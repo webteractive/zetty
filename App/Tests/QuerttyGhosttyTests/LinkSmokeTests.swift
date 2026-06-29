@@ -4,18 +4,22 @@
 //   1. The QuerttyGhostty module links (import succeeds).
 //   2. `ghostty_init(0, nil)` returns 0 and sets `Ghostty.isInitialized`.
 //
-// Uses Swift Testing (@Test / #expect), available natively in Xcode 16+.
+// Uses XCTest (not Swift Testing) — XCTest discovery is robust under
+// Tuist-generated projects + xcodebuild, avoiding Swift Testing's extra
+// discovery configuration.
 
-import Testing
+import XCTest
 @testable import QuerttyGhostty
 
-@Test func runtimeInitializesWithoutThrowing() throws {
-    try Ghostty.initializeRuntime()
-    #expect(Ghostty.isInitialized)
-}
+final class LinkSmokeTests: XCTestCase {
+    func testRuntimeInitializesWithoutThrowing() throws {
+        try Ghostty.initializeRuntime()
+        XCTAssertTrue(Ghostty.isInitialized)
+    }
 
-@Test func doubleInitIsIdempotent() throws {
-    try Ghostty.initializeRuntime()
-    try Ghostty.initializeRuntime()  // second call should be a no-op
-    #expect(Ghostty.isInitialized)
+    func testDoubleInitIsIdempotent() throws {
+        try Ghostty.initializeRuntime()
+        try Ghostty.initializeRuntime()  // second call should be a no-op
+        XCTAssertTrue(Ghostty.isInitialized)
+    }
 }

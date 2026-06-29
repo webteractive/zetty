@@ -27,7 +27,8 @@ let project = Project(
             ]),
             sources: ["App/Sources/App/**"],
             dependencies: [
-                .package(product: "GhosttyKit"),
+                // GhosttyKit (static) is linked transitively via QuerttyGhostty;
+                // linking it here too triggers a static-double-link warning.
                 .package(product: "GhosttyTerminal"),
                 .package(product: "QuerttyCore"),
                 .target(name: "QuerttyGhostty"),
@@ -71,6 +72,16 @@ let project = Project(
             dependencies: [
                 .target(name: "QuerttyGhostty"),
             ]
+        ),
+    ],
+    schemes: [
+        // Explicit scheme so `tuist test` discovers and runs the unit tests
+        // (Tuist's auto-generated schemes weren't attaching the test target).
+        .scheme(
+            name: "QuerttyGhosttyTests",
+            shared: true,
+            buildAction: .buildAction(targets: ["QuerttyGhostty"]),
+            testAction: .targets(["QuerttyGhosttyTests"])
         ),
     ]
 )
