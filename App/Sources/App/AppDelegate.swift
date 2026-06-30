@@ -1,7 +1,11 @@
 import AppKit
 import GhosttyTerminal
 
-@main
+// NOTE: no `@main` here. Tuist's default macOS Info.plist sets
+// NSMainStoryboardFile = "Main", and `@main` on an NSApplicationDelegate routes
+// through NSApplicationMain, which eagerly loads that (nonexistent) storyboard
+// and crashes before the delegate runs. We bootstrap NSApplication manually in
+// main.swift instead, which never consults the storyboard key.
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private let defaultContentSize = NSSize(width: 720, height: 480)
     private let minimumContentSize = NSSize(width: 480, height: 320)
