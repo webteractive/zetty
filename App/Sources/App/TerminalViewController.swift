@@ -498,8 +498,12 @@ final class TerminalViewController: NSViewController {
     private func focusChanged(surfaceID: UUID) {
         guard paneTree.focusedSurfaceID != surfaceID else { return }
         paneTree.focus(surfaceID)
-        rebuildSurfaceNodeView()
-        // No need to re-observe: the KVO target is the (unchanged) window, and
-        // rebuildSurfaceNodeView only swaps the view hierarchy.
+        // Update the highlight IN PLACE — do NOT rebuild. Rebuilding re-parents the
+        // live terminal views, which resigns the clicked pane's first responder so
+        // it never actually takes keyboard focus (highlight without an active cursor).
+        rootContentView?.updateFocus(paneTree.focusedSurfaceID)
+        // The active tab's name follows its focused pane's title.
+        refreshTabBar()
+        refreshSidebar()
     }
 }

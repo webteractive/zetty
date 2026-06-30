@@ -44,6 +44,22 @@ final class SurfaceNodeView: NSView {
     @available(*, unavailable)
     required init?(coder _: NSCoder) { fatalError("not supported") }
 
+    // MARK: - In-place focus update
+
+    /// Updates the focus highlight to `focusedSurfaceID` WITHOUT rebuilding the
+    /// view hierarchy. Rebuilding re-parents the live terminal views, which
+    /// resigns first responder and prevents the clicked pane from taking
+    /// keyboard focus — so focus changes must update borders in place.
+    func updateFocus(_ focusedSurfaceID: UUID?) {
+        for sub in subviews {
+            if let leaf = sub as? LeafContainerView {
+                leaf.setFocused(leaf.surfaceID == focusedSurfaceID)
+            } else if let split = sub as? RatioSplitView {
+                split.updateFocus(focusedSurfaceID)
+            }
+        }
+    }
+
     // MARK: - Private
 
     private func buildContent(
@@ -56,6 +72,7 @@ final class SurfaceNodeView: NSView {
         case .leaf(let surface):
             let terminalView = registry.terminalView(for: surface)
             let container = LeafContainerView(
+                surfaceID: surface.id,
                 terminalView: terminalView,
                 isFocused: surface.id == focusedSurfaceID
             )
@@ -98,9 +115,11 @@ private final class LeafContainerView: NSView {
 
     private static let borderWidth: CGFloat = 2
 
-    private let isFocused: Bool
+    let surfaceID: UUID
+    private var isFocused: Bool
 
-    init(terminalView: NSView, isFocused: Bool) {
+    init(surfaceID: UUID, terminalView: NSView, isFocused: Bool) {
+        self.surfaceID = surfaceID
         self.isFocused = isFocused
         super.init(frame: .zero)
         wantsLayer = true
@@ -120,6 +139,13 @@ private final class LeafContainerView: NSView {
 
     @available(*, unavailable)
     required init?(coder _: NSCoder) { fatalError("not supported") }
+
+    /// Updates the focus state + border in place (no rebuild).
+    func setFocused(_ focused: Bool) {
+        guard focused != isFocused else { return }
+        isFocused = focused
+        updateBorder()
+    }
 
     private func updateBorder() {
         if isFocused {
@@ -175,6 +201,13 @@ private final class RatioSplitView: NSSplitView {
 
     @available(*, unavailable)
     required init?(coder _: NSCoder) { fatalError("not supported") }
+
+    /// Forwards an in-place focus update to both child sub-trees.
+    func updateFocus(_ focusedSurfaceID: UUID?) {
+        for sub in arrangedSubviews {
+            (sub as? SurfaceNodeView)?.updateFocus(focusedSurfaceID)
+        }
+    }
 
     override func layout() {
         super.layout()
