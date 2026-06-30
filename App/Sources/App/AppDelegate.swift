@@ -1,6 +1,18 @@
 import AppKit
 import GhosttyTerminal
 
+/// Window that gives the app's main-menu key equivalents (⌘D / ⇧⌘D / ⌘W)
+/// priority over the focused view. The embedded GhosttyTerminal view otherwise
+/// consumes those key equivalents (AppKit hands the view hierarchy first crack),
+/// so menu shortcuts never fire. Checking the main menu before `super` (which
+/// forwards to the view hierarchy) restores the expected app-shortcut behaviour.
+final class QuerttyWindow: NSWindow {
+    override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        if NSApp.mainMenu?.performKeyEquivalent(with: event) == true { return true }
+        return super.performKeyEquivalent(with: event)
+    }
+}
+
 // NOTE: no `@main` here. Tuist's default macOS Info.plist sets
 // NSMainStoryboardFile = "Main", and `@main` on an NSApplicationDelegate routes
 // through NSApplicationMain, which eagerly loads that (nonexistent) storyboard
@@ -16,7 +28,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // via its own initializeRuntimeIfNeeded() guard, so we do not call
         // Ghostty.initializeRuntime() here to avoid a double-init.
 
-        let window = NSWindow(
+        let window = QuerttyWindow(
             contentRect: NSRect(origin: .zero, size: defaultContentSize),
             styleMask: [.titled, .closable, .miniaturizable, .resizable],
             backing: .buffered,

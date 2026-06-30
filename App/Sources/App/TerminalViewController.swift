@@ -175,7 +175,7 @@ final class TerminalViewController: NSViewController {
         guard paneTree.focusedSurfaceID != surfaceID else { return }
         paneTree.focus(surfaceID)
         rebuildSurfaceNodeView()
-        // Re-attach the KVO observer after rebuilding (the window is the same).
-        startObservingFirstResponder()
+        // No need to re-observe: the KVO target is the (unchanged) window, and
+        // rebuildSurfaceNodeView only swaps the view hierarchy.
     }
 }
