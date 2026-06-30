@@ -149,3 +149,39 @@ swift test
 ```
 
 Result: **38 tests passed** (all passing, including 7 new SessionSnapshot round-trip tests).
+
+---
+
+## Task 7: Projects sidebar — switch/add/pin projects, each with its own tabs, persisted
+
+### What was implemented
+
+- `App/Sources/App/TerminalViewController.swift` — replaced `private var tabList: TabList` with `private var workspace = WorkspaceModel()`. The `paneTree` computed property now forwards to `workspace.activeTabList.activeTree`. All tab actions (`newTab`, `closeTab`, `selectNextTab`, `selectPreviousTab`, `selectTab(at:)`) operate on `workspace.activeTabList`. Added `restore(workspace:)` (replaces the model) and `currentWorkspace` (read-only accessor for save). Replaced `restore(trees:)`/`currentPaneTrees` which are now superseded. Added `rebuildSurfaceNodeView()` union-prune over all projects × all tabs: `workspace.projects.flatMap { $0.tabList.trees.flatMap { $0.layout.surfaces.map(\.id) } }`. Added `addProject(_:)` `@objc` responder target + `presentAddProjectPanel()` via `NSOpenPanel` (`canChooseDirectories=true`, `canChooseFiles=false`). Layout: sidebar (200 pt) + thin separator + content container side-by-side via Auto Layout constraints; tab bar and pane area are hosted inside the content container.
+- `App/Sources/App/AppDelegate.swift` — replaced `restoreLayout(into:)`/`saveLayout()` with `restoreWorkspace(into:)`/`saveWorkspace()` using `SessionSnapshot.projectRuntimes(from:)` → `WorkspaceModel(restoring:)` → `tvc.restore(workspace:)` on launch, and `SessionSnapshot.workspace(from: tvc.currentWorkspace)` on terminate. Restoration is unconditional (no `preserveSessions` gate). Added "Add Project…" ⌘O menu item in a new "Project" menu. Default content size widened from 720→920 to accommodate the 200 pt sidebar.
+
+### Manual check (PENDING USER VERIFICATION)
+
+Run the app:
+```bash
+open ~/Library/Developer/Xcode/DerivedData/quertty-giuacqmlsqkgkrdadhyyjabydjxb/Build/Products/Debug/quertty.app
+```
+
+1. **Sidebar visible**: A 200-pt sidebar appears on the left with the default project listed (your home directory name). A "+" button sits at the bottom.
+2. **Add Project (⌘O or "+")**: Press ⌘O or click "+" — a directory picker opens. Choose any directory — the project is added to the sidebar and becomes active with a fresh tab.
+3. **Switch project**: Click a different project row in the sidebar — the tab bar and pane area swap to that project's own tabs/splits.
+4. **Independent tabs per project**: Open multiple tabs (⌘T) in project A, switch to project B — it has its own separate tab set. Switch back to project A — original tabs are intact.
+5. **Pin toggle**: Click the pin icon on a project row — it toggles between filled (pinned) and outline (unpinned).
+6. **Persist across launches**: Add a second project, create tabs/splits in each, quit (⌘Q), relaunch — all projects, their tabs, and layouts are restored.
+7. **Splits survive project switch**: Background projects' PTY sessions are never pruned (union-prune across all projects × all tabs).
+
+**Status: PENDING USER VERIFICATION**
+
+---
+
+### Build verification (headless)
+
+```bash
+mise exec -- tuist generate --no-open && tuist build quertty
+```
+
+Result: **Build Succeeded** (confirmed by automated build step).

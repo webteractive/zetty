@@ -5,7 +5,7 @@ import QuerttyGhostty
 // MARK: - TerminalViewController
 
 /// Hosts a recursive split-pane terminal layout driven by a `PaneTree`,
-/// with full tab support via `TabList`.
+/// with full tab support via `TabList` and project management via `WorkspaceModel`.
 ///
 /// # Layout model
 /// `paneTree.layout.root` is a `SurfaceNode` tree.  Each time the tree
@@ -15,13 +15,17 @@ import QuerttyGhostty
 ///
 /// # Tab model
 /// A `TabList` holds one `PaneTree` per tab.  The computed `paneTree`
-/// property forwards to `tabList.activeTree`, so all `PaneActions`
+/// property forwards to `workspace.activeTabList.activeTree`, so all `PaneActions`
 /// methods operate on the active tab without modification.
+///
+/// # Project model
+/// A `WorkspaceModel` holds one `ProjectRuntime` (each with its own `TabList`)
+/// per project.  Switching projects swaps the entire tab+pane area.
 ///
 /// # Registry pruning
 /// After each rebuild the registry is pruned to the UNION of surface IDs across
-/// ALL tabs.  Background tabs keep their live PTY sessions; only truly closed
-/// surfaces are torn down.
+/// ALL projects' ALL tabs.  Background tabs and projects keep their live PTY
+/// sessions; only truly closed surfaces are torn down.
 ///
 /// # Session ownership
 /// The live PTY lives inside `TerminalView` (AppTerminalView) via its
@@ -31,18 +35,19 @@ final class TerminalViewController: NSViewController {
 
     // MARK: - State
 
-    /// Shared registry — persists terminal views across re-renders and tab switches.
+    /// Shared registry — persists terminal views across re-renders, tab switches,
+    /// and project switches.
     private let registry = SurfaceRegistry()
 
-    /// Tab manager.  One `PaneTree` per tab.
-    private var tabList = TabList()
+    /// Workspace model — ordered list of projects, each owning its own TabList.
+    private var workspace = WorkspaceModel()
 
-    /// The logical pane tree for the ACTIVE tab.  Mutate this, then call
-    /// `rebuildSurfaceNodeView()`.  Declared `internal` so the `PaneActions`
-    /// extension (same module) can write it.
+    /// The logical pane tree for the ACTIVE tab in the ACTIVE project.  Mutate
+    /// this, then call `rebuildSurfaceNodeView()`.  Declared `internal` so the
+    /// `PaneActions` extension (same module) can write it.
     var paneTree: PaneTree {
-        get { tabList.activeTree }
-        set { tabList.activeTree = newValue }
+        get { workspace.activeTabList.activeTree }
+        set { workspace.activeTabList.activeTree = newValue }
     }
 
     /// The currently installed root content view (a `SurfaceNodeView`).
@@ -50,6 +55,12 @@ final class TerminalViewController: NSViewController {
 
     /// The tab bar strip shown above the pane area.
     private var tabBarView: TabBarView?
+
+    /// The project sidebar shown on the left.
+    private var sidebarView: SidebarView?
+
+    /// The container that wraps the tab-bar + pane area (right side of the split).
+    private var contentContainer: NSView?
 
     /// KVO token for observing `window.firstResponder`.
     private var firstResponderObservation: NSKeyValueObservation?
@@ -63,8 +74,10 @@ final class TerminalViewController: NSViewController {
 
     override func viewDidLoad() {
         super.viewDidLoad()
+        setupSidebarAndContent()
         setupTabBar()
         rebuildSurfaceNodeView()
+        refreshSidebar()
     }
 
     override func viewDidAppear() {
@@ -87,27 +100,91 @@ final class TerminalViewController: NSViewController {
 
     // MARK: - Layout restoration
 
-    /// Replaces the current `TabList` with one built from `trees`.
+    /// Replaces the current `WorkspaceModel` with the given one.
     ///
     /// Called by `AppDelegate` before the view appears so the restored layout
-    /// is rendered on first draw.  When `trees` is empty (corrupt or absent
-    /// workspace) this is a no-op and the view keeps its default fresh tab.
-    func restore(trees: [PaneTree]) {
-        guard let restored = TabList(restoring: trees) else { return }
-        tabList = restored
+    /// is rendered on first draw.
+    func restore(workspace model: WorkspaceModel) {
+        workspace = model
     }
 
-    /// A snapshot of the current `TabList` suitable for persistence.
-    var currentPaneTrees: [PaneTree] {
-        tabList.trees
+    /// A snapshot of the current `WorkspaceModel` suitable for persistence.
+    var currentWorkspace: WorkspaceModel {
+        workspace
+    }
+
+    // MARK: - Sidebar + content layout setup
+
+    private func setupSidebarAndContent() {
+        let sidebar = SidebarView()
+        sidebar.translatesAutoresizingMaskIntoConstraints = false
+
+        let container = NSView()
+        container.wantsLayer = true
+        container.translatesAutoresizingMaskIntoConstraints = false
+
+        view.addSubview(sidebar)
+        view.addSubview(container)
+
+        // Sidebar left edge, fixed width ~200, full height.
+        NSLayoutConstraint.activate([
+            sidebar.topAnchor.constraint(equalTo: view.topAnchor),
+            sidebar.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            sidebar.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+            sidebar.widthAnchor.constraint(equalToConstant: 200),
+
+            container.topAnchor.constraint(equalTo: view.topAnchor),
+            container.leadingAnchor.constraint(equalTo: sidebar.trailingAnchor),
+            container.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            container.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+        ])
+
+        // Add a thin separator line between sidebar and content.
+        let separator = NSBox()
+        separator.boxType = .separator
+        separator.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(separator)
+        NSLayoutConstraint.activate([
+            separator.topAnchor.constraint(equalTo: view.topAnchor),
+            separator.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+            separator.leadingAnchor.constraint(equalTo: sidebar.trailingAnchor),
+            separator.widthAnchor.constraint(equalToConstant: 1),
+        ])
+
+        // Wire sidebar callbacks.
+        sidebar.onSelect = { [weak self] index in
+            guard let self else { return }
+            self.workspace.select(index: index)
+            self.refreshTabBar()
+            self.rebuildSurfaceNodeView()
+            self.refreshSidebar()
+            if let focused = self.focusedTerminalView() {
+                self.view.window?.makeFirstResponder(focused)
+            }
+        }
+
+        sidebar.onTogglePin = { [weak self] index in
+            guard let self else { return }
+            self.workspace.togglePin(at: index)
+            self.refreshSidebar()
+        }
+
+        sidebar.onAddProject = { [weak self] in
+            self?.presentAddProjectPanel()
+        }
+
+        self.sidebarView = sidebar
+        self.contentContainer = container
     }
 
     // MARK: - Tab bar setup
 
     private func setupTabBar() {
+        guard let container = contentContainer else { return }
+
         let tabBar = TabBarView()
         tabBar.translatesAutoresizingMaskIntoConstraints = false
-        view.addSubview(tabBar)
+        container.addSubview(tabBar)
 
         tabBar.onSelect = { [weak self] index in
             self?.selectTab(at: index)
@@ -117,9 +194,9 @@ final class TerminalViewController: NSViewController {
         }
 
         NSLayoutConstraint.activate([
-            tabBar.topAnchor.constraint(equalTo: view.topAnchor),
-            tabBar.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-            tabBar.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            tabBar.topAnchor.constraint(equalTo: container.topAnchor),
+            tabBar.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            tabBar.trailingAnchor.constraint(equalTo: container.trailingAnchor),
             tabBar.heightAnchor.constraint(equalToConstant: 28),
         ])
 
@@ -127,17 +204,63 @@ final class TerminalViewController: NSViewController {
         refreshTabBar()
     }
 
-    /// Syncs the tab bar UI state with `tabList`.
-    private func refreshTabBar() {
+    /// Syncs the tab bar UI state with the active project's TabList.
+    func refreshTabBar() {
+        let tabList = workspace.activeTabList
         let titles = tabList.trees.indices.map { tabList.title(at: $0) }
         tabBarView?.update(titles: titles, selectedIndex: tabList.activeIndex)
+    }
+
+    /// Syncs the sidebar UI state with the workspace.
+    func refreshSidebar() {
+        let projects = workspace.projects.map { (name: $0.name, isPinned: $0.isPinned) }
+        sidebarView?.update(projects: projects, selectedIndex: workspace.activeIndex)
+    }
+
+    // MARK: - Add Project via NSOpenPanel
+
+    /// Presents an NSOpenPanel to choose a directory, then adds it as a new project.
+    @objc func addProject(_ sender: Any?) {
+        presentAddProjectPanel()
+    }
+
+    private func presentAddProjectPanel() {
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.allowsMultipleSelection = false
+        panel.prompt = "Add Project"
+        panel.message = "Choose a directory to add as a project"
+
+        guard let window = view.window else {
+            // Fallback: run modally if no window yet.
+            if panel.runModal() == .OK, let url = panel.url {
+                addProjectFromURL(url)
+            }
+            return
+        }
+
+        panel.beginSheetModal(for: window) { [weak self] response in
+            guard response == .OK, let url = panel.url else { return }
+            self?.addProjectFromURL(url)
+        }
+    }
+
+    private func addProjectFromURL(_ url: URL) {
+        workspace.addProject(name: url.lastPathComponent, rootPath: url.path)
+        refreshTabBar()
+        rebuildSurfaceNodeView()
+        refreshSidebar()
+        if let focused = focusedTerminalView() {
+            view.window?.makeFirstResponder(focused)
+        }
     }
 
     // MARK: - Tab actions (responder-chain targets)
 
     /// Open a new tab and focus its single fresh pane.  Key equivalent: ⌘T.
     @objc func newTab(_ sender: Any?) {
-        tabList.newTab()
+        workspace.activeTabList.newTab()
         refreshTabBar()
         rebuildSurfaceNodeView()
         if let focused = focusedTerminalView() {
@@ -147,6 +270,7 @@ final class TerminalViewController: NSViewController {
 
     /// Close the active tab.  No-op if it is the only tab.  Key equivalent: ⇧⌘W.
     @objc func closeTab(_ sender: Any?) {
+        let tabList = workspace.activeTabList
         tabList.closeTab(at: tabList.activeIndex)
         refreshTabBar()
         rebuildSurfaceNodeView()
@@ -157,7 +281,7 @@ final class TerminalViewController: NSViewController {
 
     /// Switch to the next tab, wrapping.  Key equivalent: ⌘}.
     @objc func selectNextTab(_ sender: Any?) {
-        tabList.selectNext()
+        workspace.activeTabList.selectNext()
         refreshTabBar()
         rebuildSurfaceNodeView()
         if let focused = focusedTerminalView() {
@@ -167,7 +291,7 @@ final class TerminalViewController: NSViewController {
 
     /// Switch to the previous tab, wrapping.  Key equivalent: ⌘{.
     @objc func selectPreviousTab(_ sender: Any?) {
-        tabList.selectPrevious()
+        workspace.activeTabList.selectPrevious()
         refreshTabBar()
         rebuildSurfaceNodeView()
         if let focused = focusedTerminalView() {
@@ -178,7 +302,7 @@ final class TerminalViewController: NSViewController {
     // MARK: - Private helper
 
     private func selectTab(at index: Int) {
-        tabList.select(index: index)
+        workspace.activeTabList.select(index: index)
         refreshTabBar()
         rebuildSurfaceNodeView()
         if let focused = focusedTerminalView() {
@@ -222,10 +346,13 @@ final class TerminalViewController: NSViewController {
     /// derived from `paneTree.layout.root`.
     ///
     /// After building, prunes the registry to the UNION of surface IDs across
-    /// ALL tabs — background tabs keep their live PTY sessions alive.
+    /// ALL projects' ALL tabs — background tabs and projects keep their live
+    /// PTY sessions alive.
     ///
     /// Declared `internal` so the `PaneActions` extension (same module) can call it.
     func rebuildSurfaceNodeView() {
+        guard let container = contentContainer else { return }
+
         rootContentView?.removeFromSuperview()
 
         let newRoot = SurfaceNodeView(
@@ -234,26 +361,33 @@ final class TerminalViewController: NSViewController {
             focusedSurfaceID: paneTree.focusedSurfaceID
         )
         newRoot.translatesAutoresizingMaskIntoConstraints = false
-        view.addSubview(newRoot)
+        container.addSubview(newRoot)
 
         // Pin below the tab bar (28 pt), or to the top if there is no tab bar yet.
         let topGuide: NSLayoutYAxisAnchor
         if let tabBar = tabBarView {
             topGuide = tabBar.bottomAnchor
         } else {
-            topGuide = view.topAnchor
+            topGuide = container.topAnchor
         }
 
         NSLayoutConstraint.activate([
             newRoot.topAnchor.constraint(equalTo: topGuide),
-            newRoot.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-            newRoot.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            newRoot.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+            newRoot.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            newRoot.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+            newRoot.bottomAnchor.constraint(equalTo: container.bottomAnchor),
         ])
         rootContentView = newRoot
 
-        // Prune to the union of all tabs' surfaces so background sessions survive.
-        let allIDs = Set(tabList.trees.flatMap { $0.layout.surfaces.map(\.id) })
+        // Prune to the union of ALL projects' ALL tabs' surfaces so background
+        // sessions survive project switches as well as tab switches.
+        let allIDs = Set(
+            workspace.projects.flatMap { project in
+                project.tabList.trees.flatMap { tree in
+                    tree.layout.surfaces.map(\.id)
+                }
+            }
+        )
         registry.prune(keeping: allIDs)
     }
 

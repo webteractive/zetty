@@ -20,12 +20,15 @@ final class QuerttyWindow: NSWindow {
 // and crashes before the delegate runs. We bootstrap NSApplication manually in
 // main.swift instead, which never consults the storyboard key.
 final class AppDelegate: NSObject, NSApplicationDelegate {
-    private let defaultContentSize = NSSize(width: 720, height: 480)
-    private let minimumContentSize = NSSize(width: 480, height: 320)
+    private let defaultContentSize = NSSize(width: 920, height: 560)
+    private let minimumContentSize = NSSize(width: 600, height: 320)
     private var window: NSWindow?
 
-    /// Weak reference to the terminal view controller for saving on quit.
-    private weak var terminalViewController: TerminalViewController?
+    /// Strong reference to the terminal view controller so it survives until
+    /// `applicationWillTerminate` (the window — and thus its contentViewController —
+    /// is released on last-window-close, BEFORE terminate; a weak ref would be nil
+    /// at save time and the workspace would never persist).
+    private var terminalViewController: TerminalViewController?
 
     /// The persistent workspace store backed by `~/Library/Application Support/quertty/`.
     private lazy var workspaceStore: WorkspaceStore = {
@@ -43,7 +46,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Ghostty.initializeRuntime() here to avoid a double-init.
 
         let tvc = TerminalViewController()
-        restoreLayout(into: tvc)
+        restoreWorkspace(into: tvc)
         terminalViewController = tvc
 
         let window = QuerttyWindow(
@@ -68,33 +71,35 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationWillTerminate(_: Notification) {
-        saveLayout()
+        saveWorkspace()
     }
 
     // MARK: - Persistence helpers
 
     /// Load the saved workspace and seed the terminal view controller with it.
-    /// On any error (missing file, corrupt JSON) this silently falls back to
-    /// the default fresh-tab layout — the app must never crash on bad data.
-    private func restoreLayout(into tvc: TerminalViewController) {
+    ///
+    /// Restoration is unconditional — even if `preserveSessions` is false in the
+    /// persisted project, we still restore the tab layout.  On any error (missing
+    /// file, corrupt JSON) this silently falls back to the default fresh-tab layout
+    /// so the app never crashes on bad data.
+    private func restoreWorkspace(into tvc: TerminalViewController) {
         do {
             let workspace = try workspaceStore.load()
-            let trees = SessionSnapshot.paneTrees(from: workspace)
-            tvc.restore(trees: trees)
+            let runtimes = SessionSnapshot.projectRuntimes(from: workspace)
+            if let model = WorkspaceModel(restoring: runtimes, activeIndex: 0) {
+                tvc.restore(workspace: model)
+            }
+            // Empty runtimes → fall back to the default WorkspaceModel already in tvc.
         } catch {
-            // Corrupt or unreadable — start fresh.
+            // Corrupt or unreadable — start fresh (tvc already has a default model).
         }
     }
 
-    /// Snapshot the current layout and write it to disk.
+    /// Snapshot the current workspace and write it to disk.
     /// Errors are swallowed so a full disk or sandbox denial never crashes the quit path.
-    private func saveLayout() {
+    private func saveWorkspace() {
         guard let tvc = terminalViewController else { return }
-        let trees = tvc.currentPaneTrees
-        guard !trees.isEmpty else { return }
-        // Build a temporary TabList purely to drive the snapshot mapping.
-        let list = TabList(restoring: trees) ?? TabList()
-        let workspace = SessionSnapshot.workspace(from: list)
+        let workspace = SessionSnapshot.workspace(from: tvc.currentWorkspace)
         try? workspaceStore.save(workspace)
     }
 
@@ -215,6 +220,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         )
         prevTab.keyEquivalentModifierMask = [.command]
         shellMenu.addItem(prevTab)
+
+        // ── Project menu ──────────────────────────────────────────────────────
+        let projectMenuItem = NSMenuItem()
+        mainMenu.addItem(projectMenuItem)
+        let projectMenu = NSMenu(title: "Project")
+        projectMenuItem.submenu = projectMenu
+
+        // "Add Project…"  ⌘O
+        let addProject = NSMenuItem(
+            title: "Add Project\u{2026}",
+            action: #selector(TerminalViewController.addProject(_:)),
+            keyEquivalent: "o"
+        )
+        addProject.keyEquivalentModifierMask = [.command]
+        projectMenu.addItem(addProject)
 
         NSApp.mainMenu = mainMenu
     }

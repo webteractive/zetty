@@ -101,8 +101,15 @@ final class SidebarView: NSView {
 
     // MARK: - Update
 
+    /// True while `update()` is programmatically setting the selection, so the
+    /// resulting `tableViewSelectionDidChange` doesn't re-fire `onSelect` and
+    /// loop back through the owner's refresh.
+    private var isUpdating = false
+
     /// Replaces the displayed project list and highlighted selection.
     func update(projects: [(name: String, isPinned: Bool)], selectedIndex: Int) {
+        isUpdating = true
+        defer { isUpdating = false }
         self.projects = projects
         self.selectedIndex = selectedIndex
         tableView.reloadData()
@@ -155,6 +162,7 @@ extension SidebarView: NSTableViewDelegate {
     }
 
     func tableViewSelectionDidChange(_ notification: Notification) {
+        guard !isUpdating else { return }  // ignore programmatic selection from update()
         guard let tv = notification.object as? NSTableView else { return }
         let row = tv.selectedRow
         guard row >= 0 else { return }
