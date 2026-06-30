@@ -48,7 +48,57 @@ public enum SessionSnapshot {
             !session.tabs.isEmpty
         else { return [] }
 
-        return session.tabs.map { tab in
+        return paneTrees(from: session.tabs)
+    }
+
+    // MARK: - WorkspaceModel → Workspace
+
+    /// Converts a live `WorkspaceModel` into a `Workspace` ready for persistence.
+    ///
+    /// Each `ProjectRuntime` becomes a `Project` with a single default session
+    /// whose tabs are derived from the project's `tabList.trees`.
+    /// Active-project index is not persisted in v1; restoration always activates index 0.
+    public static func workspace(from model: WorkspaceModel) -> Workspace {
+        let projects = model.projects.enumerated().map { index, runtime in
+            let tabs = runtime.tabList.trees.map { tree in
+                Tab(title: "", layout: tree.layout)
+            }
+            return Project(
+                name: runtime.name,
+                rootPath: runtime.rootPath,
+                isPinned: runtime.isPinned,
+                sortOrder: index,
+                sessions: [Session(title: "main", tabs: tabs)]
+            )
+        }
+        return Workspace(projects: projects)
+    }
+
+    // MARK: - Workspace → [ProjectRuntime]
+
+    /// Converts a persisted `Workspace` back into an array of `ProjectRuntime`s.
+    ///
+    /// Each `Project` yields a `ProjectRuntime` whose `TabList` is restored from
+    /// the project's first session's tabs. Returns `[]` for an empty workspace.
+    public static func projectRuntimes(from workspace: Workspace) -> [ProjectRuntime] {
+        workspace.projects.map { project in
+            let tabs = project.sessions.first?.tabs ?? []
+            let trees = paneTrees(from: tabs)
+            let tabList = TabList(restoring: trees) ?? TabList()
+            return ProjectRuntime(
+                name: project.name,
+                rootPath: project.rootPath,
+                isPinned: project.isPinned,
+                tabList: tabList
+            )
+        }
+    }
+
+    // MARK: - Private helpers
+
+    /// Maps an array of persisted `Tab`s to `PaneTree`s, reusing layout → pane conversion.
+    private static func paneTrees(from tabs: [Tab]) -> [PaneTree] {
+        tabs.map { tab in
             let firstID = tab.layout.surfaces.first?.id
             return PaneTree(layout: tab.layout, focusedSurfaceID: firstID)
         }
