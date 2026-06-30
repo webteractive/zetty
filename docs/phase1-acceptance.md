@@ -256,3 +256,37 @@ mise exec -- tuist generate --no-open && tuist build quertty
 ```
 
 Result: **Build Succeeded** (confirmed by automated build step).
+
+---
+
+## Task 4 (final): Double-click to rename a tab (manualTitle override)
+
+### What was implemented
+
+- `App/Sources/App/TabBarView.swift` — **Option A (overlay)**: overrides `mouseDown` to detect a double-click (`clickCount == 2`) on the `NSSegmentedControl`. Computes the hit segment by summing `width(forSegment:)` values. Overlays a temporary `RenameTextField` (private `NSTextField` subclass) positioned over the segment, prefilled with the current display title. Enter/blur commits; Escape cancels. Fires `onRenameTab: ((Int, String) -> Void)?` on commit. Closures are nil-ed before resigning first responder to prevent double-fire from `controlTextDidEndEditing`.
+- `Sources/QuerttyCore/Model/TabList.swift` — added `public func setManualTitle(_ title: String?, at index: Int)` to allow cross-module mutation (since `trees` is `public private(set)`).
+- `App/Sources/App/TerminalViewController.swift` — wires `tabBar.onRenameTab` → `renameTab(at:to:)`, which calls `tabList.setManualTitle(trimmed.isEmpty ? nil : trimmed, at: index)` then `refreshTabBar()` + `refreshSidebar()`. Persistence is automatic (workspace saved on terminate; `manualTitle` already round-trips via `SessionSnapshot`).
+
+### Manual check (PENDING USER VERIFICATION)
+
+Run the app:
+```bash
+open ~/Library/Developer/Xcode/DerivedData/quertty-giuacqmlsqkgkrdadhyyjabydjxb/Build/Products/Debug/quertty.app
+```
+
+1. **Double-click a tab → edit field appears**: Double-click a tab segment in the tab bar. A text field should appear overlaid on the segment, prefilled with the current tab name, with the text selected.
+2. **Enter commits the rename**: Type a new name and press Enter. The tab segment label should update immediately to the typed name.
+3. **Name sticks across tab switches**: Switch to another tab and back — the renamed tab should still show the custom name.
+4. **Name survives relaunch**: Quit (⌘Q) and reopen the app — the renamed tab should still show the custom name (manualTitle is persisted via workspace.json).
+5. **Clearing reverts to auto**: Double-click the renamed tab, clear the field (select-all + delete) and press Enter. The tab should revert to its auto-computed name (working directory basename or terminal title).
+6. **Escape cancels**: Double-click a tab, type something, then press Escape — the field closes without changing the name.
+
+**Status: PENDING USER VERIFICATION**
+
+### Build verification (headless)
+
+```bash
+mise exec -- tuist generate --no-open && tuist build quertty
+```
+
+Result: **Build Succeeded** (confirmed by automated build step).

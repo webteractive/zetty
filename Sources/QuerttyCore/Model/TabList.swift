@@ -79,6 +79,15 @@ public final class TabList {
         activeIndex = (activeIndex - 1 + trees.count) % trees.count
     }
 
+    /// Sets the manual title on the tab at `index`.
+    ///
+    /// Pass `nil` to clear the override and revert to the auto-computed name.
+    /// No-op if `index` is out of range.
+    public func setManualTitle(_ title: String?, at index: Int) {
+        guard trees.indices.contains(index) else { return }
+        trees[index].manualTitle = title
+    }
+
     /// Human-readable, positional title for the tab at `index`.
     public func title(at index: Int) -> String {
         "Tab \(index + 1)"

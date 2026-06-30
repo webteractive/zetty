@@ -211,6 +211,13 @@ final class TerminalViewController: NSViewController {
         tabBar.onNewTab = { [weak self] in
             self?.newTab(nil)
         }
+        tabBar.onRenameTab = { [weak self] index, newName in
+            self?.renameTab(at: index, to: newName)
+        }
+        tabBar.currentManualTitle = { [weak self] index in
+            let trees = self?.workspace.activeTabList.trees ?? []
+            return trees.indices.contains(index) ? trees[index].manualTitle : nil
+        }
 
         NSLayoutConstraint.activate([
             tabBar.topAnchor.constraint(equalTo: container.topAnchor),
@@ -365,6 +372,18 @@ final class TerminalViewController: NSViewController {
         if let focused = focusedTerminalView() {
             view.window?.makeFirstResponder(focused)
         }
+    }
+
+    // MARK: - Tab rename
+
+    /// Applies a manual title to the tab at `index`.  An empty / whitespace-only
+    /// `name` clears `manualTitle`, reverting the tab to its auto-computed name.
+    private func renameTab(at index: Int, to name: String) {
+        let tabList = workspace.activeTabList
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        tabList.setManualTitle(trimmed.isEmpty ? nil : trimmed, at: index)
+        refreshTabBar()
+        refreshSidebar()
     }
 
     // MARK: - Private helper
