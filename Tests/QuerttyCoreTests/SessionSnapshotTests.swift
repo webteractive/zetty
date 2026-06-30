@@ -104,3 +104,32 @@ private func tempDir() throws -> URL {
     let tabs = TabList(restoring: [t], activeIndex: 99)
     #expect(tabs?.activeIndex == 0)
 }
+
+/// `manualTitle` is persisted and restored across save→load cycles.
+@Test func manualTitleRoundTripsThroughWorkspaceStore() throws {
+    // ── Arrange ──────────────────────────────────────────────────────────────
+    let dir = try tempDir()
+    let store = WorkspaceStore(directory: dir)
+
+    // Tab 1: with manual title
+    let surf1 = Surface(workingDir: "/home")
+    var tree1 = PaneTree(layout: Layout(root: .leaf(surf1)), focusedSurfaceID: surf1.id)
+    tree1.manualTitle = "My Custom Tab"
+
+    // Tab 2: no manual title (will restore as nil)
+    let surf2 = Surface(workingDir: "/work")
+    let tree2 = PaneTree(layout: Layout(root: .leaf(surf2)), focusedSurfaceID: surf2.id)
+
+    let tabList = TabList(restoring: [tree1, tree2])!
+
+    // ── Act ───────────────────────────────────────────────────────────────────
+    let workspace = SessionSnapshot.workspace(from: tabList)
+    try store.save(workspace)
+    let reloaded = try store.load()
+    let restoredTrees = SessionSnapshot.paneTrees(from: reloaded)
+
+    // ── Assert ─────────────────────────────────────────────────────────────
+    #expect(restoredTrees.count == 2)
+    #expect(restoredTrees[0].manualTitle == "My Custom Tab")
+    #expect(restoredTrees[1].manualTitle == nil)
+}

@@ -3,10 +3,12 @@ import Foundation
 public struct PaneTree: Codable, Sendable, Equatable {
     public var layout: Layout
     public var focusedSurfaceID: UUID?
+    public var manualTitle: String?
 
-    public init(layout: Layout, focusedSurfaceID: UUID? = nil) {
+    public init(layout: Layout, focusedSurfaceID: UUID? = nil, manualTitle: String? = nil) {
         self.layout = layout
         self.focusedSurfaceID = focusedSurfaceID
+        self.manualTitle = manualTitle
     }
 
     public var focusedSurface: Surface? {

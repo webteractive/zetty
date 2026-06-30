@@ -19,8 +19,8 @@ public enum SessionSnapshot {
     /// Each tab's `PaneTree.layout` becomes a `Tab(title:layout:)`.
     /// All tabs are grouped under one default `Project` → `Session`.
     public static func workspace(from tabList: TabList) -> Workspace {
-        let tabs = tabList.trees.enumerated().map { index, tree in
-            Tab(title: "Tab \(index + 1)", layout: tree.layout)
+        let tabs = tabList.trees.map { tree in
+            Tab(title: tree.manualTitle ?? "", layout: tree.layout)
         }
         let session = Session(title: defaultSessionTitle, tabs: tabs)
         let project = Project(
@@ -61,7 +61,7 @@ public enum SessionSnapshot {
     public static func workspace(from model: WorkspaceModel) -> Workspace {
         let projects = model.projects.enumerated().map { index, runtime in
             let tabs = runtime.tabList.trees.map { tree in
-                Tab(title: "", layout: tree.layout)
+                Tab(title: tree.manualTitle ?? "", layout: tree.layout)
             }
             return Project(
                 name: runtime.name,
@@ -100,7 +100,8 @@ public enum SessionSnapshot {
     private static func paneTrees(from tabs: [Tab]) -> [PaneTree] {
         tabs.map { tab in
             let firstID = tab.layout.surfaces.first?.id
-            return PaneTree(layout: tab.layout, focusedSurfaceID: firstID)
+            let manualTitle = tab.title.isEmpty ? nil : tab.title
+            return PaneTree(layout: tab.layout, focusedSurfaceID: firstID, manualTitle: manualTitle)
         }
     }
 }
