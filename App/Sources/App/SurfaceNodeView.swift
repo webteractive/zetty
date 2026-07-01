@@ -131,6 +131,9 @@ final class SurfaceNodeView: NSView {
 private final class LeafContainerView: NSView {
 
     private static let borderWidth: CGFloat = 2
+    /// Top strip reserved for the × button when a pane is closable, so it never
+    /// overlaps the terminal's first line.
+    private static let closeGutterHeight: CGFloat = 24
 
     let surfaceID: UUID
     private var isFocused: Bool
@@ -151,10 +154,13 @@ private final class LeafContainerView: NSView {
         wantsLayer = true
 
         let inset = LeafContainerView.borderWidth
+        // Reserve a top gutter for the × when closable so it sits above the
+        // terminal content instead of overlapping the first line.
+        let topInset = showsClose ? LeafContainerView.closeGutterHeight : inset
         terminalView.translatesAutoresizingMaskIntoConstraints = false
         addSubview(terminalView)
         NSLayoutConstraint.activate([
-            terminalView.topAnchor.constraint(equalTo: topAnchor, constant: inset),
+            terminalView.topAnchor.constraint(equalTo: topAnchor, constant: topInset),
             terminalView.leadingAnchor.constraint(equalTo: leadingAnchor, constant: inset),
             terminalView.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -inset),
             terminalView.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -inset),

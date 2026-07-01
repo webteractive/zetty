@@ -108,7 +108,7 @@ final class TabBarView: NSView {
 
         // Build new items.
         for (index, title) in titles.enumerated() {
-            let item = TabItemView(title: title, index: index, isSelected: index == selectedIndex)
+            let item = TabItemView(title: title, index: index, isSelected: index == selectedIndex, showsClose: titles.count > 1)
             item.onSelect = { [weak self] idx in
                 self?.onSelect?(idx)
             }
@@ -241,7 +241,7 @@ private final class TabItemView: NSView {
 
     // MARK: Init
 
-    init(title: String, index: Int, isSelected: Bool) {
+    init(title: String, index: Int, isSelected: Bool, showsClose: Bool) {
         self.index = index
         self.isSelected = isSelected
 
@@ -267,30 +267,31 @@ private final class TabItemView: NSView {
         wantsLayer = true
 
         addSubview(titleLabel)
-        addSubview(closeButton)
 
-        closeButton.target = self
-        closeButton.action = #selector(closeClicked(_:))
-
-        NSLayoutConstraint.activate([
-            // Label fills left side, with padding.
+        var constraints: [NSLayoutConstraint] = [
             titleLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8),
             titleLabel.centerYAnchor.constraint(equalTo: centerYAnchor),
-            titleLabel.trailingAnchor.constraint(equalTo: closeButton.leadingAnchor, constant: -2),
-
-            // Close button is fixed size, right-aligned.
-            closeButton.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -4),
-            closeButton.centerYAnchor.constraint(equalTo: centerYAnchor),
-            closeButton.widthAnchor.constraint(equalToConstant: Self.closeButtonSize),
-            closeButton.heightAnchor.constraint(equalToConstant: Self.closeButtonSize),
-
-            // Height = 28pt (the tab bar height).
             heightAnchor.constraint(equalToConstant: 28),
-
-            // Width constraints.
             widthAnchor.constraint(greaterThanOrEqualToConstant: Self.minWidth),
             widthAnchor.constraint(lessThanOrEqualToConstant: Self.maxWidth),
-        ])
+        ]
+
+        if showsClose {
+            // Only show a × when there are 2+ tabs (the last tab can't be closed).
+            addSubview(closeButton)
+            closeButton.target = self
+            closeButton.action = #selector(closeClicked(_:))
+            constraints += [
+                titleLabel.trailingAnchor.constraint(equalTo: closeButton.leadingAnchor, constant: -2),
+                closeButton.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -4),
+                closeButton.centerYAnchor.constraint(equalTo: centerYAnchor),
+                closeButton.widthAnchor.constraint(equalToConstant: Self.closeButtonSize),
+                closeButton.heightAnchor.constraint(equalToConstant: Self.closeButtonSize),
+            ]
+        } else {
+            constraints.append(titleLabel.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8))
+        }
+        NSLayoutConstraint.activate(constraints)
 
         updateAppearance()
     }
