@@ -59,6 +59,17 @@ final class TerminalViewController: NSViewController {
     /// The project sidebar shown on the left.
     private var sidebarView: SidebarView?
 
+    /// The bottom status strip (cwd · scheme · shell · libghostty version).
+    private var statusBarView: StatusBarView?
+
+    /// The pinned libghostty-spm version (no runtime version API is exposed).
+    /// Keep in sync with `Project.swift`'s package requirement.
+    private static let libghosttyVersion = "1.2.7"
+
+    /// Background queue + debounce for `git` probes feeding the status bar.
+    private let gitQueue = DispatchQueue(label: "dev.more.quertty.git", qos: .utility)
+    private var gitProbeWork: DispatchWorkItem?
+
     /// The container that wraps the tab-bar + pane area (right side of the split).
     private var contentContainer: NSView?
 
@@ -90,8 +101,10 @@ final class TerminalViewController: NSViewController {
         view.layer?.backgroundColor = QTheme.current.bg1Color.cgColor
         setupSidebarAndContent()
         setupTabBar()
+        setupStatusBar()
         rebuildSurfaceNodeView()
         refreshSidebar()
+        refreshStatusBar()
 
         // Refresh the tab bar whenever any live surface reports a title or
         // working-directory change so the active tab's name stays current.
@@ -148,6 +161,7 @@ final class TerminalViewController: NSViewController {
         separatorView?.layer?.backgroundColor = QTheme.current.borderColor.cgColor
         tabBarView?.applyTheme()
         sidebarView?.applyTheme()
+        statusBarView?.applyTheme()
         registry.reapplyTerminalTheme(QTheme.current.terminalTheme())
         refreshTabBar()
         refreshSidebar()
@@ -274,6 +288,78 @@ final class TerminalViewController: NSViewController {
         refreshTabBar()
     }
 
+    // MARK: - Status bar setup
+
+    private func setupStatusBar() {
+        guard let container = contentContainer else { return }
+
+        let statusBar = StatusBarView()
+        container.addSubview(statusBar)
+        NSLayoutConstraint.activate([
+            statusBar.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            statusBar.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+            statusBar.bottomAnchor.constraint(equalTo: container.bottomAnchor),
+            statusBar.heightAnchor.constraint(equalToConstant: 24),
+        ])
+        self.statusBarView = statusBar
+    }
+
+    /// Syncs the status bar with the focused pane's working directory and the
+    /// active scheme / shell / libghostty version.
+    /// Syncs the status bar with the CURRENTLY FOCUSED pane (works across tabs
+    /// and splits — the focused leaf of the active tab's tree).
+    func refreshStatusBar() {
+        guard let statusBar = statusBarView else { return }
+        let focused = paneTree.focusedSurface
+        let rawCwd = focused.flatMap { registry.workingDirectory(for: $0) }
+            ?? focused?.workingDir
+            ?? NSHomeDirectory()
+        let cwd = Self.normalizedPath(rawCwd)
+        let shell = URL(fileURLWithPath: ProcessInfo.processInfo.environment["SHELL"] ?? "/bin/zsh")
+            .lastPathComponent
+        statusBar.update(
+            cwd: Self.abbreviatingHome(cwd),
+            scheme: QTheme.scheme.displayName,
+            shell: shell,
+            ghostty: "libghostty \(Self.libghosttyVersion)"
+        )
+        scheduleGitProbe(for: cwd, surfaceID: paneTree.focusedSurfaceID)
+    }
+
+    /// Debounced, off-main `git` probe for the focused pane's directory. The
+    /// result is applied only if the SAME pane is still focused — guarding by
+    /// surface identity (not directory string), so a shell that reports its cwd
+    /// in a slightly different form than the pane's seed dir doesn't get dropped.
+    private func scheduleGitProbe(for directory: String, surfaceID: UUID?) {
+        gitProbeWork?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+            let status = GitStatusProbe.probe(directory: directory)
+            DispatchQueue.main.async {
+                guard let self, self.paneTree.focusedSurfaceID == surfaceID else { return }
+                self.statusBarView?.updateGit(status)
+            }
+        }
+        gitProbeWork = work
+        gitQueue.asyncAfter(deadline: .now() + 0.2, execute: work)
+    }
+
+    /// Strips a `file://` URL wrapper (some shells report OSC 7 as a URL) to a
+    /// plain filesystem path; returns the input unchanged otherwise.
+    private static func normalizedPath(_ raw: String) -> String {
+        if raw.hasPrefix("file://"), let url = URL(string: raw), url.isFileURL {
+            return url.path
+        }
+        return raw
+    }
+
+    /// Replaces a leading home-directory prefix with `~`.
+    private static func abbreviatingHome(_ path: String) -> String {
+        let home = NSHomeDirectory()
+        if path == home { return "~" }
+        if path.hasPrefix(home + "/") { return "~" + path.dropFirst(home.count) }
+        return path
+    }
+
     /// Syncs the tab bar UI state with the active project's TabList.
     ///
     /// For each tab, computes its display title via `TabTitle.display` using:
@@ -298,6 +384,8 @@ final class TerminalViewController: NSViewController {
             )
         }
         tabBarView?.update(titles: titles, selectedIndex: tabList.activeIndex)
+        // The status bar tracks the same focused-pane / active-tab state.
+        refreshStatusBar()
     }
 
     /// Syncs the sidebar UI state with the workspace.
@@ -520,11 +608,14 @@ final class TerminalViewController: NSViewController {
             topGuide = container.topAnchor
         }
 
+        // Sit above the status bar (if present), else to the container bottom.
+        let bottomGuide = statusBarView?.topAnchor ?? container.bottomAnchor
+
         NSLayoutConstraint.activate([
             newRoot.topAnchor.constraint(equalTo: topGuide),
             newRoot.leadingAnchor.constraint(equalTo: container.leadingAnchor),
             newRoot.trailingAnchor.constraint(equalTo: container.trailingAnchor),
-            newRoot.bottomAnchor.constraint(equalTo: container.bottomAnchor),
+            newRoot.bottomAnchor.constraint(equalTo: bottomGuide),
         ])
         rootContentView = newRoot
 

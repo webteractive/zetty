@@ -87,6 +87,7 @@ struct QTheme {
     var greenColor: NSColor  { QTheme.color(green) }
     var yellowColor: NSColor { QTheme.color(yellow) }
     var purpleColor: NSColor { QTheme.color(purple) }
+    var redColor: NSColor    { QTheme.color(red) }
 
     /// The AppKit appearance that matches this scheme, so native chrome
     /// (menus, scrollers, the titlebar) tracks the palette.
