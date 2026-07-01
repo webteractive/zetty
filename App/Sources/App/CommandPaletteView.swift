@@ -29,6 +29,15 @@ final class CommandPaletteView: NSView, NSTextFieldDelegate {
     private let listStack = NSStackView()
     private let scrollView = NSScrollView()
     private var rowViews: [PaletteRowView] = []
+    private let emptyLabel = NSTextField(labelWithString: "No matching commands")
+    /// Explicit, content-driven height for the scroll area (capped). Without it
+    /// the scroll view has no intrinsic height and the panel collapses.
+    private var listHeight: NSLayoutConstraint!
+
+    private static let rowHeight: CGFloat = 42
+    private static let rowSpacing: CGFloat = 2
+    private static let listInset: CGFloat = 16   // stack top+bottom padding
+    private static let maxListHeight: CGFloat = 320
 
     init(commands: [PaletteCommand], onClose: @escaping () -> Void) {
         self.allCommands = commands
@@ -108,15 +117,27 @@ final class CommandPaletteView: NSView, NSTextFieldDelegate {
         scrollView.drawsBackground = false
         scrollView.translatesAutoresizingMaskIntoConstraints = false
 
+        // Empty-state label (centered in the scroll area).
+        emptyLabel.font = QTheme.monoFont(size: 13)
+        emptyLabel.textColor = theme.fg3Color
+        emptyLabel.alignment = .center
+        emptyLabel.isHidden = true
+        emptyLabel.translatesAutoresizingMaskIntoConstraints = false
+
         panel.addSubview(searchRow)
         panel.addSubview(divider)
         panel.addSubview(scrollView)
+        panel.addSubview(emptyLabel)
+
+        listHeight = scrollView.heightAnchor.constraint(equalToConstant: Self.maxListHeight)
 
         NSLayoutConstraint.activate([
             panel.centerXAnchor.constraint(equalTo: centerXAnchor),
             panel.topAnchor.constraint(equalTo: topAnchor, constant: 96),
             panel.widthAnchor.constraint(equalToConstant: 560),
-            panel.heightAnchor.constraint(lessThanOrEqualToConstant: 420),
+            listHeight,
+            emptyLabel.centerXAnchor.constraint(equalTo: scrollView.centerXAnchor),
+            emptyLabel.centerYAnchor.constraint(equalTo: scrollView.centerYAnchor),
 
             searchRow.topAnchor.constraint(equalTo: panel.topAnchor),
             searchRow.leadingAnchor.constraint(equalTo: panel.leadingAnchor),
@@ -168,6 +189,13 @@ final class CommandPaletteView: NSView, NSTextFieldDelegate {
             row.widthAnchor.constraint(equalTo: listStack.widthAnchor).isActive = true
             rowViews.append(row)
         }
+
+        emptyLabel.isHidden = !filtered.isEmpty
+
+        // Size the scroll area to the content, capped so it scrolls beyond that.
+        let contentHeight = CGFloat(filtered.count) * (Self.rowHeight + Self.rowSpacing) + Self.listInset
+        listHeight.constant = filtered.isEmpty ? 60 : min(contentHeight, Self.maxListHeight)
+
         selectedIndex = filtered.isEmpty ? -1 : 0
         highlight()
     }

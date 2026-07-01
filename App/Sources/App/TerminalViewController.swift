@@ -80,6 +80,11 @@ final class TerminalViewController: NSViewController {
     /// recolored when the scheme changes).
     private var separatorView: NSView?
 
+    /// Sidebar width, and the leading constraint we animate to collapse it.
+    private let sidebarWidth: CGFloat = 244
+    private var sidebarLeadingConstraint: NSLayoutConstraint?
+    private var sidebarCollapsed = false
+
     /// KVO token for observing `window.firstResponder`.
     private var firstResponderObservation: NSKeyValueObservation?
 
@@ -188,12 +193,15 @@ final class TerminalViewController: NSViewController {
         view.addSubview(sidebar)
         view.addSubview(container)
 
-        // Sidebar left edge, fixed width (handoff: 264pt), full height.
+        // Sidebar left edge, fixed width (handoff: 264pt), full height. The
+        // leading constraint is retained so ⌘B can slide it off-screen.
+        let sidebarLeading = sidebar.leadingAnchor.constraint(equalTo: view.leadingAnchor)
+        self.sidebarLeadingConstraint = sidebarLeading
         NSLayoutConstraint.activate([
             sidebar.topAnchor.constraint(equalTo: view.topAnchor),
-            sidebar.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            sidebarLeading,
             sidebar.bottomAnchor.constraint(equalTo: view.bottomAnchor),
-            sidebar.widthAnchor.constraint(equalToConstant: 244),
+            sidebar.widthAnchor.constraint(equalToConstant: sidebarWidth),
 
             container.topAnchor.constraint(equalTo: view.topAnchor),
             container.leadingAnchor.constraint(equalTo: sidebar.trailingAnchor),
@@ -279,6 +287,9 @@ final class TerminalViewController: NSViewController {
         tabBar.onCloseTab = { [weak self] index in
             self?.closeTab(atIndex: index)
         }
+        tabBar.onToggleSidebar = { [weak self] in
+            self?.toggleSidebar(nil)
+        }
 
         NSLayoutConstraint.activate([
             tabBar.topAnchor.constraint(equalTo: container.topAnchor),
@@ -363,6 +374,20 @@ final class TerminalViewController: NSViewController {
         return path
     }
 
+    // MARK: - Sidebar collapse
+
+    /// Slides the sidebar off-screen (or back) with ⌘B; the content area follows.
+    @objc func toggleSidebar(_ sender: Any?) {
+        guard let leading = sidebarLeadingConstraint else { return }
+        sidebarCollapsed.toggle()
+        NSAnimationContext.runAnimationGroup { ctx in
+            ctx.duration = 0.22
+            ctx.allowsImplicitAnimation = true
+            leading.animator().constant = sidebarCollapsed ? -sidebarWidth : 0
+            separatorView?.animator().alphaValue = sidebarCollapsed ? 0 : 1
+        }
+    }
+
     // MARK: - Command palette
 
     /// Opens the ⌘K command palette, or closes it if already open.
@@ -410,6 +435,7 @@ final class TerminalViewController: NSViewController {
             PaletteCommand(glyph: "←", label: "Previous Tab", kbd: "⌘{") { [weak self] in self?.selectPreviousTab(nil) },
             PaletteCommand(glyph: "★", label: "Pin / Unpin Current Project", kbd: "") { [weak self] in self?.togglePinActiveProject() },
             PaletteCommand(glyph: "＋", label: "Add Project…", kbd: "⌘O") { [weak self] in self?.addProject(nil) },
+            PaletteCommand(glyph: "⛶", label: "Toggle Sidebar", kbd: "⌘B") { [weak self] in self?.toggleSidebar(nil) },
         ]
     }
 

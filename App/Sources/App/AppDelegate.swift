@@ -318,6 +318,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         palette.keyEquivalentModifierMask = [.command]
         viewMenu.addItem(palette)
 
+        // "Toggle Sidebar"  ⌘B
+        let toggleSidebar = NSMenuItem(
+            title: "Toggle Sidebar",
+            action: #selector(TerminalViewController.toggleSidebar(_:)),
+            keyEquivalent: "b"
+        )
+        toggleSidebar.keyEquivalentModifierMask = [.command]
+        viewMenu.addItem(toggleSidebar)
+
         // ── Project menu ──────────────────────────────────────────────────────
         let projectMenuItem = NSMenuItem()
         mainMenu.addItem(projectMenuItem)

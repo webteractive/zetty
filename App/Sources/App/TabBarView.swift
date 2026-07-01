@@ -35,8 +35,12 @@ final class TabBarView: NSView {
     /// rendered auto label (which would otherwise freeze the auto name on commit).
     var currentManualTitle: ((Int) -> String?)?
 
+    /// Called when the user clicks the sidebar-toggle button.
+    var onToggleSidebar: (() -> Void)?
+
     // MARK: - Private subviews
 
+    private let sidebarButton: NSButton
     private let stackView: NSStackView
     private let addButton: NSButton
 
@@ -55,6 +59,12 @@ final class TabBarView: NSView {
     // MARK: - Init
 
     override init(frame frameRect: NSRect) {
+        sidebarButton = NSButton(title: "", target: nil, action: nil)
+        sidebarButton.bezelStyle = .inline
+        sidebarButton.isBordered = false
+        sidebarButton.imagePosition = .imageOnly
+        sidebarButton.translatesAutoresizingMaskIntoConstraints = false
+
         stackView = NSStackView()
         stackView.orientation = .horizontal
         stackView.spacing = 0
@@ -72,15 +82,24 @@ final class TabBarView: NSView {
         wantsLayer = true
         layer?.backgroundColor = QTheme.current.bg0Color.cgColor
         styleAddButton()
+        styleSidebarButton()
 
+        sidebarButton.target = self
+        sidebarButton.action = #selector(sidebarButtonClicked(_:))
         addButton.target = self
         addButton.action = #selector(addButtonClicked(_:))
 
+        addSubview(sidebarButton)
         addSubview(stackView)
         addSubview(addButton)
 
         NSLayoutConstraint.activate([
-            stackView.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 4),
+            sidebarButton.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8),
+            sidebarButton.centerYAnchor.constraint(equalTo: centerYAnchor),
+            sidebarButton.widthAnchor.constraint(equalToConstant: 22),
+            sidebarButton.heightAnchor.constraint(equalToConstant: 22),
+
+            stackView.leadingAnchor.constraint(equalTo: sidebarButton.trailingAnchor, constant: 6),
             stackView.topAnchor.constraint(equalTo: topAnchor),
             stackView.bottomAnchor.constraint(equalTo: bottomAnchor),
 
@@ -123,6 +142,27 @@ final class TabBarView: NSView {
         }
     }
 
+    /// Applies theme-dependent styling to the sidebar-toggle button.
+    private func styleSidebarButton() {
+        let config = NSImage.SymbolConfiguration(pointSize: 15, weight: .medium)
+        if let image = NSImage(systemSymbolName: "sidebar.left", accessibilityDescription: "Toggle sidebar")?
+            .withSymbolConfiguration(config) {
+            sidebarButton.image = image
+            sidebarButton.imageScaling = .scaleProportionallyUpOrDown
+            sidebarButton.contentTintColor = QTheme.current.fgColor
+        } else {
+            // Fallback glyph if the SF Symbol is unavailable.
+            sidebarButton.attributedTitle = NSAttributedString(
+                string: "☰",
+                attributes: [
+                    .font: QTheme.monoFont(size: 15),
+                    .foregroundColor: QTheme.current.fgColor,
+                ]
+            )
+        }
+        sidebarButton.toolTip = "Toggle sidebar (⌘B)"
+    }
+
     /// Applies theme-dependent styling to the `+` button (re-callable on scheme change).
     private func styleAddButton() {
         addButton.attributedTitle = NSAttributedString(
@@ -139,9 +179,14 @@ final class TabBarView: NSView {
     func applyTheme() {
         layer?.backgroundColor = QTheme.current.bg0Color.cgColor
         styleAddButton()
+        styleSidebarButton()
     }
 
     // MARK: - Actions
+
+    @objc private func sidebarButtonClicked(_: Any?) {
+        onToggleSidebar?()
+    }
 
     @objc private func addButtonClicked(_: Any?) {
         onNewTab?()
