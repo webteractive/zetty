@@ -19,24 +19,55 @@ xcodebuild -project quertty.xcodeproj -scheme quertty -destination 'platform=mac
 
 Tests: `mise exec -- tuist test`.
 
-## Design system — read before any UI change
+## Design rules — read before any UI change
 
-All UI styling follows **[`DESIGN.md`](DESIGN.md)** (translated from the Claude
-Design handoff `quertty.dc.html`). Tokens live in
-[`App/Sources/App/Theme.swift`](App/Sources/App/Theme.swift) (`QTheme`).
-
-Non-negotiable (full list in DESIGN.md):
+The *visual* spec (tokens, schemes, typography, component anatomy) lives in
+**[`DESIGN.md`](DESIGN.md)**; tokens are in
+[`App/Sources/App/Theme.swift`](App/Sources/App/Theme.swift) (`QTheme`). These
+enforceable rules govern how UI code uses it — a change that violates one should
+be corrected before merge:
 
 1. **Never hardcode a color** — read `QTheme.current.<token>Color`; add a token
-   rather than inlining hex or a system color.
-2. **Fonts follow content:** terminal-adjacent UI uses `QTheme.monoFont`; prose
-   uses the system font.
-3. **Accent = focus/active/brand only, and it glows;** fills use `bg3`.
-4. **Surface ramp:** `bg0` chrome · `bg1` base/panes/terminal · `bg2` elevated ·
-   `bg3` chips/selection.
-5. **The terminal tracks the scheme** via `QTheme.current.terminalTheme()`,
-   applied through `SurfaceRegistry.terminalTheme` — nowhere else.
-6. **Schemes are all-or-nothing** — a new `QColorScheme` fills every token.
+   rather than inlining hex or a system color (`.controlAccentColor`,
+   `.separatorColor`, `.windowBackgroundColor`, …).
+2. **Fonts follow content:** terminal-adjacent UI (tabs, project tree, status
+   bar, kbd chips) uses `QTheme.monoFont`; prose and standard controls use the
+   system font.
+3. **Accent = focus/active/brand only, and it glows;** selection/active fills use
+   `bg3`, never a saturated accent block.
+4. **Surface ramp:** `bg0` chrome (sidebar / tab bar / status bar) · `bg1`
+   base/panes/terminal · `bg2` elevated inputs & hover · `bg3` chips/selection.
+   Don't invent intermediate greys.
+5. **Panes are borderless;** focus is shown by the accent status dot, not a border.
+6. **The terminal tracks the scheme** via `QTheme.current.terminalTheme()`,
+   applied through `SurfaceRegistry.terminalTheme` — nowhere else. (A user's
+   pasted ghostty directives may override terminal colors; see Configuration.)
+7. **Schemes are all-or-nothing** — a new `QColorScheme` fills every token plus
+   its `isDark` flag.
+8. **Semantic colors carry meaning** (green=ok, yellow=attention, red=error,
+   purple=git, `fg3`=idle). Don't repurpose them for decoration.
+9. **Chrome depth is borders + surfaces, not shadows;** reserve glow for the
+   accent on focused/active elements.
+
+## Configuration
+
+quertty reads `~/.config/quertty/config` (or `$XDG_CONFIG_HOME/quertty/config`),
+seeded with a documented default on first launch. Parsing is pure + unit-tested
+in `QuerttyCore` (`AppConfig` / `ConfigStore`); `AppDelegate` resolves it.
+
+- **`appearance = system | dark | light`** — `system` (default) follows macOS
+  live; `dark`/`light` pin one axis.
+- **`theme-dark` / `theme-light`** — the `QColorScheme` used for each axis.
+- **Every other `key = value` is a ghostty directive**, forwarded verbatim to
+  libghostty (via `TerminalConfiguration`) — users can paste an existing ghostty
+  config straight in (no prefix; we don't read `~/.config/ghostty/config`).
+  Ghostty defines none of the reserved keys, so there's no collision. Comments
+  are **full-line only** (`#` at line start) so `#`-prefixed colors survive.
+- **Precedence:** scheme theme → pasted ghostty directives (last wins). Pasted
+  directives can override terminal colors; chrome stays scheme-driven.
+- **Reload:** ⇧⌘, (also App menu + palette) re-reads config and re-applies theme
+  + terminal overrides to every live pane; runtime scheme/appearance changes are
+  persisted back to the file.
 
 ## Guardrails
 

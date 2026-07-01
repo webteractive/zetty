@@ -80,33 +80,6 @@ chrome/sidebar (`bg0` `#ececed`), and a brand-teal accent that reads on white.
 
 ---
 
-## Configuration & appearance
-
-quertty reads a ghostty-style plain-text config from `~/.config/quertty/config`
-(or `$XDG_CONFIG_HOME/quertty/config`), seeded with a documented default on
-first launch. Parsing lives in `QuerttyCore` (`AppConfig` / `ConfigStore`, pure
-and unit-tested); the app resolves it to a `QColorScheme` in `AppDelegate`.
-
-```
-appearance  = system   # system | dark | light
-theme-dark  = Twilight
-theme-light = Daylight
-```
-
-- **`appearance`** — `system` (default) follows the macOS appearance and swaps
-  live when the user toggles it; `dark` / `light` pin one appearance.
-- **`theme-dark` / `theme-light`** — which scheme to use for each appearance
-  (any built-in scheme name; matched case-insensitively).
-
-Resolution: `system` → `theme-dark` when the OS is dark, else `theme-light`;
-`dark`/`light` → the corresponding scheme. In system mode the app leaves
-`NSApp.appearance` unset so it tracks the OS, observes
-`NSApp.effectiveAppearance`, and on change re-points `QTheme.scheme` and calls
-`TerminalViewController.applyTheme()` — which recolors chrome and live terminals
-in place (PTYs preserved). Config edits currently apply on next launch.
-
----
-
 ## Typography
 
 - **Mono:** JetBrains Mono (`QTheme.monoFont(size:weight:)`), falling back to the
@@ -142,60 +115,14 @@ mono, project name 13 system-medium, section headers 10.5 mono uppercase
   fills `bg1`, shows a 2pt accent top-bar + glow and an accent status dot;
   inactive tabs are clear with an `fg3` dot. Two-line mono label (name + meta),
   × close (hidden on a lone tab), then `+` and split-right / split-down buttons.
-- **Pane** — `bg1`, 10pt radius; focused pane draws an accent border (+ glow),
-  unfocused draws a `bord` hairline. Pane header (30pt): status dot + name +
-  subtitle + a `RUNNING` badge outlined in accent.
-- **Status bar** (`bg0`, 28pt) — git branch (purple), ahead/behind counts, cwd,
-  active scheme (accent dot), shell, encoding, libghostty version.
-- **Command palette** (⌘K) — centered modal over a blurred scrim, `bg2`, 14pt
-  radius; mono search input, rows with a glyph chip + label + shortcut, footer hints.
+- **Pane** — `bg1`, rounded; **borderless**. Focus is shown by an accent status
+  dot in the pane's top-left gutter (dim `fg3` when unfocused). *(The handoff also
+  shows a pane header with name/subtitle + a `RUNNING` badge — not yet built.)*
+- **Status bar** (`bg0`) — git branch (purple) + ahead/behind/changes, cwd
+  (centered), then appearance + scheme switchers, shell, libghostty version.
+- **Command palette** (⌘K) — centered modal over a scrim, `bg2`, 14pt radius;
+  mono search input, rows with a glyph chip + label + shortcut.
 
----
-
-## Rules
-
-These are enforceable. A change that violates one should be corrected before merge.
-
-1. **Never hardcode a color in a view.** Read every color from
-   `QTheme.current.<token>Color`. If you need a color that isn't a token, add a
-   token to `QTheme` — do not inline a hex literal or a system color
-   (`.controlAccentColor`, `.separatorColor`, `.windowBackgroundColor`, …).
-2. **Fonts follow content type.** Terminal-adjacent UI (tabs, project tree,
-   status bar, kbd chips, badges) uses `QTheme.monoFont`; prose and standard
-   controls use the system font.
-3. **Accent = focus/active/brand only, and it glows.** Use `acc` for the focused
-   pane border, selected tab, active project bar, cursor. Selection/active fills
-   use `bg3`, not a saturated accent block.
-4. **Respect the surface ramp.** `bg0` = chrome (sidebar / tab bar / status bar);
-   `bg1` = window / main / panes / terminal; `bg2` = elevated inputs & hover;
-   `bg3` = chips & selection. Don't invent intermediate greys.
-5. **Panes:** 8–10pt radius, focused = accent border, unfocused = `bord` hairline.
-6. **The terminal tracks the scheme.** Terminal colors come from
-   `QTheme.current.terminalTheme()`, applied via `SurfaceRegistry.terminalTheme`
-   before the first surface renders. Don't set terminal colors anywhere else.
-7. **Schemes are all-or-nothing.** Adding a scheme means filling *every* token in
-   `QTheme.palette(for:)` plus its `isDark` flag — no partial palettes.
-8. **Semantic colors carry meaning** (green=ok, yellow=attention, red=error,
-   purple=git, fg3=idle). Don't repurpose them for decoration.
-9. **Chrome depth is borders + surfaces, not shadows.** Reserve glow/shadow for
-   the accent on focused/active elements.
-
----
-
-## Roadmap
-
-Handoff features, and their status.
-
-**Shipped:**
-- **Status bar** — git (branch/ahead/behind/changes) · cwd · scheme · shell · libghostty version.
-- **Sidebar** — filter field + `Pinned`/`Projects` section headers with counts.
-- **Command palette** (⌘K) — fuzzy command list.
-- **Collapse sidebar** (⌘B) — with a tab-bar toggle button.
-- **Scheme switcher** (⌘⇧T) — cycles schemes live and persists the choice to
-  `theme-dark`/`theme-light`; per-scheme commands are in the palette too.
-
-**Pending:**
-- **Project glyphs + per-tab pulse-dot status** in the sidebar tree.
-- **Config file-watch** — reload on external edits to `~/.config/quertty/config`.
-- **AI-agent status dots** — feed detection state into the sidebar/tab status
-  dots (green=running, yellow=needs-attention, fg3=idle).
+> **Contributor rules and configuration behavior live in
+> [`CLAUDE.md`](CLAUDE.md) / [`AGENTS.md`](AGENTS.md)**, not here — this file is
+> the visual reference only.
