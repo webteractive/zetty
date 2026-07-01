@@ -65,13 +65,13 @@ final class TabBarView: NSView {
         addButton = NSButton(title: "+", target: nil, action: nil)
         addButton.bezelStyle = .inline
         addButton.isBordered = false
-        addButton.font = NSFont.systemFont(ofSize: 14, weight: .regular)
         addButton.translatesAutoresizingMaskIntoConstraints = false
 
         super.init(frame: frameRect)
 
         wantsLayer = true
-        layer?.backgroundColor = NSColor.windowBackgroundColor.cgColor
+        layer?.backgroundColor = QTheme.current.bg0Color.cgColor
+        styleAddButton()
 
         addButton.target = self
         addButton.action = #selector(addButtonClicked(_:))
@@ -121,6 +121,24 @@ final class TabBarView: NSView {
             stackView.addArrangedSubview(item)
             tabItems.append(item)
         }
+    }
+
+    /// Applies theme-dependent styling to the `+` button (re-callable on scheme change).
+    private func styleAddButton() {
+        addButton.attributedTitle = NSAttributedString(
+            string: "+",
+            attributes: [
+                .font: QTheme.monoFont(size: 15, weight: .regular),
+                .foregroundColor: QTheme.current.fg2Color,
+            ]
+        )
+    }
+
+    /// Re-applies the active theme to the bar background and `+` button. Tab
+    /// items recolor when the caller reloads via `update(...)`.
+    func applyTheme() {
+        layer?.backgroundColor = QTheme.current.bg0Color.cgColor
+        styleAddButton()
     }
 
     // MARK: - Actions
@@ -223,8 +241,11 @@ private final class TabItemView: NSView {
 
     // MARK: Subviews
 
+    private let statusDot: NSView
     private let titleLabel: NSTextField
     private let closeButton: NSButton
+    /// Accent bar pinned to the top edge, shown only when selected (handoff).
+    private let topBar = CALayer()
 
     // MARK: State
 
@@ -245,6 +266,11 @@ private final class TabItemView: NSView {
         self.index = index
         self.isSelected = isSelected
 
+        statusDot = NSView()
+        statusDot.wantsLayer = true
+        statusDot.layer?.cornerRadius = 3.5
+        statusDot.translatesAutoresizingMaskIntoConstraints = false
+
         titleLabel = NSTextField(labelWithString: title)
         titleLabel.lineBreakMode = .byTruncatingTail
         titleLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
@@ -260,16 +286,27 @@ private final class TabItemView: NSView {
         }
         closeButton.isBordered = false
         closeButton.bezelStyle = .inline
+        closeButton.contentTintColor = QTheme.current.fg3Color
         closeButton.translatesAutoresizingMaskIntoConstraints = false
 
         super.init(frame: .zero)
 
         wantsLayer = true
 
+        topBar.backgroundColor = QTheme.current.accentColor.cgColor
+        topBar.cornerRadius = 1
+        layer?.addSublayer(topBar)
+
+        addSubview(statusDot)
         addSubview(titleLabel)
 
         var constraints: [NSLayoutConstraint] = [
-            titleLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8),
+            statusDot.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 10),
+            statusDot.centerYAnchor.constraint(equalTo: centerYAnchor),
+            statusDot.widthAnchor.constraint(equalToConstant: 7),
+            statusDot.heightAnchor.constraint(equalToConstant: 7),
+
+            titleLabel.leadingAnchor.constraint(equalTo: statusDot.trailingAnchor, constant: 8),
             titleLabel.centerYAnchor.constraint(equalTo: centerYAnchor),
             heightAnchor.constraint(equalToConstant: 28),
             widthAnchor.constraint(greaterThanOrEqualToConstant: Self.minWidth),
@@ -283,13 +320,13 @@ private final class TabItemView: NSView {
             closeButton.action = #selector(closeClicked(_:))
             constraints += [
                 titleLabel.trailingAnchor.constraint(equalTo: closeButton.leadingAnchor, constant: -2),
-                closeButton.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -4),
+                closeButton.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -6),
                 closeButton.centerYAnchor.constraint(equalTo: centerYAnchor),
                 closeButton.widthAnchor.constraint(equalToConstant: Self.closeButtonSize),
                 closeButton.heightAnchor.constraint(equalToConstant: Self.closeButtonSize),
             ]
         } else {
-            constraints.append(titleLabel.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8))
+            constraints.append(titleLabel.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -10))
         }
         NSLayoutConstraint.activate(constraints)
 
@@ -299,13 +336,28 @@ private final class TabItemView: NSView {
     @available(*, unavailable)
     required init?(coder _: NSCoder) { fatalError("not supported") }
 
+    override func layout() {
+        super.layout()
+        // Accent bar spans the tab width, hugging the top edge.
+        topBar.frame = CGRect(x: 10, y: 0, width: max(0, bounds.width - 20), height: 2)
+    }
+
     // MARK: Appearance
 
     private func updateAppearance() {
+        let theme = QTheme.current
         if isSelected {
-            layer?.backgroundColor = NSColor.selectedControlColor.withAlphaComponent(0.35).cgColor
+            layer?.backgroundColor = theme.bg1Color.cgColor
+            statusDot.layer?.backgroundColor = theme.accentColor.cgColor
+            titleLabel.font = QTheme.monoFont(size: 12.5, weight: .semibold)
+            titleLabel.textColor = theme.fgColor
+            topBar.isHidden = false
         } else {
             layer?.backgroundColor = NSColor.clear.cgColor
+            statusDot.layer?.backgroundColor = theme.fg3Color.cgColor
+            titleLabel.font = QTheme.monoFont(size: 12.5, weight: .medium)
+            titleLabel.textColor = theme.fg2Color
+            topBar.isHidden = true
         }
     }
 

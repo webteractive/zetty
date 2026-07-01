@@ -87,6 +87,9 @@ final class SidebarView: NSView {
 
         super.init(frame: frameRect)
 
+        wantsLayer = true
+        layer?.backgroundColor = QTheme.current.bg0Color.cgColor
+
         setupOutlineView()
         setupAddButton()
         setupLayout()
@@ -111,6 +114,7 @@ final class SidebarView: NSView {
         outlineView.indentationMarkerFollowsCell = true
         outlineView.dataSource = self
         outlineView.delegate = self
+        outlineView.backgroundColor = QTheme.current.bg0Color
         outlineView.translatesAutoresizingMaskIntoConstraints = false
 
         scrollView.documentView = outlineView
@@ -118,6 +122,8 @@ final class SidebarView: NSView {
         scrollView.hasHorizontalScroller = false
         scrollView.autohidesScrollers = true
         scrollView.borderType = .noBorder
+        scrollView.drawsBackground = true
+        scrollView.backgroundColor = QTheme.current.bg0Color
         scrollView.translatesAutoresizingMaskIntoConstraints = false
         addSubview(scrollView)
     }
@@ -125,11 +131,38 @@ final class SidebarView: NSView {
     private func setupAddButton() {
         addButton.bezelStyle = .inline
         addButton.isBordered = false
-        addButton.font = NSFont.systemFont(ofSize: 14, weight: .regular)
+        addButton.imagePosition = .imageLeading
+        addButton.alignment = .left
         addButton.target = self
         addButton.action = #selector(addButtonClicked(_:))
         addButton.translatesAutoresizingMaskIntoConstraints = false
+        styleAddButton()
         addSubview(addButton)
+    }
+
+    /// Applies theme-dependent styling to the Add-project button (re-callable
+    /// on scheme change).
+    private func styleAddButton() {
+        if let plus = NSImage(systemSymbolName: "plus", accessibilityDescription: "Add project") {
+            addButton.image = plus
+            addButton.contentTintColor = QTheme.current.fg2Color
+        }
+        addButton.attributedTitle = NSAttributedString(
+            string: " Add project",
+            attributes: [
+                .font: QTheme.monoFont(size: 12.5, weight: .medium),
+                .foregroundColor: QTheme.current.fg2Color,
+            ]
+        )
+    }
+
+    /// Re-applies the active theme to background surfaces and the add button.
+    /// Row cells recolor when the caller reloads via `update(...)`.
+    func applyTheme() {
+        layer?.backgroundColor = QTheme.current.bg0Color.cgColor
+        outlineView.backgroundColor = QTheme.current.bg0Color
+        scrollView.backgroundColor = QTheme.current.bg0Color
+        styleAddButton()
     }
 
     private func setupLayout() {
@@ -317,6 +350,18 @@ extension SidebarView: NSOutlineViewDelegate {
         }
     }
 
+    /// Draw selection with a themed row view instead of the OS's system accent
+    /// highlight (which clashes with quertty's accent).
+    func outlineView(_ outlineView: NSOutlineView, rowViewForItem item: Any) -> NSTableRowView? {
+        let identifier = NSUserInterfaceItemIdentifier("SidebarRow")
+        if let recycled = outlineView.makeView(withIdentifier: identifier, owner: nil) as? SidebarRowView {
+            return recycled
+        }
+        let row = SidebarRowView()
+        row.identifier = identifier
+        return row
+    }
+
     func outlineViewSelectionDidChange(_ notification: Notification) {
         guard !isUpdating else { return }
         let row = outlineView.selectedRow
@@ -329,6 +374,33 @@ extension SidebarView: NSOutlineViewDelegate {
         case .tab(let p, let t):
             onSelectTab?(p, t)
         }
+    }
+}
+
+// MARK: - SidebarRowView
+
+/// Row view that renders selection using the theme (a `bg3` fill with an accent
+/// left-bar), replacing AppKit's system-accent highlight so it matches quertty's
+/// accent regardless of the user's macOS accent color.
+private final class SidebarRowView: NSTableRowView {
+
+    override var isEmphasized: Bool {
+        get { false }   // never use the emphasized (saturated system) selection
+        set {}
+    }
+
+    override func drawSelection(in dirtyRect: NSRect) {
+        guard isSelected else { return }
+        let theme = QTheme.current
+
+        let fillRect = bounds.insetBy(dx: 4, dy: 1)
+        theme.bg3Color.setFill()
+        NSBezierPath(roundedRect: fillRect, xRadius: 6, yRadius: 6).fill()
+
+        let barHeight: CGFloat = 16
+        let barRect = NSRect(x: 4, y: bounds.midY - barHeight / 2, width: 2.5, height: barHeight)
+        theme.accentColor.setFill()
+        NSBezierPath(roundedRect: barRect, xRadius: 1.25, yRadius: 1.25).fill()
     }
 }
 
@@ -346,7 +418,8 @@ private final class ProjectCellView: NSTableCellView {
 
         super.init(frame: frameRect)
 
-        nameLabel.font = NSFont.systemFont(ofSize: 13)
+        nameLabel.font = NSFont.systemFont(ofSize: 13, weight: .medium)
+        nameLabel.textColor = QTheme.current.fgColor
         nameLabel.lineBreakMode = .byTruncatingTail
         nameLabel.translatesAutoresizingMaskIntoConstraints = false
         addSubview(nameLabel)
@@ -376,12 +449,17 @@ private final class ProjectCellView: NSTableCellView {
                    target: AnyObject, action: Selector) {
         nameLabel.stringValue = name
 
-        let symbolName = isPinned ? "pin.fill" : "pin"
+        // Pinned rows use a filled accent star (matching the handoff); unpinned
+        // rows show a dim hollow star affordance.
+        let symbolName = isPinned ? "star.fill" : "star"
         if let image = NSImage(systemSymbolName: symbolName,
                                accessibilityDescription: isPinned ? "Pinned" : "Pin") {
             pinButton.image = image
+            pinButton.contentTintColor = isPinned
+                ? QTheme.current.accentColor
+                : QTheme.current.fg3Color
         } else {
-            pinButton.title = isPinned ? "📌" : "◌"
+            pinButton.title = isPinned ? "★" : "☆"
         }
 
         pinButton.tag = projectIndex
@@ -402,8 +480,8 @@ private final class TabCellView: NSTableCellView {
 
         super.init(frame: frameRect)
 
-        titleLabel.font = NSFont.systemFont(ofSize: 12)
-        titleLabel.textColor = .secondaryLabelColor
+        titleLabel.font = QTheme.monoFont(size: 12)
+        titleLabel.textColor = QTheme.current.fg2Color
         titleLabel.lineBreakMode = .byTruncatingTail
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
         addSubview(titleLabel)

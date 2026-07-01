@@ -139,6 +139,7 @@ private final class LeafContainerView: NSView {
     private var isFocused: Bool
     private var onClose: ((UUID) -> Void)?
     private var closeButton: NSButton?
+    private var statusDot: NSView?
 
     init(
         surfaceID: UUID,
@@ -152,6 +153,10 @@ private final class LeafContainerView: NSView {
         self.onClose = onClose
         super.init(frame: .zero)
         wantsLayer = true
+        // Rounded, themed pane surface (handoff: 10pt radius panes on bg1).
+        layer?.cornerRadius = 8
+        layer?.masksToBounds = true
+        layer?.backgroundColor = QTheme.current.bg1Color.cgColor
 
         let inset = LeafContainerView.borderWidth
         // Reserve a top gutter for the × when closable so it sits above the
@@ -167,6 +172,7 @@ private final class LeafContainerView: NSView {
         ])
 
         if showsClose {
+            addStatusDot()
             addCloseButton()
         }
 
@@ -184,13 +190,29 @@ private final class LeafContainerView: NSView {
     }
 
     private func updateBorder() {
-        if isFocused {
-            layer?.borderColor = NSColor.controlAccentColor.cgColor
-            layer?.borderWidth = LeafContainerView.borderWidth
-        } else {
-            layer?.borderColor = NSColor.separatorColor.withAlphaComponent(0.4).cgColor
-            layer?.borderWidth = 0.5
-        }
+        // No pane border by design; focus is conveyed by the accent status dot.
+        layer?.borderWidth = 0
+        let theme = QTheme.current
+        statusDot?.layer?.backgroundColor = isFocused
+            ? theme.accentColor.cgColor
+            : theme.fg3Color.cgColor
+    }
+
+    /// A small status dot floated top-left in the gutter, echoing the handoff's
+    /// pane header (accent when focused, dim otherwise).
+    private func addStatusDot() {
+        let dot = NSView()
+        dot.wantsLayer = true
+        dot.layer?.cornerRadius = 3.5
+        dot.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(dot)
+        NSLayoutConstraint.activate([
+            dot.widthAnchor.constraint(equalToConstant: 7),
+            dot.heightAnchor.constraint(equalToConstant: 7),
+            dot.topAnchor.constraint(equalTo: topAnchor, constant: 9),
+            dot.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 9),
+        ])
+        statusDot = dot
     }
 
     private func addCloseButton() {
@@ -205,7 +227,7 @@ private final class LeafContainerView: NSView {
             button.title = "×"
         }
         button.imageScaling = .scaleProportionallyDown
-        button.contentTintColor = NSColor.secondaryLabelColor
+        button.contentTintColor = QTheme.current.fg3Color
         button.toolTip = "Close pane"
         button.target = self
         button.action = #selector(closeButtonTapped)

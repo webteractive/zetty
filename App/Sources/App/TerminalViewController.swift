@@ -62,6 +62,10 @@ final class TerminalViewController: NSViewController {
     /// The container that wraps the tab-bar + pane area (right side of the split).
     private var contentContainer: NSView?
 
+    /// The 1pt divider between the sidebar and content (retained so it can be
+    /// recolored when the scheme changes).
+    private var separatorView: NSView?
+
     /// KVO token for observing `window.firstResponder`.
     private var firstResponderObservation: NSKeyValueObservation?
 
@@ -80,6 +84,10 @@ final class TerminalViewController: NSViewController {
 
     override func viewDidLoad() {
         super.viewDidLoad()
+        // Terminal surfaces must adopt the active palette before the first pane
+        // is created (see SurfaceRegistry.terminalTheme).
+        registry.terminalTheme = QTheme.current.terminalTheme()
+        view.layer?.backgroundColor = QTheme.current.bg1Color.cgColor
         setupSidebarAndContent()
         setupTabBar()
         rebuildSurfaceNodeView()
@@ -126,6 +134,29 @@ final class TerminalViewController: NSViewController {
         workspace
     }
 
+    // MARK: - Theme
+
+    /// Re-applies the active `QTheme` to every surface at runtime (called when
+    /// the color scheme changes, e.g. the OS toggled appearance in system mode).
+    ///
+    /// Static layer colors are updated directly; the tab bar, sidebar, and pane
+    /// tree are rebuilt so their cells re-read the theme. The registry recolors
+    /// live terminals in place, so PTY sessions are preserved.
+    func applyTheme() {
+        view.layer?.backgroundColor = QTheme.current.bg1Color.cgColor
+        contentContainer?.layer?.backgroundColor = QTheme.current.bg1Color.cgColor
+        separatorView?.layer?.backgroundColor = QTheme.current.borderColor.cgColor
+        tabBarView?.applyTheme()
+        sidebarView?.applyTheme()
+        registry.reapplyTerminalTheme(QTheme.current.terminalTheme())
+        refreshTabBar()
+        refreshSidebar()
+        rebuildSurfaceNodeView()
+        if let focused = focusedTerminalView() {
+            view.window?.makeFirstResponder(focused)
+        }
+    }
+
     // MARK: - Sidebar + content layout setup
 
     private func setupSidebarAndContent() {
@@ -134,17 +165,18 @@ final class TerminalViewController: NSViewController {
 
         let container = NSView()
         container.wantsLayer = true
+        container.layer?.backgroundColor = QTheme.current.bg1Color.cgColor
         container.translatesAutoresizingMaskIntoConstraints = false
 
         view.addSubview(sidebar)
         view.addSubview(container)
 
-        // Sidebar left edge, fixed width ~200, full height.
+        // Sidebar left edge, fixed width (handoff: 264pt), full height.
         NSLayoutConstraint.activate([
             sidebar.topAnchor.constraint(equalTo: view.topAnchor),
             sidebar.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             sidebar.bottomAnchor.constraint(equalTo: view.bottomAnchor),
-            sidebar.widthAnchor.constraint(equalToConstant: 200),
+            sidebar.widthAnchor.constraint(equalToConstant: 244),
 
             container.topAnchor.constraint(equalTo: view.topAnchor),
             container.leadingAnchor.constraint(equalTo: sidebar.trailingAnchor),
@@ -152,9 +184,10 @@ final class TerminalViewController: NSViewController {
             container.bottomAnchor.constraint(equalTo: view.bottomAnchor),
         ])
 
-        // Add a thin separator line between sidebar and content.
-        let separator = NSBox()
-        separator.boxType = .separator
+        // Add a thin themed separator line between sidebar and content.
+        let separator = NSView()
+        separator.wantsLayer = true
+        separator.layer?.backgroundColor = QTheme.current.borderColor.cgColor
         separator.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(separator)
         NSLayoutConstraint.activate([
@@ -163,6 +196,7 @@ final class TerminalViewController: NSViewController {
             separator.leadingAnchor.constraint(equalTo: sidebar.trailingAnchor),
             separator.widthAnchor.constraint(equalToConstant: 1),
         ])
+        self.separatorView = separator
 
         // Wire sidebar callbacks.
         sidebar.onSelectProject = { [weak self] index in

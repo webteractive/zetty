@@ -96,6 +96,12 @@ public final class SurfaceRegistry {
     /// `TerminalViewController` installs this closure to trigger a tab-bar refresh.
     public var onTitleChange: ((UUID) -> Void)?
 
+    /// The terminal color theme applied to every controller as it is created.
+    /// Set by the app layer from the active `QTheme` so the terminal surface
+    /// matches the app chrome.  Must be assigned before the first
+    /// `terminalView(for:)` call to take effect on the initial panes.
+    public var terminalTheme: TerminalTheme?
+
     // MARK: - Factories
 
     /// Closure used to create a new controller for a surface that has no
@@ -174,6 +180,19 @@ public final class SurfaceRegistry {
         pairs[surface.id]?.viewState?.workingDirectory
     }
 
+    /// Re-applies `theme` to every LIVE terminal controller and stores it as the
+    /// theme for future surfaces. Called when the color scheme changes at runtime
+    /// (e.g. the OS toggled appearance in `system` mode) so open panes recolor in
+    /// place without being recreated.
+    public func reapplyTerminalTheme(_ theme: TerminalTheme) {
+        terminalTheme = theme
+        for pair in pairs.values {
+            if let tc = pair.controller as? TerminalController {
+                tc.setTheme(theme)
+            }
+        }
+    }
+
     /// Removes every pair whose id is not in `ids`, allowing them to be
     /// deallocated (which tears down the PTY and ghostty surface).
     public func prune(keeping ids: Set<UUID>) {
@@ -211,6 +230,11 @@ public final class SurfaceRegistry {
             return existing
         }
         let ctrl = controllerFactory(surface)
+        // Apply the app's terminal theme before the surface renders so the very
+        // first frame is already in-palette (no flash of default colors).
+        if let theme = terminalTheme, let tc = ctrl as? TerminalController {
+            tc.setTheme(theme)
+        }
         let (view, state) = viewFactory(surface, ctrl)
         let pair = TerminalViewPair(controller: ctrl, view: view, viewState: state)
         pairs[surface.id] = pair

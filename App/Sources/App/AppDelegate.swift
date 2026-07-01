@@ -20,7 +20,7 @@ final class QuerttyWindow: NSWindow {
 // and crashes before the delegate runs. We bootstrap NSApplication manually in
 // main.swift instead, which never consults the storyboard key.
 final class AppDelegate: NSObject, NSApplicationDelegate {
-    private let defaultContentSize = NSSize(width: 920, height: 560)
+    private let defaultContentSize = NSSize(width: 1280, height: 800)
     private let minimumContentSize = NSSize(width: 600, height: 320)
     private var window: NSWindow?
 
@@ -29,6 +29,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// is released on last-window-close, BEFORE terminate; a weak ref would be nil
     /// at save time and the workspace would never persist).
     private var terminalViewController: TerminalViewController?
+
+    /// User config (`~/.config/quertty/config`) and its store.
+    private let configStore = ConfigStore()
+    private var appConfig = AppConfig()
+
+    /// KVO token for `NSApp.effectiveAppearance`, active only in `system` mode.
+    private var appearanceObservation: NSKeyValueObservation?
 
     /// The persistent workspace store backed by `~/Library/Application Support/quertty/`.
     private lazy var workspaceStore: WorkspaceStore = {
@@ -45,6 +52,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // via its own initializeRuntimeIfNeeded() guard, so we do not call
         // Ghostty.initializeRuntime() here to avoid a double-init.
 
+        // Load config and resolve the active scheme BEFORE the view controller
+        // is created (it reads QTheme.current in viewDidLoad).
+        appConfig = configStore.load()
+        QTheme.scheme = resolvedScheme()
+        NSApp.appearance = appearanceOverride
+
         let tvc = TerminalViewController()
         restoreWorkspace(into: tvc)
         terminalViewController = tvc
@@ -60,17 +73,69 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         )
         window.title = "quertty"
         window.isOpaque = true
-        window.backgroundColor = .windowBackgroundColor
-        window.titlebarAppearsTransparent = false
+        window.appearance = appearanceOverride
+        window.backgroundColor = QTheme.current.bg1Color
+        window.titlebarAppearsTransparent = true
         window.contentMinSize = minimumContentSize
         window.contentViewController = tvc
-        window.center()
+        // Persist and restore the window frame across launches. On first launch
+        // (no saved frame) fall back to centering the default size.
+        window.setFrameAutosaveName("QuerttyMainWindow")
+        if !window.setFrameUsingName("QuerttyMainWindow") {
+            window.center()
+        }
         window.makeKeyAndOrderFront(nil)
         repairRestoredWindowSizeIfNeeded(window)
         NSApp.activate(ignoringOtherApps: true)
         self.window = window
 
+        startObservingSystemAppearance()
         buildMenuBar()
+    }
+
+    // MARK: - Appearance
+
+    /// Whether the OS is currently in dark mode (only meaningful in system mode,
+    /// where `NSApp.appearance` is left unset so it tracks the OS).
+    private var osIsDark: Bool {
+        NSApp.effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+    }
+
+    /// The concrete scheme for the current config + OS appearance.
+    private func resolvedScheme() -> QColorScheme {
+        switch appConfig.appearance {
+        case .dark:
+            return QColorScheme.named(appConfig.themeDark) ?? .midnight
+        case .light:
+            return QColorScheme.named(appConfig.themeLight) ?? .paper
+        case .system:
+            let name = osIsDark ? appConfig.themeDark : appConfig.themeLight
+            return QColorScheme.named(name) ?? (osIsDark ? .midnight : .paper)
+        }
+    }
+
+    /// The app/window appearance to pin. `nil` in system mode so
+    /// `NSApp.effectiveAppearance` keeps tracking the OS (and our KVO keeps firing);
+    /// the resolved scheme's appearance in the explicit dark/light modes.
+    private var appearanceOverride: NSAppearance? {
+        appConfig.appearance == .system ? nil : QTheme.current.appearance
+    }
+
+    /// In system mode, watch for OS appearance toggles and re-theme live.
+    private func startObservingSystemAppearance() {
+        appearanceObservation = nil
+        guard appConfig.appearance == .system else { return }
+        appearanceObservation = NSApp.observe(\.effectiveAppearance) { [weak self] _, _ in
+            DispatchQueue.main.async { self?.systemAppearanceDidChange() }
+        }
+    }
+
+    private func systemAppearanceDidChange() {
+        let newScheme = resolvedScheme()
+        guard newScheme != QTheme.scheme else { return }
+        QTheme.scheme = newScheme
+        window?.backgroundColor = QTheme.current.bg1Color
+        terminalViewController?.applyTheme()
     }
 
     func applicationWillTerminate(_: Notification) {
