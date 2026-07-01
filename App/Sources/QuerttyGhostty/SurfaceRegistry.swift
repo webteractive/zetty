@@ -102,6 +102,11 @@ public final class SurfaceRegistry {
     /// `terminalView(for:)` call to take effect on the initial panes.
     public var terminalTheme: TerminalTheme?
 
+    /// Per-session ghostty configuration overrides (from the user's
+    /// `ghostty.*` passthrough directives), applied to every controller as it is
+    /// created.  Assign before the first `terminalView(for:)` call.
+    public var terminalConfiguration: TerminalConfiguration?
+
     // MARK: - Factories
 
     /// Closure used to create a new controller for a surface that has no
@@ -193,6 +198,19 @@ public final class SurfaceRegistry {
         }
     }
 
+    /// Re-applies `config` (ghostty passthrough overrides) to every LIVE
+    /// controller and stores it for future surfaces. Called on config reload.
+    /// A `nil` config clears overrides (empty configuration).
+    public func reapplyTerminalConfiguration(_ config: TerminalConfiguration?) {
+        terminalConfiguration = config
+        let applied = config ?? TerminalConfiguration()
+        for pair in pairs.values {
+            if let tc = pair.controller as? TerminalController {
+                tc.setTerminalConfiguration(applied)
+            }
+        }
+    }
+
     /// Removes every pair whose id is not in `ids`, allowing them to be
     /// deallocated (which tears down the PTY and ghostty surface).
     public func prune(keeping ids: Set<UUID>) {
@@ -232,8 +250,9 @@ public final class SurfaceRegistry {
         let ctrl = controllerFactory(surface)
         // Apply the app's terminal theme before the surface renders so the very
         // first frame is already in-palette (no flash of default colors).
-        if let theme = terminalTheme, let tc = ctrl as? TerminalController {
-            tc.setTheme(theme)
+        if let tc = ctrl as? TerminalController {
+            if let theme = terminalTheme { tc.setTheme(theme) }
+            if let config = terminalConfiguration { tc.setTerminalConfiguration(config) }
         }
         let (view, state) = viewFactory(surface, ctrl)
         let pair = TerminalViewPair(controller: ctrl, view: view, viewState: state)

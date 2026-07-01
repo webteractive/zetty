@@ -1,4 +1,5 @@
 import AppKit
+import GhosttyTerminal
 import QuerttyCore
 import QuerttyGhostty
 
@@ -109,6 +110,13 @@ final class TerminalViewController: NSViewController {
     /// Supplies the current appearance-mode display name ("System"/"Dark"/"Light").
     var appearanceModeName: (() -> String)?
 
+    /// Ghostty config (user's ghostty file + `ghostty.*` passthrough). Set by the
+    /// owner before the view loads so the first panes pick it up.
+    var ghosttyConfiguration: TerminalConfiguration?
+
+    /// Called to reload configuration from disk (⇧⌘,).
+    var onReloadConfig: (() -> Void)?
+
     // MARK: - View lifecycle
 
     override func loadView() {
@@ -121,6 +129,7 @@ final class TerminalViewController: NSViewController {
         // Terminal surfaces must adopt the active palette before the first pane
         // is created (see SurfaceRegistry.terminalTheme).
         registry.terminalTheme = QTheme.current.terminalTheme()
+        registry.terminalConfiguration = ghosttyConfiguration
         view.layer?.backgroundColor = QTheme.current.bg1Color.cgColor
         setupSidebarAndContent()
         setupTabBar()
@@ -452,6 +461,7 @@ final class TerminalViewController: NSViewController {
             PaletteCommand(glyph: "◑", label: "Appearance: System", kbd: "") { [weak self] in self?.onSetAppearance?(.system) },
             PaletteCommand(glyph: "●", label: "Appearance: Dark", kbd: "") { [weak self] in self?.onSetAppearance?(.dark) },
             PaletteCommand(glyph: "○", label: "Appearance: Light", kbd: "") { [weak self] in self?.onSetAppearance?(.light) },
+            PaletteCommand(glyph: "↻", label: "Reload Configuration", kbd: "⇧⌘,") { [weak self] in self?.onReloadConfig?() },
         ]
         // Jump to any project (focuses its active pane).
         let projectCommands = workspace.projects.enumerated().map { index, project in
@@ -659,6 +669,12 @@ final class TerminalViewController: NSViewController {
         if let focused = focusedTerminalView() {
             view.window?.makeFirstResponder(focused)
         }
+    }
+
+    /// Reapplies ghostty config overrides to all live panes (called on reload).
+    func reloadGhosttyConfiguration(_ config: TerminalConfiguration?) {
+        ghosttyConfiguration = config
+        registry.reapplyTerminalConfiguration(config)
     }
 
     /// Switches to the project at `index` and focuses its active pane.

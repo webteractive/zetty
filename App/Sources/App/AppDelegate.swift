@@ -69,6 +69,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         tvc.onSetAppearance = { [weak self] mode in self?.setAppearanceMode(mode) }
         tvc.onCycleAppearance = { [weak self] in self?.cycleAppearanceMode() }
         tvc.appearanceModeName = { [weak self] in (self?.appConfig.appearance ?? .system).rawValue.capitalized }
+        // Forward the user's ghostty config (file + passthrough) to the terminal.
+        tvc.ghosttyConfiguration = makeTerminalConfiguration()
+        tvc.onReloadConfig = { [weak self] in self?.reloadConfiguration(nil) }
 
         let window = QuerttyWindow(
             contentRect: NSRect(origin: .zero, size: defaultContentSize),
@@ -187,6 +190,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc private func setAppearanceDark(_ sender: Any?) { setAppearanceMode(.dark) }
     @objc private func setAppearanceLight(_ sender: Any?) { setAppearanceMode(.light) }
 
+    /// Builds the terminal override config from the ghostty directives pasted
+    /// into quertty's config. Returns nil when there are none.
+    private func makeTerminalConfiguration() -> TerminalConfiguration? {
+        guard !appConfig.ghostty.isEmpty else { return nil }
+        return TerminalConfiguration { builder in
+            for directive in appConfig.ghostty {
+                builder.withCustom(directive.key, directive.value)
+            }
+        }
+    }
+
+    /// Reloads all config from disk (⇧⌘,, like ghostty): re-reads quertty's
+    /// config + the ghostty file, re-resolves appearance/scheme, and re-applies
+    /// the theme + terminal overrides to every live pane — no relaunch needed.
+    @objc func reloadConfiguration(_ sender: Any?) {
+        appConfig = configStore.load()
+        QTheme.scheme = resolvedScheme()
+        NSApp.appearance = appearanceOverride
+        window?.appearance = appearanceOverride
+        window?.backgroundColor = QTheme.current.bg1Color
+        startObservingSystemAppearance()
+        terminalViewController?.applyTheme()                                  // chrome + terminal theme
+        terminalViewController?.reloadGhosttyConfiguration(makeTerminalConfiguration())  // terminal overrides
+    }
+
     @objc func cycleAppearance(_ sender: Any?) { cycleAppearanceMode() }
 
     /// Cycles the appearance axis System → Dark → Light → System.
@@ -278,6 +306,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         mainMenu.addItem(appMenuItem)
         let appMenu = NSMenu()
         appMenuItem.submenu = appMenu
+        let reloadConfig = NSMenuItem(
+            title: "Reload Configuration",
+            action: #selector(reloadConfiguration(_:)),
+            keyEquivalent: ","
+        )
+        reloadConfig.keyEquivalentModifierMask = [.command, .shift]
+        reloadConfig.target = self
+        appMenu.addItem(reloadConfig)
+        appMenu.addItem(.separator())
         appMenu.addItem(
             NSMenuItem(
                 title: "Quit quertty",
