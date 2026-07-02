@@ -1,4 +1,5 @@
 import AppKit
+import QuerttyCore
 
 // MARK: - SidebarProject
 
@@ -9,7 +10,19 @@ import AppKit
 struct SidebarProject {
     let name: String
     let isPinned: Bool
-    let tabTitles: [String]   // .count >= 2 → expandable
+    let tabTitles: [String]              // .count >= 2 → expandable
+    let tabStatuses: [AgentStatus?]      // parallel to tabTitles (agent status per tab)
+    let status: AgentStatus?             // project roll-up (most-severe across tabs)
+}
+
+/// Maps an agent status to its status-dot color, or nil for "no agent".
+func agentStatusColor(_ status: AgentStatus?) -> NSColor? {
+    switch status {
+    case .running:        return QTheme.current.greenColor
+    case .needsAttention: return QTheme.current.yellowColor
+    case .idle:           return QTheme.current.fg3Color
+    case nil:             return nil
+    }
 }
 
 // MARK: - Outline item model
@@ -412,6 +425,7 @@ extension SidebarView: NSOutlineViewDelegate {
                 name: project.name,
                 isPinned: project.isPinned,
                 isActive: p == activeProject,
+                agentStatus: project.status,
                 projectIndex: p,
                 target: self,
                 action: #selector(pinButtonClicked(_:))
@@ -422,6 +436,7 @@ extension SidebarView: NSOutlineViewDelegate {
             guard projects.indices.contains(p),
                   projects[p].tabTitles.indices.contains(t) else { return nil }
             let title = projects[p].tabTitles[t]
+            let status = projects[p].tabStatuses.indices.contains(t) ? projects[p].tabStatuses[t] : nil
 
             let identifier = NSUserInterfaceItemIdentifier("TabCell")
             let cellView: TabCellView
@@ -431,7 +446,7 @@ extension SidebarView: NSOutlineViewDelegate {
                 cellView = TabCellView()
                 cellView.identifier = identifier
             }
-            cellView.configure(title: title, isActive: p == activeProject && t == activeTab)
+            cellView.configure(title: title, isActive: p == activeProject && t == activeTab, agentStatus: status)
             return cellView
         }
     }
@@ -596,15 +611,18 @@ private final class ProjectCellView: NSTableCellView {
     @available(*, unavailable)
     required init?(coder _: NSCoder) { fatalError("not supported") }
 
-    func configure(name: String, isPinned: Bool, isActive: Bool, projectIndex: Int,
-                   target: AnyObject, action: Selector) {
+    func configure(name: String, isPinned: Bool, isActive: Bool, agentStatus: AgentStatus?,
+                   projectIndex: Int, target: AnyObject, action: Selector) {
         nameLabel.stringValue = name
         nameLabel.textColor = isActive ? QTheme.current.fgColor : QTheme.current.fg2Color
 
-        // Diamond project glyph: filled accent when active, dim outline otherwise.
-        let glyph = isActive ? "diamond.fill" : "diamond"
+        // Diamond project glyph: filled when an agent is present (tinted by its
+        // status) or when active; dim outline otherwise.
+        let hasAgent = agentStatus != nil
+        let glyph = (hasAgent || isActive) ? "diamond.fill" : "diamond"
         glyphView.image = NSImage(systemSymbolName: glyph, accessibilityDescription: "Project")
-        glyphView.contentTintColor = isActive ? QTheme.current.accentColor : QTheme.current.fg3Color
+        glyphView.contentTintColor = agentStatusColor(agentStatus)
+            ?? (isActive ? QTheme.current.accentColor : QTheme.current.fg3Color)
 
         // Pinned rows use a filled accent star; unpinned rows show a dim hollow star.
         let symbolName = isPinned ? "star.fill" : "star"
@@ -663,13 +681,19 @@ private final class TabCellView: NSTableCellView {
     @available(*, unavailable)
     required init?(coder _: NSCoder) { fatalError("not supported") }
 
-    func configure(title: String, isActive: Bool) {
+    func configure(title: String, isActive: Bool, agentStatus: AgentStatus?) {
         titleLabel.stringValue = title
         titleLabel.textColor = isActive ? QTheme.current.fgColor : QTheme.current.fg2Color
 
-        // Active tab: accent status dot that gently pulses; others: dim + static.
-        dot.layer?.backgroundColor = (isActive ? QTheme.current.accentColor : QTheme.current.fg3Color).cgColor
-        if isActive {
+        // Dot color: agent status when present (green/yellow/dim), else the
+        // active/inactive accent. Pulse when an agent is running/needs-attention,
+        // or when the tab is active with no agent.
+        let dotColor = agentStatusColor(agentStatus)
+            ?? (isActive ? QTheme.current.accentColor : QTheme.current.fg3Color)
+        dot.layer?.backgroundColor = dotColor.cgColor
+        let shouldPulse = (agentStatus == .running || agentStatus == .needsAttention)
+            || (agentStatus == nil && isActive)
+        if shouldPulse {
             let pulse = CABasicAnimation(keyPath: "opacity")
             pulse.fromValue = 0.55
             pulse.toValue = 1.0

@@ -66,6 +66,11 @@ final class TerminalViewController: NSViewController {
     /// The command palette overlay, when open.
     private var commandPaletteView: CommandPaletteView?
 
+    /// Per-session AI-agent state, driven by harness-hook events.
+    private let agentDetector = AgentDetector()
+    /// Watches the hook event sink (`~/.quertty/agent-events.jsonl`).
+    private var agentEventWatcher: AgentEventWatcher?
+
     /// The pinned libghostty-spm version (no runtime version API is exposed).
     /// Keep in sync with `Project.swift`'s package requirement.
     private static let libghosttyVersion = "1.2.7"
@@ -144,6 +149,8 @@ final class TerminalViewController: NSViewController {
             self?.refreshTabBar()
             self?.refreshSidebar()
         }
+
+        startAgentEventWatcher()
     }
 
     override func viewDidAppear() {
@@ -394,6 +401,53 @@ final class TerminalViewController: NSViewController {
         return path
     }
 
+    // MARK: - AI agent detection
+
+    /// Location of the hook event sink that harness hooks append to.
+    private static var agentEventsURL: URL {
+        URL(fileURLWithPath: NSHomeDirectory(), isDirectory: true)
+            .appendingPathComponent(".quertty", isDirectory: true)
+            .appendingPathComponent("agent-events.jsonl")
+    }
+
+    private func startAgentEventWatcher() {
+        let url = Self.agentEventsURL
+        try? FileManager.default.createDirectory(
+            at: url.deletingLastPathComponent(), withIntermediateDirectories: true
+        )
+        let watcher = AgentEventWatcher(url: url) { [weak self] events in
+            self?.handleAgentEvents(events)
+        }
+        watcher.start()
+        agentEventWatcher = watcher
+    }
+
+    /// Routes hook events to the sessions (surfaces) whose working directory
+    /// matches the event's `cwd`, then refreshes the status dots.
+    private func handleAgentEvents(_ events: [AgentEvent]) {
+        let now = Date().timeIntervalSince1970
+        var changed = false
+        for event in events {
+            let target = Self.normalizedPath(event.cwd)
+            for project in workspace.projects {
+                for tree in project.tabList.trees {
+                    for surface in tree.layout.surfaces {
+                        let cwd = registry.workingDirectory(for: surface).map(Self.normalizedPath)
+                            ?? Self.normalizedPath(surface.workingDir)
+                        if cwd == target {
+                            agentDetector.apply(event: event, session: surface.id, now: now)
+                            changed = true
+                        }
+                    }
+                }
+            }
+        }
+        if changed {
+            refreshSidebar()
+            refreshTabBar()
+        }
+    }
+
     // MARK: - Sidebar collapse
 
     /// Slides the sidebar off-screen (or back) with ⌘B; the content area follows.
@@ -519,8 +573,15 @@ final class TerminalViewController: NSViewController {
     func refreshSidebar() {
         let sidebarProjects: [SidebarProject] = workspace.projects.map { project in
             let trees = project.tabList.trees
+            // Agent status per tab (from the tab's focused surface).
+            let statuses: [AgentStatus?] = trees.map { tree in
+                tree.focusedSurface.flatMap { agentDetector.state(for: $0.id).status }
+            }
+            let rollup = statuses.compactMap { $0 }.max { Self.severity($0) < Self.severity($1) }
+
             // Only provide tab titles when there are 2+ tabs (single-tab projects are plain rows).
             let tabTitles: [String]
+            let tabStatuses: [AgentStatus?]
             if trees.count >= 2 {
                 tabTitles = trees.indices.map { idx in
                     let tree = trees[idx]
@@ -535,16 +596,33 @@ final class TerminalViewController: NSViewController {
                         index: idx
                     )
                 }
+                tabStatuses = statuses
             } else {
                 tabTitles = []
+                tabStatuses = []
             }
-            return SidebarProject(name: project.name, isPinned: project.isPinned, tabTitles: tabTitles)
+            return SidebarProject(
+                name: project.name,
+                isPinned: project.isPinned,
+                tabTitles: tabTitles,
+                tabStatuses: tabStatuses,
+                status: rollup
+            )
         }
         sidebarView?.update(
             projects: sidebarProjects,
             activeProject: workspace.activeIndex,
             activeTab: workspace.activeTabList.activeIndex
         )
+    }
+
+    /// Severity ranking for rolling up multiple tab statuses to a project glyph.
+    private static func severity(_ status: AgentStatus) -> Int {
+        switch status {
+        case .needsAttention: return 3
+        case .running:        return 2
+        case .idle:           return 1
+        }
     }
 
     // MARK: - Add Project via NSOpenPanel
