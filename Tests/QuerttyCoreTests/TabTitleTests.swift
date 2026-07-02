@@ -6,15 +6,23 @@ import Foundation
     #expect(TabTitle.display(manualTitle: "mine", focusedSurfaceTitle: "vim", workingDir: "/x", index: 0) == "mine")
 }
 
-@Test func tabTitleDefaultsToWorkingDirBasename() {
-    // pwd is the default, taking precedence over the terminal-reported title.
-    #expect(TabTitle.display(manualTitle: nil, focusedSurfaceTitle: "vim", workingDir: "/x/y", index: 0) == "y")
+@Test func tabTitleShowsRunningCommandOverPwd() {
+    // A real running command (terminal title) names the tab, over the pwd.
+    #expect(TabTitle.display(manualTitle: nil, focusedSurfaceTitle: "vim", workingDir: "/x/y", index: 0) == "vim")
 }
 
-@Test func tabTitleUsesFocusedTitleWhenNoWorkingDir() {
+@Test func tabTitleIdleShellFallsBackToPwd() {
+    // A bare shell name means "idle at a prompt" → show the pwd, not "zsh".
+    #expect(TabTitle.display(manualTitle: nil, focusedSurfaceTitle: "zsh", workingDir: "/x/y", index: 0) == "y")
+    #expect(TabTitle.display(manualTitle: nil, focusedSurfaceTitle: "-zsh", workingDir: "/x/y", index: 0) == "y")
+}
+
+@Test func tabTitleAgentNameWinsOverCommandAndPwd() {
+    #expect(TabTitle.display(manualTitle: nil, agentName: "Claude", focusedSurfaceTitle: "vim", workingDir: "/x/y", index: 0) == "Claude")
+}
+
+@Test func tabTitleUsesCommandWhenNoWorkingDir() {
     #expect(TabTitle.display(manualTitle: nil, focusedSurfaceTitle: "vim", workingDir: nil, index: 0) == "vim")
-    // "/" has no usable basename, so it also falls through to the title.
-    #expect(TabTitle.display(manualTitle: nil, focusedSurfaceTitle: "vim", workingDir: "/", index: 0) == "vim")
 }
 
 @Test func tabTitleFallsBackToWorkingDirBasename() {
