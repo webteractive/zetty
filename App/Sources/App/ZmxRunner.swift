@@ -32,10 +32,11 @@ enum ZmxRunner {
         return candidates.first { FileManager.default.isExecutableFile(atPath: $0) }
     }
 
-    /// `zmx list --short` → quertty session names (empty on any failure).
-    static func listQuerttySessions(zmxPath: String) -> [String] {
+    /// `zmx list --short` → Zetty session names, both prefixes (empty on any
+    /// failure).
+    static func listZettySessions(zmxPath: String) -> [String] {
         guard let output = run(zmxPath, ["list", "--short"]) else { return [] }
-        return SessionPersistence.querttySessions(fromList: output)
+        return SessionPersistence.zettySessions(fromList: output)
     }
 
     /// `zmx list` → session name to root shell pid (empty on any failure).

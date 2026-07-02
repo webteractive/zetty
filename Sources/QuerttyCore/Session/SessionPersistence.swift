@@ -8,11 +8,16 @@ import Foundation
 /// layer; this type only builds names/commands and parses output.
 public enum SessionPersistence {
 
-    /// Session names are `quertty-<first 8 uuid hex chars, lowercased>`.
-    public static let namePrefix = "quertty-"
+    /// Session names are `zetty-<first 8 uuid hex chars, lowercased>`.
+    public static let namePrefix = "zetty-"
+
+    /// The pre-rename prefix. zmx cannot rename sessions, so sessions created
+    /// before the Zetty rebrand keep this name; attach and orphan logic treat
+    /// both prefixes as ours until the legacy sessions age out.
+    public static let legacyNamePrefix = "quertty-"
 
     /// The 8-hex short id derived from a surface UUID — the session-name
-    /// suffix, and the pane id the `quertty` CLI addresses.
+    /// suffix, and the pane id the `zetty` CLI addresses.
     public static func shortID(for surfaceID: UUID) -> String {
         let hex = surfaceID.uuidString.replacingOccurrences(of: "-", with: "").lowercased()
         return String(hex.prefix(8))
@@ -22,15 +27,26 @@ public enum SessionPersistence {
         namePrefix + shortID(for: surfaceID)
     }
 
+    public static func legacySessionName(for surfaceID: UUID) -> String {
+        legacyNamePrefix + shortID(for: surfaceID)
+    }
+
     /// The ghostty `command` value that runs the pane inside its zmx session.
     /// zmx attach creates the session (running the user's shell) if missing.
+    /// When only the pane's pre-rename (`quertty-`) session is alive in
+    /// `existingSessions`, it is reattached instead of minting a new one.
     ///
-    /// ZMX_SESSION is unset first: when quertty itself was launched from a
+    /// ZMX_SESSION is unset first: when Zetty itself was launched from a
     /// zmx-backed terminal (e.g. Supacode), every pane inherits that variable,
     /// and `zmx attach` run "inside" a session kills it instead of attaching
     /// the target (or errors out if it's already gone).
-    public static func attachCommand(zmxPath: String, surfaceID: UUID) -> String {
-        "/usr/bin/env -u ZMX_SESSION \(zmxPath) attach \(sessionName(for: surfaceID))"
+    public static func attachCommand(
+        zmxPath: String, surfaceID: UUID, existingSessions: Set<String> = []
+    ) -> String {
+        let name = sessionName(for: surfaceID)
+        let legacy = legacySessionName(for: surfaceID)
+        let target = (!existingSessions.contains(name) && existingSessions.contains(legacy)) ? legacy : name
+        return "/usr/bin/env -u ZMX_SESSION \(zmxPath) attach \(target)"
     }
 
     /// Parses full `zmx list` output into session name → root pid, for
@@ -49,20 +65,22 @@ public enum SessionPersistence {
         return pids
     }
 
-    /// Parses `zmx list --short` output into session names, keeping only ours.
-    /// Tolerates blank lines and ignores non-quertty sessions.
-    public static func querttySessions(fromList output: String) -> [String] {
+    /// Parses `zmx list --short` output into session names, keeping only ours
+    /// (both prefixes). Tolerates blank lines and ignores foreign sessions.
+    public static func zettySessions(fromList output: String) -> [String] {
         output
             .split(separator: "\n")
             .map { $0.trimmingCharacters(in: .whitespaces) }
-            .filter { $0.hasPrefix(namePrefix) }
+            .filter { $0.hasPrefix(namePrefix) || $0.hasPrefix(legacyNamePrefix) }
     }
 
     /// Sessions in `existing` that no live surface owns — candidates for
     /// cleanup ("orphans"). `liveSurfaceIDs` are all surfaces across the
-    /// whole workspace (every project/tab/pane).
+    /// whole workspace (every project/tab/pane); each owns its session under
+    /// either prefix.
     public static func orphans(existing: [String], liveSurfaceIDs: [UUID]) -> [String] {
         let owned = Set(liveSurfaceIDs.map(sessionName(for:)))
+            .union(liveSurfaceIDs.map(legacySessionName(for:)))
         return existing.filter { !owned.contains($0) }
     }
 }

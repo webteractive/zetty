@@ -1,4 +1,4 @@
-# AGENTS.md — quertty
+# AGENTS.md — Zetty
 
 Guidance for AI agents and contributors working in this repo.
 
@@ -25,7 +25,7 @@ The Xcode project is **Tuist-generated**. Sources are listed explicitly, so
 
 ```sh
 mise exec -- tuist generate --no-open
-xcodebuild -project quertty.xcodeproj -scheme quertty -destination 'platform=macOS' build
+xcodebuild -project zetty.xcodeproj -scheme zetty -destination 'platform=macOS' build
 ```
 
 Tests: `mise exec -- tuist test` (or the `QuerttyGhosttyTests` / `Testing` schemes).
@@ -65,7 +65,7 @@ status dots, accent top-bar on the active tab, etc.).
 
 ## Configuration
 
-quertty reads `~/.config/quertty/config` (or `$XDG_CONFIG_HOME/quertty/config`),
+quertty reads `~/.config/zetty/config` (or `$XDG_CONFIG_HOME/zetty/config`),
 seeded with a documented default on first launch. Parsing is pure + unit-tested
 in `QuerttyCore` (`AppConfig` / `ConfigStore`); `AppDelegate` resolves + applies it.
 
@@ -84,10 +84,10 @@ in `QuerttyCore` (`AppConfig` / `ConfigStore`); `AppDelegate` resolves + applies
   re-applies theme + terminal overrides to every live pane. Runtime scheme /
   appearance switches persist back to the file (`AppConfig.rendered()`).
 - **`preserve-sessions = true|false`** (default false) — panes run inside
-  [zmx](https://zmx.sh) sessions (`zmx attach quertty-<uuid8>`, one per pane) so
+  [zmx](https://zmx.sh) sessions (`zmx attach zetty-<uuid8>`, one per pane) so
   they survive app quit/relaunch; reattach replays terminal state. Quit
   survives, explicit close kills (via `registry.prune` → `zmx kill`); a
-  one-shot startup reap kills `quertty-*` sessions no restored surface owns
+  one-shot startup reap kills `zetty-*` sessions (and pre-rename `quertty-*` ones) no restored surface owns
   (crash leftovers), and Settings offers a manual kill too. The
   Settings (⌘,) toggle offers to download the zmx release binary from zmx.sh
   into `~/.quertty/bin` when missing (Homebrew/manual installs are detected
@@ -133,17 +133,18 @@ pwd basename → positional.
   delete the xcodeproj* (a later build then silently reuses a stale app). Run
   `mise exec -- tuist clean` first, then generate.
 
-## Control CLI (`quertty`)
+## Control CLI (`zetty`)
 
-The app hosts a Unix control socket (`~/.quertty/quertty.sock`, 0600,
-line-JSON — `ControlWire` in `QuerttyCore/CLI/`) and the `quertty` CLI drives
+The app hosts a Unix control socket (`~/.quertty/quertty.sock` — legacy path
+until the repo-layer rename; 0600,
+line-JSON — `ControlWire` in `QuerttyCore/CLI/`) and the `zetty` CLI drives
 it. **The app binary doubles as the CLI** when invoked with a recognized
 command (`main.swift` branches before AppKit starts); Settings (⌘,) →
-Command Line installs a symlink at `~/.local/bin/quertty`. A standalone
+Command Line installs a symlink at `~/.local/bin/zetty`. A standalone
 executable also builds via `swift build` (`.build/debug/quertty`). All CLI
 logic is shared in `ControlCLI` (QuerttyCore, pure Foundation).
 
-Commands (see `quertty --help` for full grammar and agent notes):
+Commands (see `zetty --help` for full grammar and agent notes):
 - `status [--json]` — projects → tabs → panes: 8-hex pane ids, emitted
   titles, cwd, probed tool, agent status, focused pane.
 - `send [--pane <id> | --cwd <path>] [--key <name>]… [--enter] [text…]` —

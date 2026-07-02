@@ -2,12 +2,12 @@
 import PackageDescription
 
 let package = Package(
-    name: "quertty",
+    name: "zetty",
     platforms: [.macOS(.v14)],
     products: [
         .library(name: "QuerttyCore", targets: ["QuerttyCore"]),
         // The `quertty` control CLI (talks to the app over ~/.quertty/quertty.sock).
-        .executable(name: "quertty", targets: ["QuerttyCLI"]),
+        .executable(name: "zetty", targets: ["QuerttyCLI"]),
     ],
     dependencies: [
         // Required: only Command Line Tools are installed (no full Xcode), so the

@@ -7,7 +7,7 @@ let libghosttyPackage: Package = .remote(
 )
 
 let project = Project(
-    name: "quertty",
+    name: "zetty",
     packages: [
         libghosttyPackage,
         // Local QuerttyCore SPM package (Tasks 1-4)
@@ -16,16 +16,16 @@ let project = Project(
     targets: [
         // ── App target ─────────────────────────────────────────────
         .target(
-            name: "quertty",
+            name: "zetty",
             destinations: .macOS,
             product: .app,
-            bundleId: "dev.more.quertty",
+            bundleId: "dev.more.zetty",
             deploymentTargets: .macOS("14.0"),
             infoPlist: .extendingDefault(with: [
                 "LSUIElement": false,
                 "NSPrincipalClass": "NSApplication",
-                // Brand: display name is "Zetty"; the binary/CLI stay `quertty`
-                // until the identity-layer rename (bundle id, paths, sessions).
+                // Brand: the app/binary/CLI are "zetty"; internal module names
+                // (QuerttyCore/QuerttyGhostty) are renamed in the repo layer.
                 "CFBundleName": "Zetty",
                 "CFBundleDisplayName": "Zetty",
                 "CFBundleIconFile": "AppIcon",

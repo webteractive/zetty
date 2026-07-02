@@ -62,7 +62,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Mark quertty-hosted shells so agent hooks only report sessions running
         // inside quertty (must be set before any pane spawns its shell). Also
         // refresh the installed hook script so the guard reaches existing hooks.
-        setenv("QUERTTY", "1", 1)
+        setenv("QUERTTY", "1", 1)   // legacy marker — pre-rename hook scripts check it
+        setenv("ZETTY", "1", 1)
         hookInstaller.refreshInstalledScriptIfPresent()
 
         // Load config and resolve the active scheme BEFORE the view controller
@@ -299,8 +300,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let zmxPath = ZmxRunner.locate()
 
         if appConfig.preserveSessions, let zmx = zmxPath {
+            // Sessions created before the Zetty rename keep their quertty-
+            // name (zmx can't rename); snapshot what's alive so those panes
+            // reattach instead of minting fresh sessions.
+            let existing = Set(ZmxRunner.listZettySessions(zmxPath: zmx))
             tvc.sessionCommandProvider = { id in
-                SessionPersistence.attachCommand(zmxPath: zmx, surfaceID: id)
+                SessionPersistence.attachCommand(zmxPath: zmx, surfaceID: id, existingSessions: existing)
             }
         } else {
             tvc.sessionCommandProvider = nil
@@ -324,7 +329,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard let zmx = ZmxRunner.locate() else { return }
         let liveIDs = tvc.allSurfaceIDs
         DispatchQueue.global(qos: .utility).async {
-            let existing = ZmxRunner.listQuerttySessions(zmxPath: zmx)
+            let existing = ZmxRunner.listZettySessions(zmxPath: zmx)
             let orphans = SessionPersistence.orphans(existing: existing, liveSurfaceIDs: liveIDs)
             ZmxRunner.kill(sessions: orphans, zmxPath: zmx)
         }
@@ -465,7 +470,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 self.skipQuitConfirmation = true
                 DispatchQueue.main.async {
                     if killSessions, let zmx = ZmxRunner.locate() {
-                        let sessions = ZmxRunner.listQuerttySessions(zmxPath: zmx)
+                        let sessions = ZmxRunner.listZettySessions(zmxPath: zmx)
                         ZmxRunner.killAndWait(sessions: sessions, zmxPath: zmx)
                     }
                     NSApp.terminate(nil)

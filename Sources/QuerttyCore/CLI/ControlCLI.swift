@@ -1,38 +1,38 @@
 import Foundation
 
-/// The `quertty` CLI: argument parsing, socket round-trip, output.
+/// The `zetty` CLI: argument parsing, socket round-trip, output.
 ///
 /// Lives in QuerttyCore so both the standalone `quertty` executable and the
-/// app binary itself (invoked as `quertty <command>` via the installed
+/// app binary itself (invoked as `zetty <command>` via the installed
 /// symlink) share one implementation. Returns a process exit code:
 /// 0 success · 1 error (message on stderr) · 2 usage.
 public enum ControlCLI {
 
     public static let usage = """
     usage:
-      quertty status [--json]                 workspace tree: projects → tabs → panes
-      quertty send [options] [text …]         inject input into a pane's terminal
+      zetty status [--json]                 workspace tree: projects → tabs → panes
+      zetty send [options] [text …]         inject input into a pane's terminal
         --pane <id>       target a pane by (unique prefix of) its 8-hex id
         --cwd <path>      target the single pane whose working dir is <path>
         --key <name>      append a key (Enter, Escape, Tab, BTab, Up, Down, Left,
                           Right, Home, End, PageUp, PageDown, Delete, BSpace,
                           Space, C-a … C-z); repeatable, applied in order
         --enter, -e       append a carriage return after text/keys
-      quertty capture [--pane <id> | --cwd <path>] [--lines <n>]
+      zetty capture [--pane <id> | --cwd <path>] [--lines <n>]
                                               print a pane's recent output (via its
                                               preserved zmx session)
-      quertty new-tab [--project <name>]      open a tab (active project by default);
+      zetty new-tab [--project <name>]      open a tab (active project by default);
                                               prints the new pane's id on stdout
-      quertty split [--pane <id> | --cwd <path>] [--horizontal]
+      zetty split [--pane <id> | --cwd <path>] [--horizontal]
                                               split a pane (vertical by default);
                                               prints the new pane's id on stdout
-      quertty focus (--pane <id> | --cwd <path>)
+      zetty focus (--pane <id> | --cwd <path>)
                                               focus a pane (selects its project/tab)
-      quertty close (--pane <id> | --cwd <path>) [--tab]
+      zetty close (--pane <id> | --cwd <path>) [--tab]
                                               close a pane (a tab's last pane closes
                                               the tab; --tab closes the whole tab)
-      quertty reload                          reload quertty config (⇧⌘, equivalent)
-      quertty quit [--kill-sessions]          quit the app (no confirmation dialog);
+      zetty reload                          reload zetty config (⇧⌘, equivalent)
+      zetty quit [--kill-sessions]          quit the app (no confirmation dialog);
                                               --kill-sessions also kills every
                                               preserved zmx session (full shutdown)
 
@@ -41,10 +41,10 @@ public enum ControlCLI {
         arguments are joined with spaces and sent verbatim; keys append after.
       - `status --json` prints the full machine-readable tree (pane ids, titles,
         cwd, running tool, agent status, focus). `new-tab`/`split` print just
-        the pane id, so: quertty send --pane "$(quertty new-tab)" ls --enter
+        the pane id, so: zetty send --pane "$(zetty new-tab)" ls --enter
       - Give a fresh pane ~1–2s for its shell to start before sending input.
       - Exit codes: 0 success · 1 error (message on stderr) · 2 usage.
-      - Requires the quertty app to be running (socket: ~/.quertty/quertty.sock).
+      - Requires the zetty app to be running (socket: ~/.quertty/quertty.sock).
     """
 
     /// True when `arguments` look like a CLI invocation (used by the app
@@ -337,7 +337,7 @@ public enum ControlCLI {
             }
         }
         guard connected == 0 else {
-            return .error("cannot reach quertty at \(path) — is the app running?")
+            return .error("cannot reach zetty at \(path) — is the app running?")
         }
 
         guard let out = try? ControlWire.encodeLine(request) else { return .error("cannot encode request") }

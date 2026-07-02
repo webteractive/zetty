@@ -144,7 +144,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         stack.addArrangedSubview(sectionHeader("Configuration"))
         stack.addArrangedSubview(caption(abbreviatedConfigPath()))
         stack.addArrangedSubview(caption(
-            "appearance, theme-dark, theme-light and preserve-sessions are quertty's own keys; "
+            "appearance, theme-dark, theme-light and preserve-sessions are Zetty's own keys; "
             + "every other key = value is forwarded verbatim to the terminal, so an existing "
             + "ghostty config can be pasted straight in. Reload anytime with ⇧⌘,."
         ))
@@ -171,9 +171,9 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         stack.addArrangedSubview(spacer())
         stack.addArrangedSubview(sectionHeader("Command Line"))
         stack.addArrangedSubview(caption(
-            "The quertty CLI drives the app from any terminal or agent: status, "
+            "The zetty CLI drives the app from any terminal or agent: status, "
             + "send keys, open/close/split tabs, capture pane output. "
-            + "Installs a symlink at ~/.local/bin/quertty."
+            + "Installs a symlink at ~/.local/bin/zetty."
         ))
         cliStatusLabel.font = QTheme.monoFont(size: 11)
         cliStatusLabel.textColor = QTheme.current.fg3Color
@@ -470,7 +470,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         guard let zmx = zmxPath else { return }
         let liveIDs = liveSurfaceIDs()
         DispatchQueue.global(qos: .utility).async { [weak self] in
-            let existing = ZmxRunner.listQuerttySessions(zmxPath: zmx)
+            let existing = ZmxRunner.listZettySessions(zmxPath: zmx)
             let orphans = SessionPersistence.orphans(existing: existing, liveSurfaceIDs: liveIDs)
             DispatchQueue.main.async {
                 guard let self else { return }
@@ -537,7 +537,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     // MARK: - Command Line
 
     private static var cliLinkURL: URL {
-        URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent(".local/bin/quertty")
+        URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent(".local/bin/zetty")
     }
 
     /// Syncs the CLI install state (symlink at ~/.local/bin/quertty → this
@@ -546,10 +546,10 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         let link = Self.cliLinkURL
         let destination = try? FileManager.default.destinationOfSymbolicLink(atPath: link.path)
         if let destination, destination == Bundle.main.executablePath {
-            cliStatusLabel.stringValue = "installed: ~/.local/bin/quertty"
+            cliStatusLabel.stringValue = "installed: ~/.local/bin/zetty"
             cliInstallButton.title = "Reinstall CLI"
         } else if FileManager.default.fileExists(atPath: link.path) {
-            cliStatusLabel.stringValue = "~/.local/bin/quertty exists but points to another build"
+            cliStatusLabel.stringValue = "~/.local/bin/zetty exists but points to another build"
             cliInstallButton.title = "Reinstall CLI"
         } else {
             cliStatusLabel.stringValue = "not installed"
@@ -564,6 +564,11 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         try? fm.createDirectory(at: link.deletingLastPathComponent(), withIntermediateDirectories: true)
         try? fm.removeItem(at: link)
         try? fm.createSymbolicLink(atPath: link.path, withDestinationPath: executable)
+        // Clean up the pre-rename symlink so a stale `quertty` doesn't linger.
+        let legacy = URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent(".local/bin/quertty")
+        if (try? FileManager.default.destinationOfSymbolicLink(atPath: legacy.path)) != nil {
+            try? FileManager.default.removeItem(at: legacy)
+        }
         refreshCLI()
     }
 

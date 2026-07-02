@@ -1,11 +1,13 @@
-# CLAUDE.md — quertty
+# CLAUDE.md — Zetty
 
 Project instructions for Claude Code. See [`AGENTS.md`](AGENTS.md) for the full
 contributor guide (layout, build/run, conventions) — the essentials are below.
 
 ## What this is
 
-Native macOS (Linux later) GUI **terminal multiplexer** on **full libghostty**
+**Zetty** (formerly quertty — renamed; internal module names `QuerttyCore`/
+`QuerttyGhostty` and the `~/.quertty` support dir still carry the old name
+until the repo-layer rename). Native macOS (Linux later) GUI **terminal multiplexer** on **full libghostty**
 (`libghostty-spm`) with a Swift AppKit layer. Projects → tabs → nested split panes.
 
 ## Build / run (Tuist-generated project)
@@ -14,7 +16,7 @@ Sources are listed explicitly, so **regenerate after adding/removing a file**:
 
 ```sh
 mise exec -- tuist generate --no-open
-xcodebuild -project quertty.xcodeproj -scheme quertty -destination 'platform=macOS' build
+xcodebuild -project zetty.xcodeproj -scheme zetty -destination 'platform=macOS' build
 ```
 
 Tests: `mise exec -- tuist test`.
@@ -57,7 +59,7 @@ be corrected before merge:
 
 ## Configuration
 
-quertty reads `~/.config/quertty/config` (or `$XDG_CONFIG_HOME/quertty/config`),
+quertty reads `~/.config/zetty/config` (or `$XDG_CONFIG_HOME/zetty/config`),
 seeded with a documented default on first launch. Parsing is pure + unit-tested
 in `QuerttyCore` (`AppConfig` / `ConfigStore`); `AppDelegate` resolves it.
 
@@ -101,8 +103,9 @@ relaunches. Engine is pure/tested in `QuerttyCore`. Full details in
 
 ## Control CLI
 
-`quertty` (symlink installed via Settings → Command Line; the app binary
-doubles as the CLI) drives the app over `~/.quertty/quertty.sock`:
+`zetty` (symlink installed via Settings → Command Line; the app binary
+doubles as the CLI) drives the app over `~/.quertty/quertty.sock` (legacy
+socket path until the repo-layer rename):
 `status [--json]` · `send` (text + tmux-style keys into any pane) ·
 `capture` (pane output) · `new-tab` / `split` (print the new pane id) ·
 `focus` · `close` · `reload` · `quit [--kill-sessions]`. Agent-friendly:

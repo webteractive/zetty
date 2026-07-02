@@ -13,8 +13,8 @@ DerivedData/
 *.xcscmblueprint
 
 # Tuist-generated Xcode projects (regenerate with `tuist generate`)
-quertty.xcodeproj/
-quertty.xcworkspace/
+zetty.xcodeproj/
+zetty.xcworkspace/
 
 # macOS
 .DS_Store
