@@ -31,12 +31,18 @@ final class SurfaceNodeView: NSView {
     ///   - registry: Persistent terminal-view registry.
     ///   - focusedSurfaceID: The currently focused surface; the matching leaf
     ///     draws a focus ring.
+    ///   - nodePath: Branch steps from the layout root to `node`, so divider
+    ///     drags can be written back to the matching split in the model.
+    ///   - onRatioChange: Called when the user drags a split's divider, with
+    ///     that split's path and its new first/second ratio.
     init(
         node: SurfaceNode,
         registry: SurfaceRegistry,
         focusedSurfaceID: UUID?,
         showsClose: Bool = false,
-        onClose: ((UUID) -> Void)? = nil
+        onClose: ((UUID) -> Void)? = nil,
+        nodePath: [SplitBranch] = [],
+        onRatioChange: (([SplitBranch], Double) -> Void)? = nil
     ) {
         super.init(frame: .zero)
         translatesAutoresizingMaskIntoConstraints = false
@@ -45,7 +51,9 @@ final class SurfaceNodeView: NSView {
             registry: registry,
             focusedSurfaceID: focusedSurfaceID,
             showsClose: showsClose,
-            onClose: onClose
+            onClose: onClose,
+            nodePath: nodePath,
+            onRatioChange: onRatioChange
         )
     }
 
@@ -75,7 +83,9 @@ final class SurfaceNodeView: NSView {
         registry: SurfaceRegistry,
         focusedSurfaceID: UUID?,
         showsClose: Bool,
-        onClose: ((UUID) -> Void)?
+        onClose: ((UUID) -> Void)?,
+        nodePath: [SplitBranch],
+        onRatioChange: (([SplitBranch], Double) -> Void)?
     ) {
         switch node {
 
@@ -106,7 +116,9 @@ final class SurfaceNodeView: NSView {
                 registry: registry,
                 focusedSurfaceID: focusedSurfaceID,
                 showsClose: showsClose,
-                onClose: onClose
+                onClose: onClose,
+                nodePath: nodePath,
+                onRatioChange: onRatioChange
             )
             splitView.translatesAutoresizingMaskIntoConstraints = false
             addSubview(splitView)
@@ -256,11 +268,19 @@ private final class LeafContainerView: NSView {
 /// view has a non-zero frame, the ratio is applied in `layout()` on the first
 /// pass where the bounds are non-empty.  Subsequent layout calls leave the
 /// divider alone so user drags are preserved.
+///
+/// Divider drags are written back to the model: once the initial position is
+/// set, any meaningful ratio change (a drag; window resizes keep proportions)
+/// is reported through `onRatioChange` with this split's `nodePath`, so the
+/// persisted layout matches what's on screen.
 @MainActor
-private final class RatioSplitView: NSSplitView {
+private final class RatioSplitView: NSSplitView, NSSplitViewDelegate {
 
     private let ratio: Double
     private var didSetInitialPosition = false
+    private let nodePath: [SplitBranch]
+    private let onRatioChange: (([SplitBranch], Double) -> Void)?
+    private var lastReportedRatio: Double
 
     init(
         direction: SplitDirection,
@@ -270,26 +290,36 @@ private final class RatioSplitView: NSSplitView {
         registry: SurfaceRegistry,
         focusedSurfaceID: UUID?,
         showsClose: Bool = false,
-        onClose: ((UUID) -> Void)? = nil
+        onClose: ((UUID) -> Void)? = nil,
+        nodePath: [SplitBranch] = [],
+        onRatioChange: (([SplitBranch], Double) -> Void)? = nil
     ) {
         self.ratio = ratio
+        self.nodePath = nodePath
+        self.onRatioChange = onRatioChange
+        self.lastReportedRatio = ratio
         super.init(frame: .zero)
         isVertical = (direction == .vertical)
         dividerStyle = .thin
+        delegate = self
 
         let firstView = SurfaceNodeView(
             node: first,
             registry: registry,
             focusedSurfaceID: focusedSurfaceID,
             showsClose: showsClose,
-            onClose: onClose
+            onClose: onClose,
+            nodePath: nodePath + [.first],
+            onRatioChange: onRatioChange
         )
         let secondView = SurfaceNodeView(
             node: second,
             registry: registry,
             focusedSurfaceID: focusedSurfaceID,
             showsClose: showsClose,
-            onClose: onClose
+            onClose: onClose,
+            nodePath: nodePath + [.second],
+            onRatioChange: onRatioChange
         )
         addArrangedSubview(firstView)
         addArrangedSubview(secondView)
@@ -317,5 +347,22 @@ private final class RatioSplitView: NSSplitView {
         didSetInitialPosition = true
         let position = dimension * ratio
         setPosition(position, ofDividerAt: 0)
+    }
+
+    // MARK: - NSSplitViewDelegate
+
+    func splitViewDidResizeSubviews(_: Notification) {
+        // Ignore resizes until the persisted ratio has been applied, so the
+        // pre-layout default position never overwrites the model.
+        guard didSetInitialPosition, arrangedSubviews.count == 2 else { return }
+        let dimension = isVertical ? bounds.width : bounds.height
+        guard dimension > 0 else { return }
+        let firstFrame = arrangedSubviews[0].frame
+        let current = Double((isVertical ? firstFrame.width : firstFrame.height) / dimension)
+        // Proportional window resizes wobble by sub-pixel amounts; only a real
+        // divider drag moves the ratio enough to be worth writing back.
+        guard abs(current - lastReportedRatio) > 0.001 else { return }
+        lastReportedRatio = current
+        onRatioChange?(nodePath, current)
     }
 }

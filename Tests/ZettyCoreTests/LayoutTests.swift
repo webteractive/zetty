@@ -76,6 +76,43 @@ private func surface(_ n: Int) -> Surface {
     #expect(second == .leaf(surface(3)))
 }
 
+@Test func setRatioAtPathTargetsThatSplitOnly() {
+    var layout = Layout(root: .leaf(surface(1)))
+    _ = layout.split(surfaceID: surface(1).id, direction: .horizontal, newSurface: surface(2))
+    _ = layout.split(surfaceID: surface(2).id, direction: .vertical, newSurface: surface(3))
+    // Tree: split(leaf1, split(leaf2, leaf3)).
+    let rootOK = layout.setRatio(at: [], to: 0.3)
+    let innerOK = layout.setRatio(at: [.second], to: 0.7)
+    #expect(rootOK)
+    #expect(innerOK)
+    guard case let .split(_, rootRatio, _, second) = layout.root,
+          case let .split(_, innerRatio, _, _) = second else {
+        Issue.record("expected split(leaf, split)"); return
+    }
+    #expect(rootRatio == 0.3)
+    #expect(innerRatio == 0.7)
+}
+
+@Test func setRatioAtPathClampsAndRejectsNonSplits() {
+    var layout = Layout(root: .leaf(surface(1)))
+    // Root is a leaf — no split to resize.
+    let leafRoot = layout.setRatio(at: [], to: 0.5)
+    #expect(leafRoot == false)
+    _ = layout.split(surfaceID: surface(1).id, direction: .horizontal, newSurface: surface(2))
+    // Path ending on a leaf fails; path past a leaf fails.
+    let ontoLeaf = layout.setRatio(at: [.first], to: 0.5)
+    let pastLeaf = layout.setRatio(at: [.first, .second], to: 0.5)
+    #expect(ontoLeaf == false)
+    #expect(pastLeaf == false)
+    // Ratio clamps to 0.05…0.95.
+    let clampOK = layout.setRatio(at: [], to: 5.0)
+    #expect(clampOK)
+    guard case let .split(_, ratio, _, _) = layout.root else {
+        Issue.record("root should be a split"); return
+    }
+    #expect(ratio == 0.95)
+}
+
 @Test func setRatioClampsAndTargetsParentSplit() {
     var layout = Layout(root: .leaf(surface(1)))
     _ = layout.split(surfaceID: surface(1).id, direction: .horizontal, newSurface: surface(2))

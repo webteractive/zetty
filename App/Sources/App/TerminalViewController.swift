@@ -1473,7 +1473,15 @@ final class TerminalViewController: NSViewController {
             registry: registry,
             focusedSurfaceID: paneTree.focusedSurfaceID,
             showsClose: showsClose,
-            onClose: { [weak self] id in self?.closePane(surfaceID: id) }
+            onClose: { [weak self] id in self?.closePane(surfaceID: id) },
+            onRatioChange: { [weak self] path, ratio in
+                // Write the dragged divider position back to the model (no
+                // rebuild — the view already shows it) and autosave.
+                guard let self else { return }
+                if self.paneTree.layout.setRatio(at: path, to: ratio) {
+                    self.onWorkspaceDidChange?()
+                }
+            }
         )
         newRoot.translatesAutoresizingMaskIntoConstraints = false
         container.addSubview(newRoot)

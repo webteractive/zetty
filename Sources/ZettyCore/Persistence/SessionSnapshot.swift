@@ -56,8 +56,8 @@ public enum SessionSnapshot {
     /// Converts a live `WorkspaceModel` into a `Workspace` ready for persistence.
     ///
     /// Each `ProjectRuntime` becomes a `Project` with a single default session
-    /// whose tabs are derived from the project's `tabList.trees`.
-    /// Active-project index is not persisted in v1; restoration always activates index 0.
+    /// whose tabs are derived from the project's `tabList.trees`. The model's
+    /// active-project index is persisted so restoration reactivates it.
     public static func workspace(from model: WorkspaceModel) -> Workspace {
         let projects = model.projects.enumerated().map { index, runtime in
             let tabs = runtime.tabList.trees.map { tree in
@@ -71,7 +71,7 @@ public enum SessionSnapshot {
                 sessions: [Session(title: "main", tabs: tabs)]
             )
         }
-        return Workspace(projects: projects)
+        return Workspace(projects: projects, activeProjectIndex: model.activeIndex)
     }
 
     // MARK: - Workspace → [ProjectRuntime]

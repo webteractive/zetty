@@ -520,7 +520,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         do {
             let workspace = try workspaceStore.load()
             let runtimes = SessionSnapshot.projectRuntimes(from: workspace)
-            if let model = WorkspaceModel(restoring: runtimes, activeIndex: 0) {
+            if let model = WorkspaceModel(restoring: runtimes, activeIndex: workspace.activeProjectIndex) {
                 tvc.restore(workspace: model)
             }
             // Empty runtimes → fall back to the default WorkspaceModel already in tvc.

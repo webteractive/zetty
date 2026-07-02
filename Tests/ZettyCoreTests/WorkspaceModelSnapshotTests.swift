@@ -32,3 +32,28 @@ private func tempDir() throws -> URL {
 @Test func projectRuntimesFromEmptyWorkspaceIsEmpty() {
     #expect(SessionSnapshot.projectRuntimes(from: Workspace()).isEmpty)
 }
+
+@Test func workspaceRoundTripPreservesActiveProjectIndex() throws {
+    let model = WorkspaceModel()
+    _ = model.addProject(name: "web", rootPath: "/tmp/web")
+    let webIndex = try #require(model.projects.firstIndex { $0.name == "web" })
+    model.select(index: webIndex)
+
+    let store = WorkspaceStore(directory: try tempDir())
+    try store.save(SessionSnapshot.workspace(from: model))
+
+    let workspace = try store.load()
+    #expect(workspace.activeProjectIndex == webIndex)
+
+    let restored = WorkspaceModel(
+        restoring: SessionSnapshot.projectRuntimes(from: workspace),
+        activeIndex: workspace.activeProjectIndex
+    )
+    #expect(restored?.activeProject.name == "web")
+}
+
+@Test func legacyWorkspaceJSONWithoutActiveIndexDecodesToZero() throws {
+    let json = Data(#"{"schemaVersion":1,"projects":[]}"#.utf8)
+    let workspace = try JSONDecoder().decode(Workspace.self, from: json)
+    #expect(workspace.activeProjectIndex == 0)
+}

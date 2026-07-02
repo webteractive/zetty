@@ -39,6 +39,19 @@ public struct Layout: Codable, Sendable, Equatable {
         return changed
     }
 
+    /// Set the ratio of the split at `path`, addressed from the root by
+    /// first/second branch steps. An empty path targets the root. Returns
+    /// false when the path doesn't land on a split.
+    @discardableResult
+    public mutating func setRatio(at path: [SplitBranch], to ratio: Double) -> Bool {
+        let clamped = min(max(ratio, 0.05), 0.95)
+        guard let updated = Self.settingRatio(of: root, at: path[...], to: clamped) else {
+            return false
+        }
+        root = updated
+        return true
+    }
+
     /// Set the ratio of the split that directly contains the leaf `surfaceID`.
     @discardableResult
     public mutating func setRatio(parentOf surfaceID: UUID, to ratio: Double) -> Bool {
@@ -70,6 +83,28 @@ public struct Layout: Codable, Sendable, Equatable {
     }
 
     // MARK: - Recursion helpers
+
+    /// Returns `node` with the split at `path` given the new `ratio`, or nil
+    /// when the path runs into a leaf (no split to resize).
+    private static func settingRatio(
+        of node: SurfaceNode,
+        at path: ArraySlice<SplitBranch>,
+        to ratio: Double
+    ) -> SurfaceNode? {
+        guard case let .split(direction, oldRatio, first, second) = node else { return nil }
+        guard let step = path.first else {
+            return .split(direction: direction, ratio: ratio, first: first, second: second)
+        }
+        let rest = path.dropFirst()
+        switch step {
+        case .first:
+            guard let updated = settingRatio(of: first, at: rest, to: ratio) else { return nil }
+            return .split(direction: direction, ratio: oldRatio, first: updated, second: second)
+        case .second:
+            guard let updated = settingRatio(of: second, at: rest, to: ratio) else { return nil }
+            return .split(direction: direction, ratio: oldRatio, first: first, second: updated)
+        }
+    }
 
     /// Top-down (pre-order) rewrite: apply `rewrite` to each node; if it returns a
     /// replacement, use it, else recurse into children.
