@@ -1,7 +1,7 @@
 import AppKit
 import GhosttyTerminal
-import QuerttyCore
-import QuerttyGhostty
+import ZettyCore
+import ZettyGhostty
 
 // MARK: - TerminalViewController
 
@@ -68,7 +68,7 @@ final class TerminalViewController: NSViewController {
 
     /// Per-session AI-agent state, driven by harness-hook events.
     private let agentDetector = AgentDetector()
-    /// Watches the hook event sink (`~/.quertty/agent-events.jsonl`).
+    /// Watches the hook event sink (`~/.zetty/agent-events.jsonl`).
     private var agentEventWatcher: AgentEventWatcher?
 
     /// Foreground command per preserved pane, from the zmx/ps probe. This is
@@ -83,7 +83,7 @@ final class TerminalViewController: NSViewController {
     private static let libghosttyVersion = "1.2.7"
 
     /// Background queue + debounce for `git` probes feeding the status bar.
-    private let gitQueue = DispatchQueue(label: "dev.more.quertty.git", qos: .utility)
+    private let gitQueue = DispatchQueue(label: "dev.more.zetty.git", qos: .utility)
     private var gitProbeWork: DispatchWorkItem?
 
     /// The container that wraps the tab-bar + pane area (right side of the split).
@@ -532,7 +532,7 @@ final class TerminalViewController: NSViewController {
     /// Location of the hook event sink that harness hooks append to.
     private static var agentEventsURL: URL {
         URL(fileURLWithPath: NSHomeDirectory(), isDirectory: true)
-            .appendingPathComponent(".quertty", isDirectory: true)
+            .appendingPathComponent(".zetty", isDirectory: true)
             .appendingPathComponent("agent-events.jsonl")
     }
 

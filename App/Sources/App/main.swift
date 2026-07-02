@@ -1,5 +1,5 @@
 import AppKit
-import QuerttyCore
+import ZettyCore
 
 // CLI mode: the app binary doubles as the `quertty` CLI when invoked with a
 // recognized command (Settings installs a symlink into ~/.local/bin). Finder

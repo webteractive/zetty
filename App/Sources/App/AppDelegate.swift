@@ -1,6 +1,6 @@
 import AppKit
 import GhosttyTerminal
-import QuerttyCore
+import ZettyCore
 import UserNotifications
 
 /// Window that gives the app's main-menu key equivalents (⌘D / ⇧⌘D / ⌘W)
@@ -8,7 +8,7 @@ import UserNotifications
 /// consumes those key equivalents (AppKit hands the view hierarchy first crack),
 /// so menu shortcuts never fire. Checking the main menu before `super` (which
 /// forwards to the view hierarchy) restores the expected app-shortcut behaviour.
-final class QuerttyWindow: NSWindow {
+final class ZettyWindow: NSWindow {
     override func performKeyEquivalent(with event: NSEvent) -> Bool {
         if NSApp.mainMenu?.performKeyEquivalent(with: event) == true { return true }
         return super.performKeyEquivalent(with: event)
@@ -44,23 +44,57 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// Installs/removes agent hooks in each harness's config.
     private let hookInstaller = HookInstaller()
 
-    /// The persistent workspace store backed by `~/Library/Application Support/quertty/`.
+    /// The persistent workspace store backed by `~/Library/Application Support/zetty/`
+    /// (moved from `…/quertty/` on first launch after the rename).
     private lazy var workspaceStore: WorkspaceStore = {
-        let appSupport = FileManager.default.urls(
+        let fm = FileManager.default
+        let appSupport = fm.urls(
             for: .applicationSupportDirectory, in: .userDomainMask
         ).first ?? URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent("Library/Application Support")
-        let dir = appSupport.appendingPathComponent("quertty")
-        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let dir = appSupport.appendingPathComponent("zetty")
+        let legacy = appSupport.appendingPathComponent("quertty")
+        if !fm.fileExists(atPath: dir.path), fm.fileExists(atPath: legacy.path) {
+            try? fm.moveItem(at: legacy, to: dir)
+        }
+        try? fm.createDirectory(at: dir, withIntermediateDirectories: true)
         return WorkspaceStore(directory: dir)
     }()
+
+    /// One-time move of the support dir `~/.quertty` → `~/.zetty`, leaving a
+    /// symlink at the old path: harness configs embed `~/.quertty/hooks/…` in
+    /// their hook commands, so the alias must keep resolving forever. Fresh
+    /// installs also get the symlink so old docs and configs keep working.
+    private func migrateSupportDirectory() {
+        let fm = FileManager.default
+        let home = URL(fileURLWithPath: NSHomeDirectory(), isDirectory: true)
+        let old = home.appendingPathComponent(".quertty")
+        let new = home.appendingPathComponent(".zetty")
+
+        let oldIsSymlink = (try? fm.destinationOfSymbolicLink(atPath: old.path)) != nil
+        var isDirectory: ObjCBool = false
+        let oldExists = fm.fileExists(atPath: old.path, isDirectory: &isDirectory)
+
+        if oldExists, isDirectory.boolValue, !oldIsSymlink, !fm.fileExists(atPath: new.path) {
+            try? fm.moveItem(at: old, to: new)
+        }
+        try? fm.createDirectory(at: new, withIntermediateDirectories: true)
+        if (try? fm.destinationOfSymbolicLink(atPath: old.path)) == nil,
+           !fm.fileExists(atPath: old.path) {
+            try? fm.createSymbolicLink(atPath: old.path, withDestinationPath: new.path)
+        }
+    }
 
     func applicationDidFinishLaunching(_: Notification) {
         // TerminalController internally calls ghostty_init(0, nil) exactly once
         // via its own initializeRuntimeIfNeeded() guard, so we do not call
         // Ghostty.initializeRuntime() here to avoid a double-init.
 
-        // Mark quertty-hosted shells so agent hooks only report sessions running
-        // inside quertty (must be set before any pane spawns its shell). Also
+        // Support-dir migration must precede anything touching ~/.zetty or the
+        // hook script (which lives behind the ~/.quertty compat symlink).
+        migrateSupportDirectory()
+
+        // Mark Zetty-hosted shells so agent hooks only report sessions running
+        // inside Zetty (must be set before any pane spawns its shell). Also
         // refresh the installed hook script so the guard reaches existing hooks.
         setenv("QUERTTY", "1", 1)   // legacy marker — pre-rename hook scripts check it
         setenv("ZETTY", "1", 1)
@@ -103,7 +137,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             NSApp.dockTile.badgeLabel = (self.appConfig.notifyBadge && count > 0) ? "\(count)" : nil
         }
 
-        let window = QuerttyWindow(
+        let window = ZettyWindow(
             contentRect: NSRect(origin: .zero, size: defaultContentSize),
             styleMask: [.titled, .closable, .miniaturizable, .resizable],
             backing: .buffered,
@@ -118,8 +152,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         window.contentViewController = tvc
         // Persist and restore the window frame across launches. On first launch
         // (no saved frame) fall back to centering the default size.
-        window.setFrameAutosaveName("QuerttyMainWindow")
-        if !window.setFrameUsingName("QuerttyMainWindow") {
+        window.setFrameAutosaveName("ZettyMainWindow")
+        if !window.setFrameUsingName("ZettyMainWindow") {
             window.center()
         }
         window.makeKeyAndOrderFront(nil)

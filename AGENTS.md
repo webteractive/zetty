@@ -12,11 +12,11 @@ PRD in `docs/plans/`.
 
 ## Layout
 
-- `Sources/QuerttyCore/**` — pure, testable model (no AppKit): `Surface`,
+- `Sources/ZettyCore/**` — pure, testable model (no AppKit): `Surface`,
   `SurfaceNode`, `PaneTree`, `TabList`, `WorkspaceModel`, persistence.
 - `App/Sources/App/**` — AppKit app: `AppDelegate`, `TerminalViewController`,
   `SidebarView`, `TabBarView`, `SurfaceNodeView`, `PaneActions`, `Theme.swift`.
-- `App/Sources/QuerttyGhostty/**` — libghostty bridge: `SurfaceRegistry`, `Ghostty`.
+- `App/Sources/ZettyGhostty/**` — libghostty bridge: `SurfaceRegistry`, `Ghostty`.
 
 ## Build / run
 
@@ -28,7 +28,7 @@ mise exec -- tuist generate --no-open
 xcodebuild -project zetty.xcodeproj -scheme zetty -destination 'platform=macOS' build
 ```
 
-Tests: `mise exec -- tuist test` (or the `QuerttyGhosttyTests` / `Testing` schemes).
+Tests: `mise exec -- tuist test` (or the `ZettyGhosttyTests` / `Testing` schemes).
 
 ## Design rules  ← read before any UI work
 
@@ -67,7 +67,7 @@ status dots, accent top-bar on the active tab, etc.).
 
 quertty reads `~/.config/zetty/config` (or `$XDG_CONFIG_HOME/zetty/config`),
 seeded with a documented default on first launch. Parsing is pure + unit-tested
-in `QuerttyCore` (`AppConfig` / `ConfigStore`); `AppDelegate` resolves + applies it.
+in `ZettyCore` (`AppConfig` / `ConfigStore`); `AppDelegate` resolves + applies it.
 
 - **`appearance = system | dark | light`** — `system` (default) follows macOS
   live (KVO on `NSApp.effectiveAppearance`); `dark`/`light` pin one axis.
@@ -93,7 +93,7 @@ in `QuerttyCore` (`AppConfig` / `ConfigStore`); `AppDelegate` resolves + applies
   into `~/.quertty/bin` when missing (Homebrew/manual installs are detected
   too); config-only enablement without zmx falls back to plain shells with a
   one-time alert. Pure logic in
-  `QuerttyCore` (`SessionPersistence`); process IO in `ZmxRunner`.
+  `ZettyCore` (`SessionPersistence`); process IO in `ZmxRunner`.
   Reattach gotchas handled in the app layer:
   - **`ZMX_SESSION` is stripped** from the attach command (`env -u`) and from
     every zmx subprocess: inherited from a zmx-backed terminal (Supacode, or
@@ -137,12 +137,12 @@ pwd basename → positional.
 
 The app hosts a Unix control socket (`~/.quertty/quertty.sock` — legacy path
 until the repo-layer rename; 0600,
-line-JSON — `ControlWire` in `QuerttyCore/CLI/`) and the `zetty` CLI drives
+line-JSON — `ControlWire` in `ZettyCore/CLI/`) and the `zetty` CLI drives
 it. **The app binary doubles as the CLI** when invoked with a recognized
 command (`main.swift` branches before AppKit starts); Settings (⌘,) →
 Command Line installs a symlink at `~/.local/bin/zetty`. A standalone
 executable also builds via `swift build` (`.build/debug/quertty`). All CLI
-logic is shared in `ControlCLI` (QuerttyCore, pure Foundation).
+logic is shared in `ControlCLI` (ZettyCore, pure Foundation).
 
 Commands (see `zetty --help` for full grammar and agent notes):
 - `status [--json]` — projects → tabs → panes: 8-hex pane ids, emitted
@@ -166,7 +166,7 @@ the main thread (`ControlSocketServer` → `AppDelegate.startControlSocket` →
 
 quertty surfaces running AI agents as **status dots** in the sidebar (per-tab
 dots + a per-project roll-up on the diamond): **green = running, yellow =
-needs-attention, dim = idle**. The engine is pure/tested in `QuerttyCore`
+needs-attention, dim = idle**. The engine is pure/tested in `ZettyCore`
 (`AgentRegistry`, `AgentStateMachine`, `AgentDetector`, `AgentEvent`).
 Hooks drive the **status dots only** — tab names/logos come from the
 foreground-process probe (see "Tab identity" above). At startup the existing
@@ -206,7 +206,7 @@ id libghostty doesn't expose).
 
 ## Conventions
 
-- Follow existing file patterns; keep files focused. `QuerttyCore` stays pure
+- Follow existing file patterns; keep files focused. `ZettyCore` stays pure
   (no AppKit import).
 - Do not commit debug `NSLog`/`print` statements.
 - Never commit or push without being asked; never add `Co-Authored-By` or a

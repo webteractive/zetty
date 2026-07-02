@@ -1,5 +1,5 @@
 import AppKit
-import QuerttyCore
+import ZettyCore
 
 // MARK: - SidebarProject
 
@@ -75,7 +75,7 @@ private final class OutlineItem: NSObject {
 /// Top level is a filterable list of section headers (`Pinned` / `Projects`,
 /// with counts) and project rows; a project expands to its tab children when it
 /// has 2+ tabs.  The view is dumb — it takes plain display data in and reports
-/// user actions out via closures.  No QuerttyCore import.
+/// user actions out via closures.  No ZettyCore import.
 @MainActor
 final class SidebarView: NSView {
 

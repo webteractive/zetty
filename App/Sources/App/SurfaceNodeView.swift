@@ -1,6 +1,6 @@
 import AppKit
-import QuerttyCore
-import QuerttyGhostty
+import ZettyCore
+import ZettyGhostty
 
 // MARK: - SurfaceNodeView
 

@@ -6,7 +6,7 @@ import AppKit
 ///
 /// Each tab item shows a title label and a × close button.  Changes are reported
 /// back to the owner via the `onSelect`, `onCloseTab`, `onNewTab`, and
-/// `onRenameTab` closures.  The tab *model* lives in `QuerttyCore.TabList`;
+/// `onRenameTab` closures.  The tab *model* lives in `ZettyCore.TabList`;
 /// this view only renders it.
 ///
 /// Double-clicking a tab shows a temporary `NSTextField` overlay so the user

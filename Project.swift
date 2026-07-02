@@ -10,7 +10,7 @@ let project = Project(
     name: "zetty",
     packages: [
         libghosttyPackage,
-        // Local QuerttyCore SPM package (Tasks 1-4)
+        // Local ZettyCore SPM package (Tasks 1-4)
         .local(path: "."),
     ],
     targets: [
@@ -25,7 +25,7 @@ let project = Project(
                 "LSUIElement": false,
                 "NSPrincipalClass": "NSApplication",
                 // Brand: the app/binary/CLI are "zetty"; internal module names
-                // (QuerttyCore/QuerttyGhostty) are renamed in the repo layer.
+                // (ZettyCore/ZettyGhostty) are renamed in the repo layer.
                 "CFBundleName": "Zetty",
                 "CFBundleDisplayName": "Zetty",
                 "CFBundleIconFile": "AppIcon",
@@ -33,16 +33,16 @@ let project = Project(
             sources: ["App/Sources/App/**"],
             resources: ["App/Resources/**/*.svg", "App/Resources/*.icns"],
             dependencies: [
-                // GhosttyKit (static) is linked transitively via QuerttyGhostty;
+                // GhosttyKit (static) is linked transitively via ZettyGhostty;
                 // linking it here too triggers a static-double-link warning.
                 .package(product: "GhosttyTerminal"),
-                .package(product: "QuerttyCore"),
-                .target(name: "QuerttyGhostty"),
+                .package(product: "ZettyCore"),
+                .target(name: "ZettyGhostty"),
             ]
         ),
 
-        // ── QuerttyGhostty framework ────────────────────────────────
-        // Named "QuerttyGhostty" (not "GhosttyKit") to avoid a module-name
+        // ── ZettyGhostty framework ────────────────────────────────
+        // Named "ZettyGhostty" (not "GhosttyKit") to avoid a module-name
         // clash with the libghostty-spm product also called "GhosttyKit".
         //
         // libghostty.a (the prebuilt xcframework) embeds a Metal/IOSurface
@@ -50,16 +50,16 @@ let project = Project(
         // frameworks to satisfy the static-archive linker symbols when this
         // dynamic framework is built.
         .target(
-            name: "QuerttyGhostty",
+            name: "ZettyGhostty",
             destinations: .macOS,
             product: .framework,
-            bundleId: "dev.more.quertty.QuerttyGhostty",
+            bundleId: "dev.more.zetty.ZettyGhostty",
             deploymentTargets: .macOS("14.0"),
-            sources: ["App/Sources/QuerttyGhostty/**"],
+            sources: ["App/Sources/ZettyGhostty/**"],
             dependencies: [
                 .package(product: "GhosttyKit"),
                 .package(product: "GhosttyTerminal"),
-                .package(product: "QuerttyCore"),
+                .package(product: "ZettyCore"),
                 .sdk(name: "Carbon", type: .framework),
                 .sdk(name: "CoreVideo", type: .framework),
                 .sdk(name: "IOSurface", type: .framework),
@@ -71,14 +71,14 @@ let project = Project(
 
         // ── Smoke-test target ───────────────────────────────────────
         .target(
-            name: "QuerttyGhosttyTests",
+            name: "ZettyGhosttyTests",
             destinations: .macOS,
             product: .unitTests,
-            bundleId: "dev.more.quertty.QuerttyGhosttyTests",
+            bundleId: "dev.more.zetty.ZettyGhosttyTests",
             deploymentTargets: .macOS("14.0"),
-            sources: ["App/Tests/QuerttyGhosttyTests/**"],
+            sources: ["App/Tests/ZettyGhosttyTests/**"],
             dependencies: [
-                .target(name: "QuerttyGhostty"),
+                .target(name: "ZettyGhostty"),
             ]
         ),
     ],
@@ -86,10 +86,10 @@ let project = Project(
         // Explicit scheme so `tuist test` discovers and runs the unit tests
         // (Tuist's auto-generated schemes weren't attaching the test target).
         .scheme(
-            name: "QuerttyGhosttyTests",
+            name: "ZettyGhosttyTests",
             shared: true,
-            buildAction: .buildAction(targets: ["QuerttyGhostty"]),
-            testAction: .targets(["QuerttyGhosttyTests"])
+            buildAction: .buildAction(targets: ["ZettyGhostty"]),
+            testAction: .targets(["ZettyGhosttyTests"])
         ),
     ]
 )

@@ -1,5 +1,5 @@
 import Foundation
-import QuerttyCore
+import ZettyCore
 
 /// Thin process wrapper around the `zmx` binary (session persistence daemon).
 ///
@@ -18,13 +18,13 @@ enum ZmxRunner {
     /// Where the in-app installer puts the binary.
     static var managedBinaryURL: URL {
         URL(fileURLWithPath: NSHomeDirectory())
-            .appendingPathComponent(".quertty/bin/zmx")
+            .appendingPathComponent(".zetty/bin/zmx")
     }
 
     /// Resolved zmx binary path, or nil when not installed.
     static func locate() -> String? {
         let candidates = [
-            managedBinaryURL.path,                      // quertty-managed download
+            managedBinaryURL.path,                      // Zetty-managed download
             "/opt/homebrew/bin/zmx",                    // Homebrew (Apple Silicon)
             "/usr/local/bin/zmx",                       // Homebrew (Intel) / manual
             "\(NSHomeDirectory())/.local/bin/zmx",      // manual install
@@ -74,7 +74,7 @@ enum ZmxRunner {
     }
 
     /// Downloads the pinned zmx release binary from zmx.sh into
-    /// `~/.quertty/bin/zmx` (no Homebrew needed). Runs off-main; completion (on
+    /// `~/.zetty/bin/zmx` (no Homebrew needed). Runs off-main; completion (on
     /// main) gets the resolved zmx path on success, or nil on failure.
     static func install(completion: @escaping (String?) -> Void) {
         DispatchQueue.global(qos: .userInitiated).async {
@@ -92,7 +92,7 @@ enum ZmxRunner {
         let url = "https://zmx.sh/a/zmx-\(version)-macos-\(arch).tar.gz"
 
         let fm = FileManager.default
-        let workDir = fm.temporaryDirectory.appendingPathComponent("quertty-zmx-\(UUID().uuidString)")
+        let workDir = fm.temporaryDirectory.appendingPathComponent("zetty-zmx-\(UUID().uuidString)")
         defer { try? fm.removeItem(at: workDir) }
         let tarball = workDir.appendingPathComponent("zmx.tar.gz")
 

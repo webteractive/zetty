@@ -1,8 +1,8 @@
 import Foundation
-import QuerttyCore
+import ZettyCore
 
 /// The app end of the `quertty` CLI: a Unix-domain socket at
-/// `~/.quertty/quertty.sock` speaking one JSON object per line
+/// `~/.zetty/zetty.sock` speaking one JSON object per line
 /// (`ControlWire`), one request → one response per connection.
 ///
 /// Socket IO runs on a private queue; the request handler is invoked on the
@@ -11,13 +11,13 @@ final class ControlSocketServer {
 
     static var defaultSocketURL: URL {
         URL(fileURLWithPath: NSHomeDirectory())
-            .appendingPathComponent(".quertty", isDirectory: true)
-            .appendingPathComponent("quertty.sock")
+            .appendingPathComponent(".zetty", isDirectory: true)
+            .appendingPathComponent("zetty.sock")
     }
 
     private let socketURL: URL
     private let handler: (ControlRequest) -> ControlResponse
-    private let queue = DispatchQueue(label: "dev.more.quertty.control-socket")
+    private let queue = DispatchQueue(label: "dev.more.zetty.control-socket")
     private var listenerFD: Int32 = -1
     private var acceptSource: DispatchSourceRead?
 

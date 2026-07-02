@@ -1,5 +1,5 @@
 import AppKit
-import QuerttyCore
+import ZettyCore
 
 /// A small themed Settings window. Currently hosts the **Agent Status Hooks**
 /// section — a toggle per harness that installs/uninstalls quertty's status hook.

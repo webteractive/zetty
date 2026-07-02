@@ -1,5 +1,5 @@
 import AppKit
-import QuerttyCore
+import ZettyCore
 
 /// Logos for the popular agent CLIs shown in tab pills.
 ///

@@ -1,5 +1,5 @@
 import Foundation
-import QuerttyCore
+import ZettyCore
 
 /// Runs `git` in a directory to build a ``GitStatus``.
 ///

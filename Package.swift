@@ -5,9 +5,9 @@ let package = Package(
     name: "zetty",
     platforms: [.macOS(.v14)],
     products: [
-        .library(name: "QuerttyCore", targets: ["QuerttyCore"]),
+        .library(name: "ZettyCore", targets: ["ZettyCore"]),
         // The `quertty` control CLI (talks to the app over ~/.quertty/quertty.sock).
-        .executable(name: "zetty", targets: ["QuerttyCLI"]),
+        .executable(name: "zetty", targets: ["ZettyCLI"]),
     ],
     dependencies: [
         // Required: only Command Line Tools are installed (no full Xcode), so the
@@ -16,12 +16,12 @@ let package = Package(
         .package(url: "https://github.com/apple/swift-testing.git", from: "0.0.0"),
     ],
     targets: [
-        .target(name: "QuerttyCore"),
-        .executableTarget(name: "QuerttyCLI", dependencies: ["QuerttyCore"]),
+        .target(name: "ZettyCore"),
+        .executableTarget(name: "ZettyCLI", dependencies: ["ZettyCore"]),
         .testTarget(
-            name: "QuerttyCoreTests",
+            name: "ZettyCoreTests",
             dependencies: [
-                "QuerttyCore",
+                "ZettyCore",
                 .product(name: "Testing", package: "swift-testing"),
             ]
         ),

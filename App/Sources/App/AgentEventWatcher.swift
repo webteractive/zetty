@@ -1,5 +1,5 @@
 import Foundation
-import QuerttyCore
+import ZettyCore
 
 /// Tails the agent-event sink (`~/.quertty/agent-events.jsonl`) that harness
 /// hooks append to, parsing newly-appended lines into `AgentEvent`s.

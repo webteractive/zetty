@@ -5,8 +5,8 @@ contributor guide (layout, build/run, conventions) — the essentials are below.
 
 ## What this is
 
-**Zetty** (formerly quertty — renamed; internal module names `QuerttyCore`/
-`QuerttyGhostty` and the `~/.quertty` support dir still carry the old name
+**Zetty** (formerly quertty — renamed; internal module names `ZettyCore`/
+`ZettyGhostty` and the `~/.quertty` support dir still carry the old name
 until the repo-layer rename). Native macOS (Linux later) GUI **terminal multiplexer** on **full libghostty**
 (`libghostty-spm`) with a Swift AppKit layer. Projects → tabs → nested split panes.
 
@@ -61,7 +61,7 @@ be corrected before merge:
 
 quertty reads `~/.config/zetty/config` (or `$XDG_CONFIG_HOME/zetty/config`),
 seeded with a documented default on first launch. Parsing is pure + unit-tested
-in `QuerttyCore` (`AppConfig` / `ConfigStore`); `AppDelegate` resolves it.
+in `ZettyCore` (`AppConfig` / `ConfigStore`); `AppDelegate` resolves it.
 
 - **`appearance = system | dark | light`** — `system` (default) follows macOS
   live; `dark`/`light` pin one axis.
@@ -98,7 +98,7 @@ appends `{cwd,agent,event}` to `~/.quertty/agent-events.jsonl`; quertty tails th
 pane's foreground process (interpreter-aware) and the tab shows its bundled
 logo (`App/Resources/AgentLogos/agent-<command>.svg`, template-tinted) plus the
 title the CLI emits; last emitted titles persist in `workspace.json` across
-relaunches. Engine is pure/tested in `QuerttyCore`. Full details in
+relaunches. Engine is pure/tested in `ZettyCore`. Full details in
 [`AGENTS.md`](AGENTS.md).
 
 ## Control CLI
@@ -110,10 +110,10 @@ socket path until the repo-layer rename):
 `capture` (pane output) · `new-tab` / `split` (print the new pane id) ·
 `focus` · `close` · `reload` · `quit [--kill-sessions]`. Agent-friendly:
 machine-readable output, stderr errors, exit 0/1/2. Protocol + CLI logic
-pure in `QuerttyCore/CLI/`; details in [`AGENTS.md`](AGENTS.md).
+pure in `ZettyCore/CLI/`; details in [`AGENTS.md`](AGENTS.md).
 
 ## Guardrails
 
-- Keep `QuerttyCore` pure (no AppKit). Don't commit debug `NSLog`/`print`.
+- Keep `ZettyCore` pure (no AppKit). Don't commit debug `NSLog`/`print`.
 - Never commit/push without being asked; no `Co-Authored-By` or session links in
   commit messages.
