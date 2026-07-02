@@ -6,6 +6,8 @@ let package = Package(
     platforms: [.macOS(.v14)],
     products: [
         .library(name: "QuerttyCore", targets: ["QuerttyCore"]),
+        // The `quertty` control CLI (talks to the app over ~/.quertty/quertty.sock).
+        .executable(name: "quertty", targets: ["QuerttyCLI"]),
     ],
     dependencies: [
         // Required: only Command Line Tools are installed (no full Xcode), so the
@@ -15,6 +17,7 @@ let package = Package(
     ],
     targets: [
         .target(name: "QuerttyCore"),
+        .executableTarget(name: "QuerttyCLI", dependencies: ["QuerttyCore"]),
         .testTarget(
             name: "QuerttyCoreTests",
             dependencies: [

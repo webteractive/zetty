@@ -59,6 +59,13 @@ enum ZmxRunner {
         }
     }
 
+    /// Kills the given sessions and waits for zmx to finish — for the quit
+    /// path, where an async kill could race app termination.
+    static func killAndWait(sessions: [String], zmxPath: String) {
+        guard !sessions.isEmpty else { return }
+        _ = run(zmxPath, ["kill"] + sessions)
+    }
+
     /// Downloads the pinned zmx release binary from zmx.sh into
     /// `~/.quertty/bin/zmx` (no Homebrew needed). Runs off-main; completion (on
     /// main) gets the resolved zmx path on success, or nil on failure.

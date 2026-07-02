@@ -46,6 +46,9 @@ public struct AppConfig: Equatable, Sendable {
     public var editor: String?
     /// When true, panes run inside zmx sessions that survive app quit/relaunch.
     public var preserveSessions: Bool
+    /// When true (default), quitting asks for confirmation first; when false
+    /// the app quits immediately.
+    public var confirmQuit: Bool
     /// Raw ghostty directives (from `ghostty.<key> = <value>` lines), forwarded
     /// to the terminal unchanged.
     public var ghostty: [GhosttyDirective]
@@ -59,6 +62,7 @@ public struct AppConfig: Equatable, Sendable {
         themeLight: String = AppConfig.defaultThemeLight,
         editor: String? = nil,
         preserveSessions: Bool = false,
+        confirmQuit: Bool = true,
         ghostty: [GhosttyDirective] = []
     ) {
         self.appearance = appearance
@@ -66,6 +70,7 @@ public struct AppConfig: Equatable, Sendable {
         self.themeLight = themeLight
         self.editor = editor
         self.preserveSessions = preserveSessions
+        self.confirmQuit = confirmQuit
         self.ghostty = ghostty
     }
 
@@ -108,6 +113,8 @@ public struct AppConfig: Equatable, Sendable {
                 config.editor = value
             case "preserve-sessions":
                 config.preserveSessions = ["true", "yes", "on", "1"].contains(value.lowercased())
+            case "confirm-quit":
+                config.confirmQuit = ["true", "yes", "on", "1"].contains(value.lowercased())
             default:
                 // Anything else is a pasted ghostty directive → forward verbatim.
                 config.ghostty.append(GhosttyDirective(key: rawKey, value: value))
@@ -138,6 +145,9 @@ public struct AppConfig: Equatable, Sendable {
 
         # Keep terminal sessions alive across app quit/relaunch (requires zmx).
         preserve-sessions = \(preserveSessions)
+
+        # Ask for confirmation before quitting (false quits immediately).
+        confirm-quit = \(confirmQuit)
 
         """
         if let editor, !editor.isEmpty {
@@ -183,6 +193,9 @@ public struct AppConfig: Equatable, Sendable {
     # Keep terminal sessions alive across app quit/relaunch. Requires zmx
     # (brew install neurosnap/tap/zmx); also toggleable in Settings (⌘,).
     preserve-sessions = false
+
+    # Ask for confirmation before quitting (false quits immediately).
+    confirm-quit = true
 
     # Paste your ghostty config below — any non-quertty key is forwarded to the
     # terminal verbatim, so an existing ghostty config works as-is. For example:

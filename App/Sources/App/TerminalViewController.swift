@@ -654,6 +654,145 @@ final class TerminalViewController: NSViewController {
         return base + projectCommands + schemeCommands
     }
 
+    // MARK: - Control socket (quertty CLI)
+
+    /// Snapshot of the whole workspace for `quertty status` / target resolution.
+    func statusSnapshot() -> StatusSnapshot {
+        let projects = workspace.projects.enumerated().map { pIdx, project -> StatusSnapshot.Project in
+            let isActiveProject = pIdx == workspace.activeIndex
+            let tabs = project.tabList.trees.enumerated().map { tIdx, tree -> StatusSnapshot.Tab in
+                let isActiveTab = isActiveProject && tIdx == project.tabList.activeIndex
+                let panes = tree.layout.surfaces.map { surface -> StatusSnapshot.Pane in
+                    StatusSnapshot.Pane(
+                        id: SessionPersistence.shortID(for: surface.id),
+                        title: registry.title(for: surface) ?? surface.lastTitle,
+                        cwd: registry.workingDirectory(for: surface) ?? surface.workingDir,
+                        tool: foregroundBySurface[surface.id],
+                        agentStatus: agentDetector.state(for: surface.id).status?.rawValue,
+                        isFocused: isActiveTab && surface.id == tree.focusedSurfaceID
+                    )
+                }
+                let title = TabTitle.display(
+                    manualTitle: tree.manualTitle,
+                    agentName: agentDisplayName(for: tree.focusedSurface),
+                    focusedSurfaceTitle: tree.focusedSurface.flatMap { registry.title(for: $0) ?? $0.lastTitle },
+                    workingDir: tree.focusedSurface?.workingDir,
+                    index: tIdx
+                )
+                return StatusSnapshot.Tab(title: title, isActive: isActiveTab, panes: panes)
+            }
+            return StatusSnapshot.Project(name: project.name, isActive: isActiveProject, tabs: tabs)
+        }
+        return StatusSnapshot(projects: projects)
+    }
+
+    /// Injects text/keys into the targeted pane (CLI `send`). Returns an error
+    /// message, or nil on success.
+    func sendInput(target: PaneSelector, text: String?, enter: Bool, keys: [String]) -> String? {
+        do {
+            let pane = try target.resolve(in: statusSnapshot().panes)
+            guard let surface = surface(withShortID: pane.id) else {
+                return "pane \(pane.id) is not live"
+            }
+            var payload = text ?? ""
+            for key in keys {
+                guard let sequence = KeyNotation.encode(key) else { return "unknown key \"\(key)\"" }
+                payload += sequence
+            }
+            if enter { payload += "\r" }
+            guard !payload.isEmpty else { return "nothing to send" }
+            guard registry.sendText(payload, to: surface) else {
+                return "pane \(pane.id) has no live terminal yet — focus its tab first"
+            }
+            return nil
+        } catch {
+            return error.localizedDescription
+        }
+    }
+
+    /// Opens a new tab (CLI `new-tab`) in the named project (case-insensitive,
+    /// nil → active project), makes it visible so its pane spawns, and returns
+    /// the new pane's short id — or an error message.
+    func openNewTab(inProject name: String?) -> Result<String, ControlError> {
+        if let name {
+            guard let index = workspace.projects.firstIndex(where: {
+                $0.name.lowercased() == name.lowercased()
+            }) else {
+                return .failure(.noSuchPane("no project named \"\(name)\""))
+            }
+            if index != workspace.activeIndex { selectProject(at: index) }
+        }
+        newTab(nil)
+        guard let surface = workspace.activeTabList.activeTree.focusedSurface
+                ?? workspace.activeTabList.activeTree.layout.surfaces.first else {
+            return .failure(.noSuchPane("tab created but no pane found"))
+        }
+        onWorkspaceDidChange?()
+        return .success(SessionPersistence.shortID(for: surface.id))
+    }
+
+    /// Closes the targeted pane (CLI `close`): the pane collapses into its
+    /// split; a tab's last pane — or `wholeTab` — closes the tab. Selects the
+    /// owning project/tab first so the standard close paths (and their zmx
+    /// session cleanup) apply. Returns an error message, or nil on success.
+    func closePane(target: PaneSelector, wholeTab: Bool) -> String? {
+        do {
+            let pane = try target.resolve(in: statusSnapshot().panes)
+            guard let location = locate(shortID: pane.id) else { return "pane \(pane.id) not found" }
+            if location.projectIndex != workspace.activeIndex {
+                selectProject(at: location.projectIndex)
+            }
+            let tabList = workspace.activeTabList
+            if tabList.activeIndex != location.tabIndex {
+                tabList.select(index: location.tabIndex)
+            }
+            let isLastPaneInTab = tabList.activeTree.layout.surfaces.count == 1
+            if wholeTab || isLastPaneInTab {
+                guard tabList.trees.count > 1 else {
+                    return "cannot close the project's only tab"
+                }
+                closeTab(atIndex: location.tabIndex)
+            } else {
+                closePane(surfaceID: location.surfaceID)
+                // Same reasoning as closeTab: prune misses never-spawned panes.
+                onSurfacesClosed?([location.surfaceID])
+            }
+            refreshTabBar()
+            refreshSidebar()
+            onWorkspaceDidChange?()
+            return nil
+        } catch {
+            return error.localizedDescription
+        }
+    }
+
+    private func locate(shortID: String) -> (projectIndex: Int, tabIndex: Int, surfaceID: UUID)? {
+        for pIdx in workspace.projects.indices {
+            let trees = workspace.projects[pIdx].tabList.trees
+            for tIdx in trees.indices {
+                if let surface = trees[tIdx].layout.surfaces.first(where: {
+                    SessionPersistence.shortID(for: $0.id) == shortID
+                }) {
+                    return (pIdx, tIdx, surface.id)
+                }
+            }
+        }
+        return nil
+    }
+
+    private func surface(withShortID shortID: String) -> Surface? {
+        for project in workspace.projects {
+            for tree in project.tabList.trees {
+                if let surface = tree.layout.surfaces.first(where: {
+                    SessionPersistence.shortID(for: $0.id) == shortID
+                }) {
+                    return surface
+                }
+            }
+        }
+        return nil
+    }
+
     /// Surfaces already given their post-reattach repaint nudge.
     private var nudgedSurfaces: Set<UUID> = []
 
@@ -861,21 +1000,22 @@ final class TerminalViewController: NSViewController {
 
     /// Close the active tab.  No-op if it is the only tab.  Key equivalent: ⇧⌘W.
     @objc func closeTab(_ sender: Any?) {
-        let tabList = workspace.activeTabList
-        tabList.closeTab(at: tabList.activeIndex)
-        refreshTabBar()
-        refreshSidebar()
-        rebuildSurfaceNodeView()
-        if let focused = focusedTerminalView() {
-            view.window?.makeFirstResponder(focused)
-        }
+        closeTab(atIndex: workspace.activeTabList.activeIndex)
     }
 
     /// Close the tab at an explicit index (called by the tab bar × button).
     /// No-op if it is the only tab.
     func closeTab(atIndex index: Int) {
         let tabList = workspace.activeTabList
+        guard tabList.trees.indices.contains(index) else { return }
+        let closingSurfaces = tabList.trees[index].layout.surfaces.map(\.id)
+        let countBefore = tabList.trees.count
         tabList.closeTab(at: index)
+        guard tabList.trees.count != countBefore else { return }   // only tab — no-op
+        // Registry pruning only reports panes that actually spawned; report the
+        // closed surfaces explicitly so never-spawned panes' zmx sessions are
+        // killed too (a duplicate kill of a live pair is harmless).
+        onSurfacesClosed?(closingSurfaces)
         refreshTabBar()
         refreshSidebar()
         rebuildSurfaceNodeView()

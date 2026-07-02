@@ -17,6 +17,9 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     private let editorPopup = NSPopUpButton()
     private var editorApps: [URL] = []
 
+    // Behavior section controls.
+    private let confirmQuitSwitch = NSSwitch()
+
     // Sessions section controls.
     private let preserveSwitch = NSSwitch()
     private let sessionStatusLabel = NSTextField(labelWithString: "")
@@ -134,6 +137,15 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
             row.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
         }
 
+        // Behavior section.
+        stack.addArrangedSubview(spacer())
+        stack.addArrangedSubview(sectionHeader("Behavior"))
+        confirmQuitSwitch.target = self
+        confirmQuitSwitch.action = #selector(confirmQuitToggled(_:))
+        let confirmRow = switchRow("Confirm before quitting", control: confirmQuitSwitch)
+        stack.addArrangedSubview(confirmRow)
+        confirmRow.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
+
         // Sessions section.
         stack.addArrangedSubview(spacer())
         stack.addArrangedSubview(sectionHeader("Sessions"))
@@ -190,6 +202,28 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         stack.addArrangedSubview(caption("Restart the agent after enabling for the hook to take effect."))
         refresh()
         return root
+    }
+
+    /// A justified label + switch row (same anatomy as the harness rows).
+    private func switchRow(_ title: String, control: NSSwitch) -> NSView {
+        let label = NSTextField(labelWithString: title)
+        label.font = QTheme.monoFont(size: 13, weight: .medium)
+        label.textColor = QTheme.current.fgColor
+        label.translatesAutoresizingMaskIntoConstraints = false
+        control.translatesAutoresizingMaskIntoConstraints = false
+
+        let row = NSView()
+        row.translatesAutoresizingMaskIntoConstraints = false
+        row.addSubview(label)
+        row.addSubview(control)
+        NSLayoutConstraint.activate([
+            row.heightAnchor.constraint(equalToConstant: 28),
+            label.leadingAnchor.constraint(equalTo: row.leadingAnchor),
+            label.centerYAnchor.constraint(equalTo: row.centerYAnchor),
+            control.trailingAnchor.constraint(equalTo: row.trailingAnchor),
+            control.centerYAnchor.constraint(equalTo: row.centerYAnchor),
+        ])
+        return row
     }
 
     /// A justified label + popup row (same anatomy as the switch rows).
@@ -345,6 +379,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     private func refreshSessions() {
         let config = ConfigStore(fileURL: configURL).load()
         preserveSwitch.state = config.preserveSessions ? .on : .off
+        confirmQuitSwitch.state = config.confirmQuit ? .on : .off
 
         // Which zmx binary backs the feature is an implementation detail; the
         // status line only appears when zmx is missing, to explain the toggle.
@@ -419,6 +454,15 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         let store = ConfigStore(fileURL: configURL)
         var config = store.load()
         config.preserveSessions = enabled
+        store.save(config)
+    }
+
+    // MARK: - Behavior
+
+    @objc private func confirmQuitToggled(_ sender: NSSwitch) {
+        let store = ConfigStore(fileURL: configURL)
+        var config = store.load()
+        config.confirmQuit = sender.state == .on
         store.save(config)
     }
 

@@ -88,6 +88,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // launch command is consulted when each pane spawns).
         applySessionPreservation(to: tvc)
         reapOrphanSessions(tvc)
+        startControlSocket()
 
         let window = QuerttyWindow(
             contentRect: NSRect(origin: .zero, size: defaultContentSize),
@@ -363,8 +364,76 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         setAppearanceMode(order[(index + 1) % order.count])
     }
 
+    /// Set by a CLI `quit` (explicit intent — no dialog on top of it).
+    private var skipQuitConfirmation = false
+
+    /// Quit confirmation (config `confirm-quit`, Settings toggle). The message
+    /// reflects what quitting actually does: preserved sessions keep running,
+    /// plain shells are terminated.
+    func applicationShouldTerminate(_: NSApplication) -> NSApplication.TerminateReply {
+        guard appConfig.confirmQuit, !skipQuitConfirmation else { return .terminateNow }
+        let alert = NSAlert()
+        alert.messageText = "Quit quertty?"
+        alert.informativeText = appConfig.preserveSessions
+            ? "Preserved sessions keep running and reattach on next launch."
+            : "Running processes in panes will be terminated."
+        alert.addButton(withTitle: "Quit")
+        alert.addButton(withTitle: "Cancel")
+        return alert.runModal() == .alertFirstButtonReturn ? .terminateNow : .terminateCancel
+    }
+
     func applicationWillTerminate(_: Notification) {
+        controlSocketServer?.stop()
         saveWorkspace()
+    }
+
+    // MARK: - Control socket (quertty CLI)
+
+    private var controlSocketServer: ControlSocketServer?
+
+    /// Hosts `~/.quertty/quertty.sock` for the `quertty` CLI: status snapshot,
+    /// input injection (`send`), and config reload.
+    private func startControlSocket() {
+        let server = ControlSocketServer { [weak self] request in
+            guard let self, let tvc = self.terminalViewController else {
+                return .error("quertty is still starting up")
+            }
+            switch request {
+            case .status:
+                return .status(tvc.statusSnapshot())
+            case .reload:
+                self.reloadConfiguration(nil)
+                return .ok
+            case .send(let target, let text, let enter, let keys):
+                if let message = tvc.sendInput(target: target, text: text, enter: enter, keys: keys) {
+                    return .error(message)
+                }
+                return .ok
+            case .newTab(let project):
+                switch tvc.openNewTab(inProject: project) {
+                case .success(let pane): return .pane(pane)
+                case .failure(let error): return .error(error.localizedDescription)
+                }
+            case .close(let target, let wholeTab):
+                if let message = tvc.closePane(target: target, wholeTab: wholeTab) {
+                    return .error(message)
+                }
+                return .ok
+            case .quit(let killSessions):
+                // Respond first, then terminate on the next runloop turn.
+                self.skipQuitConfirmation = true
+                DispatchQueue.main.async {
+                    if killSessions, let zmx = ZmxRunner.locate() {
+                        let sessions = ZmxRunner.listQuerttySessions(zmxPath: zmx)
+                        ZmxRunner.killAndWait(sessions: sessions, zmxPath: zmx)
+                    }
+                    NSApp.terminate(nil)
+                }
+                return .ok
+            }
+        }
+        server.start()
+        controlSocketServer = server
     }
 
     // MARK: - Persistence helpers

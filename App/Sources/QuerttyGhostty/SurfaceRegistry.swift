@@ -183,6 +183,16 @@ public final class SurfaceRegistry {
         pair(for: surface).view
     }
 
+    /// Injects raw UTF-8 into a surface's pty as synthetic input (control
+    /// socket / CLI `send`). Returns false when the surface has no live
+    /// terminal view yet (e.g. a background tab whose pane never spawned).
+    @discardableResult
+    public func sendText(_ text: String, to surface: Surface) -> Bool {
+        guard let view = pairs[surface.id]?.view as? AppTerminalView else { return false }
+        view.sendText(text)
+        return true
+    }
+
     /// Returns the live terminal title for a surface's focused pane, or `nil`
     /// if the surface has no entry yet, no state was created for it, or the
     /// terminal hasn't reported a title (the state's initial value is "", not

@@ -11,9 +11,15 @@ public enum SessionPersistence {
     /// Session names are `quertty-<first 8 uuid hex chars, lowercased>`.
     public static let namePrefix = "quertty-"
 
-    public static func sessionName(for surfaceID: UUID) -> String {
+    /// The 8-hex short id derived from a surface UUID — the session-name
+    /// suffix, and the pane id the `quertty` CLI addresses.
+    public static func shortID(for surfaceID: UUID) -> String {
         let hex = surfaceID.uuidString.replacingOccurrences(of: "-", with: "").lowercased()
-        return namePrefix + String(hex.prefix(8))
+        return String(hex.prefix(8))
+    }
+
+    public static func sessionName(for surfaceID: UUID) -> String {
+        namePrefix + shortID(for: surfaceID)
     }
 
     /// The ghostty `command` value that runs the pane inside its zmx session.
