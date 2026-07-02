@@ -19,15 +19,11 @@ final class HookInstaller {
 
     private let home = FileManager.default.homeDirectoryForCurrentUser
 
-    /// Deliberately still under `~/.quertty/` — that path is EMBEDDED in the
-    /// harness configs of every existing install, and `~/.quertty` is kept as
-    /// a symlink to `~/.zetty` by the startup migration, so old and new
-    /// installs resolve to the same script.
     var scriptURL: URL {
-        home.appendingPathComponent(".quertty/hooks/\(AgentHookScript.fileName)")
+        home.appendingPathComponent(".zetty/hooks/\(AgentHookScript.fileName)")
     }
     private var codexBackupURL: URL {
-        home.appendingPathComponent(".quertty/codex-notify-backup")
+        home.appendingPathComponent(".zetty/codex-notify-backup")
     }
 
     private func configURL(_ harness: Harness) -> URL {

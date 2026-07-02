@@ -10,17 +10,17 @@ import Foundation
 ///   quertty-hook.py codex <original-notify...>  # Codex: cwd from its JSON (last arg),
 ///                                               # then chains to the wrapped notify program
 public enum AgentHookScript {
-    public static let fileName = "quertty-hook.py"
+    public static let fileName = "zetty-hook.py"
 
     public static let contents = ##"""
     #!/usr/bin/env python3
     # Zetty agent hook — appends {cwd, agent, event} to the event sink.
-    # Only reports sessions hosted INSIDE Zetty (ZETTY=1; legacy QUERTTY=1 also
+    # Only reports sessions hosted INSIDE Zetty: Zetty sets ZETTY=1 in its
     # panes' environment, so hooks fired from other terminals stay silent.
     import sys, os, json
 
     SINK = os.path.expanduser("~/.zetty/agent-events.jsonl")
-    IN_ZETTY = bool(os.environ.get("ZETTY") or os.environ.get("QUERTTY"))
+    IN_ZETTY = bool(os.environ.get("ZETTY"))
 
     def emit(cwd, agent, event):
         if not IN_ZETTY:

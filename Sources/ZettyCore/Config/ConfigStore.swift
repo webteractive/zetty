@@ -3,9 +3,7 @@ import Foundation
 /// Reads (and, on first launch, seeds) Zetty's config file.
 ///
 /// Location, ghostty-style: `$XDG_CONFIG_HOME/zetty/config` when
-/// `XDG_CONFIG_HOME` is set, otherwise `~/.config/zetty/config`. A pre-rename
-/// `…/quertty/config` is migrated (moved) the first time the new path is
-/// resolved and doesn't exist yet.
+/// `XDG_CONFIG_HOME` is set, otherwise `~/.config/zetty/config`.
 public struct ConfigStore {
 
     public let fileURL: URL
@@ -27,17 +25,6 @@ public struct ConfigStore {
         self.fileURL = base
             .appendingPathComponent("zetty", isDirectory: true)
             .appendingPathComponent("config")
-
-        // One-time migration from the pre-rename location.
-        let legacyURL = base
-            .appendingPathComponent("quertty", isDirectory: true)
-            .appendingPathComponent("config")
-        let fm = FileManager.default
-        if !fm.fileExists(atPath: self.fileURL.path), fm.fileExists(atPath: legacyURL.path) {
-            try? fm.createDirectory(at: self.fileURL.deletingLastPathComponent(),
-                                    withIntermediateDirectories: true)
-            try? fm.moveItem(at: legacyURL, to: self.fileURL)
-        }
     }
 
     /// Loads the config. If the file is missing, writes the documented default

@@ -44,59 +44,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// Installs/removes agent hooks in each harness's config.
     private let hookInstaller = HookInstaller()
 
-    /// The persistent workspace store backed by `~/Library/Application Support/zetty/`
-    /// (moved from the legacy `quertty` folder on first launch after the rename).
+    /// The persistent workspace store backed by `~/Library/Application Support/zetty/`.
     private lazy var workspaceStore: WorkspaceStore = {
-        let fm = FileManager.default
-        let appSupport = fm.urls(
+        let appSupport = FileManager.default.urls(
             for: .applicationSupportDirectory, in: .userDomainMask
         ).first ?? URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent("Library/Application Support")
         let dir = appSupport.appendingPathComponent("zetty")
-        let legacy = appSupport.appendingPathComponent("quertty")
-        if !fm.fileExists(atPath: dir.path), fm.fileExists(atPath: legacy.path) {
-            try? fm.moveItem(at: legacy, to: dir)
-        }
-        try? fm.createDirectory(at: dir, withIntermediateDirectories: true)
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         return WorkspaceStore(directory: dir)
     }()
-
-    /// One-time move of the support dir `~/.quertty` → `~/.zetty`, leaving a
-    /// symlink at the old path: harness configs embed `~/.quertty/hooks/…` in
-    /// their hook commands, so the alias must keep resolving forever. Fresh
-    /// installs also get the symlink so old docs and configs keep working.
-    private func migrateSupportDirectory() {
-        let fm = FileManager.default
-        let home = URL(fileURLWithPath: NSHomeDirectory(), isDirectory: true)
-        let old = home.appendingPathComponent(".quertty")
-        let new = home.appendingPathComponent(".zetty")
-
-        let oldIsSymlink = (try? fm.destinationOfSymbolicLink(atPath: old.path)) != nil
-        var isDirectory: ObjCBool = false
-        let oldExists = fm.fileExists(atPath: old.path, isDirectory: &isDirectory)
-
-        if oldExists, isDirectory.boolValue, !oldIsSymlink, !fm.fileExists(atPath: new.path) {
-            try? fm.moveItem(at: old, to: new)
-        }
-        try? fm.createDirectory(at: new, withIntermediateDirectories: true)
-        if (try? fm.destinationOfSymbolicLink(atPath: old.path)) == nil,
-           !fm.fileExists(atPath: old.path) {
-            try? fm.createSymbolicLink(atPath: old.path, withDestinationPath: new.path)
-        }
-    }
 
     func applicationDidFinishLaunching(_: Notification) {
         // TerminalController internally calls ghostty_init(0, nil) exactly once
         // via its own initializeRuntimeIfNeeded() guard, so we do not call
         // Ghostty.initializeRuntime() here to avoid a double-init.
 
-        // Support-dir migration must precede anything touching ~/.zetty or the
-        // hook script (which lives behind the ~/.quertty compat symlink).
-        migrateSupportDirectory()
-
         // Mark Zetty-hosted shells so agent hooks only report sessions running
         // inside Zetty (must be set before any pane spawns its shell). Also
         // refresh the installed hook script so the guard reaches existing hooks.
-        setenv("QUERTTY", "1", 1)   // legacy marker — pre-rename hook scripts check it
         setenv("ZETTY", "1", 1)
         hookInstaller.refreshInstalledScriptIfPresent()
 
@@ -334,12 +299,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let zmxPath = ZmxRunner.locate()
 
         if appConfig.preserveSessions, let zmx = zmxPath {
-            // Sessions created before the Zetty rename keep their quertty-
-            // name (zmx can't rename); snapshot what's alive so those panes
-            // reattach instead of minting fresh sessions.
-            let existing = Set(ZmxRunner.listZettySessions(zmxPath: zmx))
             tvc.sessionCommandProvider = { id in
-                SessionPersistence.attachCommand(zmxPath: zmx, surfaceID: id, existingSessions: existing)
+                SessionPersistence.attachCommand(zmxPath: zmx, surfaceID: id)
             }
         } else {
             tvc.sessionCommandProvider = nil

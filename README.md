@@ -1,10 +1,10 @@
-# quertty
+# Zetty
 
 A GUI terminal **multiplexer** for developers, built on
 [libghostty](https://github.com/ghostty-org/ghostty) (Ghostty's embeddable terminal
 core) with a **Swift** application layer.
 
-quertty organizes work around **pinnable projects/directories**, each holding multiple
+Zetty organizes work around **pinnable projects/directories**, each holding multiple
 terminal **sessions** with **tabs and splits** — and it natively **detects AI coding
 agents** (Claude Code, Codex, opencode, Aider, Gemini, hermes) running in those sessions,
 surfacing their status (running / idle / needs-attention) in the sidebar.

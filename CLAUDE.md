@@ -5,9 +5,7 @@ contributor guide (layout, build/run, conventions) — the essentials are below.
 
 ## What this is
 
-**Zetty** (formerly quertty — renamed; internal module names `ZettyCore`/
-`ZettyGhostty` and the `~/.quertty` support dir still carry the old name
-until the repo-layer rename). Native macOS (Linux later) GUI **terminal multiplexer** on **full libghostty**
+**Zetty** (formerly quertty). Native macOS (Linux later) GUI **terminal multiplexer** on **full libghostty**
 (`libghostty-spm`) with a Swift AppKit layer. Projects → tabs → nested split panes.
 
 ## Build / run (Tuist-generated project)
@@ -59,7 +57,7 @@ be corrected before merge:
 
 ## Configuration
 
-quertty reads `~/.config/zetty/config` (or `$XDG_CONFIG_HOME/zetty/config`),
+Zetty reads `~/.config/zetty/config` (or `$XDG_CONFIG_HOME/zetty/config`),
 seeded with a documented default on first launch. Parsing is pure + unit-tested
 in `ZettyCore` (`AppConfig` / `ConfigStore`); `AppDelegate` resolves it.
 
@@ -89,9 +87,9 @@ in `ZettyCore` (`AppConfig` / `ConfigStore`); `AppDelegate` resolves it.
 
 Running agents show as sidebar status dots (green=running, yellow=needs-attention,
 dim=idle). Dots are **hook-driven**: **Settings (⌘,) → Agent
-Status Hooks** toggles a hook helper (`~/.quertty/hooks/quertty-hook.py`) into each harness
+Status Hooks** toggles a hook helper (`~/.zetty/hooks/zetty-hook.py`) into each harness
 (Claude `settings.json` · Codex chained `notify` · Hermes `config.yaml`), which
-appends `{cwd,agent,event}` to `~/.quertty/agent-events.jsonl`; quertty tails that
+appends `{cwd,agent,event}` to `~/.zetty/agent-events.jsonl`; Zetty tails that
 (replaying the log once at startup) and correlates to panes by `cwd`.
 
 **Tab names/logos are NOT hook-driven:** a zmx/ps probe resolves each preserved
@@ -104,8 +102,7 @@ relaunches. Engine is pure/tested in `ZettyCore`. Full details in
 ## Control CLI
 
 `zetty` (symlink installed via Settings → Command Line; the app binary
-doubles as the CLI) drives the app over `~/.quertty/quertty.sock` (legacy
-socket path until the repo-layer rename):
+doubles as the CLI) drives the app over `~/.zetty/zetty.sock`:
 `status [--json]` · `send` (text + tmux-style keys into any pane) ·
 `capture` (pane output) · `new-tab` / `split` (print the new pane id) ·
 `focus` · `close` · `reload` · `quit [--kill-sessions]`. Agent-friendly:

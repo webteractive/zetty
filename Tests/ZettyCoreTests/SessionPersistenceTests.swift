@@ -9,8 +9,6 @@ private let idB = UUID(uuidString: "11111111-2222-3333-4444-555555555555")!
     #expect(SessionPersistence.sessionName(for: idA) == "zetty-abcdef01")
     // Deterministic: same UUID → same name (relaunch reattaches).
     #expect(SessionPersistence.sessionName(for: idA) == SessionPersistence.sessionName(for: idA))
-    // Sessions created before the Zetty rename keep their old name.
-    #expect(SessionPersistence.legacySessionName(for: idA) == "quertty-abcdef01")
 }
 
 @Test func attachCommandUsesZmxPathAndName() {
@@ -21,34 +19,19 @@ private let idB = UUID(uuidString: "11111111-2222-3333-4444-555555555555")!
     #expect(cmd == "/usr/bin/env -u ZMX_SESSION /opt/homebrew/bin/zmx attach zetty-abcdef01")
 }
 
-@Test func attachCommandPrefersLegacySessionWhenItExists() {
-    // A pane whose pre-rename session is still alive reattaches to it
-    // instead of minting a fresh zetty- session (zmx cannot rename).
-    let cmd = SessionPersistence.attachCommand(
-        zmxPath: "/z", surfaceID: idA, existingSessions: ["quertty-abcdef01"]
-    )
-    #expect(cmd == "/usr/bin/env -u ZMX_SESSION /z attach quertty-abcdef01")
-    // The new-name session wins when both exist.
-    let cmd2 = SessionPersistence.attachCommand(
-        zmxPath: "/z", surfaceID: idA, existingSessions: ["quertty-abcdef01", "zetty-abcdef01"]
-    )
-    #expect(cmd2 == "/usr/bin/env -u ZMX_SESSION /z attach zetty-abcdef01")
-}
-
 @Test func listParsingKeepsOnlyZettySessions() {
-    // Both the new prefix and the pre-rename one are ours.
     let output = """
     zetty-abcdef01
     someone-elses-session
-    quertty-11111111
+    zetty-11111111
     """
-    #expect(SessionPersistence.zettySessions(fromList: output) == ["zetty-abcdef01", "quertty-11111111"])
+    #expect(SessionPersistence.zettySessions(fromList: output) == ["zetty-abcdef01", "zetty-11111111"])
 }
 
-@Test func orphanDiffingExcludesLiveSurfacesUnderBothPrefixes() {
-    let existing = ["zetty-abcdef01", "quertty-11111111", "quertty-deadbeef", "zetty-deadbeef"]
+@Test func orphanDiffingExcludesLiveSurfaces() {
+    let existing = ["zetty-abcdef01", "zetty-11111111", "zetty-deadbeef"]
     let orphans = SessionPersistence.orphans(existing: existing, liveSurfaceIDs: [idA, idB])
-    #expect(orphans == ["quertty-deadbeef", "zetty-deadbeef"])
+    #expect(orphans == ["zetty-deadbeef"])
 }
 
 @Test func configParsesConfirmQuit() {

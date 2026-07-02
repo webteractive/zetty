@@ -4,7 +4,7 @@ Guidance for AI agents and contributors working in this repo.
 
 ## What this is
 
-quertty is a native macOS (Linux later) GUI **terminal multiplexer** built on
+Zetty is a native macOS (Linux later) GUI **terminal multiplexer** built on
 **full libghostty** (via the prebuilt `libghostty-spm` package) with a Swift
 AppKit application layer. Work is organized around pinnable **projects**, each
 owning **tabs** and nested **split panes**. See [`README.md`](README.md) and the
@@ -65,7 +65,7 @@ status dots, accent top-bar on the active tab, etc.).
 
 ## Configuration
 
-quertty reads `~/.config/zetty/config` (or `$XDG_CONFIG_HOME/zetty/config`),
+Zetty reads `~/.config/zetty/config` (or `$XDG_CONFIG_HOME/zetty/config`),
 seeded with a documented default on first launch. Parsing is pure + unit-tested
 in `ZettyCore` (`AppConfig` / `ConfigStore`); `AppDelegate` resolves + applies it.
 
@@ -87,17 +87,17 @@ in `ZettyCore` (`AppConfig` / `ConfigStore`); `AppDelegate` resolves + applies i
   [zmx](https://zmx.sh) sessions (`zmx attach zetty-<uuid8>`, one per pane) so
   they survive app quit/relaunch; reattach replays terminal state. Quit
   survives, explicit close kills (via `registry.prune` → `zmx kill`); a
-  one-shot startup reap kills `zetty-*` sessions (and pre-rename `quertty-*` ones) no restored surface owns
+  one-shot startup reap kills `zetty-*` sessions no restored surface owns
   (crash leftovers), and Settings offers a manual kill too. The
   Settings (⌘,) toggle offers to download the zmx release binary from zmx.sh
-  into `~/.quertty/bin` when missing (Homebrew/manual installs are detected
+  into `~/.zetty/bin` when missing (Homebrew/manual installs are detected
   too); config-only enablement without zmx falls back to plain shells with a
   one-time alert. Pure logic in
   `ZettyCore` (`SessionPersistence`); process IO in `ZmxRunner`.
   Reattach gotchas handled in the app layer:
   - **`ZMX_SESSION` is stripped** from the attach command (`env -u`) and from
     every zmx subprocess: inherited from a zmx-backed terminal (Supacode, or
-    quertty itself), `zmx attach` would *kill* that session instead of
+    Zetty itself), `zmx attach` would *kill* that session instead of
     attaching the target.
   - **Repaint nudge** — zmx replays screen contents but a running TUI paints
     only deltas, so a reattached pane stays half-drawn; ~1s after a pane's
@@ -135,13 +135,12 @@ pwd basename → positional.
 
 ## Control CLI (`zetty`)
 
-The app hosts a Unix control socket (`~/.quertty/quertty.sock` — legacy path
-until the repo-layer rename; 0600,
+The app hosts a Unix control socket (`~/.zetty/zetty.sock`, 0600,
 line-JSON — `ControlWire` in `ZettyCore/CLI/`) and the `zetty` CLI drives
 it. **The app binary doubles as the CLI** when invoked with a recognized
 command (`main.swift` branches before AppKit starts); Settings (⌘,) →
 Command Line installs a symlink at `~/.local/bin/zetty`. A standalone
-executable also builds via `swift build` (`.build/debug/quertty`). All CLI
+executable also builds via `swift build` (`.build/debug/zetty`). All CLI
 logic is shared in `ControlCLI` (ZettyCore, pure Foundation).
 
 Commands (see `zetty --help` for full grammar and agent notes):
@@ -164,7 +163,7 @@ the main thread (`ControlSocketServer` → `AppDelegate.startControlSocket` →
 
 ## AI agent detection
 
-quertty surfaces running AI agents as **status dots** in the sidebar (per-tab
+Zetty surfaces running AI agents as **status dots** in the sidebar (per-tab
 dots + a per-project roll-up on the diamond): **green = running, yellow =
 needs-attention, dim = idle**. The engine is pure/tested in `ZettyCore`
 (`AgentRegistry`, `AgentStateMachine`, `AgentDetector`, `AgentEvent`).
@@ -176,18 +175,18 @@ drops) so dots recover for agents already running inside preserved sessions.
 **Needs-attention notifications** (config-gated, Settings ⌘, → Agents):
 `notify-sound` plays a sound; `notify-badge` badges the Dock icon with the
 attention-pane count (auto-clears when the agent resumes); `notify-system`
-posts a macOS notification while quertty is in the background — clicking it
+posts a macOS notification while Zetty is in the background — clicking it
 focuses the pane. Fired on the *transition into* needsAttention; the startup
 replay never notifies (stale state).
 
 Detection is **hook-driven** — libghostty exposes no PTY fd / child PID, so
-harness hooks *ping* quertty:
+harness hooks *ping* Zetty:
 
 1. **Settings (⌘,) → Agent Status Hooks** — a toggle per harness installs a
-   shared hook helper (`~/.quertty/hooks/quertty-hook.py`) and registers it in the
+   shared hook helper (`~/.zetty/hooks/zetty-hook.py`) and registers it in the
    harness config (toggle off to uninstall).
 2. On a lifecycle event the harness runs the helper, which appends
-   `{cwd, agent, event}` to `~/.quertty/agent-events.jsonl`.
+   `{cwd, agent, event}` to `~/.zetty/agent-events.jsonl`.
 3. `AgentEventWatcher` tails that file; `TerminalViewController` correlates each
    event to panes **by working directory** and drives the dots.
 
