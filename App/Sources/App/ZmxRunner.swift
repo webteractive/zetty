@@ -48,7 +48,7 @@ enum ZmxRunner {
     /// One process-table snapshot for foreground resolution (nil on failure).
     /// Blocking — call off-main.
     static func psSnapshot() -> String? {
-        run("/bin/ps", ["-axo", "pid=,pgid=,stat=,tty=,comm="])
+        run("/bin/ps", ["-axo", "pid=,pgid=,stat=,tty=,command="])
     }
 
     /// Kills the given sessions in the background (fire-and-forget).

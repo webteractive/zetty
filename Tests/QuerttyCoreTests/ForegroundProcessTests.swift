@@ -29,6 +29,31 @@ private let psSample = """
     #expect(ForegroundProcess.command(forSessionPID: 44444, psOutput: psSample) == nil)
 }
 
+@Test func foregroundResolvesInterpreterScriptsToTheScriptName() {
+    // Python/node CLIs report the interpreter as the process; the tool
+    // identity is the script (hermes here), skipping any flags.
+    let sample = """
+    300 300 S+   ttys031  /Users/x/.hermes/venv/bin/python3 /Users/x/.hermes/venv/bin/hermes
+    400 400 Ss   ttys031  -zsh
+    500 500 S+   ttys032  /usr/local/bin/node --max-old-space-size=4096 /opt/tools/mytool
+    600 600 Ss   ttys032  -zsh
+    700 700 S+   ttys033  python3 -m hermes
+    800 800 Ss   ttys033  -zsh
+    """
+    #expect(ForegroundProcess.command(forSessionPID: 400, psOutput: sample) == "hermes")
+    #expect(ForegroundProcess.command(forSessionPID: 600, psOutput: sample) == "mytool")
+    #expect(ForegroundProcess.command(forSessionPID: 800, psOutput: sample) == "hermes")
+}
+
+@Test func foregroundBareInterpreterKeepsItsOwnName() {
+    // An interactive `python3` REPL has no script — it IS the tool.
+    let sample = """
+    100 100 S+   ttys034  /usr/bin/python3
+    200 200 Ss   ttys034  -zsh
+    """
+    #expect(ForegroundProcess.command(forSessionPID: 200, psOutput: sample) == "python3")
+}
+
 @Test func foregroundStripsPathsToBasenames() {
     let sample = """
     100 100 S+   ttys030  /opt/homebrew/bin/htop
