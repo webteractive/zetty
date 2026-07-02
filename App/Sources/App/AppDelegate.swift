@@ -430,6 +430,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     NSApp.terminate(nil)
                 }
                 return .ok
+            case .split(let target, let vertical):
+                switch tvc.splitPane(target: target, vertical: vertical) {
+                case .success(let pane): return .pane(pane)
+                case .failure(let error): return .error(error.localizedDescription)
+                }
+            case .focus(let target):
+                if let message = tvc.focusPane(target: target) {
+                    return .error(message)
+                }
+                return .ok
+            case .capture(let target, let lines):
+                switch tvc.capturePane(target: target, lines: lines) {
+                case .success(let text): return .text(text)
+                case .failure(let error): return .error(error.localizedDescription)
+                }
             }
         }
         server.start()

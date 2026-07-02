@@ -51,6 +51,12 @@ enum ZmxRunner {
         run("/bin/ps", ["-axo", "pid=,pgid=,stat=,tty=,command="])
     }
 
+    /// `zmx history <session>` — the session's retained scrollback as plain
+    /// text (nil when the session doesn't exist). Blocking.
+    static func history(session: String, zmxPath: String) -> String? {
+        run(zmxPath, ["history", session])
+    }
+
     /// Kills the given sessions in the background (fire-and-forget).
     static func kill(sessions: [String], zmxPath: String) {
         guard !sessions.isEmpty else { return }

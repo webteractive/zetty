@@ -133,6 +133,34 @@ pwd basename → positional.
   delete the xcodeproj* (a later build then silently reuses a stale app). Run
   `mise exec -- tuist clean` first, then generate.
 
+## Control CLI (`quertty`)
+
+The app hosts a Unix control socket (`~/.quertty/quertty.sock`, 0600,
+line-JSON — `ControlWire` in `QuerttyCore/CLI/`) and the `quertty` CLI drives
+it. **The app binary doubles as the CLI** when invoked with a recognized
+command (`main.swift` branches before AppKit starts); Settings (⌘,) →
+Command Line installs a symlink at `~/.local/bin/quertty`. A standalone
+executable also builds via `swift build` (`.build/debug/quertty`). All CLI
+logic is shared in `ControlCLI` (QuerttyCore, pure Foundation).
+
+Commands (see `quertty --help` for full grammar and agent notes):
+- `status [--json]` — projects → tabs → panes: 8-hex pane ids, emitted
+  titles, cwd, probed tool, agent status, focused pane.
+- `send [--pane <id> | --cwd <path>] [--key <name>]… [--enter] [text…]` —
+  inject text/keys into a pane's pty (tmux-style key names incl. C-a…C-z).
+- `capture [--pane|--cwd] [--lines <n>]` — a pane's recent output via its
+  preserved zmx session (`zmx history`).
+- `new-tab [--project <name>]` / `split [--pane|--cwd] [--horizontal]` —
+  both print the new pane's bare id for command substitution.
+- `focus (--pane|--cwd)` · `close (--pane|--cwd) [--tab]` · `reload` ·
+  `quit [--kill-sessions]` (no dialog; the flag kills every preserved
+  session first — full shutdown).
+
+Errors go to stderr with exit 0/1/2; pane targets resolve by unique id
+prefix, unique cwd, or default to the focused pane. Server handlers run on
+the main thread (`ControlSocketServer` → `AppDelegate.startControlSocket` →
+`TerminalViewController` snapshot/send/split/close/capture).
+
 ## AI agent detection
 
 quertty surfaces running AI agents as **status dots** in the sidebar (per-tab

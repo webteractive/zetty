@@ -99,6 +99,16 @@ title the CLI emits; last emitted titles persist in `workspace.json` across
 relaunches. Engine is pure/tested in `QuerttyCore`. Full details in
 [`AGENTS.md`](AGENTS.md).
 
+## Control CLI
+
+`quertty` (symlink installed via Settings → Command Line; the app binary
+doubles as the CLI) drives the app over `~/.quertty/quertty.sock`:
+`status [--json]` · `send` (text + tmux-style keys into any pane) ·
+`capture` (pane output) · `new-tab` / `split` (print the new pane id) ·
+`focus` · `close` · `reload` · `quit [--kill-sessions]`. Agent-friendly:
+machine-readable output, stderr errors, exit 0/1/2. Protocol + CLI logic
+pure in `QuerttyCore/CLI/`; details in [`AGENTS.md`](AGENTS.md).
+
 ## Guardrails
 
 - Keep `QuerttyCore` pure (no AppKit). Don't commit debug `NSLog`/`print`.

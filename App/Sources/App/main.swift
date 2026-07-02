@@ -1,4 +1,13 @@
 import AppKit
+import QuerttyCore
+
+// CLI mode: the app binary doubles as the `quertty` CLI when invoked with a
+// recognized command (Settings installs a symlink into ~/.local/bin). Finder
+// launches pass no such arguments, so the GUI path is unaffected.
+let cliArguments = Array(CommandLine.arguments.dropFirst())
+if ControlCLI.recognizes(cliArguments) {
+    exit(ControlCLI.run(cliArguments))
+}
 
 // Programmatic AppKit entry point. We deliberately avoid `@main` /
 // NSApplicationMain (see AppDelegate) because Tuist's default Info.plist

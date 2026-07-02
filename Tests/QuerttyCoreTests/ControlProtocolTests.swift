@@ -20,6 +20,19 @@ import Foundation
             == .close(target: .pane("ab12"), wholeTab: true))
     #expect(try ControlWire.decodeRequest(ControlWire.encodeLine(ControlRequest.quit(killSessions: false))) == .quit(killSessions: false))
     #expect(try ControlWire.decodeRequest(ControlWire.encodeLine(ControlRequest.quit(killSessions: true))) == .quit(killSessions: true))
+    #expect(try ControlWire.decodeRequest(ControlWire.encodeLine(ControlRequest.split(target: .focused, vertical: true)))
+            == .split(target: .focused, vertical: true))
+    #expect(try ControlWire.decodeRequest(ControlWire.encodeLine(ControlRequest.focus(target: .pane("ab12"))))
+            == .focus(target: .pane("ab12")))
+    #expect(try ControlWire.decodeRequest(ControlWire.encodeLine(ControlRequest.capture(target: .cwd("/x"), lines: 40)))
+            == .capture(target: .cwd("/x"), lines: 40))
+    #expect(try ControlWire.decodeRequest(ControlWire.encodeLine(ControlRequest.capture(target: .focused, lines: nil)))
+            == .capture(target: .focused, lines: nil))
+}
+
+@Test func controlResponseCarriesText() throws {
+    let response = try ControlWire.decodeResponse(ControlWire.encodeLine(ControlResponse.text("line1\nline2")))
+    #expect(response == .text("line1\nline2"))
 }
 
 @Test func controlResponseCarriesPaneID() throws {

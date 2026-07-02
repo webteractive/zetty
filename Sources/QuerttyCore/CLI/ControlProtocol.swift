@@ -22,11 +22,19 @@ public enum ControlRequest: Equatable, Sendable {
     /// confirmation). With `killSessions`, every preserved zmx session is
     /// killed first: a full shutdown, nothing survives to reattach.
     case quit(killSessions: Bool)
+    /// Split the targeted pane (vertical = side by side); the response is
+    /// `.pane` with the new pane's short id.
+    case split(target: PaneSelector, vertical: Bool)
+    /// Focus the targeted pane (selecting its project/tab).
+    case focus(target: PaneSelector)
+    /// The targeted pane's recent output (`lines` from the end; nil → all
+    /// retained scrollback). Requires the pane's preserved zmx session.
+    case capture(target: PaneSelector, lines: Int?)
 }
 
 extension ControlRequest: Codable {
     private enum CodingKeys: String, CodingKey {
-        case command, target, text, enter, keys, project, wholeTab, killSessions
+        case command, target, text, enter, keys, project, wholeTab, killSessions, vertical, lines
     }
 
     public init(from decoder: Decoder) throws {
@@ -50,6 +58,18 @@ extension ControlRequest: Codable {
             )
         case "quit":
             self = .quit(killSessions: try container.decodeIfPresent(Bool.self, forKey: .killSessions) ?? false)
+        case "split":
+            self = .split(
+                target: try container.decodeIfPresent(PaneSelector.self, forKey: .target) ?? .focused,
+                vertical: try container.decodeIfPresent(Bool.self, forKey: .vertical) ?? true
+            )
+        case "focus":
+            self = .focus(target: try container.decode(PaneSelector.self, forKey: .target))
+        case "capture":
+            self = .capture(
+                target: try container.decodeIfPresent(PaneSelector.self, forKey: .target) ?? .focused,
+                lines: try container.decodeIfPresent(Int.self, forKey: .lines)
+            )
         case let other:
             throw ControlError.protocolError("unknown command \"\(other)\"")
         }
@@ -78,6 +98,17 @@ extension ControlRequest: Codable {
         case .quit(let killSessions):
             try container.encode("quit", forKey: .command)
             try container.encode(killSessions, forKey: .killSessions)
+        case .split(let target, let vertical):
+            try container.encode("split", forKey: .command)
+            try container.encode(target, forKey: .target)
+            try container.encode(vertical, forKey: .vertical)
+        case .focus(let target):
+            try container.encode("focus", forKey: .command)
+            try container.encode(target, forKey: .target)
+        case .capture(let target, let lines):
+            try container.encode("capture", forKey: .command)
+            try container.encode(target, forKey: .target)
+            try container.encodeIfPresent(lines, forKey: .lines)
         }
     }
 }
@@ -87,14 +118,16 @@ extension ControlRequest: Codable {
 public enum ControlResponse: Equatable, Sendable {
     case ok
     case status(StatusSnapshot)
-    /// A pane short id (e.g. the pane created by `new-tab`).
+    /// A pane short id (e.g. the pane created by `new-tab` or `split`).
     case pane(String)
+    /// Captured pane output.
+    case text(String)
     case error(String)
 }
 
 extension ControlResponse: Codable {
     private enum CodingKeys: String, CodingKey {
-        case ok, status, pane, error
+        case ok, status, pane, text, error
     }
 
     public init(from decoder: Decoder) throws {
@@ -105,6 +138,8 @@ extension ControlResponse: Codable {
             self = .status(snapshot)
         } else if let pane = try container.decodeIfPresent(String.self, forKey: .pane) {
             self = .pane(pane)
+        } else if let text = try container.decodeIfPresent(String.self, forKey: .text) {
+            self = .text(text)
         } else {
             self = .ok
         }
@@ -121,6 +156,9 @@ extension ControlResponse: Codable {
         case .pane(let id):
             try container.encode(true, forKey: .ok)
             try container.encode(id, forKey: .pane)
+        case .text(let text):
+            try container.encode(true, forKey: .ok)
+            try container.encode(text, forKey: .text)
         case .error(let message):
             try container.encode(false, forKey: .ok)
             try container.encode(message, forKey: .error)

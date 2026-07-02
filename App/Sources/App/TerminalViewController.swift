@@ -766,6 +766,81 @@ final class TerminalViewController: NSViewController {
         }
     }
 
+    /// Splits the targeted pane (CLI `split`) and returns the new pane's id.
+    func splitPane(target: PaneSelector, vertical: Bool) -> Result<String, ControlError> {
+        do {
+            let pane = try target.resolve(in: statusSnapshot().panes)
+            guard let location = locate(shortID: pane.id) else {
+                return .failure(.noSuchPane("pane \(pane.id) not found"))
+            }
+            focusPane(at: location)
+            if vertical { splitVertical(nil) } else { splitHorizontal(nil) }
+            guard let focused = paneTree.focusedSurfaceID, focused != location.surfaceID else {
+                return .failure(.noSuchPane("split failed"))
+            }
+            onWorkspaceDidChange?()
+            return .success(SessionPersistence.shortID(for: focused))
+        } catch {
+            return .failure(.noSuchPane(error.localizedDescription))
+        }
+    }
+
+    /// Focuses the targeted pane (CLI `focus`), selecting its project and tab.
+    /// Returns an error message, or nil on success.
+    func focusPane(target: PaneSelector) -> String? {
+        do {
+            let pane = try target.resolve(in: statusSnapshot().panes)
+            guard let location = locate(shortID: pane.id) else { return "pane \(pane.id) not found" }
+            focusPane(at: location)
+            return nil
+        } catch {
+            return error.localizedDescription
+        }
+    }
+
+    /// The targeted pane's recent output via its preserved zmx session
+    /// (CLI `capture`); `lines` trims to the tail.
+    func capturePane(target: PaneSelector, lines: Int?) -> Result<String, ControlError> {
+        do {
+            let pane = try target.resolve(in: statusSnapshot().panes)
+            guard let surface = surface(withShortID: pane.id) else {
+                return .failure(.noSuchPane("pane \(pane.id) not found"))
+            }
+            guard let zmx = ZmxRunner.locate() else {
+                return .failure(.noSuchPane("zmx is not installed"))
+            }
+            let session = SessionPersistence.sessionName(for: surface.id)
+            guard let history = ZmxRunner.history(session: session, zmxPath: zmx) else {
+                return .failure(.noSuchPane(
+                    "no captured output — pane \(pane.id) has no preserved session (preserve-sessions off?)"
+                ))
+            }
+            let allLines = history.split(separator: "\n", omittingEmptySubsequences: false)
+            let tail = lines.map { Array(allLines.suffix(max(0, $0))) } ?? Array(allLines)
+            return .success(tail.joined(separator: "\n"))
+        } catch {
+            return .failure(.noSuchPane(error.localizedDescription))
+        }
+    }
+
+    /// Makes the pane at `location` the focused pane of the visible tab.
+    private func focusPane(at location: (projectIndex: Int, tabIndex: Int, surfaceID: UUID)) {
+        if location.projectIndex != workspace.activeIndex {
+            selectProject(at: location.projectIndex)
+        }
+        let tabList = workspace.activeTabList
+        if tabList.activeIndex != location.tabIndex {
+            tabList.select(index: location.tabIndex)
+        }
+        paneTree.focus(location.surfaceID)
+        refreshTabBar()
+        refreshSidebar()
+        rebuildSurfaceNodeView()
+        if let focusedView = focusedTerminalView() {
+            view.window?.makeFirstResponder(focusedView)
+        }
+    }
+
     private func locate(shortID: String) -> (projectIndex: Int, tabIndex: Int, surfaceID: UUID)? {
         for pIdx in workspace.projects.indices {
             let trees = workspace.projects[pIdx].tabList.trees

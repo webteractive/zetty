@@ -20,6 +20,10 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     // Behavior section controls.
     private let confirmQuitSwitch = NSSwitch()
 
+    // Command Line section controls.
+    private let cliStatusLabel = NSTextField(labelWithString: "")
+    private let cliInstallButton = NSButton(title: "Install CLI", target: nil, action: nil)
+
     // Sessions section controls.
     private let preserveSwitch = NSSwitch()
     private let sessionStatusLabel = NSTextField(labelWithString: "")
@@ -41,7 +45,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         self.installer = installer
         self.liveSurfaceIDs = liveSurfaceIDs
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 460, height: 560),
+            contentRect: NSRect(x: 0, y: 0, width: 460, height: 680),
             styleMask: [.titled, .closable],
             backing: .buffered,
             defer: false
@@ -67,6 +71,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         }
         if editorPopup.numberOfItems > 0 { populateEditorPopup() }
         refreshAppearance()
+        refreshCLI()
         refreshSessions()
     }
 
@@ -145,6 +150,22 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         let confirmRow = switchRow("Confirm before quitting", control: confirmQuitSwitch)
         stack.addArrangedSubview(confirmRow)
         confirmRow.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
+
+        // Command Line section.
+        stack.addArrangedSubview(spacer())
+        stack.addArrangedSubview(sectionHeader("Command Line"))
+        stack.addArrangedSubview(caption(
+            "The quertty CLI drives the app from any terminal or agent: status, "
+            + "send keys, open/close/split tabs, capture pane output. "
+            + "Installs a symlink at ~/.local/bin/quertty."
+        ))
+        cliStatusLabel.font = QTheme.monoFont(size: 11)
+        cliStatusLabel.textColor = QTheme.current.fg3Color
+        stack.addArrangedSubview(cliStatusLabel)
+        cliInstallButton.bezelStyle = .rounded
+        cliInstallButton.target = self
+        cliInstallButton.action = #selector(installCLI(_:))
+        stack.addArrangedSubview(cliInstallButton)
 
         // Sessions section.
         stack.addArrangedSubview(spacer())
@@ -455,6 +476,39 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         var config = store.load()
         config.preserveSessions = enabled
         store.save(config)
+    }
+
+    // MARK: - Command Line
+
+    private static var cliLinkURL: URL {
+        URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent(".local/bin/quertty")
+    }
+
+    /// Syncs the CLI install state (symlink at ~/.local/bin/quertty → this
+    /// build's app binary, which runs in CLI mode when given a command).
+    private func refreshCLI() {
+        let link = Self.cliLinkURL
+        let destination = try? FileManager.default.destinationOfSymbolicLink(atPath: link.path)
+        if let destination, destination == Bundle.main.executablePath {
+            cliStatusLabel.stringValue = "installed: ~/.local/bin/quertty"
+            cliInstallButton.title = "Reinstall CLI"
+        } else if FileManager.default.fileExists(atPath: link.path) {
+            cliStatusLabel.stringValue = "~/.local/bin/quertty exists but points to another build"
+            cliInstallButton.title = "Reinstall CLI"
+        } else {
+            cliStatusLabel.stringValue = "not installed"
+            cliInstallButton.title = "Install CLI"
+        }
+    }
+
+    @objc private func installCLI(_ sender: Any?) {
+        guard let executable = Bundle.main.executablePath else { return }
+        let link = Self.cliLinkURL
+        let fm = FileManager.default
+        try? fm.createDirectory(at: link.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try? fm.removeItem(at: link)
+        try? fm.createSymbolicLink(atPath: link.path, withDestinationPath: executable)
+        refreshCLI()
     }
 
     // MARK: - Behavior
