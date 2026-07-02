@@ -411,6 +411,7 @@ extension SidebarView: NSOutlineViewDelegate {
             cellView.configure(
                 name: project.name,
                 isPinned: project.isPinned,
+                isActive: p == activeProject,
                 projectIndex: p,
                 target: self,
                 action: #selector(pinButtonClicked(_:))
@@ -430,7 +431,7 @@ extension SidebarView: NSOutlineViewDelegate {
                 cellView = TabCellView()
                 cellView.identifier = identifier
             }
-            cellView.configure(title: title)
+            cellView.configure(title: title, isActive: p == activeProject && t == activeTab)
             return cellView
         }
     }
@@ -549,6 +550,7 @@ private final class SidebarRowView: NSTableRowView {
 /// A single project row: name label on the left, pin toggle button on the right.
 private final class ProjectCellView: NSTableCellView {
 
+    private let glyphView = NSImageView()
     private let nameLabel: NSTextField
     private let pinButton: NSButton
 
@@ -557,6 +559,10 @@ private final class ProjectCellView: NSTableCellView {
         pinButton = NSButton(title: "", target: nil, action: nil)
 
         super.init(frame: frameRect)
+
+        glyphView.imageScaling = .scaleProportionallyDown
+        glyphView.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(glyphView)
 
         nameLabel.font = NSFont.systemFont(ofSize: 13, weight: .medium)
         nameLabel.textColor = QTheme.current.fgColor
@@ -571,7 +577,12 @@ private final class ProjectCellView: NSTableCellView {
         addSubview(pinButton)
 
         NSLayoutConstraint.activate([
-            nameLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 4),
+            glyphView.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 4),
+            glyphView.centerYAnchor.constraint(equalTo: centerYAnchor),
+            glyphView.widthAnchor.constraint(equalToConstant: 11),
+            glyphView.heightAnchor.constraint(equalToConstant: 11),
+
+            nameLabel.leadingAnchor.constraint(equalTo: glyphView.trailingAnchor, constant: 7),
             nameLabel.centerYAnchor.constraint(equalTo: centerYAnchor),
             nameLabel.trailingAnchor.constraint(equalTo: pinButton.leadingAnchor, constant: -4),
 
@@ -585,10 +596,15 @@ private final class ProjectCellView: NSTableCellView {
     @available(*, unavailable)
     required init?(coder _: NSCoder) { fatalError("not supported") }
 
-    func configure(name: String, isPinned: Bool, projectIndex: Int,
+    func configure(name: String, isPinned: Bool, isActive: Bool, projectIndex: Int,
                    target: AnyObject, action: Selector) {
         nameLabel.stringValue = name
-        nameLabel.textColor = QTheme.current.fgColor
+        nameLabel.textColor = isActive ? QTheme.current.fgColor : QTheme.current.fg2Color
+
+        // Diamond project glyph: filled accent when active, dim outline otherwise.
+        let glyph = isActive ? "diamond.fill" : "diamond"
+        glyphView.image = NSImage(systemSymbolName: glyph, accessibilityDescription: "Project")
+        glyphView.contentTintColor = isActive ? QTheme.current.accentColor : QTheme.current.fg3Color
 
         // Pinned rows use a filled accent star; unpinned rows show a dim hollow star.
         let symbolName = isPinned ? "star.fill" : "star"
@@ -613,12 +629,18 @@ private final class ProjectCellView: NSTableCellView {
 /// A single tab child row: indented title label only.
 private final class TabCellView: NSTableCellView {
 
+    private let dot = NSView()
     private let titleLabel: NSTextField
 
     override init(frame frameRect: NSRect) {
         titleLabel = NSTextField(labelWithString: "")
 
         super.init(frame: frameRect)
+
+        dot.wantsLayer = true
+        dot.layer?.cornerRadius = 3
+        dot.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(dot)
 
         titleLabel.font = QTheme.monoFont(size: 12)
         titleLabel.textColor = QTheme.current.fg2Color
@@ -627,7 +649,12 @@ private final class TabCellView: NSTableCellView {
         addSubview(titleLabel)
 
         NSLayoutConstraint.activate([
-            titleLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 4),
+            dot.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 4),
+            dot.centerYAnchor.constraint(equalTo: centerYAnchor),
+            dot.widthAnchor.constraint(equalToConstant: 6),
+            dot.heightAnchor.constraint(equalToConstant: 6),
+
+            titleLabel.leadingAnchor.constraint(equalTo: dot.trailingAnchor, constant: 8),
             titleLabel.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
             titleLabel.centerYAnchor.constraint(equalTo: centerYAnchor),
         ])
@@ -636,8 +663,24 @@ private final class TabCellView: NSTableCellView {
     @available(*, unavailable)
     required init?(coder _: NSCoder) { fatalError("not supported") }
 
-    func configure(title: String) {
+    func configure(title: String, isActive: Bool) {
         titleLabel.stringValue = title
-        titleLabel.textColor = QTheme.current.fg2Color
+        titleLabel.textColor = isActive ? QTheme.current.fgColor : QTheme.current.fg2Color
+
+        // Active tab: accent status dot that gently pulses; others: dim + static.
+        dot.layer?.backgroundColor = (isActive ? QTheme.current.accentColor : QTheme.current.fg3Color).cgColor
+        if isActive {
+            let pulse = CABasicAnimation(keyPath: "opacity")
+            pulse.fromValue = 0.55
+            pulse.toValue = 1.0
+            pulse.duration = 1.0
+            pulse.autoreverses = true
+            pulse.repeatCount = .infinity
+            pulse.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+            dot.layer?.add(pulse, forKey: "pulse")
+        } else {
+            dot.layer?.removeAnimation(forKey: "pulse")
+            dot.layer?.opacity = 1
+        }
     }
 }
