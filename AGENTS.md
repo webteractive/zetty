@@ -86,12 +86,52 @@ in `QuerttyCore` (`AppConfig` / `ConfigStore`); `AppDelegate` resolves + applies
 - **`preserve-sessions = true|false`** (default false) — panes run inside
   [zmx](https://zmx.sh) sessions (`zmx attach quertty-<uuid8>`, one per pane) so
   they survive app quit/relaunch; reattach replays terminal state. Quit
-  survives, explicit close kills (via `registry.prune` → `zmx kill`). The
+  survives, explicit close kills (via `registry.prune` → `zmx kill`); a
+  one-shot startup reap kills `quertty-*` sessions no restored surface owns
+  (crash leftovers), and Settings offers a manual kill too. The
   Settings (⌘,) toggle offers to download the zmx release binary from zmx.sh
   into `~/.quertty/bin` when missing (Homebrew/manual installs are detected
   too); config-only enablement without zmx falls back to plain shells with a
-  one-time alert. Settings also shows/kills orphaned `quertty-*` sessions. Pure logic in
+  one-time alert. Pure logic in
   `QuerttyCore` (`SessionPersistence`); process IO in `ZmxRunner`.
+  Reattach gotchas handled in the app layer:
+  - **`ZMX_SESSION` is stripped** from the attach command (`env -u`) and from
+    every zmx subprocess: inherited from a zmx-backed terminal (Supacode, or
+    quertty itself), `zmx attach` would *kill* that session instead of
+    attaching the target.
+  - **Repaint nudge** — zmx replays screen contents but a running TUI paints
+    only deltas, so a reattached pane stays half-drawn; ~1s after a pane's
+    surface appears it is shrunk ~20pt and restored (SIGWINCH → full repaint).
+  - **Title persistence** — zmx never replays the title escape sequence, so
+    each surface's last emitted title persists as `Surface.lastTitle` in
+    `workspace.json` and seeds the tab name until the program emits a fresh
+    one (`SurfaceRegistry.title` returns nil for the empty initial title so
+    the fallback engages).
+
+## Tab identity (logos + titles)
+
+Tab pills and sidebar tab rows show **what each pane is running**: a tool logo
+(when bundled) plus the title the CLI emits. Precedence (`TabTitle.display`):
+manual rename → agent identity (logo, or a `"claude code: <emitted>"` text
+prefix when no logo ships) → emitted title (bare shell names are ignored) →
+pwd basename → positional.
+
+- **Identity comes from a foreground-process probe**, not hooks: every 3s
+  (skipped while the app is inactive) one `zmx list` maps sessions→pids and one
+  `ps -axo pid,pgid,stat,tty,command` snapshot finds each session TTY's
+  foreground process-group leader (`ForegroundProcess`, pure/tested).
+  Interpreter-run CLIs resolve to the script (`python3 …/hermes` → `hermes`);
+  a bare interpreter REPL keeps its own name. Requires zmx sessions; without
+  them identity falls back to hook-detected agent kind.
+- **Logos** live in `App/Resources/AgentLogos/agent-<command>.svg` — monochrome
+  SVGs from simple-icons (CC0) / lobe-icons (MIT), loaded as template images
+  and tinted to match the row's text (`AgentIcons`). Agents also have glyph
+  fallbacks; unknown tools just show their emitted title. Add a tool by
+  dropping in `agent-<foreground-command>.svg`.
+- **Tuist gotcha:** after changing files under `App/Resources/`, `tuist
+  generate` can fail with a bogus `Manifest not found at …/AgentLogos` *and
+  delete the xcodeproj* (a later build then silently reuses a stale app). Run
+  `mise exec -- tuist clean` first, then generate.
 
 ## AI agent detection
 
@@ -99,6 +139,10 @@ quertty surfaces running AI agents as **status dots** in the sidebar (per-tab
 dots + a per-project roll-up on the diamond): **green = running, yellow =
 needs-attention, dim = idle**. The engine is pure/tested in `QuerttyCore`
 (`AgentRegistry`, `AgentStateMachine`, `AgentDetector`, `AgentEvent`).
+Hooks drive the **status dots only** — tab names/logos come from the
+foreground-process probe (see "Tab identity" above). At startup the existing
+event log replays once (`AgentEventReplay`: last event per cwd+agent, `ended`
+drops) so dots recover for agents already running inside preserved sessions.
 
 Detection is **hook-driven** — libghostty exposes no PTY fd / child PID, so
 harness hooks *ping* quertty:

@@ -19,6 +19,12 @@ xcodebuild -project quertty.xcodeproj -scheme quertty -destination 'platform=mac
 
 Tests: `mise exec -- tuist test`.
 
+**Gotcha:** after changing files under `App/Resources/`, generate can fail with
+a bogus `Manifest not found at …/AgentLogos` **and delete the xcodeproj** — a
+later `open` of DerivedData then silently runs a stale build. Run
+`mise exec -- tuist clean` first, and confirm generate/build actually succeeded
+before judging results.
+
 ## Design rules — read before any UI change
 
 The *visual* spec (tokens, schemes, typography, component anatomy) lives in
@@ -69,18 +75,29 @@ in `QuerttyCore` (`AppConfig` / `ConfigStore`); `AppDelegate` resolves it.
   + terminal overrides to every live pane; runtime scheme/appearance changes are
   persisted back to the file.
 - **`preserve-sessions`** (default false) — panes run inside zmx sessions that
-  survive quit/relaunch (quit survives, close kills). Settings toggle can
-  install zmx; details in [`AGENTS.md`](AGENTS.md).
+  survive quit/relaunch (quit survives, close kills, startup reaps crash
+  orphans). Attach strips `ZMX_SESSION` (inherited from a zmx-backed terminal
+  it makes `zmx attach` kill that session); reattached panes get a one-shot
+  resize nudge so TUIs repaint. Settings toggle can install zmx; details in
+  [`AGENTS.md`](AGENTS.md).
+- **Baked-in ghostty defaults** (user directives win): `shell-integration =
+  zsh`, `shell-integration-features = ssh-env,ssh-terminfo`.
 
-## AI agent detection
+## AI agent detection & tab identity
 
 Running agents show as sidebar status dots (green=running, yellow=needs-attention,
-dim=idle). It's **hook-driven** (libghostty exposes no PTY/pid): **Settings (⌘,) → Agent
+dim=idle). Dots are **hook-driven**: **Settings (⌘,) → Agent
 Status Hooks** toggles a hook helper (`~/.quertty/hooks/quertty-hook.py`) into each harness
 (Claude `settings.json` · Codex chained `notify` · Hermes `config.yaml`), which
 appends `{cwd,agent,event}` to `~/.quertty/agent-events.jsonl`; quertty tails that
-and correlates to panes by `cwd`. Engine is pure/tested in `QuerttyCore`. Full
-details in [`AGENTS.md`](AGENTS.md).
+(replaying the log once at startup) and correlates to panes by `cwd`.
+
+**Tab names/logos are NOT hook-driven:** a zmx/ps probe resolves each preserved
+pane's foreground process (interpreter-aware) and the tab shows its bundled
+logo (`App/Resources/AgentLogos/agent-<command>.svg`, template-tinted) plus the
+title the CLI emits; last emitted titles persist in `workspace.json` across
+relaunches. Engine is pure/tested in `QuerttyCore`. Full details in
+[`AGENTS.md`](AGENTS.md).
 
 ## Guardrails
 

@@ -201,6 +201,10 @@ final class TerminalViewController: NSViewController {
     }
 
     private func pollForegroundAgents() {
+        // Skip ticks while quertty is in the background — identities can't
+        // change visibly and the zmx/ps calls are pure overhead; the next
+        // tick after reactivation catches up.
+        guard NSApp.isActive else { return }
         guard let zmx = ZmxRunner.locate() else { return }
         let ids = allSurfaceIDs
         DispatchQueue.global(qos: .utility).async { [weak self] in

@@ -87,6 +87,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Session preservation must be threaded before the view loads (the
         // launch command is consulted when each pane spawns).
         applySessionPreservation(to: tvc)
+        reapOrphanSessions(tvc)
 
         let window = QuerttyWindow(
             contentRect: NSRect(origin: .zero, size: defaultContentSize),
@@ -298,6 +299,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
         } else {
             tvc.onSurfacesClosed = nil
+        }
+    }
+
+    /// One-shot startup reap: kills quertty zmx sessions that no restored
+    /// surface owns. Clean quits kill sessions on explicit close, so orphans
+    /// only appear after crashes or workspace-file loss; without this they
+    /// would accumulate silently (Settings also offers a manual kill).
+    private func reapOrphanSessions(_ tvc: TerminalViewController) {
+        guard let zmx = ZmxRunner.locate() else { return }
+        let liveIDs = tvc.allSurfaceIDs
+        DispatchQueue.global(qos: .utility).async {
+            let existing = ZmxRunner.listQuerttySessions(zmxPath: zmx)
+            let orphans = SessionPersistence.orphans(existing: existing, liveSurfaceIDs: liveIDs)
+            ZmxRunner.kill(sessions: orphans, zmxPath: zmx)
         }
     }
 
