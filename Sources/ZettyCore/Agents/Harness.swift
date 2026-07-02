@@ -1,6 +1,6 @@
 import Foundation
 
-/// A coding-agent harness whose lifecycle hooks quertty can install.
+/// A coding-agent harness whose lifecycle hooks Zetty can install.
 public enum Harness: String, CaseIterable, Sendable {
     case claude
     case codex
@@ -23,7 +23,7 @@ public enum Harness: String, CaseIterable, Sendable {
         }
     }
 
-    /// All three harnesses expose a config-file hook mechanism quertty can
+    /// All three harnesses expose a config-file hook mechanism Zetty can
     /// install into: Claude `settings.json` hooks, Codex `notify`, Hermes
     /// `config.yaml` hooks.
     public var supportsAutoInstall: Bool { true }

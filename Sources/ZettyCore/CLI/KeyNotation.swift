@@ -2,7 +2,7 @@ import Foundation
 
 /// tmux-style key names → the bytes to write to the pty.
 ///
-/// Used by `quertty send --key <name>`; unknown names return nil so the CLI
+/// Used by `Zetty send --key <name>`; unknown names return nil so the CLI
 /// can reject them up front instead of injecting garbage.
 public enum KeyNotation {
 

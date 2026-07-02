@@ -1,7 +1,7 @@
 import AppKit
 import ZettyCore
 
-// CLI mode: the app binary doubles as the `quertty` CLI when invoked with a
+// CLI mode: the app binary doubles as the `Zetty` CLI when invoked with a
 // recognized command (Settings installs a symlink into ~/.local/bin). Finder
 // launches pass no such arguments, so the GUI path is unaffected.
 let cliArguments = Array(CommandLine.arguments.dropFirst())

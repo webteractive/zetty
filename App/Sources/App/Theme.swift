@@ -3,8 +3,8 @@ import GhosttyTerminal
 
 // MARK: - Theme
 //
-// The single source of truth for quertty's visual design, translated from the
-// Claude Design handoff `quertty.dc.html`
+// The single source of truth for Zetty's visual design, translated from the
+// Claude Design handoff `Zetty.dc.html`
 // (project def4312f-4b6c-41d2-ae44-98d0d130c35b).
 //
 // RULES (see DESIGN.md):
@@ -51,7 +51,7 @@ enum QColorScheme: String, CaseIterable {
 /// so the same token feeds both the AppKit chrome and the libghostty terminal.
 struct QTheme {
 
-    // Design tokens (mirror the CSS custom properties in quertty.dc.html).
+    // Design tokens (mirror the CSS custom properties in Zetty.dc.html).
     let acc: String       // accent — focus / active / brand
     let bg0: String       // deepest surface — sidebar, tab bar, status bar
     let bg1: String       // base surface — window, main area, terminal, panes
@@ -146,7 +146,7 @@ struct QTheme {
         return TerminalTheme(light: config, dark: config)
     }
 
-    // MARK: Palettes (from quertty.dc.html `schemes`)
+    // MARK: Palettes (from Zetty.dc.html `schemes`)
 
     static func palette(for scheme: QColorScheme) -> QTheme {
         switch scheme {

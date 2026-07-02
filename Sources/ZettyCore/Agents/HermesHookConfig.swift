@@ -9,10 +9,10 @@ import Foundation
 /// the snippet for manual merge.
 public enum HermesHookConfig {
 
-    static let beginMarker = "# >>> quertty (managed) — do not edit >>>"
-    static let endMarker = "# <<< quertty (managed) <<<"
+    static let beginMarker = "# >>> Zetty (managed) — do not edit >>>"
+    static let endMarker = "# <<< Zetty (managed) <<<"
 
-    /// (Hermes hook event, quertty status) pairs.
+    /// (Hermes hook event, Zetty status) pairs.
     public static let events: [(event: String, status: String)] = [
         ("on_session_start", "running"),
         ("pre_llm_call", "running"),
@@ -23,7 +23,7 @@ public enum HermesHookConfig {
 
     public enum InstallResult: Equatable {
         case updated(String)
-        case conflict(snippet: String)   // a non-quertty `hooks:` already exists
+        case conflict(snippet: String)   // a non-Zetty `hooks:` already exists
     }
 
     public static func managedBlock(scriptPath: String) -> String {
@@ -49,7 +49,7 @@ public enum HermesHookConfig {
         return .updated(base + block + "\n")
     }
 
-    /// Removes quertty's managed block (no-op if absent).
+    /// Removes Zetty's managed block (no-op if absent).
     public static func uninstall(configText: String) -> String {
         removingManagedBlock(configText)
     }

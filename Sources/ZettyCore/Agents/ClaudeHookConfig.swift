@@ -7,7 +7,7 @@ import Foundation
 /// command referencing our script path. All other hooks are preserved.
 public enum ClaudeHookConfig {
 
-    /// (Claude hook event, quertty status) pairs.
+    /// (Claude hook event, Zetty status) pairs.
     public static let events: [(event: String, status: String)] = [
         ("UserPromptSubmit", "running"),
         ("Notification", "needsAttention"),
@@ -19,7 +19,7 @@ public enum ClaudeHookConfig {
         "\(scriptPath) emit claude \(status)"
     }
 
-    /// Adds quertty's hooks to a parsed `settings.json` dictionary (idempotent).
+    /// Adds Zetty's hooks to a parsed `settings.json` dictionary (idempotent).
     public static func install(into settings: [String: Any], scriptPath: String) -> [String: Any] {
         var settings = settings
         var hooks = settings["hooks"] as? [String: Any] ?? [:]
@@ -41,7 +41,7 @@ public enum ClaudeHookConfig {
         return settings
     }
 
-    /// Removes quertty's hooks (any command referencing `scriptPath`), dropping
+    /// Removes Zetty's hooks (any command referencing `scriptPath`), dropping
     /// emptied groups/events, and the `hooks` key if it becomes empty.
     public static func uninstall(from settings: [String: Any], scriptPath: String) -> [String: Any] {
         var settings = settings
@@ -64,7 +64,7 @@ public enum ClaudeHookConfig {
         return settings
     }
 
-    /// True if any of quertty's hook commands are present.
+    /// True if any of Zetty's hook commands are present.
     public static func isInstalled(in settings: [String: Any], scriptPath: String) -> Bool {
         guard let hooks = settings["hooks"] as? [String: Any] else { return false }
         return events.contains { event, _ in

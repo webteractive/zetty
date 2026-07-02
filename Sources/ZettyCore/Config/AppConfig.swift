@@ -2,7 +2,7 @@ import Foundation
 
 // MARK: - AppearanceMode
 
-/// How quertty chooses its color scheme.
+/// How Zetty chooses its color scheme.
 ///
 /// - `system`: follow the macOS appearance — use `themeDark` when the OS is
 ///   dark, `themeLight` when it is light, and switch live when the user toggles.
@@ -17,7 +17,7 @@ public enum AppearanceMode: String, Sendable, CaseIterable {
 // MARK: - GhosttyDirective
 
 /// A raw ghostty config directive to forward verbatim to libghostty, sourced
-/// from `ghostty.<key> = <value>` lines in quertty's config. Order is preserved
+/// from `ghostty.<key> = <value>` lines in Zetty's config. Order is preserved
 /// and duplicate keys are allowed (ghostty's `keybind`/`palette` repeat).
 public struct GhosttyDirective: Equatable, Sendable {
     public let key: String
@@ -54,7 +54,7 @@ public struct AppConfig: Equatable, Sendable {
     /// Dock badge showing the count of panes needing attention.
     public var notifyBadge: Bool
     /// macOS Notification Center alerts when an agent needs attention and
-    /// quertty is in the background.
+    /// Zetty is in the background.
     public var notifySystem: Bool
     /// Raw ghostty directives (from `ghostty.<key> = <value>` lines), forwarded
     /// to the terminal unchanged.
@@ -89,7 +89,7 @@ public struct AppConfig: Equatable, Sendable {
 
     // MARK: Parsing
 
-    /// Parses quertty config text (a superset of ghostty's format).
+    /// Parses Zetty config text (a superset of ghostty's format).
     ///
     /// Rules: one `key = value` per line; a line whose first non-space character
     /// is `#` is a full-line comment (inline `#` is NOT a comment, so `#`-prefixed
@@ -97,7 +97,7 @@ public struct AppConfig: Equatable, Sendable {
     /// values are trimmed.
     ///
     /// `appearance`, `theme-dark`, `theme-light`, `editor`, and
-    /// `preserve-sessions` are quertty's own keys. **Every other `key = value`
+    /// `preserve-sessions` are Zetty's own keys. **Every other `key = value`
     /// line is treated as a ghostty directive**
     /// and forwarded verbatim — so a user can paste their existing ghostty config
     /// straight in. Ghostty defines none of the reserved keys, so no collision.
@@ -148,7 +148,7 @@ public struct AppConfig: Equatable, Sendable {
     /// persists a runtime change, e.g. the scheme switcher).
     public func rendered() -> String {
         var out = """
-        # quertty configuration
+        # Zetty configuration
         # Plain text, one `key = value` per line. A line starting with # is a comment.
 
         # Appearance mode: system | dark | light
@@ -169,7 +169,7 @@ public struct AppConfig: Equatable, Sendable {
         confirm-quit = \(confirmQuit)
 
         # Agent needs-attention alerts: sound, Dock badge (attention-pane count),
-        # and macOS Notification Center (fires only while quertty is in background).
+        # and macOS Notification Center (fires only while Zetty is in background).
         notify-sound  = \(notifySound)
         notify-badge  = \(notifyBadge)
         notify-system = \(notifySystem)
@@ -197,7 +197,7 @@ public struct AppConfig: Equatable, Sendable {
 
     /// The documented starter config written on first launch.
     public static let defaultFileContents = """
-    # quertty configuration
+    # Zetty configuration
     # Plain text, one `key = value` per line. Text after # is a comment.
 
     # Appearance mode: system | dark | light
@@ -223,12 +223,12 @@ public struct AppConfig: Equatable, Sendable {
     confirm-quit = true
 
     # Agent needs-attention alerts: sound, Dock badge (attention-pane count),
-    # and macOS Notification Center (fires only while quertty is in background).
+    # and macOS Notification Center (fires only while Zetty is in background).
     notify-sound  = true
     notify-badge  = true
     notify-system = true
 
-    # Paste your ghostty config below — any non-quertty key is forwarded to the
+    # Paste your ghostty config below — any non-Zetty key is forwarded to the
     # terminal verbatim, so an existing ghostty config works as-is. For example:
     #   font-family = JetBrains Mono
     #   font-size = 14

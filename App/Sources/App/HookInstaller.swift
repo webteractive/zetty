@@ -1,7 +1,7 @@
 import Foundation
 import ZettyCore
 
-/// Installs/uninstalls quertty's agent hooks into each harness's config.
+/// Installs/uninstalls Zetty's agent hooks into each harness's config.
 ///
 /// Writes the shared Python hook helper, then applies the pure `*HookConfig`
 /// transforms to the harness config file. Only touches a config when the user
@@ -13,7 +13,7 @@ final class HookInstaller {
         case installed
         case uninstalled
         case alreadyInstalled
-        case conflict(snippet: String)   // Hermes: a non-quertty hooks: block exists
+        case conflict(snippet: String)   // Hermes: a non-Zetty hooks: block exists
         case failed(String)
     }
 

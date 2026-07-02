@@ -2,7 +2,7 @@ import AppKit
 import ZettyCore
 
 /// A small themed Settings window. Currently hosts the **Agent Status Hooks**
-/// section — a toggle per harness that installs/uninstalls quertty's status hook.
+/// section — a toggle per harness that installs/uninstalls Zetty's status hook.
 final class SettingsWindowController: NSWindowController, NSWindowDelegate {
 
     private let installer: HookInstaller
@@ -245,7 +245,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         stack.addArrangedSubview(sectionHeader("Notifications"))
         stack.addArrangedSubview(caption(
             "When an agent needs attention. The badge shows the attention-pane "
-            + "count; macOS notifications fire only while quertty is in the background."
+            + "count; macOS notifications fire only while Zetty is in the background."
         ))
         notifySoundSwitch.target = self
         notifySoundSwitch.action = #selector(notifySoundToggled(_:))
@@ -260,7 +260,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         stack.addArrangedSubview(spacer())
         stack.addArrangedSubview(sectionHeader("Status Hooks"))
         stack.addArrangedSubview(caption(
-            "Install a hook so the harness reports agent status to quertty. "
+            "Install a hook so the harness reports agent status to Zetty. "
             + "Status shows as sidebar dots — green running, yellow needs-attention, dim idle."
         ))
         for harness in Harness.allCases {
@@ -564,7 +564,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         try? fm.createDirectory(at: link.deletingLastPathComponent(), withIntermediateDirectories: true)
         try? fm.removeItem(at: link)
         try? fm.createSymbolicLink(atPath: link.path, withDestinationPath: executable)
-        // Clean up the pre-rename symlink so a stale `quertty` doesn't linger.
+        // Clean up the pre-rename symlink so a stale `Zetty` doesn't linger.
         let legacy = URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent(".local/bin/quertty")
         if (try? FileManager.default.destinationOfSymbolicLink(atPath: legacy.path)) != nil {
             try? FileManager.default.removeItem(at: legacy)

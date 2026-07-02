@@ -37,7 +37,7 @@ import Testing
 }
 
 @Test func configForwardsPastedGhosttyLines() {
-    // Reserved keys stay quertty's; everything else is forwarded verbatim.
+    // Reserved keys stay Zetty's; everything else is forwarded verbatim.
     let text = """
     appearance = dark
     theme-dark = Frost

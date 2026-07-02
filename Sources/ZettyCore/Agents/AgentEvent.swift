@@ -2,7 +2,7 @@ import Foundation
 
 /// A lifecycle event reported by an agent's harness hook (Claude Code, Codex, …).
 ///
-/// The hook forwards a small JSON object per line to quertty's event sink; each
+/// The hook forwards a small JSON object per line to Zetty's event sink; each
 /// line parses into one `AgentEvent`. Correlation back to a pane is by `cwd`
 /// (the harness passes its working directory; libghostty exposes no per-pane id).
 public struct AgentEvent: Equatable, Sendable {

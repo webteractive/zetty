@@ -209,7 +209,7 @@ final class TerminalViewController: NSViewController {
     }
 
     private func pollForegroundAgents() {
-        // Skip ticks while quertty is in the background — identities can't
+        // Skip ticks while Zetty is in the background — identities can't
         // change visibly and the zmx/ps calls are pure overhead; the next
         // tick after reactivation catches up.
         guard NSApp.isActive else { return }
@@ -743,9 +743,9 @@ final class TerminalViewController: NSViewController {
         return base + projectCommands + schemeCommands
     }
 
-    // MARK: - Control socket (quertty CLI)
+    // MARK: - Control socket (Zetty CLI)
 
-    /// Snapshot of the whole workspace for `quertty status` / target resolution.
+    /// Snapshot of the whole workspace for `Zetty status` / target resolution.
     func statusSnapshot() -> StatusSnapshot {
         let projects = workspace.projects.enumerated().map { pIdx, project -> StatusSnapshot.Project in
             let isActiveProject = pIdx == workspace.activeIndex

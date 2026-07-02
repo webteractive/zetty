@@ -3,7 +3,7 @@ import Foundation
 /// Pure install/uninstall transforms for Codex's single `notify` program in
 /// `~/.codex/config.toml`.
 ///
-/// Codex allows only one `notify` program, so quertty **chains**: it points
+/// Codex allows only one `notify` program, so Zetty **chains**: it points
 /// `notify` at our hook and appends the user's original notify array elements,
 /// which our hook execs after emitting the event. The original `notify` line is
 /// returned as a backup so uninstall can restore it verbatim.

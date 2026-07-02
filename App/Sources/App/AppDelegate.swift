@@ -31,7 +31,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// at save time and the workspace would never persist).
     private var terminalViewController: TerminalViewController?
 
-    /// User config (`~/.config/quertty/config`) and its store.
+    /// User config (`~/.config/zetty/config`) and its store.
     private let configStore = ConfigStore()
     private var appConfig = AppConfig()
 
@@ -45,7 +45,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let hookInstaller = HookInstaller()
 
     /// The persistent workspace store backed by `~/Library/Application Support/zetty/`
-    /// (moved from `…/quertty/` on first launch after the rename).
+    /// (moved from the legacy `quertty` folder on first launch after the rename).
     private lazy var workspaceStore: WorkspaceStore = {
         let fm = FileManager.default
         let appSupport = fm.urls(
@@ -284,7 +284,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc private func setAppearanceDark(_ sender: Any?) { setAppearanceMode(.dark) }
     @objc private func setAppearanceLight(_ sender: Any?) { setAppearanceMode(.light) }
 
-    /// Ghostty directives quertty ships as defaults. The user's own config
+    /// Ghostty directives Zetty ships as defaults. The user's own config
     /// directives are applied after these, so they win on conflict (ghostty
     /// last-wins semantics for scalar keys).
     private static let defaultGhosttyDirectives: [(key: String, value: String)] = [
@@ -292,8 +292,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         ("shell-integration-features", "ssh-env,ssh-terminfo"),
     ]
 
-    /// Builds the terminal config: quertty's default directives, then the
-    /// ghostty directives pasted into quertty's config.
+    /// Builds the terminal config: Zetty's default directives, then the
+    /// ghostty directives pasted into Zetty's config.
     private func makeTerminalConfiguration() -> TerminalConfiguration? {
         TerminalConfiguration { builder in
             for directive in Self.defaultGhosttyDirectives {
@@ -305,7 +305,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    /// Reloads all config from disk (⇧⌘,, like ghostty): re-reads quertty's
+    /// Reloads all config from disk (⇧⌘,, like ghostty): re-reads Zetty's
     /// config + the ghostty file, re-resolves appearance/scheme, and re-applies
     /// the theme + terminal overrides to every live pane — no relaunch needed.
     @objc func reloadConfiguration(_ sender: Any?) {
@@ -355,7 +355,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    /// One-shot startup reap: kills quertty zmx sessions that no restored
+    /// One-shot startup reap: kills Zetty zmx sessions that no restored
     /// surface owns. Clean quits kill sessions on explicit close, so orphans
     /// only appear after crashes or workspace-file loss; without this they
     /// would accumulate silently (Settings also offers a manual kill).
@@ -372,7 +372,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// One-time guidance when `preserve-sessions = true` was set by hand but
     /// zmx isn't installed (the Settings toggle drives an install instead).
     private func presentZmxMissingAlertOnce() {
-        let key = "quertty.zmxMissingAlertShown"
+        let key = "Zetty.zmxMissingAlertShown"
         guard !UserDefaults.standard.bool(forKey: key) else { return }
         UserDefaults.standard.set(true, forKey: key)
         DispatchQueue.main.async {
@@ -421,7 +421,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// An agent transitioned into needs-attention. Config-gated levels:
     /// attention sound, Dock badge (follows the attention count, applied in
     /// the count callback), and a macOS notification — posted only while
-    /// quertty is in the background (in front, the sound + yellow dots
+    /// Zetty is in the background (in front, the sound + yellow dots
     /// already tell the story).
     private func agentNeedsAttention(surface: Surface, kind: AgentKind, project: String) {
         if appConfig.notifySound {
@@ -467,7 +467,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         saveWorkspace()
     }
 
-    // MARK: - Control socket (quertty CLI)
+    // MARK: - Control socket (Zetty CLI)
 
     private var controlSocketServer: ControlSocketServer?
 
@@ -476,7 +476,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func startControlSocket() {
         let server = ControlSocketServer { [weak self] request in
             guard let self, let tvc = self.terminalViewController else {
-                return .error("quertty is still starting up")
+                return .error("Zetty is still starting up")
             }
             switch request {
             case .status:
@@ -600,7 +600,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// We bootstrap without a storyboard (see `main.swift`) so AppKit never
     /// loads a `Main.storyboard`; without an explicit menu, the app has no
     /// Quit item or standard shortcuts.  This method creates the minimal set of
-    /// menus quertty needs.
+    /// menus Zetty needs.
     private func buildMenuBar() {
         let mainMenu = NSMenu()
 
@@ -629,7 +629,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         appMenu.addItem(.separator())
         appMenu.addItem(
             NSMenuItem(
-                title: "Quit quertty",
+                title: "Quit Zetty",
                 action: #selector(NSApplication.terminate(_:)),
                 keyEquivalent: "q"
             )

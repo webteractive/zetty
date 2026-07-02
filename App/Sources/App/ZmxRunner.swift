@@ -138,7 +138,7 @@ enum ZmxRunner {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: path)
         process.arguments = args
-        // Never run zmx "inside" a session: an inherited ZMX_SESSION (quertty
+        // Never run zmx "inside" a session: an inherited ZMX_SESSION (Zetty
         // launched from a zmx-backed terminal) changes attach/kill semantics.
         var environment = ProcessInfo.processInfo.environment
         environment.removeValue(forKey: "ZMX_SESSION")

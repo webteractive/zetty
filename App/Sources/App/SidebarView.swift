@@ -687,7 +687,7 @@ private final class HeaderCellView: NSTableCellView {
 // MARK: - SidebarRowView
 
 /// Row view that renders selection using the theme (a `bg3` fill with an accent
-/// left-bar), replacing AppKit's system-accent highlight so it matches quertty's
+/// left-bar), replacing AppKit's system-accent highlight so it matches Zetty's
 /// accent regardless of the user's macOS accent color.
 private final class SidebarRowView: NSTableRowView {
 

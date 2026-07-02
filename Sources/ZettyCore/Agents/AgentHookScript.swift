@@ -14,7 +14,7 @@ public enum AgentHookScript {
 
     public static let contents = ##"""
     #!/usr/bin/env python3
-    # quertty agent hook — appends {cwd, agent, event} to the event sink.
+    # Zetty agent hook — appends {cwd, agent, event} to the event sink.
     # Only reports sessions hosted INSIDE Zetty (ZETTY=1; legacy QUERTTY=1 also
     # panes' environment, so hooks fired from other terminals stay silent.
     import sys, os, json

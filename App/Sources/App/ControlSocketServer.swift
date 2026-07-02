@@ -1,7 +1,7 @@
 import Foundation
 import ZettyCore
 
-/// The app end of the `quertty` CLI: a Unix-domain socket at
+/// The app end of the `Zetty` CLI: a Unix-domain socket at
 /// `~/.zetty/zetty.sock` speaking one JSON object per line
 /// (`ControlWire`), one request → one response per connection.
 ///

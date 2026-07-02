@@ -2,7 +2,7 @@ import Foundation
 
 /// The `zetty` CLI: argument parsing, socket round-trip, output.
 ///
-/// Lives in ZettyCore so both the standalone `quertty` executable and the
+/// Lives in ZettyCore so both the standalone `Zetty` executable and the
 /// app binary itself (invoked as `zetty <command>` via the installed
 /// symlink) share one implementation. Returns a process exit code:
 /// 0 success · 1 error (message on stderr) · 2 usage.
@@ -309,7 +309,7 @@ public enum ControlCLI {
     }
 
     private static func failure(_ message: String) -> Int32 {
-        FileHandle.standardError.write(Data("quertty: \(message)\n".utf8))
+        FileHandle.standardError.write(Data("Zetty: \(message)\n".utf8))
         return 1
     }
 

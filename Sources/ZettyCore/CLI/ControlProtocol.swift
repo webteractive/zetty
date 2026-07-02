@@ -1,6 +1,6 @@
 import Foundation
 
-/// Wire protocol between the `quertty` CLI and the app's control socket
+/// Wire protocol between the `Zetty` CLI and the app's control socket
 /// (`~/.quertty/quertty.sock`): one JSON object per line, one request →
 /// one response per connection. Pure and shared by both sides.
 
