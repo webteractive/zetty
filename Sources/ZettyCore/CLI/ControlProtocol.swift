@@ -15,6 +15,10 @@ public enum ControlRequest: Equatable, Sendable {
     /// Open a new tab in the named project (nil → the active project); the
     /// response is `.pane` with the new pane's short id.
     case newTab(project: String?)
+    /// Remove the named project (case-insensitive), closing all of its
+    /// tabs/panes and ending their zmx sessions (no confirmation dialog —
+    /// the CLI call IS the confirmation). The last project can't be removed.
+    case removeProject(name: String)
     /// Close the targeted pane (its tab when it's the last pane), or the
     /// whole tab containing it when `wholeTab` is set.
     case close(target: PaneSelector, wholeTab: Bool)
@@ -51,6 +55,8 @@ extension ControlRequest: Codable {
             )
         case "new-tab":
             self = .newTab(project: try container.decodeIfPresent(String.self, forKey: .project))
+        case "remove-project":
+            self = .removeProject(name: try container.decode(String.self, forKey: .project))
         case "close":
             self = .close(
                 target: try container.decode(PaneSelector.self, forKey: .target),
@@ -91,6 +97,9 @@ extension ControlRequest: Codable {
         case .newTab(let project):
             try container.encode("new-tab", forKey: .command)
             try container.encodeIfPresent(project, forKey: .project)
+        case .removeProject(let name):
+            try container.encode("remove-project", forKey: .command)
+            try container.encode(name, forKey: .project)
         case .close(let target, let wholeTab):
             try container.encode("close", forKey: .command)
             try container.encode(target, forKey: .target)

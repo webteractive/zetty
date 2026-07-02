@@ -82,6 +82,18 @@ final class TerminalViewController: NSViewController {
     /// Keep in sync with `Project.swift`'s package requirement.
     private static let libghosttyVersion = "1.2.7"
 
+    /// Build identity for the status bar: the short git commit stamped into
+    /// Info.plist by the "Stamp build commit" build phase ("*" suffix = built
+    /// from a dirty tree). Falls back to the marketing version, then "dev"
+    /// (e.g. running from a build that skipped the stamp phase).
+    private static let buildStamp: String = {
+        let info = Bundle.main.infoDictionary
+        if let commit = info?["ZettyBuildCommit"] as? String, !commit.isEmpty {
+            return commit
+        }
+        return (info?["CFBundleShortVersionString"] as? String) ?? "dev"
+    }()
+
     /// Background queue + debounce for `git` probes feeding the status bar.
     private let gitQueue = DispatchQueue(label: "dev.more.zetty.git", qos: .utility)
     private var gitProbeWork: DispatchWorkItem?
@@ -492,6 +504,7 @@ final class TerminalViewController: NSViewController {
             appearance: appearanceModeName?() ?? "System",
             scheme: QTheme.scheme.displayName,
             shell: shell,
+            zetty: "zetty \(Self.buildStamp)",
             ghostty: "libghostty \(Self.libghosttyVersion)"
         )
         scheduleGitProbe(for: cwd, surfaceID: paneTree.focusedSurfaceID)
@@ -823,6 +836,27 @@ final class TerminalViewController: NSViewController {
         }
         onWorkspaceDidChange?()
         return .success(SessionPersistence.shortID(for: surface.id))
+    }
+
+    /// Removes the named project (CLI `remove-project`, case-insensitive),
+    /// closing all of its tabs/panes and ending their zmx sessions. No
+    /// confirmation dialog — the CLI call IS the confirmation. Returns an
+    /// error message, or nil on success.
+    func removeProjectNamed(_ name: String) -> String? {
+        let matches = workspace.projects.enumerated().filter {
+            $0.element.name.lowercased() == name.lowercased()
+        }
+        guard let match = matches.first else {
+            return "no project named \"\(name)\""
+        }
+        guard matches.count == 1 else {
+            return "\(matches.count) projects named \"\(name)\" — remove it via the sidebar"
+        }
+        guard workspace.projects.count > 1 else {
+            return "cannot remove the only project"
+        }
+        performRemoveProject(at: match.offset)
+        return nil
     }
 
     /// Closes the targeted pane (CLI `close`): the pane collapses into its

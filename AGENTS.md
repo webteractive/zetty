@@ -152,6 +152,9 @@ Commands (see `zetty --help` for full grammar and agent notes):
   preserved zmx session (`zmx history`).
 - `new-tab [--project <name>]` / `split [--pane|--cwd] [--horizontal]` —
   both print the new pane's bare id for command substitution.
+- `remove-project <name>` — remove a project (case-insensitive), closing
+  its tabs/panes and ending their zmx sessions; no confirmation dialog,
+  and the last remaining project can't be removed.
 - `focus (--pane|--cwd)` · `close (--pane|--cwd) [--tab]` · `reload` ·
   `quit [--kill-sessions]` (no dialog; the flag kills every preserved
   session first — full shutdown).

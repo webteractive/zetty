@@ -466,6 +466,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 case .success(let pane): return .pane(pane)
                 case .failure(let error): return .error(error.localizedDescription)
                 }
+            case .removeProject(let name):
+                if let message = tvc.removeProjectNamed(name) {
+                    return .error(message)
+                }
+                return .ok
             case .close(let target, let wholeTab):
                 if let message = tvc.closePane(target: target, wholeTab: wholeTab) {
                     return .error(message)

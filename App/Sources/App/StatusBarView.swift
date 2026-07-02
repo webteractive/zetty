@@ -35,7 +35,7 @@ final class StatusBarView: NSView {
     // Center: working directory.
     private let cwdLabel = NSTextField(labelWithString: "")
 
-    // Right: "Open ▾" pill · appearance · scheme · shell · libghostty.
+    // Right: "Open ▾" pill · appearance · scheme · shell · zetty build · libghostty.
     private let editorPill = NSView()
     private let editorButton = NSButton()
     private let appearanceButton = NSButton()
@@ -45,6 +45,8 @@ final class StatusBarView: NSView {
     private let sep1 = NSTextField(labelWithString: "·")
     private let shellLabel = NSTextField(labelWithString: "")
     private let sep2 = NSTextField(labelWithString: "·")
+    private let zettyLabel = NSTextField(labelWithString: "")
+    private let sep3 = NSTextField(labelWithString: "·")
     private let ghosttyLabel = NSTextField(labelWithString: "")
     private let rightStack = NSStackView()
 
@@ -52,7 +54,7 @@ final class StatusBarView: NSView {
 
     private var plainLabels: [NSTextField] {
         [branchLabel, aheadLabel, behindLabel, changesLabel,
-         cwdLabel, sep0, sep1, shellLabel, sep2, ghosttyLabel]
+         cwdLabel, sep0, sep1, shellLabel, sep2, zettyLabel, sep3, ghosttyLabel]
     }
 
     override init(frame frameRect: NSRect) {
@@ -108,7 +110,7 @@ final class StatusBarView: NSView {
         ])
 
         configureStack(leftStack, views: [branchIcon, branchLabel, aheadLabel, behindLabel, changesLabel])
-        configureStack(rightStack, views: [editorPill, appearanceButton, sep0, schemeDot, schemeButton, sep1, shellLabel, sep2, ghosttyLabel])
+        configureStack(rightStack, views: [editorPill, appearanceButton, sep0, schemeDot, schemeButton, sep1, shellLabel, sep2, zettyLabel, sep3, ghosttyLabel])
         rightStack.setCustomSpacing(10, after: editorPill)
 
         addSubview(topBorder)
@@ -222,10 +224,12 @@ final class StatusBarView: NSView {
 
     // MARK: - Content
 
-    func update(cwd: String, appearance: String, scheme: String, shell: String, ghostty: String) {
+    func update(cwd: String, appearance: String, scheme: String, shell: String,
+                zetty: String, ghostty: String) {
         cwdLabel.stringValue = cwd
         appearanceMode = appearance
         shellLabel.stringValue = shell
+        zettyLabel.stringValue = zetty
         ghosttyLabel.stringValue = ghostty
         styleAppearanceButton()
         styleSchemeButton(scheme)
@@ -263,10 +267,12 @@ final class StatusBarView: NSView {
         behindLabel.textColor = theme.redColor
         changesLabel.textColor = theme.yellowColor
         shellLabel.textColor = theme.fg2Color
+        zettyLabel.textColor = theme.fg2Color
         ghosttyLabel.textColor = theme.fg2Color
         sep0.textColor = theme.fg3Color
         sep1.textColor = theme.fg3Color
         sep2.textColor = theme.fg3Color
+        sep3.textColor = theme.fg3Color
         editorPill.layer?.backgroundColor = theme.bg2Color.cgColor
         editorPill.layer?.borderColor = theme.borderColor.cgColor
         editorButton.contentTintColor = theme.fg2Color

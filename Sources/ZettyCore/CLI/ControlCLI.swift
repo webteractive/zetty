@@ -23,6 +23,9 @@ public enum ControlCLI {
                                               preserved zmx session)
       zetty new-tab [--project <name>]      open a tab (active project by default);
                                               prints the new pane's id on stdout
+      zetty remove-project <name>           remove a project (closes its tabs and
+                                              ends their sessions; no confirmation;
+                                              the last project can't be removed)
       zetty split [--pane <id> | --cwd <path>] [--horizontal]
                                               split a pane (vertical by default);
                                               prints the new pane's id on stdout
@@ -51,8 +54,9 @@ public enum ControlCLI {
     /// binary to decide CLI mode vs. launching the GUI).
     public static func recognizes(_ arguments: [String]) -> Bool {
         guard let first = arguments.first else { return false }
-        return ["status", "ls", "send", "capture", "new-tab", "split", "focus",
-                "close", "reload", "quit", "help", "--help", "-h"].contains(first)
+        return ["status", "ls", "send", "capture", "new-tab", "remove-project",
+                "split", "focus", "close", "reload", "quit",
+                "help", "--help", "-h"].contains(first)
     }
 
     public static func run(_ arguments: [String]) -> Int32 {
@@ -75,6 +79,8 @@ public enum ControlCLI {
             return runCapture(arguments)
         case "new-tab":
             return runNewTab(arguments)
+        case "remove-project":
+            return runRemoveProject(arguments)
         case "split":
             return runSplit(arguments)
         case "focus":
@@ -197,6 +203,19 @@ public enum ControlCLI {
             index += 1
         }
         return expectPane(.newTab(project: project))
+    }
+
+    private static func runRemoveProject(_ arguments: [String]) -> Int32 {
+        if arguments.contains("--help") || arguments.contains("-h") {
+            print(usage)
+            return 0
+        }
+        // Positional name — joined so unquoted multi-word names still work.
+        let name = arguments.joined(separator: " ").trimmingCharacters(in: .whitespaces)
+        guard !name.isEmpty else {
+            return failure("remove-project needs a project name")
+        }
+        return expectOK(.removeProject(name: name), success: nil)
     }
 
     private static func runSplit(_ arguments: [String]) -> Int32 {

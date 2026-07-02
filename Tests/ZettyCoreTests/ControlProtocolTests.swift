@@ -16,6 +16,7 @@ import Foundation
     #expect(try ControlWire.decodeRequest(ControlWire.encodeLine(ControlRequest.reload)) == .reload)
     #expect(try ControlWire.decodeRequest(ControlWire.encodeLine(ControlRequest.newTab(project: "glen"))) == .newTab(project: "glen"))
     #expect(try ControlWire.decodeRequest(ControlWire.encodeLine(ControlRequest.newTab(project: nil))) == .newTab(project: nil))
+    #expect(try ControlWire.decodeRequest(ControlWire.encodeLine(ControlRequest.removeProject(name: "zetty"))) == .removeProject(name: "zetty"))
     #expect(try ControlWire.decodeRequest(ControlWire.encodeLine(ControlRequest.close(target: .pane("ab12"), wholeTab: true)))
             == .close(target: .pane("ab12"), wholeTab: true))
     #expect(try ControlWire.decodeRequest(ControlWire.encodeLine(ControlRequest.quit(killSessions: false))) == .quit(killSessions: false))

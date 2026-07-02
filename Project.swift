@@ -6,6 +6,17 @@ let libghosttyPackage: Package = .remote(
     requirement: .upToNextMinor(from: "1.2.7")
 )
 
+// Stamps the built app's Info.plist with the short git commit ("*" suffix when
+// the working tree is dirty) so the status bar can show which build is running.
+// Runs as the last build phase — after plist processing, before codesigning.
+let stampBuildCommit = """
+PLIST="${TARGET_BUILD_DIR}/${INFOPLIST_PATH}"
+COMMIT=$(git -C "${SRCROOT}" rev-parse --short HEAD 2>/dev/null || echo unknown)
+if [ -n "$(git -C "${SRCROOT}" status --porcelain 2>/dev/null)" ]; then COMMIT="${COMMIT}*"; fi
+/usr/libexec/PlistBuddy -c "Set :ZettyBuildCommit ${COMMIT}" "${PLIST}" 2>/dev/null \\
+  || /usr/libexec/PlistBuddy -c "Add :ZettyBuildCommit string ${COMMIT}" "${PLIST}"
+"""
+
 let project = Project(
     name: "zetty",
     packages: [
@@ -29,9 +40,15 @@ let project = Project(
                 "CFBundleName": "Zetty",
                 "CFBundleDisplayName": "Zetty",
                 "CFBundleIconFile": "AppIcon",
+                "CFBundleShortVersionString": "0.1.0",
             ]),
             sources: ["App/Sources/App/**"],
             resources: ["App/Resources/**/*.svg", "App/Resources/*.icns"],
+            scripts: [
+                .post(script: stampBuildCommit,
+                      name: "Stamp build commit",
+                      basedOnDependencyAnalysis: false),
+            ],
             dependencies: [
                 // GhosttyKit (static) is linked transitively via ZettyGhostty;
                 // linking it here too triggers a static-double-link warning.
