@@ -9,6 +9,11 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     private var switches: [(harness: Harness, control: NSSwitch)] = []
     private let configURL = ConfigStore().fileURL
 
+    /// Detected text-capable apps backing the editor dropdown (parallel to its
+    /// items after the leading "System Default").
+    private let editorPopup = NSPopUpButton()
+    private var editorApps: [URL] = []
+
     init(installer: HookInstaller) {
         self.installer = installer
         let window = NSWindow(
@@ -30,11 +35,13 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("not supported") }
 
-    /// Refreshes toggle states from disk each time the window is shown.
+    /// Refreshes toggle states + the editor selection from disk each time the
+    /// window is shown.
     func refresh() {
         for (harness, control) in switches {
             control.state = installer.isInstalled(harness) ? .on : .off
         }
+        if editorPopup.numberOfItems > 0 { populateEditorPopup() }
     }
 
     // MARK: - Content
@@ -60,9 +67,19 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         // Configuration section.
         stack.addArrangedSubview(sectionHeader("Configuration"))
         stack.addArrangedSubview(caption(abbreviatedConfigPath()))
+
+        // Editor row: a dropdown of detected text editors + the open button.
+        editorPopup.target = self
+        editorPopup.action = #selector(editorPicked(_:))
+        editorPopup.translatesAutoresizingMaskIntoConstraints = false
         let openButton = NSButton(title: "Open in Editor", target: self, action: #selector(openConfig(_:)))
         openButton.bezelStyle = .rounded
-        stack.addArrangedSubview(openButton)
+        openButton.translatesAutoresizingMaskIntoConstraints = false
+        let editorRow = NSStackView(views: [editorPopup, openButton])
+        editorRow.orientation = .horizontal
+        editorRow.spacing = 8
+        stack.addArrangedSubview(editorRow)
+        populateEditorPopup()
 
         stack.addArrangedSubview(spacer())
         stack.addArrangedSubview(sectionHeader("Agent Status Hooks"))
@@ -138,16 +155,111 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         return path.hasPrefix(home) ? "~" + path.dropFirst(home.count) : path
     }
 
+    // MARK: - Editor picker
+
+    /// Curated roster of popular editors (bundle ids). The dropdown shows the
+    /// intersection of this list with what's installed — apps like browsers that
+    /// merely *register* for text files stay out. The `editor` config key remains
+    /// the escape hatch for anything not listed.
+    private static let knownEditors: [String] = [
+        "dev.zed.Zed",                       // Zed
+        "com.microsoft.VSCode",              // Visual Studio Code
+        "com.todesktop.230313mzl4w4u92",     // Cursor
+        "com.exafunction.windsurf",          // Windsurf
+        "com.sublimetext.4",                 // Sublime Text 4
+        "com.sublimetext.3",                 // Sublime Text 3
+        "com.barebones.bbedit",              // BBEdit
+        "com.macromates.TextMate",           // TextMate
+        "com.panic.Nova",                    // Nova
+        "com.jetbrains.fleet",               // Fleet
+        "com.apple.dt.Xcode",                // Xcode
+        "com.apple.TextEdit",                // TextEdit
+    ]
+
+    /// Fills the dropdown with the installed subset of `knownEditors` and
+    /// selects the config's current `editor` (appending it if it's something
+    /// off-roster, so a hand-set value still shows).
+    private func populateEditorPopup() {
+        var seen = Set<String>()
+        editorApps = Self.knownEditors
+            .compactMap { NSWorkspace.shared.urlForApplication(withBundleIdentifier: $0) }
+            .filter { seen.insert($0.deletingPathExtension().lastPathComponent.lowercased()).inserted }
+
+        let current = ConfigStore(fileURL: configURL).load().editor?
+            .trimmingCharacters(in: .whitespaces) ?? ""
+
+        // A hand-configured editor outside the roster still gets an entry.
+        if !current.isEmpty,
+           !editorApps.contains(where: { Self.matches($0, editor: current) }),
+           let url = Self.resolveEditor(current) {
+            editorApps.append(url)
+        }
+
+        editorPopup.removeAllItems()
+        editorPopup.addItem(withTitle: "System Default")
+        for url in editorApps {
+            editorPopup.addItem(withTitle: url.deletingPathExtension().lastPathComponent)
+        }
+
+        if !current.isEmpty,
+           let index = editorApps.firstIndex(where: { Self.matches($0, editor: current) }) {
+            editorPopup.selectItem(at: index + 1)
+        } else {
+            editorPopup.selectItem(at: 0)
+        }
+    }
+
+    /// True if the app at `url` is the one the `editor` value names.
+    private static func matches(_ url: URL, editor: String) -> Bool {
+        url.deletingPathExtension().lastPathComponent.caseInsensitiveCompare(editor) == .orderedSame
+            || Bundle(url: url)?.bundleIdentifier?.caseInsensitiveCompare(editor) == .orderedSame
+    }
+
+    /// Persists the picked editor to the config (`nil` for System Default).
+    @objc private func editorPicked(_ sender: NSPopUpButton) {
+        let store = ConfigStore(fileURL: configURL)
+        var config = store.load()
+        let index = sender.indexOfSelectedItem
+        config.editor = index <= 0 || index > editorApps.count
+            ? nil
+            : editorApps[index - 1].deletingPathExtension().lastPathComponent
+        store.save(config)
+    }
+
     // MARK: - Actions
 
-    /// Opens the config in Zed if installed, else the system default editor.
+    /// Opens the config in the app named by the config's `editor` key (app name
+    /// or bundle id); when unset/unresolvable, the system default app for the
+    /// file. Seeds the file first so there's something to open.
     @objc private func openConfig(_ sender: Any?) {
-        ConfigStore(fileURL: configURL).writeDefaultIfMissing()
-        if let zed = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "dev.zed.Zed") {
-            NSWorkspace.shared.open([configURL], withApplicationAt: zed, configuration: NSWorkspace.OpenConfiguration())
+        let store = ConfigStore(fileURL: configURL)
+        store.writeDefaultIfMissing()
+        if let editor = store.load().editor, let appURL = Self.resolveEditor(editor) {
+            NSWorkspace.shared.open([configURL], withApplicationAt: appURL,
+                                    configuration: NSWorkspace.OpenConfiguration())
         } else {
             NSWorkspace.shared.open(configURL)
         }
+    }
+
+    /// Resolves an `editor` value to an app URL: bundle id first, then an app
+    /// name looked up in the standard Applications folders.
+    private static func resolveEditor(_ editor: String) -> URL? {
+        let trimmed = editor.trimmingCharacters(in: .whitespaces)
+        guard !trimmed.isEmpty else { return nil }
+        if let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: trimmed) {
+            return url
+        }
+        let name = trimmed.hasSuffix(".app") ? trimmed : trimmed + ".app"
+        let candidates = [
+            "/Applications/\(name)",
+            "\(NSHomeDirectory())/Applications/\(name)",
+            "/System/Applications/\(name)",
+        ]
+        for path in candidates where FileManager.default.fileExists(atPath: path) {
+            return URL(fileURLWithPath: path)
+        }
+        return nil
     }
 
     @objc private func switchToggled(_ sender: NSSwitch) {
