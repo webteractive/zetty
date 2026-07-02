@@ -407,6 +407,10 @@ final class TerminalViewController: NSViewController {
             self?.presentAddProjectPanel()
         }
 
+        sidebar.onRemoveProject = { [weak self] index in
+            self?.confirmRemoveProject(at: index)
+        }
+
         self.sidebarView = sidebar
         self.contentContainer = container
     }
@@ -717,6 +721,7 @@ final class TerminalViewController: NSViewController {
             PaletteCommand(glyph: "←", label: "Previous Tab", kbd: "⌘{") { [weak self] in self?.selectPreviousTab(nil) },
             PaletteCommand(glyph: "★", label: "Pin / Unpin Current Project", kbd: "") { [weak self] in self?.togglePinActiveProject() },
             PaletteCommand(glyph: "＋", label: "Add Project…", kbd: "⌘O") { [weak self] in self?.addProject(nil) },
+            PaletteCommand(glyph: "−", label: "Remove Current Project…", kbd: "") { [weak self] in self?.removeProject(nil) },
             PaletteCommand(glyph: "⛶", label: "Toggle Sidebar", kbd: "⌘B") { [weak self] in self?.toggleSidebar(nil) },
             PaletteCommand(glyph: "◐", label: "Cycle Color Scheme", kbd: "⇧⌘T") { [weak self] in self?.onCycleScheme?() },
             PaletteCommand(glyph: "◑", label: "Cycle Appearance", kbd: "⇧⌘A") { [weak self] in self?.onCycleAppearance?() },
@@ -1222,6 +1227,64 @@ final class TerminalViewController: NSViewController {
         }
     }
 
+    // MARK: - Remove Project
+
+    /// Removes the active project after confirmation.  Menu: Project → Remove Project…
+    @objc func removeProject(_ sender: Any?) {
+        confirmRemoveProject(at: workspace.activeIndex)
+    }
+
+    /// Asks for confirmation, then removes the project at `index`, closing all
+    /// of its tabs/panes (which ends their zmx sessions).  The last remaining
+    /// project can't be removed.
+    private func confirmRemoveProject(at index: Int) {
+        guard workspace.projects.count > 1,
+              workspace.projects.indices.contains(index) else { return }
+        let project = workspace.projects[index]
+        let tabCount = project.tabList.trees.count
+
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = "Remove project “\(project.name)”?"
+        alert.informativeText = "This closes its \(tabCount) tab\(tabCount == 1 ? "" : "s")"
+            + " and ends their sessions. The directory on disk is not affected."
+        alert.addButton(withTitle: "Remove").hasDestructiveAction = true
+        alert.addButton(withTitle: "Cancel")
+
+        // Re-resolve by identity on confirm — indices can shift while the
+        // sheet is up (e.g. a CLI-driven workspace change).
+        let projectID = project.id
+        let confirm: (NSApplication.ModalResponse) -> Void = { [weak self] response in
+            guard response == .alertFirstButtonReturn, let self,
+                  let current = self.workspace.projects.firstIndex(where: { $0.id == projectID })
+            else { return }
+            self.performRemoveProject(at: current)
+        }
+        if let window = view.window {
+            alert.beginSheetModal(for: window, completionHandler: confirm)
+        } else {
+            confirm(alert.runModal())
+        }
+    }
+
+    private func performRemoveProject(at index: Int) {
+        let closingSurfaces = workspace.projects[index].tabList.trees
+            .flatMap { $0.layout.surfaces.map(\.id) }
+        let countBefore = workspace.projects.count
+        workspace.removeProject(at: index)
+        guard workspace.projects.count != countBefore else { return }   // last project — no-op
+        // Same reasoning as closeTab: report the closed surfaces explicitly so
+        // never-spawned panes' zmx sessions are killed too.
+        onSurfacesClosed?(closingSurfaces)
+        refreshTabBar()
+        refreshSidebar()
+        rebuildSurfaceNodeView()
+        onWorkspaceDidChange?()
+        if let focused = focusedTerminalView() {
+            view.window?.makeFirstResponder(focused)
+        }
+    }
+
     // MARK: - Tab actions (responder-chain targets)
 
     /// Open a new tab and focus its single fresh pane.  Key equivalent: ⌘T.
@@ -1442,5 +1505,16 @@ final class TerminalViewController: NSViewController {
         // The active tab's name follows its focused pane's title.
         refreshTabBar()
         refreshSidebar()
+    }
+}
+
+// MARK: - NSMenuItemValidation
+
+extension TerminalViewController: NSMenuItemValidation {
+    func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
+        if menuItem.action == #selector(removeProject(_:)) {
+            return workspace.projects.count > 1
+        }
+        return true
     }
 }

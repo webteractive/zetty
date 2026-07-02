@@ -93,6 +93,10 @@ final class SidebarView: NSView {
     /// Called with the project index when the user clicks the pin button.
     var onTogglePin: ((Int) -> Void)?
 
+    /// Called with the project index when the user picks "Remove Project…"
+    /// from a project row's context menu.
+    var onRemoveProject: ((Int) -> Void)?
+
     // MARK: - Private state
 
     /// The full (unfiltered) project list as last received, pinned-first sorted.
@@ -206,6 +210,12 @@ final class SidebarView: NSView {
         outlineView.dataSource = self
         outlineView.delegate = self
         outlineView.translatesAutoresizingMaskIntoConstraints = false
+
+        // Context menu — populated per-row in `menuNeedsUpdate`.
+        let contextMenu = NSMenu()
+        contextMenu.autoenablesItems = false
+        contextMenu.delegate = self
+        outlineView.menu = contextMenu
 
         scrollView.documentView = outlineView
         scrollView.hasVerticalScroller = true
@@ -490,6 +500,33 @@ final class SidebarView: NSView {
         let projectIndex = sender.tag
         guard projects.indices.contains(projectIndex) else { return }
         onTogglePin?(projectIndex)
+    }
+
+    @objc private func removeProjectMenuClicked(_ sender: NSMenuItem) {
+        let projectIndex = sender.tag
+        guard projects.indices.contains(projectIndex) else { return }
+        onRemoveProject?(projectIndex)
+    }
+}
+
+// MARK: - NSMenuDelegate (project row context menu)
+
+extension SidebarView: NSMenuDelegate {
+    func menuNeedsUpdate(_ menu: NSMenu) {
+        menu.removeAllItems()
+        let row = outlineView.clickedRow
+        guard row >= 0,
+              let obj = outlineView.item(atRow: row) as? OutlineItem,
+              case .project(let p) = obj.kind,
+              projects.indices.contains(p) else { return }
+
+        let remove = NSMenuItem(title: "Remove Project\u{2026}",
+                                action: #selector(removeProjectMenuClicked(_:)),
+                                keyEquivalent: "")
+        remove.target = self
+        remove.tag = p
+        remove.isEnabled = projects.count > 1   // the last project can't be removed
+        menu.addItem(remove)
     }
 }
 

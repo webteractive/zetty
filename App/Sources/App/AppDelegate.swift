@@ -757,6 +757,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         addProject.keyEquivalentModifierMask = [.command]
         projectMenu.addItem(addProject)
 
+        // "Remove Project…" — no shortcut (destructive); disabled on the last
+        // project via the TVC's menu validation.
+        let removeProject = NSMenuItem(
+            title: "Remove Project\u{2026}",
+            action: #selector(TerminalViewController.removeProject(_:)),
+            keyEquivalent: ""
+        )
+        projectMenu.addItem(removeProject)
+
         // Target the view-controller actions DIRECTLY at the (retained) TVC rather
         // than relying on the responder chain. Responder-chain routing only reaches
         // the TVC when a terminal pane holds first responder, so ⌘W/⇧⌘W etc. would
