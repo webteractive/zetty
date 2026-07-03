@@ -1,71 +1,21 @@
-Zetty Source-Available License 1.0
+MIT License
 
-Copyright (c) 2026 Glen Bangkila. All rights reserved.
+Copyright (c) 2026 Glen Bangkila
 
-Zetty is source-available software: the source code is published for
-transparency, but this is not an open-source license.
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
 
-1. Grant of Use
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
 
-   Subject to these terms, you are granted a free, worldwide,
-   non-exclusive, non-transferable license to:
-
-   a. use and run the software for any purpose, personal or
-      commercial;
-   b. read the source code for reference, study, and audit; and
-   c. compile the unmodified source code to produce builds of the
-      software for your own use.
-
-2. Restrictions
-
-   Except as expressly permitted above (or by applicable law that
-   cannot be contractually waived), you may not:
-
-   a. modify the software or create derivative works based on it;
-   b. distribute, publish, sell, rent, lease, or sublicense the
-      software or your builds of it, in source or binary form;
-   c. remove or alter copyright, license, or attribution notices.
-
-   Viewing and forking the repository on a code-hosting platform, as
-   permitted by that platform's terms of service, is not considered
-   distribution — but any use of a fork remains governed by this
-   license.
-
-3. Contributions and Feedback
-
-   The project does not accept code contributions. Bug reports,
-   feature requests, and other feedback are welcome; by submitting
-   feedback you grant the copyright holder a perpetual, irrevocable,
-   royalty-free right to use it without restriction or attribution.
-
-4. Third-Party Components
-
-   The software incorporates third-party components (including
-   libghostty and bundled icon sets) that remain under their own
-   licenses. Those licenses govern the respective components, and
-   nothing in this license restricts rights they grant you in those
-   components obtained separately.
-
-5. Termination
-
-   Your license ends automatically if you violate these terms. If you
-   come into full compliance and take practical steps to correct past
-   violations within 30 days of written notice of a first violation,
-   your license is reinstated.
-
-6. No Warranty; No Liability
-
-   THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
-   EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
-   MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, AND
-   NONINFRINGEMENT. IN NO EVENT SHALL THE COPYRIGHT HOLDER BE LIABLE
-   FOR ANY CLAIM, DAMAGES, OR OTHER LIABILITY, WHETHER IN AN ACTION OF
-   CONTRACT, TORT, OR OTHERWISE, ARISING FROM, OUT OF, OR IN
-   CONNECTION WITH THE SOFTWARE OR THE USE OF OR OTHER DEALINGS IN THE
-   SOFTWARE.
-
-7. Reserved Rights
-
-   All rights not expressly granted are reserved. This license does
-   not prevent the copyright holder from offering the software under
-   different terms to anyone.
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.

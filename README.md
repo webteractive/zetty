@@ -42,9 +42,7 @@ by the tool it's running.
 ### Download (recommended)
 
 1. Open the [Releases](https://github.com/webteractive/zetty/releases) page
-   and download the latest `Zetty-<version>.dmg`. While this repository is
-   private, the page requires a GitHub account with access to it — download
-   in a logged-in browser (API/`curl` downloads would need an auth token).
+   and download the latest `Zetty-<version>.dmg`.
 2. Open the DMG and drag **Zetty** into **Applications**.
 3. Clear the Gatekeeper quarantine flag (see below), then launch Zetty from
    Applications or Spotlight:
@@ -285,28 +283,23 @@ visual spec. Product plans live in [`docs/plans/`](docs/plans/).
 
 ## Status
 
-Pre-release (`0.1.0`), under active development and daily use. Interfaces and
+Pre-release (`0.1.x`), under active development and daily use. Interfaces and
 config keys may still change. Pre-built (unsigned) apps ship via
 [GitHub Releases](https://github.com/webteractive/zetty/releases); Developer
 ID signing and notarization are planned.
 
 ## Contributing
 
-Zetty is **closed to code contributions** — pull requests are not accepted
-and will be closed. Bug reports and feature requests are very welcome via
-[GitHub Issues](https://github.com/webteractive/zetty/issues).
+Contributions are welcome — bug reports, feature requests, and pull
+requests alike. See [`CONTRIBUTING.md`](CONTRIBUTING.md) for how to get a
+build running and what a good PR looks like, and
+[`AGENTS.md`](AGENTS.md) for the full contributor guide.
 
 ## License
 
-Zetty is **source-available, not open source** — see [`LICENSE`](LICENSE).
-In short: free to use for any purpose (personal or commercial) and free to
-build from source for your own use; the source is published for
-transparency, but modification, derivative works, and redistribution are
-not permitted. Third-party components (libghostty, icon sets) remain under
-their own licenses.
-
-This licensing is expected to be temporary — Zetty will likely be
-re-licensed as open source once it matures.
+Zetty is open source under the [MIT License](LICENSE). Third-party
+components (libghostty, icon sets, bundled fonts) remain under their own
+licenses.
 
 ## Acknowledgments
 

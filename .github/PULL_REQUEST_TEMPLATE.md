@@ -1,9 +1,13 @@
-Thanks for your interest in Zetty!
+Thanks for contributing to Zetty!
 
-**Zetty does not accept code contributions** — this pull request will be
-closed. The project is source-available under a license that does not permit
-modification or redistribution (see [LICENSE](../LICENSE)).
+## What & why
 
-If you've found a bug or have a feature idea, please open an
-[issue](https://github.com/webteractive/zetty/issues) instead — reports and
-requests are very welcome.
+<!-- What does this PR change, and what problem does it solve? -->
+
+## Checklist
+
+- [ ] Read [`CONTRIBUTING.md`](../CONTRIBUTING.md) and [`AGENTS.md`](../AGENTS.md)
+- [ ] `swift test` passes (and `mise exec -- tuist test` for app-layer changes)
+- [ ] New `ZettyCore` logic has unit tests; no AppKit imports in `ZettyCore`
+- [ ] No hardcoded colors — UI reads `ZTheme` tokens (see `CLAUDE.md` design rules)
+- [ ] For UI changes: a screenshot or short clip
