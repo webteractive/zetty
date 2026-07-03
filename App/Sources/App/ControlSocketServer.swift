@@ -5,8 +5,10 @@ import ZettyCore
 /// `~/.zetty/zetty.sock` speaking one JSON object per line
 /// (`ControlWire`), one request → one response per connection.
 ///
-/// Socket IO runs on a private queue; the request handler is invoked on the
-/// main thread (it reads UI/workspace state). Same-user only (0600 socket).
+/// Socket IO runs on a private queue and the request handler is invoked on
+/// that queue — NOT the main thread — so slow work (zmx subprocesses for
+/// `capture`) can't freeze the UI. Handlers hop to main themselves for
+/// anything that reads UI/workspace state. Same-user only (0600 socket).
 final class ControlSocketServer {
 
     static var defaultSocketURL: URL {
@@ -93,17 +95,40 @@ final class ControlSocketServer {
         guard clientFD >= 0 else { return }
         defer { close(clientFD) }
 
+        // A client that vanished mid-exchange must not take the app with it:
+        // without SO_NOSIGPIPE, writing to its closed socket raises SIGPIPE,
+        // whose default disposition terminates the process.
+        var on: Int32 = 1
+        setsockopt(clientFD, SOL_SOCKET, SO_NOSIGPIPE, &on, socklen_t(MemoryLayout<Int32>.size))
+        // And a client that connects but never completes a line must not wedge
+        // the (serial) accept queue forever — bound both directions.
+        var timeout = timeval(tv_sec: 10, tv_usec: 0)
+        setsockopt(clientFD, SOL_SOCKET, SO_RCVTIMEO, &timeout, socklen_t(MemoryLayout<timeval>.size))
+        setsockopt(clientFD, SOL_SOCKET, SO_SNDTIMEO, &timeout, socklen_t(MemoryLayout<timeval>.size))
+
         let response: ControlResponse
         if let line = readLine(from: clientFD),
            let request = try? ControlWire.decodeRequest(line) {
-            response = DispatchQueue.main.sync { handler(request) }
+            response = handler(request)
         } else {
             response = .error("malformed request")
         }
 
         guard let out = try? ControlWire.encodeLine(response) else { return }
-        let data = Array(out.utf8)
-        _ = data.withUnsafeBufferPointer { write(clientFD, $0.baseAddress, $0.count) }
+        writeAll(Array(out.utf8), to: clientFD)
+    }
+
+    /// Writes the whole buffer, retrying after short writes (EINTR, full
+    /// socket buffers on large `status --json`/`capture` responses).
+    private func writeAll(_ bytes: [UInt8], to fd: Int32) {
+        var offset = 0
+        while offset < bytes.count {
+            let written = bytes[offset...].withUnsafeBufferPointer { buffer in
+                write(fd, buffer.baseAddress, buffer.count)
+            }
+            guard written > 0 else { return }   // timeout/closed peer — give up
+            offset += written
+        }
     }
 
     /// Reads until the first newline (cap 1 MB); nil on EOF-before-data.

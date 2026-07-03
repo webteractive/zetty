@@ -50,6 +50,8 @@ public enum ControlCLI {
         cwd, running tool, agent status, focus). `new-tab`/`split` print just
         the pane id, so: zetty send --pane "$(zetty new-tab)" ls --enter
       - Give a fresh pane ~1–2s for its shell to start before sending input.
+      - new-tab/split/add-project select the new pane (it must be visible for
+        its shell to spawn); close/send/capture leave the visible view alone.
       - Exit codes: 0 success · 1 error (message on stderr) · 2 usage.
       - Requires the zetty app to be running (socket: ~/.zetty/zetty.sock).
     """
@@ -374,6 +376,14 @@ public enum ControlCLI {
         guard fd >= 0 else { return .error("cannot create socket") }
         defer { close(fd) }
 
+        // Don't die by SIGPIPE if the app closes mid-exchange, and don't hang
+        // a script forever if the app is wedged — fail with an error instead.
+        var on: Int32 = 1
+        setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &on, socklen_t(MemoryLayout<Int32>.size))
+        var timeout = timeval(tv_sec: 30, tv_usec: 0)
+        setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, socklen_t(MemoryLayout<timeval>.size))
+        setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &timeout, socklen_t(MemoryLayout<timeval>.size))
+
         var address = sockaddr_un()
         address.sun_family = sa_family_t(AF_UNIX)
         let pathBytes = path.utf8CString
@@ -405,6 +415,9 @@ public enum ControlCLI {
             guard count > 0 else { break }
             buffer.append(contentsOf: chunk[0..<count])
             if buffer.contains(0x0A) { break }
+        }
+        guard !buffer.isEmpty else {
+            return .error("no response from zetty (timed out or connection closed)")
         }
         guard let line = String(data: buffer, encoding: .utf8),
               let response = try? ControlWire.decodeResponse(line) else {

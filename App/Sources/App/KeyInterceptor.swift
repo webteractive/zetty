@@ -57,6 +57,8 @@ final class KeyInterceptor {
     private(set) var engine: KeyBindingEngine
     private weak var viewController: TerminalViewController?
     private var monitor: Any?
+    private var mouseMonitor: Any?
+    private var focusObservers: [NSObjectProtocol] = []
 
     init(configuration: KeyBindingConfiguration, viewController: TerminalViewController) {
         self.engine = KeyBindingEngine(
@@ -83,10 +85,43 @@ final class KeyInterceptor {
             guard let self else { return event }
             return self.handle(event)
         }
+        // An armed prefix must not survive focus moving by mouse — the next
+        // keystroke after a click/menu/dialog would otherwise misfire as a
+        // prefix command (x = close-pane). Keys can't leak this way (every
+        // keyDown resolves through the engine); only non-key focus changes
+        // can. Copy mode is deliberately untouched here: it drives a
+        // Ghostty-native cursor via synthetic mouse events, and real pane
+        // clicks already exit it through the focus-change guard.
+        mouseMonitor = NSEvent.addLocalMonitorForEvents(
+            matching: [.leftMouseDown, .rightMouseDown, .otherMouseDown]
+        ) { [weak self] event in
+            self?.disarmPrefixIfArmed()
+            return event
+        }
+        let center = NotificationCenter.default
+        let disarm: (Notification) -> Void = { [weak self] _ in
+            MainActor.assumeIsolated { self?.disarmPrefixIfArmed() }
+        }
+        focusObservers = [
+            center.addObserver(forName: NSWindow.didResignKeyNotification,
+                               object: nil, queue: .main, using: disarm),
+            center.addObserver(forName: NSApplication.didResignActiveNotification,
+                               object: nil, queue: .main, using: disarm),
+            center.addObserver(forName: NSMenu.didBeginTrackingNotification,
+                               object: nil, queue: .main, using: disarm),
+        ]
+    }
+
+    private func disarmPrefixIfArmed() {
+        guard engine.mode == .prefixArmed else { return }
+        engine.reset()
+        viewController?.keyModeDidChange(.normal)
     }
 
     deinit {
         if let monitor { NSEvent.removeMonitor(monitor) }
+        if let mouseMonitor { NSEvent.removeMonitor(mouseMonitor) }
+        for observer in focusObservers { NotificationCenter.default.removeObserver(observer) }
     }
 
     private func handle(_ event: NSEvent) -> NSEvent? {
@@ -97,6 +132,9 @@ final class KeyInterceptor {
         // Text editing anywhere (palette, rename, settings) owns the keyboard.
         if let responder = window.firstResponder, responder is NSTextView {
             if engine.mode != .normal {
+                // Full teardown, not just engine.reset(): abandoning copy mode
+                // must also clear its Ghostty selection + active-surface state.
+                viewController.exitCopyModeIfActive()
                 engine.reset()
                 viewController.keyModeDidChange(.normal)
             }

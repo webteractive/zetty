@@ -1102,7 +1102,6 @@ final class TerminalViewController: NSViewController {
                 ?? workspace.activeTabList.activeTree.layout.surfaces.first else {
             return .failure(.noSuchPane("project added but no pane found"))
         }
-        onWorkspaceDidChange?()
         return .success(SessionPersistence.shortID(for: surface.id))
     }
 
@@ -1130,12 +1129,25 @@ final class TerminalViewController: NSViewController {
     /// Closes the targeted pane (CLI `close`): the pane collapses into its
     /// split; a tab's last pane — or `wholeTab` — closes the tab. Selects the
     /// owning project/tab first so the standard close paths (and their zmx
-    /// session cleanup) apply. Returns an error message, or nil on success.
+    /// session cleanup) apply, then restores the user's prior selection —
+    /// an agent closing a background pane must not yank the visible view to
+    /// another project. Returns an error message, or nil on success.
     func closePane(target: PaneSelector, wholeTab: Bool) -> String? {
         do {
             let pane = try target.resolve(in: statusSnapshot().panes)
             guard let location = locate(shortID: pane.id) else { return "pane \(pane.id) not found" }
-            if location.projectIndex != workspace.activeIndex {
+            // Identity, not index: closing never removes a project, but the
+            // sidebar is sorted, so resolve back by id when restoring.
+            let previousProjectID = workspace.activeProject.id
+            let cameFromOtherProject = location.projectIndex != workspace.activeIndex
+            defer {
+                if cameFromOtherProject,
+                   let back = workspace.projects.firstIndex(where: { $0.id == previousProjectID }),
+                   back != workspace.activeIndex {
+                    selectProject(at: back)
+                }
+            }
+            if cameFromOtherProject {
                 selectProject(at: location.projectIndex)
             }
             let tabList = workspace.activeTabList
@@ -1194,9 +1206,19 @@ final class TerminalViewController: NSViewController {
         }
     }
 
-    /// The targeted pane's recent output via its preserved zmx session
-    /// (CLI `capture`); `lines` trims to the tail.
-    func capturePane(target: PaneSelector, lines: Int?) -> Result<String, ControlError> {
+    /// Everything the control socket's queue needs to run a blocking
+    /// `zmx history` for CLI `capture` without touching main-thread state.
+    struct CaptureSource {
+        let session: String
+        let zmxPath: String
+        let paneID: String
+    }
+
+    /// Resolves the target pane to its preserved zmx session (CLI `capture`).
+    /// Main-thread only (reads UI/workspace state); the caller runs the
+    /// blocking `zmx history` subprocess OFF main with the returned source,
+    /// so a slow/hung zmx can't freeze the UI.
+    func captureSource(target: PaneSelector) -> Result<CaptureSource, ControlError> {
         do {
             let pane = try target.resolve(in: statusSnapshot().panes)
             guard let surface = surface(withShortID: pane.id) else {
@@ -1205,15 +1227,11 @@ final class TerminalViewController: NSViewController {
             guard let zmx = ZmxRunner.locate() else {
                 return .failure(.noSuchPane("zmx is not installed"))
             }
-            let session = SessionPersistence.sessionName(for: surface.id)
-            guard let history = ZmxRunner.history(session: session, zmxPath: zmx) else {
-                return .failure(.noSuchPane(
-                    "no captured output — pane \(pane.id) has no preserved session (preserve-sessions off?)"
-                ))
-            }
-            let allLines = history.split(separator: "\n", omittingEmptySubsequences: false)
-            let tail = lines.map { Array(allLines.suffix(max(0, $0))) } ?? Array(allLines)
-            return .success(tail.joined(separator: "\n"))
+            return .success(CaptureSource(
+                session: SessionPersistence.sessionName(for: surface.id),
+                zmxPath: zmx,
+                paneID: pane.id
+            ))
         } catch {
             return .failure(.noSuchPane(error.localizedDescription))
         }
@@ -1522,7 +1540,7 @@ final class TerminalViewController: NSViewController {
     private func addProjectFromURL(_ url: URL, name: String? = nil) {
         workspace.addProject(name: name ?? url.lastPathComponent, rootPath: url.path)
         refreshTabBar()
-        rebuildSurfaceNodeView()
+        rebuildSurfaceNodeView()   // spawns the pane + autosaves (tail call)
         refreshSidebar()
         if let focused = focusedTerminalView() {
             view.window?.makeFirstResponder(focused)

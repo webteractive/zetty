@@ -20,7 +20,7 @@ final class ZettyWindow: NSWindow {
 // through NSApplicationMain, which eagerly loads that (nonexistent) storyboard
 // and crashes before the delegate runs. We bootstrap NSApplication manually in
 // main.swift instead, which never consults the storyboard key.
-final class AppDelegate: NSObject, NSApplicationDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private let defaultContentSize = NSSize(width: 1280, height: 800)
     private let minimumContentSize = NSSize(width: 600, height: 320)
     private var window: NSWindow?
@@ -37,6 +37,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     /// KVO token for `NSApp.effectiveAppearance`, active only in `system` mode.
     private var appearanceObservation: NSKeyValueObservation?
+
+    /// Routes SIGTERM (killall, logout) through the normal terminate path so
+    /// the workspace save + socket cleanup run instead of dying mid-debounce.
+    private var sigtermSource: DispatchSourceSignal?
 
     /// Watches the config file for external edits (auto-reload).
     private var configWatcher: ConfigFileWatcher?
@@ -65,6 +69,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         setenv("ZETTY", "1", 1)
         hookInstaller.refreshInstalledScriptIfPresent()
 
+        // Graceful SIGTERM: save the workspace and tear down via the normal
+        // terminate path (no confirmation — the signal IS the intent). Without
+        // this, killall drops any structural change still in the 0.4s autosave
+        // debounce window. A no-op handler (NOT SIG_IGN) keeps default delivery
+        // from killing us before the source fires — SIG_IGN would survive exec
+        // and make every pane's shell tree immune to SIGTERM.
+        signal(SIGTERM) { _ in }
+        let sigterm = DispatchSource.makeSignalSource(signal: SIGTERM, queue: .main)
+        sigterm.setEventHandler { [weak self] in
+            self?.skipQuitConfirmation = true
+            NSApp.terminate(nil)
+        }
+        sigterm.resume()
+        sigtermSource = sigterm
+
         // Load config and resolve the active scheme BEFORE the view controller
         // is created (it reads ZTheme.current in viewDidLoad).
         appConfig = configStore.load()
@@ -75,7 +94,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         let tvc = TerminalViewController()
         tvc.sidebarPosition = appConfig.sidebarPosition
-        restoreWorkspace(into: tvc)
+        let restoredFromDisk = restoreWorkspace(into: tvc)
         terminalViewController = tvc
         // Autosave on every structural change (debounced), so the on-disk
         // workspace always reflects the current layout — not just on clean quit.
@@ -92,7 +111,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Session preservation must be threaded before the view loads (the
         // launch command is consulted when each pane spawns).
         applySessionPreservation(to: tvc)
-        reapOrphanSessions(tvc)
+        // Reap only against a successfully restored layout — after a fallback
+        // every preserved session would look like an orphan and be killed.
+        if restoredFromDisk { reapOrphanSessions(tvc) }
         startControlSocket()
 
         // Agent needs-attention notifications (two levels, config-gated).
@@ -133,6 +154,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         window.titlebarAppearsTransparent = true
         window.contentMinSize = minimumContentSize
         window.contentViewController = tvc
+        window.delegate = self   // windowShouldClose: confirm-quit on the red x
+        // We hold a strong reference in self.window; the AppKit default (true)
+        // would over-release the window if it ever closes while the app lives.
+        window.isReleasedWhenClosed = false
         // Persist and restore the window frame across launches. On first launch
         // (no saved frame) fall back to centering the default size.
         window.setFrameAutosaveName("ZettyMainWindow")
@@ -492,8 +517,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// Quit confirmation (config `confirm-quit`, Settings toggle). The message
     /// reflects what quitting actually does: preserved sessions keep running,
     /// plain shells are terminated.
-    func applicationShouldTerminate(_: NSApplication) -> NSApplication.TerminateReply {
-        guard appConfig.confirmQuit, !skipQuitConfirmation else { return .terminateNow }
+    private func confirmQuit() -> Bool {
         let alert = NSAlert()
         alert.messageText = "Quit Zetty?"
         alert.informativeText = appConfig.preserveSessions
@@ -501,7 +525,32 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             : "Running processes in panes will be terminated."
         alert.addButton(withTitle: "Quit")
         alert.addButton(withTitle: "Cancel")
-        return alert.runModal() == .alertFirstButtonReturn ? .terminateNow : .terminateCancel
+        return alert.runModal() == .alertFirstButtonReturn
+    }
+
+    /// The main window's close button (red x). Confirmation must happen HERE,
+    /// while the window still exists: a dialog shown at terminate stage is too
+    /// late — Cancel would leave a running app with no window, and the alert
+    /// panel's own close re-fires last-window-closed, prompting again.
+    ///
+    /// Closing the main window always quits, explicitly — relying on
+    /// `applicationShouldTerminateAfterLastWindowClosed` strands the app
+    /// windowless whenever another window (Settings) is open, with no way to
+    /// bring the terminal back. The explicit terminate also keeps
+    /// `skipQuitConfirmation` from sticking across a close that never quit.
+    func windowShouldClose(_ sender: NSWindow) -> Bool {
+        if appConfig.confirmQuit, !skipQuitConfirmation {
+            guard confirmQuit() else { return false }
+            skipQuitConfirmation = true   // don't re-prompt in applicationShouldTerminate
+        }
+        DispatchQueue.main.async { NSApp.terminate(nil) }
+        return true
+    }
+
+    /// ⌘Q / app menu quit (the window still exists here, so a dialog is safe).
+    func applicationShouldTerminate(_: NSApplication) -> NSApplication.TerminateReply {
+        guard appConfig.confirmQuit, !skipQuitConfirmation else { return .terminateNow }
+        return confirmQuit() ? .terminateNow : .terminateCancel
     }
 
     func applicationWillTerminate(_: Notification) {
@@ -515,72 +564,104 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     /// Hosts `~/.zetty/zetty.sock` for the `zetty` CLI: status snapshot,
     /// input injection (`send`), and config reload.
+    ///
+    /// The server invokes this handler on its own socket queue. Fast verbs
+    /// hop to main (they read UI/workspace state); `capture`'s blocking
+    /// `zmx history` subprocess and `quit --kill-sessions`' kill-wait run
+    /// off-main so a slow/hung zmx can't freeze the UI.
     private func startControlSocket() {
         let server = ControlSocketServer { [weak self] request in
-            guard let self, let tvc = self.terminalViewController else {
-                return .error("Zetty is still starting up")
-            }
+            guard let self else { return .error("Zetty is shutting down") }
             switch request {
-            case .status:
-                return .status(tvc.statusSnapshot())
-            case .reload:
-                self.reloadConfiguration(nil)
-                return .ok
-            case .send(let target, let text, let enter, let keys):
-                if let message = tvc.sendInput(target: target, text: text, enter: enter, keys: keys) {
-                    return .error(message)
+            case .capture(let target, let lines):
+                let resolved = DispatchQueue.main.sync { () -> Result<TerminalViewController.CaptureSource, ControlError> in
+                    guard let tvc = self.terminalViewController else {
+                        return .failure(.protocolError("Zetty is still starting up"))
+                    }
+                    return tvc.captureSource(target: target)
                 }
-                return .ok
-            case .newTab(let project):
-                switch tvc.openNewTab(inProject: project) {
-                case .success(let pane): return .pane(pane)
-                case .failure(let error): return .error(error.localizedDescription)
+                switch resolved {
+                case .failure(let error):
+                    return .error(error.localizedDescription)
+                case .success(let source):
+                    guard let history = ZmxRunner.history(session: source.session, zmxPath: source.zmxPath) else {
+                        return .error(
+                            "no captured output — pane \(source.paneID) has no preserved session (preserve-sessions off?)"
+                        )
+                    }
+                    let allLines = history.split(separator: "\n", omittingEmptySubsequences: false)
+                    let tail = lines.map { Array(allLines.suffix(max(0, $0))) } ?? Array(allLines)
+                    return .text(tail.joined(separator: "\n"))
                 }
-            case .addProject(let path, let name):
-                switch tvc.addProject(path: path, name: name) {
-                case .success(let pane): return .pane(pane)
-                case .failure(let error): return .error(error.localizedDescription)
-                }
-            case .removeProject(let name):
-                if let message = tvc.removeProjectNamed(name) {
-                    return .error(message)
-                }
-                return .ok
-            case .close(let target, let wholeTab):
-                if let message = tvc.closePane(target: target, wholeTab: wholeTab) {
-                    return .error(message)
-                }
-                return .ok
             case .quit(let killSessions):
-                // Respond first, then terminate on the next runloop turn.
-                self.skipQuitConfirmation = true
-                DispatchQueue.main.async {
+                // Respond first; the kill-wait runs off-main, then terminate.
+                DispatchQueue.main.sync { self.skipQuitConfirmation = true }
+                DispatchQueue.global(qos: .userInitiated).async {
                     if killSessions, let zmx = ZmxRunner.locate() {
                         let sessions = ZmxRunner.listZettySessions(zmxPath: zmx)
                         ZmxRunner.killAndWait(sessions: sessions, zmxPath: zmx)
                     }
-                    NSApp.terminate(nil)
+                    DispatchQueue.main.async { NSApp.terminate(nil) }
                 }
                 return .ok
-            case .split(let target, let vertical):
-                switch tvc.splitPane(target: target, vertical: vertical) {
-                case .success(let pane): return .pane(pane)
-                case .failure(let error): return .error(error.localizedDescription)
-                }
-            case .focus(let target):
-                if let message = tvc.focusPane(target: target) {
-                    return .error(message)
-                }
-                return .ok
-            case .capture(let target, let lines):
-                switch tvc.capturePane(target: target, lines: lines) {
-                case .success(let text): return .text(text)
-                case .failure(let error): return .error(error.localizedDescription)
-                }
+            default:
+                return DispatchQueue.main.sync { self.handleOnMain(request) }
             }
         }
         server.start()
         controlSocketServer = server
+    }
+
+    /// Fast control verbs — must run on the main thread (UI/workspace state).
+    private func handleOnMain(_ request: ControlRequest) -> ControlResponse {
+        guard let tvc = terminalViewController else {
+            return .error("Zetty is still starting up")
+        }
+        switch request {
+        case .status:
+            return .status(tvc.statusSnapshot())
+        case .reload:
+            self.reloadConfiguration(nil)
+            return .ok
+        case .send(let target, let text, let enter, let keys):
+            if let message = tvc.sendInput(target: target, text: text, enter: enter, keys: keys) {
+                return .error(message)
+            }
+            return .ok
+        case .newTab(let project):
+            switch tvc.openNewTab(inProject: project) {
+            case .success(let pane): return .pane(pane)
+            case .failure(let error): return .error(error.localizedDescription)
+            }
+        case .addProject(let path, let name):
+            switch tvc.addProject(path: path, name: name) {
+            case .success(let pane): return .pane(pane)
+            case .failure(let error): return .error(error.localizedDescription)
+            }
+        case .removeProject(let name):
+            if let message = tvc.removeProjectNamed(name) {
+                return .error(message)
+            }
+            return .ok
+        case .close(let target, let wholeTab):
+            if let message = tvc.closePane(target: target, wholeTab: wholeTab) {
+                return .error(message)
+            }
+            return .ok
+        case .split(let target, let vertical):
+            switch tvc.splitPane(target: target, vertical: vertical) {
+            case .success(let pane): return .pane(pane)
+            case .failure(let error): return .error(error.localizedDescription)
+            }
+        case .focus(let target):
+            if let message = tvc.focusPane(target: target) {
+                return .error(message)
+            }
+            return .ok
+        case .capture, .quit:
+            // Slow verbs — handled on the socket queue in startControlSocket.
+            return .error("internal: slow verb routed to the main handler")
+        }
     }
 
     // MARK: - Persistence helpers
@@ -591,17 +672,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// persisted project, we still restore the tab layout.  On any error (missing
     /// file, corrupt JSON) this silently falls back to the default fresh-tab layout
     /// so the app never crashes on bad data.
-    private func restoreWorkspace(into tvc: TerminalViewController) {
+    ///
+    /// Returns true only when a saved workspace was actually decoded and
+    /// restored. Callers MUST NOT reap "orphan" zmx sessions otherwise: after
+    /// a fallback, no session is owned by a restored surface, and reaping
+    /// would kill every preserved session — the user's running work — over a
+    /// merely missing/corrupt layout file.
+    @discardableResult
+    private func restoreWorkspace(into tvc: TerminalViewController) -> Bool {
         do {
             let workspace = try workspaceStore.load()
             tvc.restoreSidebar(collapsed: workspace.sidebarCollapsed, width: workspace.sidebarWidth)
             let runtimes = SessionSnapshot.projectRuntimes(from: workspace)
             if let model = WorkspaceModel(restoring: runtimes, activeIndex: workspace.activeProjectIndex) {
                 tvc.restore(workspace: model)
+                return true
             }
             // Empty runtimes → fall back to the default WorkspaceModel already in tvc.
+            return false
         } catch {
             // Corrupt or unreadable — start fresh (tvc already has a default model).
+            return false
         }
     }
 
