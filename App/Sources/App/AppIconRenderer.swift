@@ -13,11 +13,14 @@ import AppKit
 /// shift. Call on the main thread (it reads ZTheme and uses AppKit drawing).
 enum AppIconRenderer {
 
-    /// Registers the bundled IBM Plex Mono face for this process. Idempotent;
+    /// Registers every bundled font for this process — IBM Plex Mono (the icon
+    /// mark) and JetBrains Mono (the default chrome/terminal font, so the
+    /// default renders identically on machines without it installed). Idempotent;
     /// call once at launch before the first render.
     static func registerBundledFont() {
-        guard let url = Bundle.main.url(forResource: "IBMPlexMono-Bold", withExtension: "ttf") else { return }
-        CTFontManagerRegisterFontsForURL(url as CFURL, .process, nil)
+        for url in Bundle.main.urls(forResourcesWithExtension: "ttf", subdirectory: nil) ?? [] {
+            CTFontManagerRegisterFontsForURL(url as CFURL, .process, nil)
+        }
     }
 
     private static func plexBold(size: CGFloat) -> NSFont {
