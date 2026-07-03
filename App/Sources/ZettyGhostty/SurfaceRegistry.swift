@@ -186,11 +186,16 @@ public final class SurfaceRegistry {
     /// Injects raw UTF-8 into a surface's pty as synthetic input (control
     /// socket / CLI `send`). Returns false when the surface has no live
     /// terminal view yet (e.g. a background tab whose pane never spawned).
+    ///
+    /// Delivered via ghostty's `text:` binding action (raw pty write) — NOT
+    /// `sendText`/`ghostty_surface_text`, whose paste semantics wrap the
+    /// payload in bracketed-paste framing whenever the foreground program
+    /// enables it (zsh prompts, TUIs), turning `\r` and control keys into
+    /// inert pasted characters instead of input.
     @discardableResult
     public func sendText(_ text: String, to surface: Surface) -> Bool {
         guard let view = pairs[surface.id]?.view as? AppTerminalView else { return false }
-        view.sendText(text)
-        return true
+        return view.performBindingAction(GhosttyTextAction.encode(text))
     }
 
     /// Returns the live terminal title for a surface's focused pane, or `nil`
