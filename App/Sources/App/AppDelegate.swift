@@ -360,14 +360,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return value == value.rounded() ? String(Int(value)) : String(value)
     }
 
-    /// Applies a Settings font change: persists the ghostty directive, re-fonts
-    /// every live pane, and rescales the chrome (Settings → Appearance).
+    /// Coalesces rapid font commits (stepper runs, overlapping combo callbacks)
+    /// into one apply — re-fonting every pane + rebuilding chrome per click
+    /// makes both visibly stutter.
+    private var fontApplyDebounce: DispatchWorkItem?
+
+    /// Applies a Settings font change: persists the ghostty directive at once,
+    /// then (debounced) re-fonts every live pane and rescales the chrome.
     private func setGhosttyFontDirective(key: String, value: String?) {
         appConfig = appConfig.settingGhostty(key: key, value: value)
         saveConfig()
-        terminalViewController?.reloadGhosttyConfiguration(makeTerminalConfiguration())
-        applyChromeFontFromConfig()
-        terminalViewController?.applyTheme()
+        fontApplyDebounce?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            self.terminalViewController?.reloadGhosttyConfiguration(self.makeTerminalConfiguration())
+            self.applyChromeFontFromConfig()
+            self.terminalViewController?.applyTheme()
+        }
+        fontApplyDebounce = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.25, execute: work)
     }
 
     /// Threads the effective font directives into `ZTheme` so the chrome

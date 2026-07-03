@@ -112,11 +112,23 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     /// The tab view hosting the settings panes (kept for reselect-on-rebuild).
     private var tabView: NSTabView?
 
+    /// The chrome font this window's content was built with. Font commits skip
+    /// the mid-interaction rebuild (it flickers and drops focus), so the window
+    /// re-fonts here on its next presentation instead.
+    private var builtFontStamp = ""
+    private static var fontStamp: String { "\(ZTheme.fontFamily ?? "")|\(ZTheme.fontScale)" }
+
+    override func showWindow(_ sender: Any?) {
+        if builtFontStamp != Self.fontStamp { rebuildAfterThemeChange() }
+        super.showWindow(sender)
+    }
+
     private func buildContent() -> NSView {
         let root = NSView()
         root.wantsLayer = true
         root.layer?.backgroundColor = ZTheme.current.bg1Color.cgColor
 
+        builtFontStamp = Self.fontStamp
         let tabs = NSTabView()
         tabs.translatesAutoresizingMaskIntoConstraints = false
         tabs.addTabViewItem(tabItem("General", buildGeneralTab()))
@@ -481,25 +493,26 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
 
     /// Persists a font-family choice when it differs from the config (the
     /// commit can arrive via action, dropdown delegate, AND focus loss — the
-    /// no-op guard keeps the overlap from re-applying and re-building).
+    /// no-op guard keeps the overlap from re-applying). The window content is
+    /// deliberately NOT rebuilt here: rebuilding mid-interaction flickers and
+    /// drops focus; this window re-fonts on its next open instead.
     private func commitFontFamily(_ raw: String) {
         let value = raw.trimmingCharacters(in: .whitespaces)
         let family: String? = (value.isEmpty || value == Self.defaultFontItem) ? nil : value
         let current = ConfigStore(fileURL: configURL).load().ghosttyValue("font-family")
         guard family != current else { return }
         onSetFontFamily?(family)
-        scheduleRebuildAfterFontChange()
     }
 
     /// Persists a font-size edit when it differs from the config; unparseable
-    /// text reverts to the config's value, blank means default.
+    /// text reverts to the config's value, blank means default. No rebuild —
+    /// see `commitFontFamily`.
     private func commitFontSize(_ raw: String) {
         let value = raw.trimmingCharacters(in: .whitespaces)
         let current = ConfigStore(fileURL: configURL).load().ghosttyValue("font-size").flatMap(Double.init)
         guard !value.isEmpty else {
             guard current != nil else { return }
             onSetFontSize?(nil)   // blank → default
-            scheduleRebuildAfterFontChange()
             return
         }
         guard let size = Double(value) else {
@@ -510,14 +523,6 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         guard clamped != current else { return }
         fontSizeStepper.doubleValue = clamped
         onSetFontSize?(Float(clamped))
-        scheduleRebuildAfterFontChange()
-    }
-
-    /// Rebuilds the window content on the next runloop turn — a commit can
-    /// fire from inside the combo's own delegate/end-editing callbacks, and
-    /// tearing the control down mid-callback is unsafe.
-    private func scheduleRebuildAfterFontChange() {
-        DispatchQueue.main.async { [weak self] in self?.rebuildAfterThemeChange() }
     }
 
     @objc private func sidebarPositionPicked(_ sender: NSPopUpButton) {
