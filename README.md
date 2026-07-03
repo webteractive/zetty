@@ -117,6 +117,27 @@ Command Line** and click install — this symlinks `zetty` into
 3. Focus is shown by the accent status dot on the active pane — panes are
    intentionally borderless.
 
+### Keyboard shortcuts (native)
+
+| Shortcut | Action |
+|---|---|
+| `⌘T` | New tab |
+| `⌘D` / `⇧⌘D` | Split vertically / horizontally |
+| `⌥⌘←` `⌥⌘→` `⌥⌘↑` `⌥⌘↓` | Resize the focused pane |
+| `⌘W` / `⇧⌘W` | Close pane / close tab |
+| `⌘}` / `⌘{` | Next / previous tab |
+| `⌘1`–`⌘9` | Jump to tab |
+| `⌘K` | Command palette |
+| `⌘B` | Toggle sidebar |
+| `⌘O` | Add project |
+| `⌘,` | Settings |
+| `⇧⌘,` | Reload configuration |
+| `⇧⌘T` / `⇧⌘A` | Cycle color scheme / appearance |
+| `⌘C` / `⌘V` | Copy / paste (Ghostty defaults inside the terminal) |
+
+Everything above is also reachable from the menu bar and the command
+palette (`⌘K`).
+
 ### Keybindings (prefix layer)
 
 Press `Ctrl+B` (the prefix, configurable), then:
@@ -185,8 +206,16 @@ runtime scheme/appearance switches persist back to the file.
 
 ### Session persistence
 
-Set `preserve-sessions = true` (or toggle it in Settings ⌘,) and every pane
-runs inside its own zmx session:
+To enable, either:
+
+- open **Settings (⌘,) → Sessions** and turn on **Preserve sessions** — if
+  zmx isn't installed, Zetty offers to download it for you; or
+- set `preserve-sessions = true` in `~/.config/zetty/config` and reload with
+  **⇧⌘,** (this path needs zmx already installed — e.g.
+  `brew install neurosnap/tap/zmx` — otherwise panes fall back to plain
+  shells with a one-time alert).
+
+Once enabled, every pane runs inside its own zmx session:
 
 - **Quit survives** — relaunching reattaches every pane with its scrollback
   and running programs intact (TUIs get a resize nudge so they repaint).
@@ -194,8 +223,8 @@ runs inside its own zmx session:
 - Crash leftovers are reaped once at startup; Settings offers a manual
   kill-all too.
 
-If zmx is missing, the Settings toggle offers to download it into
-`~/.zetty/bin`; without it panes fall back to plain shells.
+The Settings-offered download installs zmx into `~/.zetty/bin`; existing
+Homebrew or manual installs are detected automatically.
 
 ### AI agent status
 
