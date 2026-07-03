@@ -48,6 +48,29 @@ extension TerminalViewController {
         rebuildAndFocus()
     }
 
+    // MARK: - Focus actions (prefix-key layer)
+
+    /// Move focus to the neighboring pane in a screen direction (prefix + h/j/k/l
+    /// or arrows). No wrapping at the edges.
+    func focusPane(_ direction: FocusDirection) {
+        guard paneTree.focusNeighbor(direction) else { return }
+        rebuildAndFocus()
+    }
+
+    /// Focus the next pane in tree order, wrapping (prefix + o).
+    @objc func cyclePaneFocus(_ sender: Any?) {
+        guard paneTree.cycleFocus() else { return }
+        rebuildAndFocus()
+    }
+
+    /// Toggle zooming the focused pane to fill the tab (prefix + z). Zoom is
+    /// transient — it never persists to `workspace.json`.
+    @objc func zoomPane(_ sender: Any?) {
+        guard paneTree.toggleZoom() else { return }
+        rebuildAndFocus()
+        refreshStatusBar()
+    }
+
     // MARK: - Close action
 
     /// Close the focused pane.  If it is the only pane, this is a no-op.

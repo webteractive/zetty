@@ -208,6 +208,19 @@ public final class SurfaceRegistry {
         pairs[surface.id]?.viewState?.workingDirectory
     }
 
+    /// The live `AppTerminalView` for a surface ID, or nil when the pane has
+    /// no entry yet. Used by the copy-mode controller to drive binding
+    /// actions and synthetic selection on the focused pane.
+    public func appTerminalView(for id: UUID) -> AppTerminalView? {
+        pairs[id]?.view as? AppTerminalView
+    }
+
+    /// The observable view state (grid metrics, focus, title) for a surface
+    /// ID, or nil when no state was created (mock-injected tests).
+    public func viewState(for id: UUID) -> TerminalViewState? {
+        pairs[id]?.viewState
+    }
+
     /// Re-applies `theme` to every LIVE terminal controller and stores it as the
     /// theme for future surfaces. Called when the color scheme changes at runtime
     /// (e.g. the OS toggled appearance in `system` mode) so open panes recolor in

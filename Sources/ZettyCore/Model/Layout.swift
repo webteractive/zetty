@@ -1,5 +1,32 @@
 import Foundation
 
+/// A focus-move direction on screen (up = toward the top of the window).
+public enum FocusDirection: Sendable, Equatable {
+    case left, right, up, down
+}
+
+/// A plain rectangle in the layout's normalized, top-left-origin coordinate
+/// space (x grows right, y grows down). Deliberately not `CGRect` so
+/// `ZettyCore` stays free of CoreGraphics (Linux later).
+public struct LayoutRect: Sendable, Equatable {
+    public var x: Double
+    public var y: Double
+    public var width: Double
+    public var height: Double
+
+    public init(x: Double, y: Double, width: Double, height: Double) {
+        self.x = x
+        self.y = y
+        self.width = width
+        self.height = height
+    }
+
+    public var minX: Double { x }
+    public var maxX: Double { x + width }
+    public var minY: Double { y }
+    public var maxY: Double { y + height }
+}
+
 public struct Layout: Codable, Sendable, Equatable {
     public var root: SurfaceNode
 
@@ -97,6 +124,82 @@ public struct Layout: Codable, Sendable, Equatable {
             return .leaf(surface)
         }
         return changed
+    }
+
+    // MARK: - Directional navigation
+
+    /// Normalized leaf frames in a unit square with a top-left origin
+    /// (x grows right, y grows down — matching how `SurfaceNodeView` lays
+    /// splits out: `.vertical` cuts the x-axis with `first` on the left,
+    /// `.horizontal` cuts the y-axis with `first` on top).
+    public func frames(in rect: LayoutRect = LayoutRect(x: 0, y: 0, width: 1, height: 1)) -> [UUID: LayoutRect] {
+        Self.collectFrames(of: root, in: rect)
+    }
+
+    /// The leaf best matching a focus move from `id` toward `direction`:
+    /// candidates share an edge-adjacent band beyond the source frame's edge
+    /// with perpendicular overlap; the largest overlap wins, ties break to the
+    /// topmost/leftmost. Nil when `id` is unknown or nothing lies that way.
+    public func neighbor(of id: UUID, direction: FocusDirection) -> UUID? {
+        let allFrames = frames()
+        guard let source = allFrames[id] else { return nil }
+
+        var best: (id: UUID, overlap: Double, position: Double)?
+        for (candidateID, frame) in allFrames where candidateID != id {
+            let beyond: Bool
+            let overlap: Double
+            switch direction {
+            case .left:
+                beyond = frame.maxX <= source.minX + 0.0001
+                overlap = overlapLength(frame.minY ..< frame.maxY, source.minY ..< source.maxY)
+            case .right:
+                beyond = frame.minX >= source.maxX - 0.0001
+                overlap = overlapLength(frame.minY ..< frame.maxY, source.minY ..< source.maxY)
+            case .up:
+                beyond = frame.maxY <= source.minY + 0.0001
+                overlap = overlapLength(frame.minX ..< frame.maxX, source.minX ..< source.maxX)
+            case .down:
+                beyond = frame.minY >= source.maxY - 0.0001
+                overlap = overlapLength(frame.minX ..< frame.maxX, source.minX ..< source.maxX)
+            }
+            guard beyond, overlap > 0 else { continue }
+            let position = direction == .left || direction == .right ? frame.minY : frame.minX
+            if let current = best {
+                if overlap > current.overlap ||
+                    (overlap == current.overlap && position < current.position) {
+                    best = (candidateID, overlap, position)
+                }
+            } else {
+                best = (candidateID, overlap, position)
+            }
+        }
+        return best?.id
+    }
+
+    private func overlapLength(_ a: Range<Double>, _ b: Range<Double>) -> Double {
+        max(0, min(a.upperBound, b.upperBound) - max(a.lowerBound, b.lowerBound))
+    }
+
+    private static func collectFrames(of node: SurfaceNode, in rect: LayoutRect) -> [UUID: LayoutRect] {
+        switch node {
+        case .leaf(let surface):
+            return [surface.id: rect]
+        case let .split(direction, ratio, first, second):
+            let firstRect: LayoutRect
+            let secondRect: LayoutRect
+            switch direction {
+            case .vertical:      // side-by-side: cut the x-axis
+                let cut = rect.width * ratio
+                firstRect = LayoutRect(x: rect.minX, y: rect.minY, width: cut, height: rect.height)
+                secondRect = LayoutRect(x: rect.minX + cut, y: rect.minY, width: rect.width - cut, height: rect.height)
+            case .horizontal:    // stacked: cut the y-axis, first on top
+                let cut = rect.height * ratio
+                firstRect = LayoutRect(x: rect.minX, y: rect.minY, width: rect.width, height: cut)
+                secondRect = LayoutRect(x: rect.minX, y: rect.minY + cut, width: rect.width, height: rect.height - cut)
+            }
+            return collectFrames(of: first, in: firstRect)
+                .merging(collectFrames(of: second, in: secondRect)) { a, _ in a }
+        }
     }
 
     // MARK: - Recursion helpers

@@ -66,6 +66,13 @@ final class TerminalViewController: NSViewController {
     /// The command palette overlay, when open.
     private var commandPaletteView: CommandPaletteView?
 
+    /// The prefix-key layer's event monitor + engine (nil until the owner
+    /// calls `installKeyBindings`).
+    private var keyInterceptor: KeyInterceptor?
+
+    /// Copy-mode driver for the focused pane (selection-as-cursor mechanics).
+    let copyMode = CopyModeController()
+
     /// Per-session AI-agent state, driven by harness-hook events.
     private let agentDetector = AgentDetector()
     /// Watches the hook event sink (`~/.zetty/agent-events.jsonl`).
@@ -631,7 +638,73 @@ final class TerminalViewController: NSViewController {
             zetty: "v\(Self.buildStamp)",
             ghostty: "libghostty \(Self.libghosttyVersion)"
         )
+        statusBar.setZoomed(paneTree.zoomedSurfaceID != nil)
         scheduleGitProbe(for: cwd, surfaceID: paneTree.focusedSurfaceID)
+    }
+
+    // MARK: - Prefix-key layer
+
+    /// Creates the copy-mode controller wiring and installs the app-local key
+    /// monitor. Called once by the owner (AppDelegate) after launch.
+    func installKeyBindings(_ configuration: KeyBindingConfiguration) {
+        copyMode.terminalView = { [weak self] id in self?.registry.appTerminalView(for: id) }
+        copyMode.gridMetrics = { [weak self] id in self?.registry.viewState(for: id)?.surfaceSize }
+        copyMode.captureLines = { id, rows in
+            guard let zmx = ZmxRunner.locate(),
+                  let history = ZmxRunner.history(session: SessionPersistence.sessionName(for: id), zmxPath: zmx)
+            else { return nil }
+            let all = history.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
+            return Array(all.suffix(rows))
+        }
+        let interceptor = KeyInterceptor(configuration: configuration, viewController: self)
+        interceptor.install()
+        keyInterceptor = interceptor
+    }
+
+    /// Applies reloaded binding tables (⇧⌘,) and drops any armed/copy state.
+    func applyKeyBindings(_ configuration: KeyBindingConfiguration) {
+        exitCopyModeIfActive()
+        keyInterceptor?.apply(configuration: configuration)
+        statusBarView?.setKeyMode(.normal)
+    }
+
+    /// Updates the status-bar mode chip (PREFIX / COPY / hidden).
+    func keyModeDidChange(_ mode: KeyMode) {
+        statusBarView?.setKeyMode(mode)
+    }
+
+    /// Starts copy mode on the focused pane. False when it has no live view.
+    func enterCopyMode() -> Bool {
+        guard let id = paneTree.focusedSurfaceID else { return false }
+        return copyMode.enter(surfaceID: id)
+    }
+
+    /// Ends copy mode from an external cause (layout change, focus change,
+    /// config reload) — clears selection, engine state, and the chip.
+    func exitCopyModeIfActive() {
+        guard copyMode.activeSurfaceID != nil else { return }
+        copyMode.exit()
+        keyInterceptor?.engine.exitCopyMode()
+        statusBarView?.setKeyMode(.normal)
+    }
+
+    /// Ghostty-native paste into the focused pane (prefix + ]).
+    func pasteIntoFocusedPane() {
+        guard let id = paneTree.focusedSurfaceID,
+              let view = registry.appTerminalView(for: id) else { return }
+        view.performBindingAction("paste_from_clipboard")
+    }
+
+    /// Jump to tab N (1-based, prefix + 1…9). Out-of-range is a no-op.
+    func selectTab(number: Int) {
+        let index = number - 1
+        guard workspace.activeTabList.trees.indices.contains(index) else { return }
+        selectTab(at: index)
+    }
+
+    /// Opens the inline rename editor on the active tab (prefix + ,).
+    func beginRenameActiveTab() {
+        tabBarView?.beginRenameProgrammatically(at: workspace.activeTabList.activeIndex)
     }
 
     /// Debounced, off-main `git` probe for the focused pane's directory. The
@@ -1668,11 +1741,25 @@ final class TerminalViewController: NSViewController {
     func rebuildSurfaceNodeView() {
         guard let container = contentContainer else { return }
 
+        // Any layout/tab change invalidates an active copy-mode session (its
+        // selection and viewport-relative cursor no longer mean anything).
+        exitCopyModeIfActive()
+
         rootContentView?.removeFromSuperview()
+
+        // A zoomed pane renders alone (tmux prefix+z). Background panes stay
+        // alive — pruning uses the union of ALL surfaces, not the rendered node.
+        let renderedNode: SurfaceNode
+        if let zoomedID = paneTree.zoomedSurfaceID,
+           let zoomed = paneTree.layout.surfaces.first(where: { $0.id == zoomedID }) {
+            renderedNode = .leaf(zoomed)
+        } else {
+            renderedNode = paneTree.layout.root
+        }
 
         let showsClose = paneTree.layout.surfaces.count > 1
         let newRoot = SurfaceNodeView(
-            node: paneTree.layout.root,
+            node: renderedNode,
             registry: registry,
             focusedSurfaceID: paneTree.focusedSurfaceID,
             showsClose: showsClose,
@@ -1745,6 +1832,10 @@ final class TerminalViewController: NSViewController {
         // was already this tab's focused surface (early return below).
         acknowledgeAttention(for: surfaceID)
         guard paneTree.focusedSurfaceID != surfaceID else { return }
+        // Focus moving to a different pane abandons an active copy-mode session.
+        if copyMode.activeSurfaceID != nil, copyMode.activeSurfaceID != surfaceID {
+            exitCopyModeIfActive()
+        }
         paneTree.focus(surfaceID)
         // Update the highlight IN PLACE — do NOT rebuild. Rebuilding re-parents the
         // live terminal views, which resigns the clicked pane's first responder so

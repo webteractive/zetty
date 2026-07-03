@@ -3,11 +3,11 @@ import ZettyCore
 
 // MARK: - StatusBarView
 
-/// The bottom status strip (handoff: 28pt, `bg0`, mono 11). Three zones:
-/// a left **git** cluster (branch · ↑ahead ↓behind · ●changes), the focused
-/// pane's working directory centered, and a right cluster of ambient info +
-/// switchers: appearance mode (click to cycle), color scheme (click to cycle),
-/// shell, and libghostty version.
+/// The bottom status strip (handoff: 28pt, `bg0`, mono 11). Two zones:
+/// a left cluster — key-layer mode chips, the focused pane's working
+/// directory, then git (branch · ↑ahead ↓behind · ●changes) — and a right
+/// cluster of ambient info + switchers: appearance mode (click to cycle),
+/// color scheme (click to cycle), shell, and libghostty version.
 ///
 /// The view is dumb: `update(...)` / `updateGit(...)` set content and
 /// `applyTheme()` re-reads colors/fonts; user intent is reported via closures.
@@ -24,16 +24,20 @@ final class StatusBarView: NSView {
 
     private let topBorder = NSView()
 
-    // Left: git.
+    // Leading: key-layer mode chips (PREFIX / COPY while active, ZOOM while
+    // a pane is zoomed). Accent-glow pills per the design rules — accent
+    // marks the active mode, fills stay on the bg3 surface.
+    private let modeChip = NSTextField(labelWithString: "")
+    private let zoomChip = NSTextField(labelWithString: " ZOOM ")
+
+    // Left: working directory, then git.
+    private let cwdLabel = NSTextField(labelWithString: "")
     private let branchIcon = NSImageView()
     private let branchLabel = NSTextField(labelWithString: "")
     private let aheadLabel = NSTextField(labelWithString: "")
     private let behindLabel = NSTextField(labelWithString: "")
     private let changesLabel = NSTextField(labelWithString: "")
     private let leftStack = NSStackView()
-
-    // Center: working directory.
-    private let cwdLabel = NSTextField(labelWithString: "")
 
     // Right: "Open ▾" pill · appearance · scheme · shell · zetty build · libghostty.
     private let editorPill = NSView()
@@ -109,17 +113,26 @@ final class StatusBarView: NSView {
             editorButton.centerYAnchor.constraint(equalTo: editorPill.centerYAnchor),
         ])
 
-        configureStack(leftStack, views: [branchIcon, branchLabel, aheadLabel, behindLabel, changesLabel])
+        for chip in [modeChip, zoomChip] {
+            chip.wantsLayer = true
+            chip.layer?.cornerRadius = 4
+            chip.alignment = .center
+            chip.translatesAutoresizingMaskIntoConstraints = false
+            chip.isHidden = true
+        }
+
+        configureStack(leftStack, views: [modeChip, zoomChip, cwdLabel, branchIcon, branchLabel, aheadLabel, behindLabel, changesLabel])
+        leftStack.setCustomSpacing(10, after: zoomChip)
+        leftStack.setCustomSpacing(10, after: cwdLabel)
+        // The cwd is the one label allowed to give way: the stack may compress
+        // and the path truncates (by the head) before anything else moves.
+        leftStack.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         configureStack(rightStack, views: [editorPill, appearanceButton, sep0, schemeDot, schemeButton, sep1, shellLabel, sep2, ghosttyLabel, sep3, zettyLabel])
         rightStack.setCustomSpacing(10, after: editorPill)
 
         addSubview(topBorder)
         addSubview(leftStack)
-        addSubview(cwdLabel)
         addSubview(rightStack)
-
-        let cwdCenter = cwdLabel.centerXAnchor.constraint(equalTo: centerXAnchor)
-        cwdCenter.priority = .defaultLow
 
         NSLayoutConstraint.activate([
             topBorder.topAnchor.constraint(equalTo: topAnchor),
@@ -129,14 +142,10 @@ final class StatusBarView: NSView {
 
             leftStack.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 14),
             leftStack.centerYAnchor.constraint(equalTo: centerYAnchor),
+            leftStack.trailingAnchor.constraint(lessThanOrEqualTo: rightStack.leadingAnchor, constant: -12),
 
             rightStack.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -14),
             rightStack.centerYAnchor.constraint(equalTo: centerYAnchor),
-
-            cwdLabel.centerYAnchor.constraint(equalTo: centerYAnchor),
-            cwdCenter,
-            cwdLabel.leadingAnchor.constraint(greaterThanOrEqualTo: leftStack.trailingAnchor, constant: 12),
-            cwdLabel.trailingAnchor.constraint(lessThanOrEqualTo: rightStack.leadingAnchor, constant: -12),
 
             branchIcon.widthAnchor.constraint(equalToConstant: 11),
             branchIcon.heightAnchor.constraint(equalToConstant: 11),
@@ -235,6 +244,28 @@ final class StatusBarView: NSView {
         styleSchemeButton(scheme)
     }
 
+    /// Shows the key-layer mode chip: `PREFIX` while the prefix is armed,
+    /// `COPY` during copy mode, hidden in normal mode.
+    func setKeyMode(_ mode: KeyMode) {
+        switch mode {
+        case .normal:
+            modeChip.isHidden = true
+        case .prefixArmed:
+            modeChip.stringValue = " PREFIX "
+            modeChip.isHidden = false
+        case .copyMode:
+            modeChip.stringValue = " COPY "
+            modeChip.isHidden = false
+        }
+        styleChips()
+    }
+
+    /// Shows/hides the `ZOOM` chip (a pane is temporarily maximized).
+    func setZoomed(_ zoomed: Bool) {
+        zoomChip.isHidden = !zoomed
+        styleChips()
+    }
+
     func updateGit(_ status: GitStatus) {
         let show = status.isRepo && !status.branch.isEmpty
         branchIcon.isHidden = !show
@@ -287,6 +318,26 @@ final class StatusBarView: NSView {
 
         styleAppearanceButton()
         styleSchemeButton(schemeButton.title)
+        styleChips()
+    }
+
+    /// Chips are bg3 pills with accent text and a soft accent glow (design
+    /// rules 3/9: accent marks the active mode and glows; fills stay surfaces).
+    private func styleChips() {
+        let theme = ZTheme.current
+        for chip in [modeChip, zoomChip] {
+            chip.font = ZTheme.monoFont(size: 10, weight: .semibold)
+            chip.textColor = theme.accentColor
+            chip.layer?.backgroundColor = theme.bg3Color.cgColor
+            guard !chip.isHidden else {
+                chip.layer?.shadowOpacity = 0
+                continue
+            }
+            chip.layer?.shadowColor = theme.accentColor.cgColor
+            chip.layer?.shadowOpacity = 0.45
+            chip.layer?.shadowRadius = 5
+            chip.layer?.shadowOffset = .zero
+        }
     }
 
     private func styleAppearanceButton() {

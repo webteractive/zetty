@@ -90,6 +90,15 @@ in `ZettyCore` (`AppConfig` / `ConfigStore`); `AppDelegate` resolves it.
   [`AGENTS.md`](AGENTS.md).
 - **Baked-in ghostty defaults** (user directives win): `shell-integration =
   zsh`, `shell-integration-features = ssh-env,ssh-terminfo`.
+- **`prefix` / `bind` / `copy-bind`** — the tmux-style prefix-key layer.
+  `Ctrl+B` then a key drives panes/tabs (`%` `"` split · h/j/k/l or arrows
+  focus · `o` cycle · `x` close · `z` zoom · `c`/`n`/`p`/`1-9` tabs · `,`
+  rename · `[` copy mode · `]` paste · prefix-twice sends the literal). Copy
+  mode is vi-keyed; its keyboard cursor is a Ghostty-native selection driven
+  by synthetic mouse events. Fully remappable (`bind = <chord> <command>`);
+  the decision core is pure/tested in `ZettyCore/Keybindings/`; one NSEvent
+  local monitor intercepts (never during IME composition or text editing).
+  Details in [`AGENTS.md`](AGENTS.md).
 
 ## AI agent detection & tab identity
 

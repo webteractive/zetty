@@ -279,6 +279,13 @@ final class TabBarView: NSView {
 
     // MARK: - Inline rename
 
+    /// Opens the inline rename editor programmatically — the prefix-key
+    /// layer's rename-tab command (prefix + ,) targets the active tab this
+    /// way; double-click stays the mouse path.
+    func beginRenameProgrammatically(at index: Int) {
+        beginRename(at: index)
+    }
+
     private func beginRename(at index: Int) {
         cancelRename()
 

@@ -69,6 +69,11 @@ public struct AppConfig: Equatable, Sendable {
     /// Raw ghostty directives (from `ghostty.<key> = <value>` lines), forwarded
     /// to the terminal unchanged.
     public var ghostty: [GhosttyDirective]
+    /// Prefix-key layer: `prefix = <chord>`, `bind = <chord> <command>`, and
+    /// `copy-bind = <chord> <command>` lines applied over the tmux-canonical
+    /// defaults. (Ghostty's own `keybind` directive is unrelated and still
+    /// forwards via `ghostty`.)
+    public var keybindings: KeyBindingConfiguration
 
     public static let defaultThemeDark = "Twilight"
     public static let defaultThemeLight = "Daylight"
@@ -84,7 +89,8 @@ public struct AppConfig: Equatable, Sendable {
         notifyBadge: Bool = true,
         notifySystem: Bool = true,
         sidebarPosition: SidebarPosition = .left,
-        ghostty: [GhosttyDirective] = []
+        ghostty: [GhosttyDirective] = [],
+        keybindings: KeyBindingConfiguration = KeyBindingConfiguration()
     ) {
         self.appearance = appearance
         self.themeDark = themeDark
@@ -97,6 +103,7 @@ public struct AppConfig: Equatable, Sendable {
         self.notifySystem = notifySystem
         self.sidebarPosition = sidebarPosition
         self.ghostty = ghostty
+        self.keybindings = keybindings
     }
 
     // MARK: Parsing
@@ -150,6 +157,12 @@ public struct AppConfig: Equatable, Sendable {
                 if let position = SidebarPosition(rawValue: value.lowercased()) {
                     config.sidebarPosition = position
                 }
+            case "prefix":
+                config.keybindings.applyPrefix(value)
+            case "bind":
+                config.keybindings.applyBind(value, toCopyTable: false)
+            case "copy-bind":
+                config.keybindings.applyBind(value, toCopyTable: true)
             default:
                 // Anything else is a pasted ghostty directive → forward verbatim.
                 config.ghostty.append(GhosttyDirective(key: rawKey, value: value))
@@ -236,6 +249,14 @@ public struct AppConfig: Equatable, Sendable {
 
             """
         }
+        if !keybindings.sourceLines.isEmpty {
+            out += """
+            # Prefix-key layer (tmux-style). `prefix = <chord>`, then repeated
+            # `bind = <chord> <command>` / `copy-bind = <chord> <command>` lines.
+            \(keybindings.sourceLines.joined(separator: "\n"))
+
+            """
+        }
         out += """
         # Paste any ghostty config lines below — they're forwarded to the terminal
         # as-is (e.g. font-family, font-size, cursor-style, window-padding-x, keybind).
@@ -286,6 +307,13 @@ public struct AppConfig: Equatable, Sendable {
 
     # Which side of the window the project sidebar sits on: left | right
     sidebar-position = left
+
+    # tmux-style prefix key layer. Ctrl+B then a key: % " split · h/j/k/l or
+    # arrows focus panes · o cycle · x close · z zoom · c new tab · n/p/1-9
+    # tabs · , rename · [ copy mode (vi keys) · ] paste. Remap with:
+    #   prefix = ctrl+b
+    #   bind = <chord> <command>        (e.g. bind = s split-vertical)
+    #   copy-bind = <chord> <command>   (e.g. copy-bind = n copy-cursor-down)
 
     # Paste your ghostty config below — any non-Zetty key is forwarded to the
     # terminal verbatim, so an existing ghostty config works as-is. For example:

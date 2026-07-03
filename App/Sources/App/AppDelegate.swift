@@ -144,6 +144,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSApp.activate(ignoringOtherApps: true)
         self.window = window
 
+        // tmux-style prefix-key layer (Ctrl+B by default; prefix/bind/copy-bind
+        // config lines remap it). Installed after the window exists so the
+        // interceptor's window guard has something to compare against.
+        tvc.installKeyBindings(appConfig.keybindings)
+
         startObservingSystemAppearance()
         buildMenuBar()
 
@@ -305,6 +310,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             applySessionPreservation(to: tvc)                                 // affects new panes only
             tvc.publishAttentionCount()                                       // re-apply Dock badge gating
             tvc.sidebarPosition = appConfig.sidebarPosition                   // re-pins only on change
+            tvc.applyKeyBindings(appConfig.keybindings)                       // prefix/bind/copy-bind lines
         }
     }
 

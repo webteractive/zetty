@@ -108,6 +108,45 @@ in `ZettyCore` (`AppConfig` / `ConfigStore`); `AppDelegate` resolves + applies i
     one (`SurfaceRegistry.title` returns nil for the empty initial title so
     the fallback engages).
 
+## tmux-style prefix keys + copy mode
+
+`Ctrl+B` (configurable) arms a one-shot prefix; the next key drives Zetty:
+`%`/`"` split · h/j/k/l or arrows focus panes directionally · `o` cycle ·
+`x` close · `z` zoom (transient, never persisted) · `c`/`n`/`p`/`1-9` tabs ·
+`,` inline tab rename · `[` copy mode · `]` paste · prefix-twice sends the
+literal prefix to the pty · Esc cancels. Copy mode is modal and vi-keyed
+(h/j/k/l/w/b/e/0/$/g/G, Ctrl+U/D/F/B paging, `v`/`V` select, `y`/Enter yank,
+`q`/Esc exit).
+
+Key routing: one `NSEvent.addLocalMonitorForEvents(.keyDown)` in
+`KeyInterceptor` (App) runs before any view, translates the event to a
+`KeyChord`, and asks `KeyBindingEngine` (`ZettyCore/Keybindings/`, pure +
+unit-tested) for a resolution — passthrough, or consume + `BindingCommand`
+dispatched into `PaneActions`/`TerminalViewController`/`CopyModeController`.
+Guards: events outside the main window, active IME composition, and
+text-editing first responders (palette, rename, settings) always pass
+through. Status bar shows `PREFIX`/`COPY`/`ZOOM` chips.
+
+Copy mode's keyboard cursor **is a Ghostty selection**: `CopyModeController`
+synthesizes in-process mouse press/drag/release into `AppTerminalView` at
+computed cell centers (`TerminalViewState.surfaceSize` supplies cell pixel
+metrics), so Ghostty renders the highlight natively. Scrolling/copy/paste use
+`performBindingAction` (`scroll_page_up`, `scroll_page_fractional:±0.5`,
+`scroll_to_top/bottom`, `copy_to_clipboard`, `paste_from_clipboard`). Word
+motions scan viewport lines from zmx capture (preserved sessions); without
+one they fall back to coarse 8-column jumps. Known limits: panes running
+mouse-capturing TUIs may swallow the synthetic clicks; wrapped lines make
+zmx-derived rows approximate. Pure cursor math lives in `CopyModeCursor`.
+
+Config: `prefix = <chord>` plus repeated `bind = <chord> <command>` /
+`copy-bind = <chord> <command>` lines (additive over the tmux-canonical
+defaults in `BindingCommand.default*Table`; no unbind). Chords are
+case-sensitive for characters (`G` = shift+g), case-insensitive for modifier
+words/named keys; bad lines are skipped and collected in
+`KeyBindingConfiguration.issues`. Accepted lines re-emit through
+`AppConfig.rendered()` so runtime persists don't drop them. Reload (⇧⌘,)
+rebuilds the tables and exits any armed/copy state.
+
 ## Tab identity (logos + titles)
 
 Tab pills and sidebar tab rows show **what each pane is running**: a tool logo
