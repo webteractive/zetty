@@ -38,16 +38,16 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     private let darkThemePopup = NSPopUpButton()
     private let lightThemePopup = NSPopUpButton()
     private let sidebarPositionPopup = NSPopUpButton()
-    private let fontCombo = NSComboBox()
+    private let fontPopup = NSPopUpButton()
     private let fontSizeField = NSTextField()
     private let fontSizeStepper = NSStepper()
 
-    /// Combo item 0 — clears the font-family directive (terminal + chrome
+    /// Dropdown item 0 — clears the font-family directive (terminal + chrome
     /// fall back to their defaults, both JetBrains Mono).
     private static let defaultFontItem = "Default (JetBrains Mono)"
 
-    /// Coding fonts offered when installed (the combo also accepts free text —
-    /// any family name ghostty accepts).
+    /// Coding fonts that resolve but can hide from NSFontManager's family list
+    /// (notably SF Mono) — merged into the monospace scan when installed.
     private static let curatedFontFamilies = [
         "SF Mono", "Menlo", "Monaco", "JetBrains Mono", "Fira Code", "Hack",
         "Source Code Pro", "IBM Plex Mono", "Cascadia Code", "Iosevka", "Geist Mono",
@@ -259,17 +259,12 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
             addFullWidth(popupRow(title, popup: popup), to: stack)
         }
 
-        fontCombo.usesDataSource = false
-        fontCombo.completes = true
-        fontCombo.removeAllItems()
-        fontCombo.addItems(withObjectValues: [Self.defaultFontItem] + installedCuratedFonts())
-        // NSComboBox only fires target/action on Enter — dropdown selection
-        // reports via the delegate (comboBoxSelectionDidChange) and typed text
-        // that loses focus via controlTextDidEndEditing. Wire all three.
-        fontCombo.delegate = self
-        fontCombo.target = self
-        fontCombo.action = #selector(fontPicked(_:))
-        addFullWidth(controlRow("Font", control: fontCombo, width: 220), to: stack)
+        fontPopup.removeAllItems()
+        fontPopup.addItem(withTitle: Self.defaultFontItem)
+        fontPopup.addItems(withTitles: monospaceFamilies())
+        fontPopup.target = self
+        fontPopup.action = #selector(fontPicked(_:))
+        addFullWidth(popupRow("Font", popup: fontPopup), to: stack)
 
         fontSizeField.alignment = .right
         fontSizeField.placeholderString = "13"
@@ -288,17 +283,32 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         fontSizeField.widthAnchor.constraint(equalToConstant: 56).isActive = true
         addFullWidth(controlRow("Font size", control: sizeGroup, width: 0), to: stack)
         stack.addArrangedSubview(caption(
-            "Applies to the terminal and Zetty's chrome together. Any font name "
-            + "ghostty accepts can be typed; blank size means the default (13)."
+            "Applies to the terminal and Zetty's chrome together. "
+            + "Blank size means the default (13)."
         ))
         return stack
     }
 
-    /// Curated coding fonts filtered to what's actually installed.
-    private func installedCuratedFonts() -> [String] {
-        let installed = Set(NSFontManager.shared.availableFontFamilies)
-        return Self.curatedFontFamilies.filter(installed.contains)
-    }
+    /// Installed monospace families for the font dropdown: every fixed-pitch
+    /// family NSFontManager reports, plus curated coding fonts that resolve but
+    /// hide from the family list (e.g. SF Mono). Sorted; hidden "." families
+    /// excluded. Computed once — the list only changes when fonts are installed.
+    private static let installedMonospaceFamilies: [String] = {
+        let manager = NSFontManager.shared
+        var families = Set<String>()
+        for family in manager.availableFontFamilies where !family.hasPrefix(".") {
+            guard let font = manager.font(withFamily: family, traits: [], weight: 5, size: 13),
+                  font.isFixedPitch else { continue }
+            families.insert(family)
+        }
+        for family in curatedFontFamilies
+        where manager.font(withFamily: family, traits: [], weight: 5, size: 13) != nil {
+            families.insert(family)
+        }
+        return families.sorted()
+    }()
+
+    private func monospaceFamilies() -> [String] { Self.installedMonospaceFamilies }
 
     /// Sessions: zmx-backed preservation + orphan cleanup.
     private func buildSessionsTab() -> NSView {
@@ -448,7 +458,13 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         if let index = SidebarPosition.allCases.firstIndex(of: config.sidebarPosition) {
             sidebarPositionPopup.selectItem(at: index)
         }
-        fontCombo.stringValue = config.ghosttyValue("font-family") ?? Self.defaultFontItem
+        if let family = config.ghosttyValue("font-family") {
+            // A hand-edited family missing from the monospace scan still shows.
+            if fontPopup.item(withTitle: family) == nil { fontPopup.addItem(withTitle: family) }
+            fontPopup.selectItem(withTitle: family)
+        } else {
+            fontPopup.selectItem(at: 0)
+        }
         let size = config.ghosttyValue("font-size").flatMap(Double.init)
         // Locale-independent (no grouping / "," decimals) so the value round-trips
         // through the config file and Double.init.
@@ -477,8 +493,9 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         rebuildAfterThemeChange()
     }
 
-    @objc private func fontPicked(_ sender: NSComboBox) {
-        commitFontFamily(sender.stringValue)
+    @objc private func fontPicked(_ sender: NSPopUpButton) {
+        guard sender.indexOfSelectedItem >= 0 else { return }
+        commitFontFamily(sender.indexOfSelectedItem == 0 ? "" : (sender.titleOfSelectedItem ?? ""))
     }
 
     @objc private func fontSizeTyped(_ sender: NSTextField) {
@@ -868,27 +885,13 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     }
 }
 
-// MARK: - Font control commits (NSComboBoxDelegate)
+// MARK: - Font size field commits (NSTextFieldDelegate)
 
-extension SettingsWindowController: NSComboBoxDelegate {
+extension SettingsWindowController: NSTextFieldDelegate {
 
-    /// Dropdown item clicks don't fire the combo's target/action — they land
-    /// here. `stringValue` is still stale at this point, so read the selected
-    /// item directly.
-    func comboBoxSelectionDidChange(_ notification: Notification) {
-        guard let combo = notification.object as? NSComboBox, combo === fontCombo else { return }
-        let index = combo.indexOfSelectedItem
-        guard index >= 0, let item = combo.itemObjectValue(at: index) as? String else { return }
-        commitFontFamily(item)
-    }
-
-    /// Typed values commit on focus loss, not just Enter.
+    /// Typed sizes commit on focus loss, not just Enter.
     func controlTextDidEndEditing(_ notification: Notification) {
-        guard let control = notification.object as? NSControl else { return }
-        if control === fontCombo {
-            commitFontFamily(fontCombo.stringValue)
-        } else if control === fontSizeField {
-            commitFontSize(fontSizeField.stringValue)
-        }
+        guard let control = notification.object as? NSControl, control === fontSizeField else { return }
+        commitFontSize(fontSizeField.stringValue)
     }
 }
