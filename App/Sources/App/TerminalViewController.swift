@@ -1083,6 +1083,29 @@ final class TerminalViewController: NSViewController {
         return .success(SessionPersistence.shortID(for: surface.id))
     }
 
+    /// Adds the directory at `path` as a new project (CLI `add-project`),
+    /// makes it active so its first pane spawns, and returns that pane's
+    /// short id — or an error message.
+    func addProject(path: String, name: String?) -> Result<String, ControlError> {
+        let root = URL(fileURLWithPath: (path as NSString).expandingTildeInPath).standardizedFileURL.path
+        var isDirectory: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: root, isDirectory: &isDirectory),
+              isDirectory.boolValue else {
+            return .failure(.protocolError("no such directory: \(root)"))
+        }
+        if let existing = workspace.projects.first(where: { $0.rootPath == root }) {
+            return .failure(.protocolError("project \"\(existing.name)\" already uses \(root)"))
+        }
+        let trimmed = name?.trimmingCharacters(in: .whitespaces)
+        addProjectFromURL(URL(fileURLWithPath: root), name: (trimmed?.isEmpty ?? true) ? nil : trimmed)
+        guard let surface = workspace.activeTabList.activeTree.focusedSurface
+                ?? workspace.activeTabList.activeTree.layout.surfaces.first else {
+            return .failure(.noSuchPane("project added but no pane found"))
+        }
+        onWorkspaceDidChange?()
+        return .success(SessionPersistence.shortID(for: surface.id))
+    }
+
     /// Removes the named project (CLI `remove-project`, case-insensitive),
     /// closing all of its tabs/panes and ending their zmx sessions. No
     /// confirmation dialog — the CLI call IS the confirmation. Returns an
@@ -1496,8 +1519,8 @@ final class TerminalViewController: NSViewController {
         }
     }
 
-    private func addProjectFromURL(_ url: URL) {
-        workspace.addProject(name: url.lastPathComponent, rootPath: url.path)
+    private func addProjectFromURL(_ url: URL, name: String? = nil) {
+        workspace.addProject(name: name ?? url.lastPathComponent, rootPath: url.path)
         refreshTabBar()
         rebuildSurfaceNodeView()
         refreshSidebar()

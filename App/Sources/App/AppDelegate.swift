@@ -536,6 +536,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 case .success(let pane): return .pane(pane)
                 case .failure(let error): return .error(error.localizedDescription)
                 }
+            case .addProject(let path, let name):
+                switch tvc.addProject(path: path, name: name) {
+                case .success(let pane): return .pane(pane)
+                case .failure(let error): return .error(error.localizedDescription)
+                }
             case .removeProject(let name):
                 if let message = tvc.removeProjectNamed(name) {
                     return .error(message)

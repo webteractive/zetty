@@ -254,6 +254,7 @@ zetty send --cwd ~/work/api 'ls' --enter # type into a pane
 zetty send --key C-c                     # send a control key
 zetty capture --lines 100                # recent pane output (preserved sessions)
 zetty new-tab --project api              # prints the new pane id
+zetty add-project ~/work/api             # add a directory as a project
 zetty split --pane 1a2b3c4d --horizontal
 zetty focus --cwd ~/work/api
 zetty close --pane 1a2b3c4d --tab

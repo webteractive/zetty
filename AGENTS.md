@@ -191,6 +191,11 @@ Commands (see `zetty --help` for full grammar and agent notes):
   preserved zmx session (`zmx history`).
 - `new-tab [--project <name>]` / `split [--pane|--cwd] [--horizontal]` —
   both print the new pane's bare id for command substitution.
+- `add-project <path> [--name <name>]` — add a directory as a project
+  (name defaults to the directory name) and make it active; the CLI
+  resolves relative paths against its own cwd, and the path must be an
+  existing directory not already used by a project. Prints the new
+  project's first pane id.
 - `remove-project <name>` — remove a project (case-insensitive), closing
   its tabs/panes and ending their zmx sessions; no confirmation dialog,
   and the last remaining project can't be removed.

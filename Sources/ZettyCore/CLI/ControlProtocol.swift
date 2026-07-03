@@ -15,6 +15,11 @@ public enum ControlRequest: Equatable, Sendable {
     /// Open a new tab in the named project (nil → the active project); the
     /// response is `.pane` with the new pane's short id.
     case newTab(project: String?)
+    /// Add the directory at `path` (absolute — the CLI resolves relative paths
+    /// against its own cwd) as a new project named `name` (nil → the
+    /// directory's last path component) and make it active; the response is
+    /// `.pane` with its first pane's short id.
+    case addProject(path: String, name: String?)
     /// Remove the named project (case-insensitive), closing all of its
     /// tabs/panes and ending their zmx sessions (no confirmation dialog —
     /// the CLI call IS the confirmation). The last project can't be removed.
@@ -38,7 +43,7 @@ public enum ControlRequest: Equatable, Sendable {
 
 extension ControlRequest: Codable {
     private enum CodingKeys: String, CodingKey {
-        case command, target, text, enter, keys, project, wholeTab, killSessions, vertical, lines
+        case command, target, text, enter, keys, project, wholeTab, killSessions, vertical, lines, path, name
     }
 
     public init(from decoder: Decoder) throws {
@@ -55,6 +60,11 @@ extension ControlRequest: Codable {
             )
         case "new-tab":
             self = .newTab(project: try container.decodeIfPresent(String.self, forKey: .project))
+        case "add-project":
+            self = .addProject(
+                path: try container.decode(String.self, forKey: .path),
+                name: try container.decodeIfPresent(String.self, forKey: .name)
+            )
         case "remove-project":
             self = .removeProject(name: try container.decode(String.self, forKey: .project))
         case "close":
@@ -97,6 +107,10 @@ extension ControlRequest: Codable {
         case .newTab(let project):
             try container.encode("new-tab", forKey: .command)
             try container.encodeIfPresent(project, forKey: .project)
+        case .addProject(let path, let name):
+            try container.encode("add-project", forKey: .command)
+            try container.encode(path, forKey: .path)
+            try container.encodeIfPresent(name, forKey: .name)
         case .removeProject(let name):
             try container.encode("remove-project", forKey: .command)
             try container.encode(name, forKey: .project)

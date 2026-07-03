@@ -122,6 +122,7 @@ relaunches. Engine is pure/tested in `ZettyCore`. Full details in
 doubles as the CLI) drives the app over `~/.zetty/zetty.sock`:
 `status [--json]` · `send` (text + tmux-style keys into any pane) ·
 `capture` (pane output) · `new-tab` / `split` (print the new pane id) ·
+`add-project` (adds a directory as a project, prints its first pane id) ·
 `remove-project` (closes the project's tabs, no confirmation) ·
 `focus` · `close` · `reload` · `quit [--kill-sessions]`. Agent-friendly:
 machine-readable output, stderr errors, exit 0/1/2. Protocol + CLI logic
