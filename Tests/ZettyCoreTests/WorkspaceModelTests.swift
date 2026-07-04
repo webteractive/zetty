@@ -1,4 +1,5 @@
 import Testing
+import Foundation
 @testable import ZettyCore
 
 @Test func seedsOneActiveProject() {
@@ -123,4 +124,28 @@ import Testing
     let low = WorkspaceModel(restoring: trees, activeIndex: -5)
     #expect(low?.activeIndex == 0)                   // clamped to first
     #expect(WorkspaceModel(restoring: []) == nil)    // nil on empty
+}
+
+@Test func projectContainingSurfaceFindsOwner() {
+    let model = WorkspaceModel()
+    let second = model.addProject(name: "beta", rootPath: "/tmp/beta")
+    let surfaceID = second.tabList.trees[0].layout.surfaces[0].id
+    #expect(model.project(containing: surfaceID) === second)
+    #expect(model.project(containing: UUID()) == nil)
+}
+
+@Test func renameProjectResortsAndKeepsActiveIdentity() {
+    let model = WorkspaceModel()
+    let zebra = model.addProject(name: "zebra", rootPath: "/tmp/zebra")
+    model.addProject(name: "alpha", rootPath: "/tmp/alpha")
+    // Active is "alpha" (last added). Rename zebra → "aaa": it must sort first
+    // while the active project stays "alpha" by identity.
+    guard let zebraIndex = model.projects.firstIndex(where: { $0 === zebra }) else {
+        Issue.record("zebra missing"); return
+    }
+    model.rename(projectAt: zebraIndex, to: "aaa")
+    #expect(model.projects.first?.name == "aaa")
+    #expect(model.activeProject.name == "alpha")
+    // Out-of-range index is a no-op.
+    model.rename(projectAt: 99, to: "nope")
 }

@@ -70,6 +70,24 @@ public final class WorkspaceModel {
         resort()   // pinning moves the project into the pinned group
     }
 
+    /// The project owning `surfaceID`, or nil. Used by the app layer to
+    /// resolve per-project settings at pane-spawn time.
+    public func project(containing surfaceID: UUID) -> ProjectRuntime? {
+        projects.first { project in
+            project.tabList.trees.contains { tree in
+                tree.layout.surfaces.contains { $0.id == surfaceID }
+            }
+        }
+    }
+
+    /// Renames a project and re-sorts (name participates in sidebar order);
+    /// the active project is preserved by identity, like `togglePin`.
+    public func rename(projectAt index: Int, to newName: String) {
+        guard projects.indices.contains(index) else { return }
+        projects[index].name = newName
+        resort()
+    }
+
     /// Sort order: pinned projects first, then unpinned, each group ordered by
     /// name (case-insensitive). The active project is preserved by identity so
     /// `activeIndex` keeps pointing at the same project after reordering.
