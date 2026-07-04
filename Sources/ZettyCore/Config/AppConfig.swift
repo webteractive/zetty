@@ -54,6 +54,10 @@ public struct AppConfig: Equatable, Sendable {
     public var editor: String?
     /// When true, panes run inside zmx sessions that survive app quit/relaunch.
     public var preserveSessions: Bool
+    /// When true (default), relaunch-reattached preserved panes replay their
+    /// full zmx scrollback history into the surface before attaching. Only
+    /// meaningful when `preserveSessions` is on and zmx is installed.
+    public var restoreScrollback: Bool
     /// When true (default), quitting asks for confirmation first; when false
     /// the app quits immediately.
     public var confirmQuit: Bool
@@ -84,6 +88,7 @@ public struct AppConfig: Equatable, Sendable {
         themeLight: String = AppConfig.defaultThemeLight,
         editor: String? = nil,
         preserveSessions: Bool = false,
+        restoreScrollback: Bool = true,
         confirmQuit: Bool = true,
         notifySound: Bool = true,
         notifyBadge: Bool = true,
@@ -97,6 +102,7 @@ public struct AppConfig: Equatable, Sendable {
         self.themeLight = themeLight
         self.editor = editor
         self.preserveSessions = preserveSessions
+        self.restoreScrollback = restoreScrollback
         self.confirmQuit = confirmQuit
         self.notifySound = notifySound
         self.notifyBadge = notifyBadge
@@ -115,9 +121,9 @@ public struct AppConfig: Equatable, Sendable {
     /// color values survive); blank lines are skipped; keys are case-insensitive;
     /// values are trimmed.
     ///
-    /// `appearance`, `theme-dark`, `theme-light`, `editor`, and
-    /// `preserve-sessions` are Zetty's own keys. **Every other `key = value`
-    /// line is treated as a ghostty directive**
+    /// `appearance`, `theme-dark`, `theme-light`, `editor`,
+    /// `preserve-sessions`, and `restore-scrollback` are Zetty's own keys.
+    /// **Every other `key = value` line is treated as a ghostty directive**
     /// and forwarded verbatim — so a user can paste their existing ghostty config
     /// straight in. Ghostty defines none of the reserved keys, so no collision.
     public static func parse(_ text: String) -> AppConfig {
@@ -145,6 +151,8 @@ public struct AppConfig: Equatable, Sendable {
                 config.editor = value
             case "preserve-sessions":
                 config.preserveSessions = ["true", "yes", "on", "1"].contains(value.lowercased())
+            case "restore-scrollback":
+                config.restoreScrollback = ["true", "yes", "on", "1"].contains(value.lowercased())
             case "confirm-quit":
                 config.confirmQuit = ["true", "yes", "on", "1"].contains(value.lowercased())
             case "notify-sound":
@@ -229,6 +237,10 @@ public struct AppConfig: Equatable, Sendable {
         # Keep terminal sessions alive across app quit/relaunch (requires zmx).
         preserve-sessions = \(preserveSessions)
 
+        # Replay preserved panes' scrollback history when relaunch reattaches
+        # them (only meaningful with preserve-sessions = true).
+        restore-scrollback = \(restoreScrollback)
+
         # Ask for confirmation before quitting (false quits immediately).
         confirm-quit = \(confirmQuit)
 
@@ -295,6 +307,10 @@ public struct AppConfig: Equatable, Sendable {
     # Keep terminal sessions alive across app quit/relaunch. Requires zmx
     # (brew install neurosnap/tap/zmx); also toggleable in Settings (⌘,).
     preserve-sessions = false
+
+    # Replay preserved panes' scrollback history when relaunch reattaches
+    # them (only meaningful with preserve-sessions = true).
+    restore-scrollback = true
 
     # Ask for confirmation before quitting (false quits immediately).
     confirm-quit = true

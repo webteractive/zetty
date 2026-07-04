@@ -391,15 +391,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     /// Threads session preservation into the terminal VC: when enabled and zmx
     /// is installed, new panes launch `zmx attach zetty-<id>` instead of a
-    /// bare shell. Affects NEW panes only. Explicitly closed panes always get
+    /// bare shell. When restore-scrollback is on, panes launch through the
+    /// scrollback-restore wrapper script instead (replays zmx history, then
+    /// attaches). Affects NEW panes only. Explicitly closed panes always get
     /// their sessions killed when zmx is present (regardless of the toggle, so
     /// closing panes after disabling still cleans up).
     private func applySessionPreservation(to tvc: TerminalViewController) {
         let zmxPath = ZmxRunner.locate()
 
         if appConfig.preserveSessions, let zmx = zmxPath {
+            let restoreScript = appConfig.restoreScrollback ? ScrollbackRestore.ensureScript() : nil
             tvc.sessionCommandProvider = { id in
-                SessionPersistence.attachCommand(zmxPath: zmx, surfaceID: id)
+                SessionPersistence.attachCommand(
+                    zmxPath: zmx, surfaceID: id, restoreScriptPath: restoreScript)
             }
         } else {
             tvc.sessionCommandProvider = nil

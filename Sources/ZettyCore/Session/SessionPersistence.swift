@@ -22,15 +22,47 @@ public enum SessionPersistence {
         namePrefix + shortID(for: surfaceID)
     }
 
+    /// Contents of the generated scrollback-restore wrapper
+    /// (`~/.zetty/scrollback-restore.sh`; the app layer writes it). Replays
+    /// the session's full scrollback (`zmx history --vt`, attributes intact)
+    /// into the surface as ordinary output, then execs the attach so no
+    /// extra shell lingers. `unset ZMX_SESSION` covers the inherited-session
+    /// hazard (see `attachCommand`) for both zmx invocations. A missing
+    /// session (new pane) prints nothing — stderr is suppressed — and attach
+    /// creates it as before.
+    public static let restoreScriptContents = """
+    #!/bin/sh
+    # Zetty scrollback restore (generated; do not edit — rewritten on launch).
+    # $1 = zmx path, $2 = session name.
+    unset ZMX_SESSION
+    "$1" history "$2" --vt 2>/dev/null
+    exec "$1" attach "$2"
+    """
+
     /// The ghostty `command` value that runs the pane inside its zmx session.
     /// zmx attach creates the session (running the user's shell) if missing.
     ///
-    /// ZMX_SESSION is unset first: when Zetty itself was launched from a
-    /// zmx-backed terminal (e.g. Supacode), every pane inherits that variable,
-    /// and `zmx attach` run "inside" a session kills it instead of attaching
-    /// the target (or errors out if it's already gone).
-    public static func attachCommand(zmxPath: String, surfaceID: UUID) -> String {
-        "/usr/bin/env -u ZMX_SESSION \(zmxPath) attach \(sessionName(for: surfaceID))"
+    /// With a `restoreScriptPath`, the pane instead runs the wrapper script,
+    /// which replays the session's scrollback history before attaching. The
+    /// invocation is plain space-separated tokens — ghostty's `command`
+    /// parser can't be relied on for quote grouping, so nothing may need
+    /// quoting (paths with spaces are already unsupported by the bare form).
+    ///
+    /// ZMX_SESSION is unset first (by `env -u` here, by the script there):
+    /// when Zetty itself was launched from a zmx-backed terminal (e.g.
+    /// Supacode), every pane inherits that variable, and `zmx attach` run
+    /// "inside" a session kills it instead of attaching the target (or
+    /// errors out if it's already gone).
+    public static func attachCommand(
+        zmxPath: String,
+        surfaceID: UUID,
+        restoreScriptPath: String? = nil
+    ) -> String {
+        let session = sessionName(for: surfaceID)
+        guard let script = restoreScriptPath else {
+            return "/usr/bin/env -u ZMX_SESSION \(zmxPath) attach \(session)"
+        }
+        return "/bin/sh \(script) \(zmxPath) \(session)"
     }
 
     /// Parses full `zmx list` output into session name → root pid, for
