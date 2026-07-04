@@ -1,6 +1,11 @@
 # Named layouts & workspaces — deferred (2026-07-03)
 
-**Status: tabled.** This was the last unbuilt PRD Phase 2 item
+**Status: superseded (2026-07-04)** by
+[`2026-07-04-layout-templates-design.md`](2026-07-04-layout-templates-design.md),
+which builds exactly the "thin slice" identified below. The revisit trigger
+fired. This note is kept for the rationale.
+
+**Original status: tabled.** This was the last unbuilt PRD Phase 2 item
 (`docs/plans/2026-06-25-quertty-prd.md` §9). We decided not to build it now.
 This note records why, and what would change our mind.
 

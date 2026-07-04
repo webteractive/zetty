@@ -1,6 +1,6 @@
 # Design: tmux-style prefix keybindings + copy mode
 
-**Date:** 2026-07-03 · **Status:** Approved by Glen (design); implementation pending
+**Date:** 2026-07-03 · **Status:** Implemented (2026-07-04)
 **Roadmap:** Phase 2 — "tmux-style keybindings + copy mode"
 
 ## Summary
