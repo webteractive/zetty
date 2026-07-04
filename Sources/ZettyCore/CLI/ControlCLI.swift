@@ -33,6 +33,9 @@ public enum ControlCLI {
       zetty split [--pane <id> | --cwd <path>] [--horizontal]
                                               split a pane (vertical by default);
                                               prints the new pane's id on stdout
+      zetty break [--pane <id> | --cwd <path>]
+                                              break a pane into a new adjacent tab;
+                                              prints the moved pane's id on stdout
       zetty focus (--pane <id> | --cwd <path>)
                                               focus a pane (selects its project/tab)
       zetty close (--pane <id> | --cwd <path>) [--tab]
@@ -61,7 +64,7 @@ public enum ControlCLI {
     public static func recognizes(_ arguments: [String]) -> Bool {
         guard let first = arguments.first else { return false }
         return ["status", "ls", "send", "capture", "new-tab", "add-project", "remove-project",
-                "split", "focus", "close", "reload", "quit",
+                "split", "break", "focus", "close", "reload", "quit",
                 "help", "--help", "-h"].contains(first)
     }
 
@@ -91,6 +94,8 @@ public enum ControlCLI {
             return runRemoveProject(arguments)
         case "split":
             return runSplit(arguments)
+        case "break":
+            return runBreak(arguments)
         case "focus":
             return runFocus(arguments)
         case "close":
@@ -282,6 +287,30 @@ public enum ControlCLI {
             index += 1
         }
         return expectPane(.split(target: target, vertical: vertical))
+    }
+
+    private static func runBreak(_ arguments: [String]) -> Int32 {
+        var target = PaneSelector.focused
+        var index = 0
+        while index < arguments.count {
+            switch arguments[index] {
+            case "--pane":
+                index += 1
+                guard index < arguments.count else { return failure("--pane needs a value") }
+                target = .pane(arguments[index])
+            case "--cwd":
+                index += 1
+                guard index < arguments.count else { return failure("--cwd needs a value") }
+                target = .cwd(arguments[index])
+            case "--help", "-h":
+                print(usage)
+                return 0
+            default:
+                return failure("unknown argument \"\(arguments[index])\"")
+            }
+            index += 1
+        }
+        return expectPane(.breakPane(target: target))
     }
 
     private static func runFocus(_ arguments: [String]) -> Int32 {

@@ -34,6 +34,10 @@ public enum ControlRequest: Equatable, Sendable {
     /// Split the targeted pane (vertical = side by side); the response is
     /// `.pane` with the new pane's short id.
     case split(target: PaneSelector, vertical: Bool)
+    /// Break the targeted pane out into a new tab inserted right after the
+    /// current one; the response is `.pane` with the moved pane's short id.
+    /// Fails when the pane is the only one in its tab.
+    case breakPane(target: PaneSelector)
     /// Focus the targeted pane (selecting its project/tab).
     case focus(target: PaneSelector)
     /// The targeted pane's recent output (`lines` from the end; nil → all
@@ -79,6 +83,8 @@ extension ControlRequest: Codable {
                 target: try container.decodeIfPresent(PaneSelector.self, forKey: .target) ?? .focused,
                 vertical: try container.decodeIfPresent(Bool.self, forKey: .vertical) ?? true
             )
+        case "break":
+            self = .breakPane(target: try container.decodeIfPresent(PaneSelector.self, forKey: .target) ?? .focused)
         case "focus":
             self = .focus(target: try container.decode(PaneSelector.self, forKey: .target))
         case "capture":
@@ -125,6 +131,9 @@ extension ControlRequest: Codable {
             try container.encode("split", forKey: .command)
             try container.encode(target, forKey: .target)
             try container.encode(vertical, forKey: .vertical)
+        case .breakPane(let target):
+            try container.encode("break", forKey: .command)
+            try container.encode(target, forKey: .target)
         case .focus(let target):
             try container.encode("focus", forKey: .command)
             try container.encode(target, forKey: .target)

@@ -66,6 +66,31 @@ public final class TabList {
         activeIndex = trees.count - 1
     }
 
+    /// Move the active tab's focused pane into a new single-pane tab inserted
+    /// right after the current tab, which becomes active. The moved `Surface`
+    /// keeps its identity (id/workingDir/command/lastTitle), so the live
+    /// terminal is re-parented rather than recreated. Returns false (no-op)
+    /// when the active tab has a single pane or no focused surface.
+    @discardableResult
+    public func breakFocusedPaneIntoNewTab() -> Bool {
+        var tree = activeTree
+        guard tree.layout.surfaces.count > 1,
+              let id = tree.focusedSurfaceID,
+              let surface = tree.layout.surfaces.first(where: { $0.id == id }) else {
+            return false
+        }
+        // Removing via closeFocused reuses the collapse + source-focus fix and
+        // clears the source tab's zoom if the moved pane was the zoomed one.
+        guard tree.closeFocused() else { return false }
+        activeTree = tree
+
+        let newTree = PaneTree(layout: Layout(root: .leaf(surface)),
+                               focusedSurfaceID: surface.id)
+        trees.insert(newTree, at: activeIndex + 1)
+        activeIndex += 1
+        return true
+    }
+
     /// Closes the tab at `index`. No-op if it would remove the last tab or the
     /// index is out of range. After closing, `activeIndex` stays on a valid tab
     /// (and on the same logical tab when one before it is removed).

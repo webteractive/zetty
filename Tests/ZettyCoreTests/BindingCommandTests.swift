@@ -16,7 +16,7 @@ private func copyDefault(_ chordText: String) -> BindingCommand? {
     let commands: [BindingCommand] = [
         .splitVertical, .splitHorizontal,
         .focusLeft, .focusRight, .focusUp, .focusDown, .cyclePanes,
-        .closePane, .zoomPane,
+        .closePane, .zoomPane, .breakPane,
         .newTab, .nextTab, .previousTab, .renameTab,
         .enterCopyMode, .paste, .sendPrefixLiteral, .cancelPrefix,
     ]
@@ -58,6 +58,11 @@ private func copyDefault(_ chordText: String) -> BindingCommand? {
     #expect(BindingCommand(configName: "select-tab-x") == nil)
 }
 
+@Test func breakPaneBoundToBangByDefault() {
+    #expect(prefixDefault("!") == .breakPane)
+    #expect(BindingCommand(configName: "break-pane") == .breakPane)
+}
+
 // MARK: - Default prefix table (tmux canon)
 
 @Test func defaultPrefixTableMatchesDesignDoc() {
@@ -74,6 +79,7 @@ private func copyDefault(_ chordText: String) -> BindingCommand? {
     #expect(prefixDefault("o") == .cyclePanes)
     #expect(prefixDefault("x") == .closePane)
     #expect(prefixDefault("z") == .zoomPane)
+    #expect(prefixDefault("!") == .breakPane)
     #expect(prefixDefault("c") == .newTab)
     #expect(prefixDefault("n") == .nextTab)
     #expect(prefixDefault("p") == .previousTab)

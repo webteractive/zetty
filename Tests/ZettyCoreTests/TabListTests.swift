@@ -106,6 +106,57 @@ import Testing
     #expect(list.activeIndex == 2)
 }
 
+// MARK: - Break pane into tab
+
+/// Build a fresh 2-pane active tab (focused = the second, newly split pane).
+private func twoPaneTabList() -> TabList {
+    let list = TabList(defaultWorkingDir: "/tmp/proj")
+    var tree = list.activeTree
+    _ = tree.splitFocused(direction: .vertical,
+                          newSurface: Surface(workingDir: "/tmp/proj"))
+    list.activeTree = tree
+    return list
+}
+
+@Test func breakMovesFocusedPaneIntoNewAdjacentTab() {
+    let list = twoPaneTabList()
+    let movedID = list.activeTree.focusedSurfaceID!
+    let sourceIndex = list.activeIndex
+
+    #expect(list.breakFocusedPaneIntoNewTab() == true)
+
+    #expect(list.trees.count == 2)
+    #expect(list.activeIndex == sourceIndex + 1)          // inserted right after
+    // New tab is a single pane holding the SAME surface id (live view survives).
+    #expect(list.activeTree.layout.surfaces.map(\.id) == [movedID])
+    #expect(list.activeTree.focusedSurfaceID == movedID)
+    // Source tab collapsed to its remaining pane and no longer holds the moved id.
+    #expect(list.trees[sourceIndex].layout.surfaces.contains { $0.id == movedID } == false)
+    #expect(list.trees[sourceIndex].layout.surfaces.count == 1)
+    #expect(list.trees[sourceIndex].focusedSurfaceID != nil)
+}
+
+@Test func breakIsNoOpOnSinglePaneTab() {
+    let list = TabList(defaultWorkingDir: "/tmp/proj")   // one pane
+    #expect(list.breakFocusedPaneIntoNewTab() == false)
+    #expect(list.trees.count == 1)
+    #expect(list.activeIndex == 0)
+}
+
+@Test func breakClearsSourceZoomAndYieldsUnzoomedTab() {
+    let list = twoPaneTabList()
+    var tree = list.activeTree
+    _ = tree.toggleZoom()                                 // zoom the focused pane
+    list.activeTree = tree
+    #expect(list.activeTree.zoomedSurfaceID != nil)
+
+    #expect(list.breakFocusedPaneIntoNewTab() == true)
+
+    #expect(list.activeTree.zoomedSurfaceID == nil)        // new tab unzoomed
+    let sourceIndex = list.activeIndex - 1
+    #expect(list.trees[sourceIndex].zoomedSurfaceID == nil) // source zoom cleared
+}
+
 @Test func replaceTreesSwapsTabSetAndClampsActive() {
     let list = TabList(defaultWorkingDir: "/tmp/a")
     list.newTab()                                    // 2 tabs, active = 1
