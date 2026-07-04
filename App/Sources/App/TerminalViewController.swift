@@ -177,6 +177,17 @@ final class TerminalViewController: NSViewController {
         }
     }
 
+    /// When set, new panes get these environment variables (per-project env
+    /// from settings). Affects NEW panes only — a preserved zmx session
+    /// captures its env at first creation.
+    var surfaceEnvironmentProvider: ((UUID) -> [String: String]?)? {
+        didSet {
+            registry.surfaceEnvironment = surfaceEnvironmentProvider.map { provider in
+                { surface in provider(surface.id) }
+            }
+        }
+    }
+
     /// Called with surface IDs removed by an explicit close (pane/tab/project),
     /// so their persistent sessions can be killed. App quit never fires this.
     var onSurfacesClosed: (([UUID]) -> Void)? {
@@ -233,6 +244,7 @@ final class TerminalViewController: NSViewController {
             // The subscription fires once when the pane's surface pair is
             // created, which makes this a reliable per-pane one-shot hook.
             self.nudgeAfterReattach(id)
+            self.injectStartupCommandIfPending(id)
         }
 
         startAgentEventWatcher()
@@ -432,6 +444,9 @@ final class TerminalViewController: NSViewController {
         sidebar.onSelectTab = { [weak self] projectIndex, tabIndex in
             guard let self else { return }
             self.workspace.select(index: projectIndex)
+            // Same activation hook as selectProject(at:) — a tab click can
+            // switch projects too (per-project theme must follow).
+            self.onActiveProjectChanged?()
             self.workspace.activeTabList.select(index: tabIndex)
             self.refreshTabBar()
             self.rebuildSurfaceNodeView()
@@ -816,6 +831,53 @@ final class TerminalViewController: NSViewController {
 
     /// Sidebar "Project Settings…" — payload is the project runtime.
     var onOpenProjectSettings: ((ProjectRuntime) -> Void)?
+
+    /// Fired when the ACTIVE project changes (select, add, remove) — the
+    /// receiver re-applies per-project theme overrides.
+    var onActiveProjectChanged: (() -> Void)?
+
+    /// Resolves a project's layout template (repo `.zetty/project.json`
+    /// first, then the global default); nil → seed the usual single pane.
+    var layoutTemplateProvider: ((ProjectRuntime) -> LayoutTemplate?)?
+
+    /// Startup commands awaiting injection into freshly spawned panes —
+    /// populated ONLY by template application, and in-memory only, so a
+    /// relaunch can never re-run a command into a preserved session.
+    private var pendingStartupCommands: [UUID: String] = [:]
+
+    /// Injects a template pane's startup command shortly after its view
+    /// spawns (the delay lets the shell — or the scrollback-restore wrapper's
+    /// attach — start reading the pty before the text arrives).
+    private func injectStartupCommandIfPending(_ surfaceID: UUID) {
+        guard let command = pendingStartupCommands.removeValue(forKey: surfaceID) else { return }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { [weak self] in
+            guard let self, let surface = self.surface(with: surfaceID) else { return }
+            _ = self.registry.sendText(command + "\r", to: surface)
+        }
+    }
+
+    /// Replaces `project`'s tabs with its resolved layout template (panes
+    /// spawn lazily via the usual rebuild; replaced panes' sessions are
+    /// killed like a close). Returns false when no template resolves.
+    @discardableResult
+    func applyLayoutTemplate(to project: ProjectRuntime) -> Bool {
+        guard let template = layoutTemplateProvider?(project),
+              let built = template.tabList(rootPath: project.rootPath) else { return false }
+        let closingSurfaces = project.tabList.trees.flatMap { $0.layout.surfaces.map(\.id) }
+        project.tabList.replaceTrees(from: built.tabList)
+        pendingStartupCommands.merge(built.commands) { _, new in new }
+        onSurfacesClosed?(closingSurfaces)
+        refreshTabBar()
+        rebuildSurfaceNodeView()
+        refreshSidebar()
+        return true
+    }
+
+    /// Captures `project`'s live arrangement as its repo-file template.
+    /// Returns the captured template (the caller persists it).
+    func captureLayoutTemplate(for project: ProjectRuntime) -> LayoutTemplate {
+        LayoutTemplate.capture(from: project.tabList, rootPath: project.rootPath)
+    }
 
     /// Fired whenever the number of attention panes changes (Dock badge).
     var onAttentionCountChanged: ((Int) -> Void)?
@@ -1577,7 +1639,15 @@ final class TerminalViewController: NSViewController {
     }
 
     private func addProjectFromURL(_ url: URL, name: String? = nil) {
-        workspace.addProject(name: name ?? url.lastPathComponent, rootPath: url.path)
+        let project = workspace.addProject(name: name ?? url.lastPathComponent, rootPath: url.path)
+        // A resolved layout template replaces the default single-pane seed
+        // (fresh project → nothing to confirm-discard).
+        if let template = layoutTemplateProvider?(project),
+           let built = template.tabList(rootPath: project.rootPath) {
+            project.tabList.replaceTrees(from: built.tabList)
+            pendingStartupCommands.merge(built.commands) { _, new in new }
+        }
+        onActiveProjectChanged?()
         refreshTabBar()
         rebuildSurfaceNodeView()   // spawns the pane + autosaves (tail call)
         refreshSidebar()
@@ -1632,6 +1702,7 @@ final class TerminalViewController: NSViewController {
         let countBefore = workspace.projects.count
         workspace.removeProject(at: index)
         guard workspace.projects.count != countBefore else { return }   // last project — no-op
+        onActiveProjectChanged?()   // removal can shift which project is active
         // Same reasoning as closeTab: report the closed surfaces explicitly so
         // never-spawned panes' zmx sessions are killed too.
         onSurfacesClosed?(closingSurfaces)
@@ -1770,6 +1841,7 @@ final class TerminalViewController: NSViewController {
     /// Switches to the project at `index` and focuses its active pane.
     func selectProject(at index: Int) {
         workspace.select(index: index)
+        onActiveProjectChanged?()
         refreshTabBar()
         rebuildSurfaceNodeView()
         refreshSidebar()

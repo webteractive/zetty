@@ -112,6 +112,11 @@ public final class SurfaceRegistry {
     /// preservation). Consulted once, at surface creation; nil → default shell.
     public var surfaceCommand: ((Surface) -> String?)?
 
+    /// When set, supplies environment variables for a surface's pane (e.g.
+    /// per-project env). Injected as repeated ghostty `env` directives at
+    /// surface creation; nil/empty → nothing added.
+    public var surfaceEnvironment: ((Surface) -> [String: String]?)?
+
     /// Called with the surface IDs removed by `prune(keeping:)` — the app layer
     /// uses this to kill those surfaces' persistent sessions on explicit close
     /// (app quit never prunes, so quit leaves sessions running).
@@ -296,11 +301,18 @@ public final class SurfaceRegistry {
         if let tc = ctrl as? TerminalController {
             if let theme = terminalTheme { tc.setTheme(theme) }
             // Merge the shared passthrough config with this surface's launch
-            // command (session preservation), when either is present.
+            // command (session preservation) and env vars (per-project
+            // settings), when any is present.
             let command = surfaceCommand?(surface)
-            if terminalConfiguration != nil || command != nil {
+            let environment = surfaceEnvironment?(surface) ?? [:]
+            if terminalConfiguration != nil || command != nil || !environment.isEmpty {
                 var config = terminalConfiguration ?? TerminalConfiguration()
                 if let command { config = config.custom("command", command) }
+                // Sorted for deterministic config; ghostty's `env` directive
+                // repeats, one KEY=VALUE per line.
+                for key in environment.keys.sorted() {
+                    config = config.custom("env", "\(key)=\(environment[key]!)")
+                }
                 tc.setTerminalConfiguration(config)
             }
         }

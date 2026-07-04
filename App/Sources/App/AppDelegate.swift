@@ -65,6 +65,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     /// Private per-project settings (identity + overrides), keyed by rootPath.
     private lazy var projectSettingsStore = ProjectSettingsStore(directory: appSupportDirectory)
 
+    /// Global default layout template (hand-editable; a project's repo file
+    /// wins when it carries its own).
+    private lazy var layoutTemplateStore = LayoutTemplateStore(directory: appSupportDirectory)
+
     /// In-memory project settings; loaded at launch, saved on every edit.
     private(set) var projectSettings = ProjectSettingsFile()
 
@@ -108,6 +112,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         terminalViewController = tvc
         projectSettings = projectSettingsStore.load()
         applyProjectNameOverrides(to: tvc)
+        applyThemeForActiveProject()   // initial active project's theme override
         // Autosave on every structural change (debounced), so the on-disk
         // workspace always reflects the current layout — not just on clean quit.
         tvc.onWorkspaceDidChange = { [weak self] in self?.scheduleSave() }
@@ -143,6 +148,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
         tvc.onRenameProject = { [weak self] project in self?.promptRenameProject(project) }
         tvc.onOpenProjectSettings = { [weak self] project in self?.presentProjectSettings(project) }
+        tvc.onActiveProjectChanged = { [weak self] in self?.applyThemeForActiveProject() }
+        tvc.layoutTemplateProvider = { [weak self] project in
+            ProjectFileIO.load(projectRoot: project.rootPath)?.layoutTemplate
+                ?? self?.layoutTemplateStore.load()
+        }
+        tvc.surfaceEnvironmentProvider = { [weak self, weak tvc] id in
+            guard let self, let project = tvc?.workspace.project(containing: id) else { return nil }
+            let env = self.resolvedSettings(for: project).env
+            return env.isEmpty ? nil : env
+        }
         tvc.onAttentionCountChanged = { [weak self] count in
             guard let self else { return }
             NSApp.dockTile.badgeLabel = (self.appConfig.notifyBadge && count > 0) ? "\(count)" : nil
@@ -215,10 +230,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     // MARK: - Appearance
 
-    /// Whether the OS is currently in dark mode (only meaningful in system mode,
-    /// where `NSApp.appearance` is left unset so it tracks the OS).
+    /// Whether the OS is currently in dark mode — pin-free: while
+    /// `NSApp.appearance` is pinned (explicit global mode, or a per-project
+    /// appearance override), `effectiveAppearance` follows the pin and would
+    /// lie about the OS, so read the system default instead.
     private var osIsDark: Bool {
-        NSApp.effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+        if NSApp.appearance == nil {
+            return NSApp.effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+        }
+        return UserDefaults.standard.string(forKey: "AppleInterfaceStyle") == "Dark"
     }
 
     /// The concrete scheme for the current config + OS appearance.
@@ -241,21 +261,81 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         appConfig.appearance == .system ? nil : ZTheme.current.appearance
     }
 
-    /// In system mode, watch for OS appearance toggles and re-theme live.
+    /// OS appearance-change observer (distributed notification). Fires on
+    /// the system toggle even while `NSApp.appearance` is pinned — the KVO
+    /// on `effectiveAppearance` goes silent under a pin, and a per-project
+    /// appearance override can make the EFFECTIVE mode system while the
+    /// global is pinned. The decision point no-ops when the flip doesn't
+    /// matter.
+    private var interfaceThemeObserver: NSObjectProtocol?
+
     private func startObservingSystemAppearance() {
         appearanceObservation = nil
-        guard appConfig.appearance == .system else { return }
         appearanceObservation = NSApp.observe(\.effectiveAppearance) { [weak self] _, _ in
             DispatchQueue.main.async { self?.systemAppearanceDidChange() }
+        }
+        guard interfaceThemeObserver == nil else { return }
+        interfaceThemeObserver = DistributedNotificationCenter.default().addObserver(
+            forName: NSNotification.Name("AppleInterfaceThemeChangedNotification"),
+            object: nil, queue: .main
+        ) { [weak self] _ in
+            self?.systemAppearanceDidChange()
         }
     }
 
     private func systemAppearanceDidChange() {
-        let newScheme = resolvedScheme()
-        guard newScheme != ZTheme.scheme else { return }
-        ZTheme.scheme = newScheme
+        applyThemeForActiveProject()
+    }
+
+    /// Applies `scheme` to chrome + terminals WITHOUT persisting — the
+    /// visual half of `applyScheme`, also used for per-project overrides
+    /// (which must never write into the global config).
+    private func applySchemeTransient(_ scheme: ZColorScheme) {
+        guard scheme != ZTheme.scheme else { return }
+        ZTheme.scheme = scheme
         window?.backgroundColor = ZTheme.current.bg1Color
         terminalViewController?.applyTheme()
+    }
+
+    /// The single visual theme decision point, modeled exactly on the global
+    /// resolution (appearance axis → scheme per axis) with the active
+    /// project's overrides folded in per field: effective appearance =
+    /// project override ?? global; effective scheme = the project's
+    /// theme-dark/-light override for that axis ?? the global one. Unknown
+    /// scheme names fall back to the global choice. Called on project
+    /// activation, OS appearance flips, config reloads, and settings edits.
+    func applyThemeForActiveProject() {
+        var appearance = appConfig.appearance
+        var themeDark = appConfig.themeDark
+        var themeLight = appConfig.themeLight
+        if let tvc = terminalViewController {
+            let resolved = resolvedSettings(for: tvc.workspace.activeProject)
+            if let mode = resolved.appearanceOverride.flatMap(AppearanceMode.init(rawValue:)) {
+                appearance = mode
+            }
+            if let dark = resolved.themeDarkOverride, ZColorScheme.named(dark) != nil {
+                themeDark = dark
+            }
+            if let light = resolved.themeLightOverride, ZColorScheme.named(light) != nil {
+                themeLight = light
+            }
+        }
+
+        let isDark: Bool
+        switch appearance {
+        case .dark: isDark = true
+        case .light: isDark = false
+        case .system: isDark = osIsDark
+        }
+        let scheme = ZColorScheme.named(isDark ? themeDark : themeLight)
+            ?? (isDark ? .midnight : .paper)
+        applySchemeTransient(scheme)
+        // Pin (or release) the app/window appearance for the EFFECTIVE axis,
+        // like the global appearanceOverride does — a project pinned dark
+        // under a light system needs dark chrome for menus/sheets too.
+        let pin: NSAppearance? = appearance == .system ? nil : ZTheme.current.appearance
+        NSApp.appearance = pin
+        window?.appearance = pin
     }
 
     /// Cycles to the next scheme WITHIN the current dark/light axis (⇧⌘T), so it
@@ -273,16 +353,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     /// Does NOT touch the appearance axis: schemes only change within the current
     /// axis, so the existing app appearance already matches.
     func applyScheme(_ scheme: ZColorScheme) {
-        ZTheme.scheme = scheme
-        window?.backgroundColor = ZTheme.current.bg1Color
-        terminalViewController?.applyTheme()
-
         if scheme.isDark {
             appConfig.themeDark = scheme.displayName
         } else {
             appConfig.themeLight = scheme.displayName
         }
         saveConfig()
+        // Visuals route through the per-project decision point: while the
+        // active project has a theme override it keeps winning (the new
+        // global shows on projects without one); otherwise the newly
+        // persisted global applies immediately.
+        applyThemeForActiveProject()
     }
 
     /// Persists `scheme` as the dark or light choice, applying it live only
@@ -306,12 +387,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     /// scheme, updating chrome + observation, and persisting.
     func setAppearanceMode(_ mode: AppearanceMode) {
         appConfig.appearance = mode
-        ZTheme.scheme = resolvedScheme()
-        NSApp.appearance = appearanceOverride
-        window?.appearance = appearanceOverride
-        window?.backgroundColor = ZTheme.current.bg1Color
-        terminalViewController?.applyTheme()
-        startObservingSystemAppearance()   // (re)arm or disarm the OS-follow KVO
+        // Visuals + appearance pinning route through the per-project decision
+        // point, so an active project's appearance/theme overrides keep
+        // winning over the new global.
+        applyThemeForActiveProject()
+        startObservingSystemAppearance()   // (re)arm the OS-follow observers
         saveConfig()
     }
 
@@ -345,10 +425,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     /// the theme + terminal overrides to every live pane — no relaunch needed.
     @objc func reloadConfiguration(_ sender: Any?) {
         appConfig = configStore.load()
-        ZTheme.scheme = resolvedScheme()
         applyChromeFontFromConfig()             // hand-edited font directives drive chrome too
-        NSApp.appearance = appearanceOverride
-        window?.appearance = appearanceOverride
+        // Theme + appearance pinning route through the per-project decision
+        // point (active project's overrides win over the reloaded global).
+        applyThemeForActiveProject()
         window?.backgroundColor = ZTheme.current.bg1Color
         startObservingSystemAppearance()
         terminalViewController?.applyTheme()                                  // chrome + terminal theme
@@ -433,18 +513,61 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             tvc.workspace.rename(projectAt: index, to: resolvedSettings(for: project).name)
         }
         applySessionPreservation(to: tvc)
+        if tvc.workspace.activeProject === project {
+            applyThemeForActiveProject()   // theme override may have changed
+        }
         tvc.refreshSidebar()
         tvc.refreshTabBar()
         scheduleSave()   // runtime name persists via the workspace snapshot
     }
 
+    /// Project menu / ⌥⌘, — opens the ACTIVE project's settings sheet.
+    @objc func openActiveProjectSettings(_ sender: Any?) {
+        guard let project = terminalViewController?.workspace.activeProject else { return }
+        presentProjectSettings(project)
+    }
+
     /// "Project Settings…" sheet: identity + overrides for one project.
     private func presentProjectSettings(_ project: ProjectRuntime) {
         guard let window = terminalViewController?.view.window else { return }
+
+        let layoutStatus: () -> String = { [weak self] in
+            if let template = ProjectFileIO.load(projectRoot: project.rootPath)?.layoutTemplate {
+                return "Repo file — \(template.tabs.count) tab\(template.tabs.count == 1 ? "" : "s")"
+            }
+            if let template = self?.layoutTemplateStore.load() {
+                return "Global default — \(template.tabs.count) tab\(template.tabs.count == 1 ? "" : "s")"
+            }
+            return "None"
+        }
+
         ProjectSettingsSheet.present(
             for: project.name,
             current: projectSettings.settings(for: project.rootPath) ?? ProjectSettings(),
             fallbackName: (project.rootPath as NSString).lastPathComponent,
+            layoutStatus: layoutStatus,
+            onSaveLayout: { [weak self] in
+                guard let tvc = self?.terminalViewController else { return }
+                var file = ProjectFileIO.load(projectRoot: project.rootPath) ?? ProjectFile()
+                file.layoutTemplate = tvc.captureLayoutTemplate(for: project)
+                try? ProjectFileIO.save(file, projectRoot: project.rootPath)
+            },
+            onApplyLayout: { [weak self] in
+                guard let self, let tvc = self.terminalViewController else { return }
+                let alert = NSAlert()
+                alert.messageText = "Apply layout template?"
+                alert.informativeText =
+                    "This replaces \(project.name)'s current tabs and panes; their sessions end."
+                alert.addButton(withTitle: "Apply")
+                alert.addButton(withTitle: "Cancel")
+                guard alert.runModal() == .alertFirstButtonReturn else { return }
+                tvc.applyLayoutTemplate(to: project)
+            },
+            onClearLayout: {
+                guard var file = ProjectFileIO.load(projectRoot: project.rootPath) else { return }
+                file.layoutTemplate = nil
+                try? ProjectFileIO.save(file, projectRoot: project.rootPath)
+            },
             on: window
         ) { [weak self] edited in
             self?.updateProjectSettings(edited, for: project)
@@ -1081,6 +1204,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         )
         addProject.keyEquivalentModifierMask = [.command]
         projectMenu.addItem(addProject)
+
+        // "Project Settings…"  ⌥⌘, — the ACTIVE project's settings sheet
+        // (comma mirrors the app-wide Settings ⌘, convention).
+        let projectSettings = NSMenuItem(
+            title: "Project Settings\u{2026}",
+            action: #selector(openActiveProjectSettings(_:)),
+            keyEquivalent: ","
+        )
+        projectSettings.keyEquivalentModifierMask = [.command, .option]
+        projectSettings.target = self
+        projectMenu.addItem(projectSettings)
 
         // "Remove Project…" — no shortcut (destructive); disabled on the last
         // project via the TVC's menu validation.
