@@ -29,10 +29,16 @@ by the tool it's running.
   reattached panes replay their full scrollback history (colors intact) so
   scrolling up works as if the app never quit.
 - **Per-project settings** — right-click a project → **Rename…** or **Project
-  Settings…**: custom name, identity color, and icon for the sidebar, plus
+  Settings…**: custom name, identity color, and icon for the sidebar; a
+  per-project **theme** (the whole app re-themes when you switch projects);
   per-project overrides (Follow global / On / Off) of session preservation
-  and agent notifications. Stored privately per user; nothing is written
-  into the repo.
+  and agent notifications; and per-project **environment variables**
+  (private, never written into the repo).
+- **Layout templates** — save a project's tab/split arrangement (each pane's
+  cwd + optional startup command) into a git-committable
+  `.zetty/project.json`; it re-applies automatically when the project is
+  added, or on demand from Project Settings. A hand-editable global default
+  lives in Application Support.
 - **AI agent status** — hook-driven status dots per tab and per project:
   green = running, yellow = needs attention, dim = idle — with optional
   sound / Dock badge / Notification Center alerts when an agent needs you.
@@ -136,6 +142,7 @@ Command Line** and click install — this symlinks `zetty` into
 | `⌘B` | Toggle sidebar |
 | `⌘O` | Add project |
 | `⌘,` | Settings |
+| `⌥⌘,` | Project Settings (active project) |
 | `⇧⌘,` | Reload configuration |
 | `⇧⌘T` / `⇧⌘A` | Cycle color scheme / appearance |
 | `⌘C` / `⌘V` | Copy / paste (Ghostty defaults inside the terminal) |

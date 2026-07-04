@@ -1,6 +1,6 @@
 # Per-Project Settings — Design
 
-**Date:** 2026-07-04 · **Status:** v1 shipped (identity + preserve/notification overrides); v2 (theme + layout) and v3 (env) pending ·
+**Date:** 2026-07-04 · **Status:** shipped (v1 identity + overrides · v2 theme + layout templates · v3 env vars) ·
 **Related:**
 [`2026-07-04-layout-templates-design.md`](2026-07-04-layout-templates-design.md)
 (its per-project `.zetty-layout.json` is consolidated into this design's

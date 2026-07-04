@@ -91,9 +91,12 @@ in `ZettyCore` (`AppConfig` / `ConfigStore`); `AppDelegate` resolves it.
   panes via a generated wrapper script (`~/.zetty/scrollback-restore.sh`) so
   scrollback survives relaunch. Details in [`AGENTS.md`](AGENTS.md).
 - **Per-project settings** — sidebar right-click → Rename…/Project Settings…
-  (name/color/icon + preserve-sessions & notifications tri-state overrides);
-  private store in Application Support, pure core in `ZettyCore/Settings/`.
-  Details in [`AGENTS.md`](AGENTS.md).
+  (name/color/icon, theme override applied on project switch, preserve-sessions
+  & notifications tri-state overrides, private env vars); layout templates in
+  a git-committable `.zetty/project.json` (cwds + startup commands, applied on
+  add-project or on demand; commands inject once, never on relaunch). Private
+  store in Application Support, pure core in `ZettyCore/Settings/`. Details in
+  [`AGENTS.md`](AGENTS.md).
 - **Baked-in ghostty defaults** (user directives win): `shell-integration =
   zsh`, `shell-integration-features = ssh-env,ssh-terminfo`.
 - **`prefix` / `bind` / `copy-bind`** — the tmux-style prefix-key layer.
