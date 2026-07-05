@@ -27,6 +27,10 @@ public enum ControlCLI {
                                               add a directory as a project (made
                                               active, one fresh tab); prints its
                                               first pane's id on stdout
+      zetty new-project <path> [--name <name>] [--git]
+                                              create a new directory and add it
+                                              as a project (--git runs git init);
+                                              prints its first pane's id on stdout
       zetty remove-project <name>           remove a project (closes its tabs and
                                               ends their sessions; no confirmation;
                                               the last project can't be removed)
@@ -63,8 +67,8 @@ public enum ControlCLI {
     /// binary to decide CLI mode vs. launching the GUI).
     public static func recognizes(_ arguments: [String]) -> Bool {
         guard let first = arguments.first else { return false }
-        return ["status", "ls", "send", "capture", "new-tab", "add-project", "remove-project",
-                "split", "break", "focus", "close", "reload", "quit",
+        return ["status", "ls", "send", "capture", "new-tab", "add-project", "new-project",
+                "remove-project", "split", "break", "focus", "close", "reload", "quit",
                 "help", "--help", "-h"].contains(first)
     }
 
@@ -90,6 +94,8 @@ public enum ControlCLI {
             return runNewTab(arguments)
         case "add-project":
             return runAddProject(arguments)
+        case "new-project":
+            return runNewProject(arguments)
         case "remove-project":
             return runRemoveProject(arguments)
         case "split":
@@ -245,6 +251,38 @@ public enum ControlCLI {
         let expanded = (raw as NSString).expandingTildeInPath
         let absolute = URL(fileURLWithPath: expanded).standardizedFileURL.path
         return expectPane(.addProject(path: absolute, name: name))
+    }
+
+    private static func runNewProject(_ arguments: [String]) -> Int32 {
+        var name: String?
+        var gitInit = false
+        var pathParts: [String] = []
+        var index = 0
+        while index < arguments.count {
+            switch arguments[index] {
+            case "--name":
+                index += 1
+                guard index < arguments.count else { return failure("--name needs a value") }
+                name = arguments[index]
+            case "--git":
+                gitInit = true
+            case "--help", "-h":
+                print(usage)
+                return 0
+            default:
+                pathParts.append(arguments[index])
+            }
+            index += 1
+        }
+        // Positional path — joined so unquoted paths with spaces still work.
+        let raw = pathParts.joined(separator: " ").trimmingCharacters(in: .whitespaces)
+        guard !raw.isEmpty else {
+            return failure("new-project needs a directory path to create")
+        }
+        // Resolve here: relative paths are relative to the CLI's cwd, not the app's.
+        let expanded = (raw as NSString).expandingTildeInPath
+        let absolute = URL(fileURLWithPath: expanded).standardizedFileURL.path
+        return expectPane(.newProject(path: absolute, name: name, gitInit: gitInit))
     }
 
     private static func runRemoveProject(_ arguments: [String]) -> Int32 {
