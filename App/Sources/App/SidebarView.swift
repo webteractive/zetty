@@ -95,6 +95,8 @@ final class SidebarView: NSView {
 
     /// Called when the user clicks the "+" Add Project button.
     var onAddProject: (() -> Void)?
+    /// Called when the user chooses "New Project…" from the "+" menu.
+    var onNewProject: (() -> Void)?
 
     /// Called with the project index when the user clicks the pin button.
     var onTogglePin: ((Int) -> Void)?
@@ -294,7 +296,7 @@ final class SidebarView: NSView {
         topAddButton.target = self
         topAddButton.action = #selector(addButtonClicked(_:))
         topAddButton.translatesAutoresizingMaskIntoConstraints = false
-        topAddButton.toolTip = "Add project"
+        topAddButton.toolTip = "Add or create a project"
         styleTopAddButton()
         addSubview(topAddButton)
     }
@@ -514,7 +516,30 @@ final class SidebarView: NSView {
 
     // MARK: - Actions
 
-    @objc private func addButtonClicked(_: Any?) {
+    @objc private func addButtonClicked(_ sender: Any?) {
+        let menu = NSMenu()
+        let newItem = NSMenuItem(
+            title: "New Project\u{2026}",
+            action: #selector(newProjectMenuClicked(_:)), keyEquivalent: "")
+        newItem.target = self
+        menu.addItem(newItem)
+        let addItem = NSMenuItem(
+            title: "Add Existing Project\u{2026}",
+            action: #selector(addExistingProjectMenuClicked(_:)), keyEquivalent: "")
+        addItem.target = self
+        menu.addItem(addItem)
+
+        let anchor = (sender as? NSView) ?? topAddButton
+        menu.popUp(positioning: nil,
+                   at: NSPoint(x: 0, y: anchor.bounds.height + 4),
+                   in: anchor)
+    }
+
+    @objc private func newProjectMenuClicked(_: Any?) {
+        onNewProject?()
+    }
+
+    @objc private func addExistingProjectMenuClicked(_: Any?) {
         onAddProject?()
     }
 

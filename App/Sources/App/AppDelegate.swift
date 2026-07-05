@@ -885,6 +885,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 return .error(message)
             }
             return .ok
+        case .newProject(let path, let name, let gitInit):
+            switch tvc.newProject(path: path, name: name, gitInit: gitInit) {
+            case .success(let pane): return .pane(pane)
+            case .failure(let error): return .error(error.localizedDescription)
+            }
         case .close(let target, let wholeTab):
             if let message = tvc.closePane(target: target, wholeTab: wholeTab) {
                 return .error(message)
@@ -1210,9 +1215,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let projectMenu = NSMenu(title: "Project")
         projectMenuItem.submenu = projectMenu
 
-        // "Add Project…"  ⌘O
+        // "New Project…"  ⇧⌘N — create a new folder and add it
+        let newProject = NSMenuItem(
+            title: "New Project\u{2026}",
+            action: #selector(TerminalViewController.createProject(_:)),
+            keyEquivalent: "n"
+        )
+        newProject.keyEquivalentModifierMask = [.command, .shift]
+        projectMenu.addItem(newProject)
+
+        // "Add Existing Project…"  ⌘O — pick an existing directory
         let addProject = NSMenuItem(
-            title: "Add Project\u{2026}",
+            title: "Add Existing Project\u{2026}",
             action: #selector(TerminalViewController.addProject(_:)),
             keyEquivalent: "o"
         )
