@@ -42,7 +42,7 @@ let project = Project(
                 "CFBundleName": "Zetty",
                 "CFBundleDisplayName": "Zetty",
                 "CFBundleIconFile": "AppIcon",
-                "CFBundleShortVersionString": "0.1.5",
+                "CFBundleShortVersionString": "0.1.6",
             ]),
             sources: ["App/Sources/App/**"],
             resources: ["App/Resources/**/*.svg", "App/Resources/*.icns",
