@@ -7,6 +7,7 @@ import ZettyCore
 ///
 /// Keyboard: ↑/↓ move the selection, ⏎/Space launch it, Esc cancels, and 1–9
 /// jump straight to that agent. Mouse clicks work too.
+@MainActor
 final class AgentChooserSheet: NSObject {
 
     enum Outcome {
@@ -48,21 +49,28 @@ final class AgentChooserSheet: NSObject {
         panel.titlebarAppearsTransparent = true
         panel.title = ""
 
-        // Row labels: each agent, then "Standard session".
-        let rowTitles = agents.map(\.agent.displayName) + ["Standard session"]
-        listView = ChooserListView(rowTitles: rowTitles)
+        // Rows: each agent (with its logo), then "Standard session" (terminal).
+        var items = agents.map { resolved -> ChooserListView.Item in
+            let icon = AgentIcons.icon(forTool: resolved.agent.id)
+                ?? NSImage(systemSymbolName: "sparkles", accessibilityDescription: nil)
+            return ChooserListView.Item(title: resolved.agent.displayName, icon: icon)
+        }
+        let terminalIcon = NSImage(systemSymbolName: "apple.terminal", accessibilityDescription: nil)
+            ?? NSImage(systemSymbolName: "terminal", accessibilityDescription: nil)
+        items.append(ChooserListView.Item(title: "Standard session", icon: terminalIcon))
+        listView = ChooserListView(items: items)
 
         super.init()
         buildLayout()
         listView.onActivate = { [weak self] index in self?.activate(index) }
-        panel.contentView?.setFrameSize(panel.contentView?.fittingSize ?? .zero)
-        panel.setContentSize(panel.contentView?.fittingSize ?? NSSize(width: 320, height: 200))
+        let fit = panel.contentView?.fittingSize ?? .zero
+        panel.setContentSize(fit == .zero ? NSSize(width: 320, height: 200) : fit)
         panel.initialFirstResponder = listView
     }
 
     private func buildLayout() {
         let title = NSTextField(labelWithString: "Launch an agent?")
-        title.font = ZTheme.monoFont(size: 13)
+        title.font = ZTheme.chromeFont(size: 13)
         title.textColor = ZTheme.current.accentColor
 
         let helper = NSTextField(wrappingLabelWithString:
@@ -124,11 +132,15 @@ final class AgentChooserSheet: NSObject {
 /// Cancel button key equivalent.
 private final class ChooserListView: NSView {
 
+    struct Item { let title: String; let icon: NSImage? }
+
     var onActivate: ((Int) -> Void)?
     private var selected = 0
-    private var rows: [NSTextField] = []
+    private var rowViews: [NSView] = []
+    private var labels: [NSTextField] = []
+    private var iconViews: [NSImageView] = []
 
-    init(rowTitles: [String]) {
+    init(items: [Item]) {
         super.init(frame: .zero)
         let stack = NSStackView()
         stack.orientation = .vertical
@@ -142,24 +154,47 @@ private final class ChooserListView: NSView {
             stack.trailingAnchor.constraint(equalTo: trailingAnchor),
             stack.bottomAnchor.constraint(equalTo: bottomAnchor),
         ])
-        for (index, title) in rowTitles.enumerated() {
-            let label = NSTextField(labelWithString: title)
-            label.font = ZTheme.monoFont(size: 12)
-            label.wantsLayer = true
-            label.layer?.cornerRadius = 5
-            label.tag = index
-            label.translatesAutoresizingMaskIntoConstraints = false
-            label.widthAnchor.constraint(equalTo: widthAnchor).isActive = true
-            label.heightAnchor.constraint(equalToConstant: 26).isActive = true
-            // Inset the text a touch inside the highlighted pill.
+        for item in items {
+            let row = NSView()
+            row.wantsLayer = true
+            row.layer?.cornerRadius = 5
+            row.translatesAutoresizingMaskIntoConstraints = false
+
+            let iconView = NSImageView()
+            iconView.image = item.icon
+            iconView.imageScaling = .scaleProportionallyUpOrDown
+            iconView.translatesAutoresizingMaskIntoConstraints = false
+
+            let label = NSTextField(labelWithString: item.title)
+            label.font = ZTheme.chromeFont(size: 12)
             label.usesSingleLineMode = true
             label.lineBreakMode = .byTruncatingTail
             label.drawsBackground = false
-            rows.append(label)
-            stack.addArrangedSubview(label)
+            label.translatesAutoresizingMaskIntoConstraints = false
+
+            // Add to the hierarchy BEFORE constraining — activation needs a
+            // common ancestor.
+            row.addSubview(iconView)
+            row.addSubview(label)
+            stack.addArrangedSubview(row)
+            NSLayoutConstraint.activate([
+                row.widthAnchor.constraint(equalTo: widthAnchor),
+                row.heightAnchor.constraint(equalToConstant: 28),
+                iconView.leadingAnchor.constraint(equalTo: row.leadingAnchor, constant: 8),
+                iconView.centerYAnchor.constraint(equalTo: row.centerYAnchor),
+                iconView.widthAnchor.constraint(equalToConstant: 16),
+                iconView.heightAnchor.constraint(equalToConstant: 16),
+                label.leadingAnchor.constraint(equalTo: iconView.trailingAnchor, constant: 8),
+                label.centerYAnchor.constraint(equalTo: row.centerYAnchor),
+                label.trailingAnchor.constraint(lessThanOrEqualTo: row.trailingAnchor, constant: -8),
+            ])
+
+            rowViews.append(row)
+            labels.append(label)
+            iconViews.append(iconView)
 
             let click = NSClickGestureRecognizer(target: self, action: #selector(rowClicked(_:)))
-            label.addGestureRecognizer(click)
+            row.addGestureRecognizer(click)
         }
         updateHighlight()
     }
@@ -170,23 +205,23 @@ private final class ChooserListView: NSView {
     override var acceptsFirstResponder: Bool { true }
 
     @objc private func rowClicked(_ recognizer: NSClickGestureRecognizer) {
-        guard let label = recognizer.view as? NSTextField else { return }
-        selected = label.tag
+        guard let row = recognizer.view, let index = rowViews.firstIndex(of: row) else { return }
+        selected = index
         updateHighlight()
-        onActivate?(selected)
+        onActivate?(index)
     }
 
     override func keyDown(with event: NSEvent) {
         switch event.keyCode {
         case 125: // down
-            selected = min(selected + 1, rows.count - 1); updateHighlight()
+            selected = min(selected + 1, rowViews.count - 1); updateHighlight()
         case 126: // up
             selected = max(selected - 1, 0); updateHighlight()
         case 36, 76, 49: // return, enter, space
             onActivate?(selected)
         default:
             // 1–9 jump straight to that row.
-            if let chars = event.characters, let digit = Int(chars), digit >= 1, digit <= rows.count {
+            if let chars = event.characters, let digit = Int(chars), digit >= 1, digit <= rowViews.count {
                 selected = digit - 1
                 updateHighlight()
                 onActivate?(selected)
@@ -197,10 +232,12 @@ private final class ChooserListView: NSView {
     }
 
     private func updateHighlight() {
-        for (index, label) in rows.enumerated() {
+        for (index, row) in rowViews.enumerated() {
             let isSel = index == selected
-            label.layer?.backgroundColor = isSel ? ZTheme.current.bg3Color.cgColor : NSColor.clear.cgColor
-            label.textColor = isSel ? ZTheme.current.fgColor : ZTheme.current.fg2Color
+            row.layer?.backgroundColor = isSel ? ZTheme.current.bg3Color.cgColor : NSColor.clear.cgColor
+            let tint = isSel ? ZTheme.current.fgColor : ZTheme.current.fg2Color
+            labels[index].textColor = tint
+            iconViews[index].contentTintColor = tint
         }
     }
 }
