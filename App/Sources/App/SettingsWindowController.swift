@@ -216,7 +216,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
             + "send keys, open/close/split tabs, capture pane output. "
             + "Installs a symlink at ~/.local/bin/zetty."
         ))
-        cliStatusLabel.font = ZTheme.monoFont(size: 11)
+        cliStatusLabel.font = ZTheme.chromeFont(size: 11)
         cliStatusLabel.textColor = ZTheme.current.fg3Color
         stack.addArrangedSubview(cliStatusLabel)
         cliInstallButton.bezelStyle = .rounded
@@ -321,7 +321,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         preserveSwitch.action = #selector(preserveToggled(_:))
         addFullWidth(switchRow("Preserve sessions", control: preserveSwitch), to: stack)
 
-        sessionStatusLabel.font = ZTheme.monoFont(size: 11)
+        sessionStatusLabel.font = ZTheme.chromeFont(size: 11)
         sessionStatusLabel.textColor = ZTheme.current.fg3Color
         stack.addArrangedSubview(sessionStatusLabel)
 
@@ -370,7 +370,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     /// A justified label + switch row (same anatomy as the harness rows).
     private func switchRow(_ title: String, control: NSSwitch) -> NSView {
         let label = NSTextField(labelWithString: title)
-        label.font = ZTheme.monoFont(size: 13, weight: .medium)
+        label.font = ZTheme.chromeFont(size: 13, weight: .medium)
         label.textColor = ZTheme.current.fgColor
         label.translatesAutoresizingMaskIntoConstraints = false
         control.translatesAutoresizingMaskIntoConstraints = false
@@ -392,7 +392,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     /// A justified label + popup row (same anatomy as the switch rows).
     private func popupRow(_ title: String, popup: NSPopUpButton) -> NSView {
         let label = NSTextField(labelWithString: title)
-        label.font = ZTheme.monoFont(size: 13, weight: .medium)
+        label.font = ZTheme.chromeFont(size: 13, weight: .medium)
         label.textColor = ZTheme.current.fgColor
         label.translatesAutoresizingMaskIntoConstraints = false
         popup.translatesAutoresizingMaskIntoConstraints = false
@@ -416,7 +416,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     /// rows). `width` > 0 pins the control's width.
     private func controlRow(_ title: String, control: NSView, width: CGFloat) -> NSView {
         let label = NSTextField(labelWithString: title)
-        label.font = ZTheme.monoFont(size: 13, weight: .medium)
+        label.font = ZTheme.chromeFont(size: 13, weight: .medium)
         label.textColor = ZTheme.current.fgColor
         label.translatesAutoresizingMaskIntoConstraints = false
         control.translatesAutoresizingMaskIntoConstraints = false
@@ -569,7 +569,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         row.translatesAutoresizingMaskIntoConstraints = false
 
         let name = NSTextField(labelWithString: harness.displayName)
-        name.font = ZTheme.monoFont(size: 13, weight: .medium)
+        name.font = ZTheme.chromeFont(size: 13, weight: .medium)
         name.textColor = ZTheme.current.fgColor
         name.translatesAutoresizingMaskIntoConstraints = false
 

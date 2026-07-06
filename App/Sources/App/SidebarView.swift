@@ -192,7 +192,7 @@ final class SidebarView: NSView {
     }
 
     private func styleSearchField() {
-        searchField.font = ZTheme.monoFont(size: 12)
+        searchField.font = ZTheme.chromeFont(size: 12)
         searchField.textColor = ZTheme.current.fgColor
         // The control renders its bezel/icons per its own appearance — pin it
         // to the scheme's axis or it lags behind dark↔light switches.
@@ -203,7 +203,7 @@ final class SidebarView: NSView {
             cell.placeholderAttributedString = NSAttributedString(
                 string: "Filter projects…",
                 attributes: [
-                    .font: ZTheme.monoFont(size: 12),
+                    .font: ZTheme.chromeFont(size: 12),
                     .foregroundColor: ZTheme.current.fg3Color,
                 ]
             )
@@ -310,7 +310,7 @@ final class SidebarView: NSView {
         addButton.attributedTitle = NSAttributedString(
             string: " Add project",
             attributes: [
-                .font: ZTheme.monoFont(size: 12, weight: .medium),
+                .font: ZTheme.chromeFont(size: 12, weight: .medium),
                 .foregroundColor: ZTheme.current.fgColor,
             ]
         )
@@ -365,7 +365,7 @@ final class SidebarView: NSView {
         bellButton.attributedTitle = NSAttributedString(
             string: attention ? " \(attentionCount)" : "",
             attributes: [
-                .font: ZTheme.monoFont(size: 12.5, weight: .semibold),
+                .font: ZTheme.chromeFont(size: 12.5, weight: .semibold),
                 .foregroundColor: theme.yellowColor,
             ]
         )
@@ -825,12 +825,12 @@ private final class HeaderCellView: NSTableCellView {
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
 
-        titleLabel.font = ZTheme.monoFont(size: 10.5, weight: .bold)
+        titleLabel.font = ZTheme.chromeFont(size: 10.5, weight: .bold)
         titleLabel.textColor = ZTheme.current.fg3Color
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
         addSubview(titleLabel)
 
-        countLabel.font = ZTheme.monoFont(size: 10.5)
+        countLabel.font = ZTheme.chromeFont(size: 10.5)
         countLabel.textColor = ZTheme.current.fg3Color
         countLabel.alignment = .right
         countLabel.translatesAutoresizingMaskIntoConstraints = false
@@ -852,7 +852,7 @@ private final class HeaderCellView: NSTableCellView {
         titleLabel.attributedStringValue = NSAttributedString(
             string: title.uppercased(),
             attributes: [
-                .font: ZTheme.monoFont(size: 10.5, weight: .bold),
+                .font: ZTheme.chromeFont(size: 10.5, weight: .bold),
                 .foregroundColor: ZTheme.current.fg3Color,
                 .kern: 1.2,
             ]
@@ -1026,7 +1026,7 @@ private final class TabCellView: NSTableCellView {
         iconView.translatesAutoresizingMaskIntoConstraints = false
         addSubview(iconView)
 
-        titleLabel.font = ZTheme.monoFont(size: 12)
+        titleLabel.font = ZTheme.chromeFont(size: 12)
         titleLabel.textColor = ZTheme.current.fg2Color
         titleLabel.lineBreakMode = .byTruncatingTail
         titleLabel.translatesAutoresizingMaskIntoConstraints = false

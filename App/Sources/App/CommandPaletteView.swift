@@ -82,7 +82,7 @@ final class CommandPaletteView: NSView, NSTextFieldDelegate {
         magnifier.translatesAutoresizingMaskIntoConstraints = false
 
         searchField.placeholderString = "Type a command…"
-        searchField.font = ZTheme.monoFont(size: 15)
+        searchField.font = ZTheme.chromeFont(size: 15)
         searchField.textColor = theme.fgColor
         searchField.isBezeled = false
         searchField.drawsBackground = false
@@ -118,7 +118,7 @@ final class CommandPaletteView: NSView, NSTextFieldDelegate {
         scrollView.translatesAutoresizingMaskIntoConstraints = false
 
         // Empty-state label (centered in the scroll area).
-        emptyLabel.font = ZTheme.monoFont(size: 13)
+        emptyLabel.font = ZTheme.chromeFont(size: 13)
         emptyLabel.textColor = theme.fg3Color
         emptyLabel.alignment = .center
         emptyLabel.isHidden = true
@@ -298,20 +298,20 @@ private final class PaletteRowView: NSView {
         addSubview(chip)
 
         glyphLabel.stringValue = command.glyph
-        glyphLabel.font = ZTheme.monoFont(size: 13, weight: .bold)
+        glyphLabel.font = ZTheme.chromeFont(size: 13, weight: .bold)
         glyphLabel.textColor = theme.accentColor
         glyphLabel.alignment = .center
         glyphLabel.translatesAutoresizingMaskIntoConstraints = false
         chip.addSubview(glyphLabel)
 
         titleLabel.stringValue = command.label
-        titleLabel.font = ZTheme.monoFont(size: 13.5)
+        titleLabel.font = ZTheme.chromeFont(size: 13.5)
         titleLabel.textColor = theme.fgColor
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
         addSubview(titleLabel)
 
         kbdLabel.stringValue = command.kbd
-        kbdLabel.font = ZTheme.monoFont(size: 11)
+        kbdLabel.font = ZTheme.chromeFont(size: 11)
         kbdLabel.textColor = theme.fg3Color
         kbdLabel.alignment = .right
         kbdLabel.translatesAutoresizingMaskIntoConstraints = false

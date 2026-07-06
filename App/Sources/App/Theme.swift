@@ -168,6 +168,14 @@ struct ZTheme {
         return .monospacedSystemFont(ofSize: scaled, weight: weight)
     }
 
+    /// System (proportional) font for standard chrome — tabs, sidebar, palette,
+    /// dialogs, chips. Deliberately decoupled from the user's terminal
+    /// `font-family`/`font-size`: only the terminal and the status bar follow
+    /// `monoFont`. Fixed point size (no `fontScale`).
+    static func chromeFont(size: CGFloat, weight: NSFont.Weight = .regular) -> NSFont {
+        NSFont.systemFont(ofSize: size, weight: weight)
+    }
+
     /// Resolves a weight-appropriate member of `family`, or its regular face,
     /// or `nil` when the family isn't installed (callers fall back to default).
     private static func customFont(family: String, size: CGFloat, weight: NSFont.Weight) -> NSFont? {

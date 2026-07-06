@@ -240,7 +240,7 @@ final class TabBarView: NSView {
             sidebarButton.attributedTitle = NSAttributedString(
                 string: "☰",
                 attributes: [
-                    .font: ZTheme.monoFont(size: 15),
+                    .font: ZTheme.chromeFont(size: 15),
                     .foregroundColor: ZTheme.current.fgColor,
                 ]
             )
@@ -253,7 +253,7 @@ final class TabBarView: NSView {
         addButton.attributedTitle = NSAttributedString(
             string: "+",
             attributes: [
-                .font: ZTheme.monoFont(size: 15, weight: .regular),
+                .font: ZTheme.chromeFont(size: 15, weight: .regular),
                 .foregroundColor: ZTheme.current.fg2Color,
             ]
         )
@@ -518,13 +518,13 @@ private final class TabItemView: NSView {
         if isSelected {
             layer?.backgroundColor = theme.bg1Color.cgColor
             statusDot.layer?.backgroundColor = theme.accentColor.cgColor
-            titleLabel.font = ZTheme.monoFont(size: 12.5, weight: .semibold)
+            titleLabel.font = ZTheme.chromeFont(size: 12.5, weight: .semibold)
             titleLabel.textColor = theme.fgColor
             topBar.isHidden = false
         } else {
             layer?.backgroundColor = NSColor.clear.cgColor
             statusDot.layer?.backgroundColor = theme.fg3Color.cgColor
-            titleLabel.font = ZTheme.monoFont(size: 12.5, weight: .medium)
+            titleLabel.font = ZTheme.chromeFont(size: 12.5, weight: .medium)
             titleLabel.textColor = theme.fg2Color
             topBar.isHidden = true
         }

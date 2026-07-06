@@ -101,7 +101,7 @@ final class ProjectSettingsSheet: NSObject {
 
         nameField = NSTextField(string: current.name ?? "")
         nameField.placeholderString = fallbackName
-        nameField.font = ZTheme.monoFont(size: 13)
+        nameField.font = ZTheme.chromeFont(size: 13)
 
         selectedColorID = current.color
 
@@ -177,7 +177,7 @@ final class ProjectSettingsSheet: NSObject {
             check.isEnabled = promptOn
             let field = NSTextField(string: (stored?.isEmpty == false) ? stored! : agent.defaultCommand)
             field.placeholderString = agent.defaultCommand
-            field.font = ZTheme.monoFont(size: 12)
+            field.font = ZTheme.chromeFont(size: 12)
             field.isEnabled = promptOn && stored != nil
             agentChecks.append(check)
             agentCommandFields.append(field)
@@ -232,7 +232,7 @@ final class ProjectSettingsSheet: NSObject {
     /// KEY=VALUE per line; values stay in the PRIVATE store only. Parsed on
     /// save — blank lines and lines without `=` are dropped.
     private func configureEnvEditor(current: [String: String]?) {
-        envTextView.font = ZTheme.monoFont(size: 12)
+        envTextView.font = ZTheme.chromeFont(size: 12)
         envTextView.textColor = ZTheme.current.fgColor
         envTextView.backgroundColor = ZTheme.current.bg2Color
         envTextView.isRichText = false
@@ -274,7 +274,7 @@ final class ProjectSettingsSheet: NSObject {
 
         func label(_ text: String) -> NSTextField {
             let field = NSTextField(labelWithString: text)
-            field.font = ZTheme.monoFont(size: 13, weight: .medium)
+            field.font = ZTheme.chromeFont(size: 13, weight: .medium)
             field.textColor = ZTheme.current.fgColor
             // Row titles never truncate — wide controls squeeze the spacer
             // (or the layout status text) instead.
@@ -289,7 +289,7 @@ final class ProjectSettingsSheet: NSObject {
 
         // Layout template: status + repo-file actions (immediate — they act
         // on .zetty/project.json, independent of the private-store Save).
-        layoutStatusLabel.font = ZTheme.monoFont(size: 11)
+        layoutStatusLabel.font = ZTheme.chromeFont(size: 11)
         layoutStatusLabel.textColor = ZTheme.current.fg3Color
         layoutStatusLabel.stringValue = layoutStatus()
         layoutStatusLabel.lineBreakMode = .byTruncatingTail
@@ -346,7 +346,7 @@ final class ProjectSettingsSheet: NSObject {
         let envCaption = NSTextField(
             wrappingLabelWithString: "One KEY=VALUE per line. Values stay private to this Mac "
                 + "(never written into the repo) and apply to new panes only.")
-        envCaption.font = ZTheme.monoFont(size: 11)
+        envCaption.font = ZTheme.chromeFont(size: 11)
         envCaption.textColor = ZTheme.current.fg3Color
 
         let environment = NSStackView(views: [envScroll, envCaption])
