@@ -160,6 +160,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         tvc.onOpenProjectSettings = { [weak self] project in self?.presentProjectSettings(project) }
         tvc.onOpenAgentSettings = { [weak self] project in self?.presentProjectSettings(project, initialTab: "agents") }
         tvc.onUpdatePillClicked = { [weak self] in self?.versionPillClicked() }
+        tvc.onCLIReinstallClicked = { [weak self] in
+            CLILink.install()
+            self?.refreshCLIStatus()
+        }
         tvc.onActiveProjectChanged = { [weak self] in self?.applyThemeForActiveProject() }
         tvc.layoutTemplateProvider = { [weak self] project in
             ProjectFileIO.load(projectRoot: project.rootPath)?.layoutTemplate
@@ -234,6 +238,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         configWatcher = watcher
 
         startUpdateChecks()
+        refreshCLIStatus()
+    }
+
+    /// Reflects the CLI symlink's staleness in the status bar (pill when it
+    /// points at an old build or is missing).
+    private func refreshCLIStatus() {
+        terminalViewController?.showCLIStatus(CLILink.status())
+    }
+
+    func applicationDidBecomeActive(_: Notification) {
+        // Re-check on focus so moving/replacing the app (which staleifies the
+        // symlink) is reflected without a relaunch.
+        refreshCLIStatus()
     }
 
     // MARK: - Update checks

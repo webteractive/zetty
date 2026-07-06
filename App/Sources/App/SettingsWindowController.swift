@@ -728,34 +728,24 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
 
     // MARK: - Command Line
 
-    private static var cliLinkURL: URL {
-        URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent(".local/bin/zetty")
-    }
-
     /// Syncs the CLI install state (symlink at ~/.local/bin/zetty → this
     /// build's app binary, which runs in CLI mode when given a command).
     private func refreshCLI() {
-        let link = Self.cliLinkURL
-        let destination = try? FileManager.default.destinationOfSymbolicLink(atPath: link.path)
-        if let destination, destination == Bundle.main.executablePath {
+        switch CLILink.status() {
+        case .current:
             cliStatusLabel.stringValue = "installed: ~/.local/bin/zetty"
             cliInstallButton.title = "Reinstall CLI"
-        } else if FileManager.default.fileExists(atPath: link.path) {
-            cliStatusLabel.stringValue = "~/.local/bin/zetty exists but points to another build"
+        case .outdated:
+            cliStatusLabel.stringValue = "outdated — points to another build; reinstall recommended"
             cliInstallButton.title = "Reinstall CLI"
-        } else {
+        case .notInstalled:
             cliStatusLabel.stringValue = "not installed"
             cliInstallButton.title = "Install CLI"
         }
     }
 
     @objc private func installCLI(_ sender: Any?) {
-        guard let executable = Bundle.main.executablePath else { return }
-        let link = Self.cliLinkURL
-        let fm = FileManager.default
-        try? fm.createDirectory(at: link.deletingLastPathComponent(), withIntermediateDirectories: true)
-        try? fm.removeItem(at: link)
-        try? fm.createSymbolicLink(atPath: link.path, withDestinationPath: executable)
+        CLILink.install()
         refreshCLI()
     }
 

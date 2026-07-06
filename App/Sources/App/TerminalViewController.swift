@@ -161,10 +161,17 @@ final class TerminalViewController: NSViewController {
     var onCycleScheme: (() -> Void)?
     /// The status-bar "update available" pill was clicked.
     var onUpdatePillClicked: (() -> Void)?
+    /// The status-bar "reinstall CLI" pill was clicked.
+    var onCLIReinstallClicked: (() -> Void)?
 
     /// Shows/hides the status-bar update pill (driven by AppDelegate's checker).
     func showUpdate(_ update: AvailableUpdate?) {
         statusBarView?.setUpdate(update)
+    }
+
+    /// Reflects the CLI symlink status in the status bar (pill when stale).
+    func showCLIStatus(_ status: CLIStatus) {
+        statusBarView?.setCLIStatus(status)
     }
 
     /// Called to switch the appearance axis (system / dark / light).
@@ -652,6 +659,7 @@ final class TerminalViewController: NSViewController {
         statusBar.onSelectScheme = { [weak self] scheme in self?.onSelectScheme?(scheme) }
         statusBar.onShowEditorMenu = { [weak self] anchor in self?.showEditorMenu(from: anchor) }
         statusBar.onUpdateClicked = { [weak self] in self?.onUpdatePillClicked?() }
+        statusBar.onCLIReinstallClicked = { [weak self] in self?.onCLIReinstallClicked?() }
         container.addSubview(statusBar)
         NSLayoutConstraint.activate([
             statusBar.leadingAnchor.constraint(equalTo: container.leadingAnchor),

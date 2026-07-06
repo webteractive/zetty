@@ -50,6 +50,12 @@ final class StatusBarView: NSView {
     private var pendingUpdate: AvailableUpdate?
     var onUpdateClicked: (() -> Void)?
 
+    /// "Install/Reinstall CLI" pill — hidden unless the CLI symlink is stale.
+    private let cliButton = NSButton()
+    private let cliPill = NSView()
+    private var cliStatus: CLIStatus = .current
+    var onCLIReinstallClicked: (() -> Void)?
+
     private let editorButton = NSButton()
     private let appearanceButton = NSButton()
     private let sep0 = NSTextField(labelWithString: "·")
@@ -154,7 +160,27 @@ final class StatusBarView: NSView {
             versionButton.centerYAnchor.constraint(equalTo: versionPill.centerYAnchor),
         ])
 
-        configureStack(rightStack, views: [editorPill, appearanceButton, sep0, schemeDot, schemeButton, sep1, shellLabel, sep2, ghosttyLabel, sep3, versionPill])
+        // CLI pill — accent, shown only when the CLI symlink is stale/missing.
+        cliButton.isBordered = false
+        cliButton.font = ZTheme.monoFont(size: 11)
+        cliButton.target = self
+        cliButton.action = #selector(cliClicked)
+        cliButton.translatesAutoresizingMaskIntoConstraints = false
+        cliPill.wantsLayer = true
+        cliPill.layer?.cornerRadius = 10
+        cliPill.layer?.borderWidth = 1
+        cliPill.translatesAutoresizingMaskIntoConstraints = false
+        cliPill.isHidden = true
+        cliPill.addSubview(cliButton)
+        NSLayoutConstraint.activate([
+            cliPill.heightAnchor.constraint(equalToConstant: 20),
+            cliButton.leadingAnchor.constraint(equalTo: cliPill.leadingAnchor, constant: 9),
+            cliButton.trailingAnchor.constraint(equalTo: cliPill.trailingAnchor, constant: -9),
+            cliButton.centerYAnchor.constraint(equalTo: cliPill.centerYAnchor),
+        ])
+
+        configureStack(rightStack, views: [cliPill, editorPill, appearanceButton, sep0, schemeDot, schemeButton, sep1, shellLabel, sep2, ghosttyLabel, sep3, versionPill])
+        rightStack.setCustomSpacing(10, after: cliPill)
         rightStack.setCustomSpacing(10, after: editorPill)
         rightStack.setCustomSpacing(8, after: sep3)
 
@@ -263,6 +289,30 @@ final class StatusBarView: NSView {
         onUpdateClicked?()
     }
 
+    @objc private func cliClicked() {
+        onCLIReinstallClicked?()
+    }
+
+    /// Shows the CLI pill when the symlink is stale/missing; hides it when the
+    /// CLI matches this build.
+    func setCLIStatus(_ status: CLIStatus) {
+        cliStatus = status
+        let theme = ZTheme.current
+        switch status {
+        case .current:
+            cliPill.isHidden = true
+        case .outdated, .notInstalled:
+            cliButton.title = status == .notInstalled ? "Install CLI" : "↑ Reinstall CLI"
+            cliButton.contentTintColor = theme.accentColor
+            cliButton.toolTip = status == .notInstalled
+                ? "The zetty CLI isn't installed — click to install"
+                : "The zetty CLI points to an old build — click to reinstall"
+            cliPill.layer?.backgroundColor = theme.bg3Color.cgColor
+            cliPill.layer?.borderColor = theme.accentColor.cgColor
+            cliPill.isHidden = false
+        }
+    }
+
     /// Sets the pending update (accent "↑ Update X" state) or clears it (back to
     /// the plain version). Re-renders the version pill.
     func setUpdate(_ update: AvailableUpdate?) {
@@ -356,6 +406,7 @@ final class StatusBarView: NSView {
         changesLabel.textColor = theme.yellowColor
         shellLabel.textColor = theme.fg2Color
         renderVersionPill()
+        setCLIStatus(cliStatus)
         ghosttyLabel.textColor = theme.fg2Color
         sep0.textColor = theme.fg3Color
         sep1.textColor = theme.fg3Color
