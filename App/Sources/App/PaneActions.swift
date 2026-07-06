@@ -15,20 +15,16 @@ extension TerminalViewController {
 
     /// Split the focused pane vertically (left / right).  Key equivalent: ⌘D.
     @objc func splitVertical(_ sender: Any?) {
-        let workingDir = paneTree.focusedSurface?.workingDir ?? NSHomeDirectory()
-        let newSurface = Surface(workingDir: workingDir)
-        paneTree.splitFocused(direction: .vertical, newSurface: newSurface)
-        markPendingAgentChoiceIfEnabled(newSurface.id)
-        rebuildAndFocus()
+        chooseAgentThenSpawn { [weak self] command in
+            self?.performSplit(direction: .vertical, startupCommand: command)
+        }
     }
 
     /// Split the focused pane horizontally (top / bottom).  Key equivalent: ⇧⌘D.
     @objc func splitHorizontal(_ sender: Any?) {
-        let workingDir = paneTree.focusedSurface?.workingDir ?? NSHomeDirectory()
-        let newSurface = Surface(workingDir: workingDir)
-        paneTree.splitFocused(direction: .horizontal, newSurface: newSurface)
-        markPendingAgentChoiceIfEnabled(newSurface.id)
-        rebuildAndFocus()
+        chooseAgentThenSpawn { [weak self] command in
+            self?.performSplit(direction: .horizontal, startupCommand: command)
+        }
     }
 
     // MARK: - Resize actions

@@ -34,6 +34,10 @@ final class ProjectSettingsSheet: NSObject {
     private let notifyControl: NSSegmentedControl
     private let envTextView = NSTextView()
 
+    // Master switch: show the new-pane agent chooser at all.
+    private let agentPromptCheck = NSButton(
+        checkboxWithTitle: "Ask which agent to launch on new tabs and splits",
+        target: nil, action: nil)
     // One checkbox + one command field per SpawnableAgent.catalog entry
     // (parallel arrays, same order as the catalog).
     private var agentChecks: [NSButton] = []
@@ -48,13 +52,14 @@ final class ProjectSettingsSheet: NSObject {
         onApplyLayout: @escaping () -> Void,
         onClearLayout: @escaping () -> Void,
         on window: NSWindow,
+        initialTab: String? = nil,
         onSave: @escaping (ProjectSettings) -> Void
     ) {
         let sheet = ProjectSettingsSheet(
             projectName: projectName, current: current, fallbackName: fallbackName,
             layoutStatus: layoutStatus, onSaveLayout: onSaveLayout,
             onApplyLayout: onApplyLayout, onClearLayout: onClearLayout,
-            window: window, onSave: onSave)
+            window: window, initialTab: initialTab, onSave: onSave)
         active = sheet
         window.beginSheet(sheet.panel)
     }
@@ -64,6 +69,7 @@ final class ProjectSettingsSheet: NSObject {
     private let onApplyLayout: () -> Void
     private let onClearLayout: () -> Void
     private let layoutStatusLabel = NSTextField(labelWithString: "")
+    private let initialTab: String?
 
     private init(
         projectName: String,
@@ -74,6 +80,7 @@ final class ProjectSettingsSheet: NSObject {
         onApplyLayout: @escaping () -> Void,
         onClearLayout: @escaping () -> Void,
         window: NSWindow,
+        initialTab: String?,
         onSave: @escaping (ProjectSettings) -> Void
     ) {
         self.hostWindow = window
@@ -81,6 +88,7 @@ final class ProjectSettingsSheet: NSObject {
         self.onSaveLayout = onSaveLayout
         self.onApplyLayout = onApplyLayout
         self.onClearLayout = onClearLayout
+        self.initialTab = initialTab
         self.onSave = onSave
 
         panel = NSWindow(
@@ -146,14 +154,17 @@ final class ProjectSettingsSheet: NSObject {
 
         super.init()
         configureEnvEditor(current: current.env)
-        configureAgentControls(current: current.agents)
+        configureAgentControls(current: current.agents, promptOn: current.promptAgentOnNewPane != false)
         buildLayout()
     }
 
     /// Builds one checkbox + command field per catalog agent, prefilled from
     /// the project's stored `agents` (enabled = present; blank command → the
     /// catalog default, shown but disabled until the checkbox is on).
-    private func configureAgentControls(current: [ProjectAgent]?) {
+    private func configureAgentControls(current: [ProjectAgent]?, promptOn: Bool) {
+        agentPromptCheck.state = promptOn ? .on : .off
+        agentPromptCheck.target = self
+        agentPromptCheck.action = #selector(agentPromptToggled(_:))
         var commandByID: [String: String] = [:]
         for entry in current ?? [] where commandByID[entry.id] == nil {
             commandByID[entry.id] = entry.command
@@ -163,18 +174,33 @@ final class ProjectSettingsSheet: NSObject {
                                  target: self, action: #selector(agentCheckToggled(_:)))
             let stored = commandByID[agent.id]
             check.state = stored != nil ? .on : .off
+            check.isEnabled = promptOn
             let field = NSTextField(string: (stored?.isEmpty == false) ? stored! : agent.defaultCommand)
             field.placeholderString = agent.defaultCommand
             field.font = ZTheme.monoFont(size: 12)
-            field.isEnabled = stored != nil
+            field.isEnabled = promptOn && stored != nil
             agentChecks.append(check)
             agentCommandFields.append(field)
         }
     }
 
+    /// The master toggle enables/disables all agent rows. When off, the whole
+    /// list is greyed out (but the stored selections are preserved).
+    @objc private func agentPromptToggled(_ sender: NSButton) {
+        updateAgentRowsEnabled()
+    }
+
+    private func updateAgentRowsEnabled() {
+        let master = agentPromptCheck.state == .on
+        for index in agentChecks.indices {
+            agentChecks[index].isEnabled = master
+            agentCommandFields[index].isEnabled = master && agentChecks[index].state == .on
+        }
+    }
+
     @objc private func agentCheckToggled(_ sender: NSButton) {
         guard let index = agentChecks.firstIndex(of: sender) else { return }
-        agentCommandFields[index].isEnabled = sender.state == .on
+        agentCommandFields[index].isEnabled = agentPromptCheck.state == .on && sender.state == .on
     }
 
     /// Lays out the Agents tab: a caption + one row (checkbox | command) per
@@ -189,6 +215,7 @@ final class ProjectSettingsSheet: NSObject {
         caption.textColor = ZTheme.current.fg3Color
         caption.font = .systemFont(ofSize: 11)
         stack.addArrangedSubview(caption)
+        stack.addArrangedSubview(agentPromptCheck)
         for index in SpawnableAgent.catalog.indices {
             let row = NSStackView(views: [agentChecks[index], agentCommandFields[index]])
             row.orientation = .horizontal
@@ -344,6 +371,7 @@ final class ProjectSettingsSheet: NSObject {
         tabView.addTabViewItem(generalItem)
         tabView.addTabViewItem(agentsItem)
         tabView.addTabViewItem(environmentItem)
+        if let initialTab { tabView.selectTabViewItem(withIdentifier: initialTab) }
         tabView.translatesAutoresizingMaskIntoConstraints = false
         tabView.widthAnchor.constraint(equalToConstant: 500).isActive = true
 
@@ -436,6 +464,8 @@ final class ProjectSettingsSheet: NSObject {
             agents.append(ProjectAgent(id: agent.id, command: typed.isEmpty ? agent.defaultCommand : typed))
         }
         edited.agents = agents.isEmpty ? nil : agents
+        // Checked (default) → nil (follow default = on); unchecked → false.
+        edited.promptAgentOnNewPane = agentPromptCheck.state == .on ? nil : false
         hostWindow.endSheet(panel)
         Self.active = nil
         onSave(edited)

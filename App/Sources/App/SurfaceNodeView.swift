@@ -43,10 +43,7 @@ final class SurfaceNodeView: NSView {
         onClose: ((UUID) -> Void)? = nil,
         onBreak: ((UUID) -> Void)? = nil,
         nodePath: [SplitBranch] = [],
-        onRatioChange: (([SplitBranch], Double) -> Void)? = nil,
-        agentChoices: [UUID: [ResolvedSpawnAgent]] = [:],
-        onAgentChosen: ((UUID, String) -> Void)? = nil,
-        onAgentDismissed: ((UUID) -> Void)? = nil
+        onRatioChange: (([SplitBranch], Double) -> Void)? = nil
     ) {
         super.init(frame: .zero)
         translatesAutoresizingMaskIntoConstraints = false
@@ -58,10 +55,7 @@ final class SurfaceNodeView: NSView {
             onClose: onClose,
             onBreak: onBreak,
             nodePath: nodePath,
-            onRatioChange: onRatioChange,
-            agentChoices: agentChoices,
-            onAgentChosen: onAgentChosen,
-            onAgentDismissed: onAgentDismissed
+            onRatioChange: onRatioChange
         )
     }
 
@@ -94,10 +88,7 @@ final class SurfaceNodeView: NSView {
         onClose: ((UUID) -> Void)?,
         onBreak: ((UUID) -> Void)?,
         nodePath: [SplitBranch],
-        onRatioChange: (([SplitBranch], Double) -> Void)?,
-        agentChoices: [UUID: [ResolvedSpawnAgent]],
-        onAgentChosen: ((UUID, String) -> Void)?,
-        onAgentDismissed: ((UUID) -> Void)?
+        onRatioChange: (([SplitBranch], Double) -> Void)?
     ) {
         switch node {
 
@@ -109,10 +100,7 @@ final class SurfaceNodeView: NSView {
                 isFocused: surface.id == focusedSurfaceID,
                 showsClose: showsClose,
                 onClose: onClose,
-                onBreak: onBreak,
-                agentChoices: agentChoices[surface.id],
-                onAgentChosen: onAgentChosen,
-                onAgentDismissed: onAgentDismissed
+                onBreak: onBreak
             )
             container.translatesAutoresizingMaskIntoConstraints = false
             addSubview(container)
@@ -135,10 +123,7 @@ final class SurfaceNodeView: NSView {
                 onClose: onClose,
                 onBreak: onBreak,
                 nodePath: nodePath,
-                onRatioChange: onRatioChange,
-                agentChoices: agentChoices,
-                onAgentChosen: onAgentChosen,
-                onAgentDismissed: onAgentDismissed
+                onRatioChange: onRatioChange
             )
             splitView.translatesAutoresizingMaskIntoConstraints = false
             addSubview(splitView)
@@ -174,7 +159,6 @@ private final class LeafContainerView: NSView {
     private var closeButton: NSButton?
     private var breakButton: NSButton?
     private var statusDot: NSView?
-    private var agentOverlay: NSView?
 
     init(
         surfaceID: UUID,
@@ -182,10 +166,7 @@ private final class LeafContainerView: NSView {
         isFocused: Bool,
         showsClose: Bool,
         onClose: ((UUID) -> Void)?,
-        onBreak: ((UUID) -> Void)? = nil,
-        agentChoices: [ResolvedSpawnAgent]? = nil,
-        onAgentChosen: ((UUID, String) -> Void)? = nil,
-        onAgentDismissed: ((UUID) -> Void)? = nil
+        onBreak: ((UUID) -> Void)? = nil
     ) {
         self.surfaceID = surfaceID
         self.isFocused = isFocused
@@ -216,30 +197,6 @@ private final class LeafContainerView: NSView {
             addCloseButton()
             addBreakButton()
             menu = makePaneMenu()
-        }
-
-        if let agentChoices, !agentChoices.isEmpty {
-            let overlay = AgentChooserOverlay(
-                agents: agentChoices,
-                onChoose: { [weak self] command in
-                    guard let self else { return }
-                    self.agentOverlay?.removeFromSuperview()
-                    self.agentOverlay = nil
-                    onAgentChosen?(self.surfaceID, command)
-                },
-                onDismiss: { [weak self] in
-                    guard let self else { return }
-                    self.agentOverlay?.removeFromSuperview()
-                    self.agentOverlay = nil
-                    onAgentDismissed?(self.surfaceID)
-                })
-            overlay.translatesAutoresizingMaskIntoConstraints = false
-            addSubview(overlay)
-            NSLayoutConstraint.activate([
-                overlay.centerXAnchor.constraint(equalTo: centerXAnchor),
-                overlay.centerYAnchor.constraint(equalTo: centerYAnchor),
-            ])
-            agentOverlay = overlay
         }
 
         updateBorder()
@@ -401,10 +358,7 @@ private final class RatioSplitView: NSSplitView, NSSplitViewDelegate {
         onClose: ((UUID) -> Void)? = nil,
         onBreak: ((UUID) -> Void)? = nil,
         nodePath: [SplitBranch] = [],
-        onRatioChange: (([SplitBranch], Double) -> Void)? = nil,
-        agentChoices: [UUID: [ResolvedSpawnAgent]] = [:],
-        onAgentChosen: ((UUID, String) -> Void)? = nil,
-        onAgentDismissed: ((UUID) -> Void)? = nil
+        onRatioChange: (([SplitBranch], Double) -> Void)? = nil
     ) {
         self.ratio = ratio
         self.nodePath = nodePath
@@ -423,10 +377,7 @@ private final class RatioSplitView: NSSplitView, NSSplitViewDelegate {
             onClose: onClose,
             onBreak: onBreak,
             nodePath: nodePath + [.first],
-            onRatioChange: onRatioChange,
-            agentChoices: agentChoices,
-            onAgentChosen: onAgentChosen,
-            onAgentDismissed: onAgentDismissed
+            onRatioChange: onRatioChange
         )
         let secondView = SurfaceNodeView(
             node: second,
@@ -436,10 +387,7 @@ private final class RatioSplitView: NSSplitView, NSSplitViewDelegate {
             onClose: onClose,
             onBreak: onBreak,
             nodePath: nodePath + [.second],
-            onRatioChange: onRatioChange,
-            agentChoices: agentChoices,
-            onAgentChosen: onAgentChosen,
-            onAgentDismissed: onAgentDismissed
+            onRatioChange: onRatioChange
         )
         addArrangedSubview(firstView)
         addArrangedSubview(secondView)
@@ -485,70 +433,4 @@ private final class RatioSplitView: NSSplitView, NSSplitViewDelegate {
         lastReportedRatio = current
         onRatioChange?(nodePath, current)
     }
-}
-
-// MARK: - AgentChooserOverlay
-
-/// A small card shown over a fresh pane offering to launch an enabled agent.
-/// Non-modal: the terminal stays usable; "Normal shell" (Esc) dismisses.
-@MainActor
-private final class AgentChooserOverlay: NSView {
-    private let onChoose: (String) -> Void
-    private let onDismiss: () -> Void
-    private var commands: [Int: String] = [:]   // button tag → command
-
-    init(agents: [ResolvedSpawnAgent], onChoose: @escaping (String) -> Void, onDismiss: @escaping () -> Void) {
-        self.onChoose = onChoose
-        self.onDismiss = onDismiss
-        super.init(frame: .zero)
-        wantsLayer = true
-        layer?.backgroundColor = ZTheme.current.bg2Color.cgColor
-        layer?.cornerRadius = 10
-        layer?.borderWidth = 1
-        layer?.borderColor = ZTheme.current.bg3Color.cgColor
-
-        let title = NSTextField(labelWithString: "Launch an agent?")
-        title.font = ZTheme.monoFont(size: 13)
-        title.textColor = ZTheme.current.accentColor
-
-        let stack = NSStackView(views: [title])
-        stack.orientation = .vertical
-        stack.alignment = .leading
-        stack.spacing = 8
-        stack.translatesAutoresizingMaskIntoConstraints = false
-
-        for (index, resolved) in agents.enumerated() {
-            let button = NSButton(title: resolved.agent.displayName, target: self,
-                                  action: #selector(agentClicked(_:)))
-            button.tag = index
-            commands[index] = resolved.command
-            stack.addArrangedSubview(button)
-        }
-        let normal = NSButton(title: "Normal shell", target: self, action: #selector(normalClicked(_:)))
-        normal.keyEquivalent = "\u{1b}"   // Esc dismisses (window-wide key equivalent)
-        stack.addArrangedSubview(normal)
-
-        let hint = NSTextField(labelWithString: "Esc = normal shell")
-        hint.font = .systemFont(ofSize: 10)
-        hint.textColor = ZTheme.current.fg3Color
-        stack.addArrangedSubview(hint)
-
-        addSubview(stack)
-        NSLayoutConstraint.activate([
-            stack.topAnchor.constraint(equalTo: topAnchor, constant: 14),
-            stack.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 14),
-            stack.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -14),
-            stack.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -14),
-        ])
-    }
-
-    @available(*, unavailable)
-    required init?(coder _: NSCoder) { fatalError("not supported") }
-
-    @objc private func agentClicked(_ sender: NSButton) {
-        guard let command = commands[sender.tag] else { return }
-        onChoose(command)
-    }
-
-    @objc private func normalClicked(_ sender: NSButton) { onDismiss() }
 }

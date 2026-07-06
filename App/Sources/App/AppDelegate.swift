@@ -147,11 +147,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             return (ZTheme.projectColor(id: resolved.colorID), resolved.icon)
         }
         tvc.agentsProvider = { [weak self] project in
-            guard let self else { return [] }
-            return SpawnableAgent.resolve(self.projectSettings.settings(for: project.rootPath)?.agents)
+            guard let self else { return .disabled }
+            let settings = self.projectSettings.settings(for: project.rootPath)
+            return SpawnableAgent.spawnConfig(
+                agents: settings?.agents,
+                promptOnNewPane: settings?.promptAgentOnNewPane != false)
         }
         tvc.onRenameProject = { [weak self] project in self?.promptRenameProject(project) }
         tvc.onOpenProjectSettings = { [weak self] project in self?.presentProjectSettings(project) }
+        tvc.onOpenAgentSettings = { [weak self] project in self?.presentProjectSettings(project, initialTab: "agents") }
         tvc.onActiveProjectChanged = { [weak self] in self?.applyThemeForActiveProject() }
         tvc.layoutTemplateProvider = { [weak self] project in
             ProjectFileIO.load(projectRoot: project.rootPath)?.layoutTemplate
@@ -532,7 +536,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     /// "Project Settings…" sheet: identity + overrides for one project.
-    private func presentProjectSettings(_ project: ProjectRuntime) {
+    private func presentProjectSettings(_ project: ProjectRuntime, initialTab: String? = nil) {
         guard let window = terminalViewController?.view.window else { return }
 
         let layoutStatus: () -> String = { [weak self] in
@@ -572,7 +576,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 file.layoutTemplate = nil
                 try? ProjectFileIO.save(file, projectRoot: project.rootPath)
             },
-            on: window
+            on: window,
+            initialTab: initialTab
         ) { [weak self] edited in
             self?.updateProjectSettings(edited, for: project)
         }

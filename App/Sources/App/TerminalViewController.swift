@@ -829,32 +829,62 @@ final class TerminalViewController: NSViewController {
     /// settings; nil closure or nil fields → default rendering.
     var projectIdentity: ((ProjectRuntime) -> (color: NSColor?, glyph: String?))?
 
-    /// Resolves a project's enabled spawnable agents (from per-project settings).
-    var agentsProvider: ((ProjectRuntime) -> [ResolvedSpawnAgent])?
+    /// Resolves a project's agent-chooser config (enabled agents + whether the
+    /// new-pane prompt is on) from per-project settings.
+    var agentsProvider: ((ProjectRuntime) -> AgentSpawnConfig)?
 
-    /// Surfaces awaiting the inline agent chooser, mapped to their options.
-    private var panesPendingAgentChoice: [UUID: [ResolvedSpawnAgent]] = [:]
+    /// Opens Project Settings on the Agents tab (from the chooser's "Manage
+    /// agents…" button).
+    var onOpenAgentSettings: ((ProjectRuntime) -> Void)?
 
-    /// Marks a freshly, interactively spawned surface as pending the chooser,
-    /// when its project has enabled agents and no template command is queued.
-    func markPendingAgentChoiceIfEnabled(_ surfaceID: UUID) {
-        guard pendingStartupCommands[surfaceID] == nil,
-              let project = workspace.project(containing: surfaceID),
-              let agents = agentsProvider?(project), !agents.isEmpty else { return }
-        panesPendingAgentChoice[surfaceID] = agents
-    }
-
-    /// User picked an agent: inject its command into the (already running) shell.
-    func chooseAgent(surfaceID: UUID, command: String) {
-        panesPendingAgentChoice.removeValue(forKey: surfaceID)
-        if let surface = surface(with: surfaceID) {
-            _ = registry.sendText(command + "\r", to: surface)
+    /// If the active project has the chooser enabled AND ≥1 enabled agent,
+    /// present a modal chooser BEFORE spawning; `onProceed(command)` runs for a
+    /// picked agent, `onProceed(nil)` for a standard session, and neither for
+    /// Cancel (no tab/pane created). Otherwise spawns immediately as a standard
+    /// session.
+    func chooseAgentThenSpawn(_ onProceed: @escaping (String?) -> Void) {
+        guard workspace.projects.indices.contains(workspace.activeIndex) else {
+            onProceed(nil); return
+        }
+        let project = workspace.projects[workspace.activeIndex]
+        let config = agentsProvider?(project) ?? .disabled
+        let agents = config.agents
+        guard config.promptOnNewPane, !agents.isEmpty, let window = view.window else {
+            onProceed(nil); return
+        }
+        AgentChooserSheet.present(agents: agents, on: window) { [weak self] outcome in
+            switch outcome {
+            case .agent(let command): onProceed(command)   // launch chosen agent
+            case .standard:           onProceed(nil)         // standard session
+            case .manage:             self?.onOpenAgentSettings?(project)
+            case .cancel:             break                  // nothing created
+            }
         }
     }
 
-    /// User dismissed the chooser (Normal shell / Esc): leave the plain shell.
-    func dismissAgentChoice(surfaceID: UUID) {
-        panesPendingAgentChoice.removeValue(forKey: surfaceID)
+    /// Opens a new tab, optionally injecting a startup command once its pane
+    /// spawns (used by the agent chooser). Shared by the interactive path.
+    func performNewTab(startupCommand: String?) {
+        workspace.activeTabList.newTab()
+        if let startupCommand, let id = workspace.activeTabList.activeTree.focusedSurface?.id {
+            pendingStartupCommands[id] = startupCommand
+        }
+        refreshTabBar()
+        refreshSidebar()
+        rebuildSurfaceNodeView()
+        if let focused = focusedTerminalView() {
+            view.window?.makeFirstResponder(focused)
+        }
+    }
+
+    /// Splits the focused pane, optionally injecting a startup command once the
+    /// new pane spawns (used by the agent chooser). Shared by the split actions.
+    func performSplit(direction: SplitDirection, startupCommand: String?) {
+        let workingDir = paneTree.focusedSurface?.workingDir ?? NSHomeDirectory()
+        let newSurface = Surface(workingDir: workingDir)
+        if let startupCommand { pendingStartupCommands[newSurface.id] = startupCommand }
+        paneTree.splitFocused(direction: direction, newSurface: newSurface)
+        rebuildAndFocus()
     }
 
     /// Sidebar "Rename…" — payload is the project runtime (the receiver
@@ -1942,15 +1972,8 @@ final class TerminalViewController: NSViewController {
 
     /// Open a new tab and focus its single fresh pane.  Key equivalent: ⌘T.
     @objc func newTab(_ sender: Any?) {
-        workspace.activeTabList.newTab()
-        if let id = workspace.activeTabList.activeTree.focusedSurface?.id {
-            markPendingAgentChoiceIfEnabled(id)
-        }
-        refreshTabBar()
-        refreshSidebar()
-        rebuildSurfaceNodeView()
-        if let focused = focusedTerminalView() {
-            view.window?.makeFirstResponder(focused)
+        chooseAgentThenSpawn { [weak self] command in
+            self?.performNewTab(startupCommand: command)
         }
     }
 
