@@ -1184,9 +1184,14 @@ final class TerminalViewController: NSViewController {
         ]
         // Jump to any project (focuses its active pane).
         let projectCommands = workspace.projects.enumerated().map { index, project in
-            PaletteCommand(glyph: "◆", label: "Go to Project: \(project.name)", kbd: "") { [weak self] in
-                self?.selectProject(at: index)
-            }
+            let hibernated = project.isHibernated
+            return PaletteCommand(
+                glyph: hibernated ? "☾" : "◆",
+                label: hibernated ? "Wake Project: \(project.name)" : "Go to Project: \(project.name)",
+                kbd: "") { [weak self] in
+                    guard let self else { return }
+                    if hibernated { self.wakeProject(project) } else { self.selectProject(at: index) }
+                }
         }
 
         // Scheme picks are scoped to the current axis, so they never flip dark↔light.
