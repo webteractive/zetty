@@ -164,6 +164,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             CLILink.install()
             self?.refreshCLIStatus()
         }
+        tvc.autoHibernateAfter = { [weak self] in self?.appConfig.hibernateAfter ?? 0 }
+        tvc.autoHibernateDisabled = { [weak self] project in
+            self?.projectSettings.settings(for: project.rootPath)?.autoHibernate == false
+        }
         tvc.onActiveProjectChanged = { [weak self] in self?.applyThemeForActiveProject() }
         tvc.layoutTemplateProvider = { [weak self] project in
             ProjectFileIO.load(projectRoot: project.rootPath)?.layoutTemplate
@@ -239,6 +243,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
         startUpdateChecks()
         refreshCLIStatus()
+        tvc.startHibernationTimer()
     }
 
     /// Reflects the CLI symlink's staleness in the status bar (pill when it

@@ -32,6 +32,7 @@ final class ProjectSettingsSheet: NSObject {
     private static let appearanceChoices = ["system", "dark", "light"]
     private let preserveControl: NSSegmentedControl
     private let notifyControl: NSSegmentedControl
+    private let autoHibernateControl: NSSegmentedControl
     private let envTextView = NSTextView()
 
     // Master switch: show the new-pane agent chooser at all.
@@ -151,6 +152,7 @@ final class ProjectSettingsSheet: NSObject {
         }
         preserveControl = triState(current.preserveSessionsOverride)
         notifyControl = triState(current.notificationsOverride)
+        autoHibernateControl = triState(current.autoHibernate)
 
         super.init()
         configureEnvEditor(current: current.env)
@@ -318,6 +320,7 @@ final class ProjectSettingsSheet: NSObject {
             row("Light Theme", themeLightPopup),
             row("Layout", layoutControls),
             row("Preserve Sessions", preserveControl),
+            row("Auto-hibernate", autoHibernateControl),
             row("Notifications", notifyControl),
         ])
         general.orientation = .vertical
@@ -457,6 +460,7 @@ final class ProjectSettingsSheet: NSObject {
             ? lightChoices[themeLightPopup.indexOfSelectedItem - 1] : nil
         edited.preserveSessionsOverride = triStateValue(preserveControl)
         edited.notificationsOverride = triStateValue(notifyControl)
+        edited.autoHibernate = triStateValue(autoHibernateControl)
         edited.env = parsedEnv()
         var agents: [ProjectAgent] = []
         for (index, agent) in SpawnableAgent.catalog.enumerated() where agentChecks[index].state == .on {

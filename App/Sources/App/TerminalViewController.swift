@@ -215,8 +215,10 @@ final class TerminalViewController: NSViewController {
     }
 
     /// Every surface ID across all projects/tabs/panes (for orphan diffing).
+    /// Hibernated projects are excluded so their surfaces are pruned (torn down)
+    /// and never spawn until woken.
     var allSurfaceIDs: [UUID] {
-        workspace.projects.flatMap { project in
+        workspace.projects.filter { !$0.isHibernated }.flatMap { project in
             project.tabList.trees.flatMap { tree in
                 tree.layout.surfaces.map(\.id)
             }
@@ -456,8 +458,12 @@ final class TerminalViewController: NSViewController {
 
         // Wire sidebar callbacks.
         sidebar.onSelectProject = { [weak self] index in
-            self?.selectProject(at: index)
+            guard let self, self.workspace.projects.indices.contains(index) else { return }
+            let project = self.workspace.projects[index]
+            if project.isHibernated { self.wakeProject(project) }
+            else { self.selectProject(at: index) }
         }
+        sidebar.onToggleHibernate = { [weak self] index in self?.toggleHibernation(at: index) }
 
         sidebar.onShowBellMenu = { [weak self] anchor in self?.showAttentionMenu(from: anchor) }
         sidebar.onOpenSettings = { [weak self] in self?.onOpenSettings?() }
@@ -1162,6 +1168,10 @@ final class TerminalViewController: NSViewController {
             PaletteCommand(glyph: "★", label: "Pin / Unpin Current Project", kbd: "") { [weak self] in self?.togglePinActiveProject() },
             PaletteCommand(glyph: "＋", label: "New Project…", kbd: "⇧⌘N") { [weak self] in self?.createProject(nil) },
             PaletteCommand(glyph: "＋", label: "Add Existing Project…", kbd: "⌘O") { [weak self] in self?.addProject(nil) },
+            PaletteCommand(glyph: "☾", label: "Hibernate Current Project", kbd: "") { [weak self] in
+                guard let self else { return }
+                self.hibernateProject(self.workspace.activeProject)
+            },
             PaletteCommand(glyph: "−", label: "Remove Current Project…", kbd: "") { [weak self] in self?.removeProject(nil) },
             PaletteCommand(glyph: "⛶", label: "Toggle Sidebar", kbd: "⌘B") { [weak self] in self?.toggleSidebar(nil) },
             PaletteCommand(glyph: "◎", label: "Clear All Notifications", kbd: "") { [weak self] in self?.clearAllNotifications(nil) },
@@ -1776,7 +1786,8 @@ final class TerminalViewController: NSViewController {
                 icon: projectIcon,
                 status: rollup,
                 projectColor: identity?.color,
-                customGlyph: identity?.glyph
+                customGlyph: identity?.glyph,
+                isHibernated: project.isHibernated
             )
         }
         sidebarView?.update(
@@ -2143,6 +2154,103 @@ final class TerminalViewController: NSViewController {
         refreshSidebar()
         if let focused = focusedTerminalView() {
             view.window?.makeFirstResponder(focused)
+        }
+    }
+
+    // MARK: - Hibernation
+
+    /// Global timeout (seconds, 0 = off) + per-project opt-out, wired from AppDelegate.
+    var autoHibernateAfter: (() -> TimeInterval)?
+    var autoHibernateDisabled: ((ProjectRuntime) -> Bool)?
+
+    private var lastActiveAt: [UUID: Date] = [:]
+    private var hibernationTimer: Timer?
+
+    /// Frees a project's sessions, processes, and panes; keeps its layout.
+    /// Never hibernates the active project (switches away first).
+    func hibernateProject(_ project: ProjectRuntime, confirmIfBusy: Bool = true) {
+        guard let index = workspace.projects.firstIndex(where: { $0.id == project.id }),
+              workspace.projects.count > 1, !project.isHibernated else { return }
+        let surfaceIDs = project.tabList.trees.flatMap { $0.layout.surfaces.map(\.id) }
+        if confirmIfBusy, !confirmClosingBusyPanes(surfaceIDs, what: "project “\(project.name)”") { return }
+
+        if index == workspace.activeIndex {
+            guard let target = workspace.projects.indices.first(where: {
+                $0 != index && !workspace.projects[$0].isHibernated
+            }) else { return }
+            workspace.select(index: target)
+        }
+        project.isHibernated = true
+        onSurfacesClosed?(surfaceIDs)          // kill zmx sessions
+        onActiveProjectChanged?()
+        refreshTabBar()
+        refreshSidebar()
+        rebuildSurfaceNodeView()               // prune tears down its surfaces
+        onWorkspaceDidChange?()
+        if let focused = focusedTerminalView() { view.window?.makeFirstResponder(focused) }
+    }
+
+    /// Wakes a hibernated project: fresh shells at each pane's cwd, layout intact.
+    func wakeProject(_ project: ProjectRuntime) {
+        guard project.isHibernated,
+              let index = workspace.projects.firstIndex(where: { $0.id == project.id }) else { return }
+        project.isHibernated = false
+        lastActiveAt[project.id] = Date()
+        workspace.select(index: index)
+        onActiveProjectChanged?()
+        refreshTabBar()
+        refreshSidebar()
+        rebuildSurfaceNodeView()               // re-creates surfaces → fresh shells
+        onWorkspaceDidChange?()
+        if let focused = focusedTerminalView() { view.window?.makeFirstResponder(focused) }
+    }
+
+    /// Toggles hibernate/wake for the project at `index` (sidebar menu).
+    func toggleHibernation(at index: Int) {
+        guard workspace.projects.indices.contains(index) else { return }
+        let project = workspace.projects[index]
+        if project.isHibernated { wakeProject(project) } else { hibernateProject(project) }
+    }
+
+    /// A project is busy if any pane runs a foreground command or a live agent —
+    /// such projects are never auto-hibernated.
+    private func projectIsBusy(_ project: ProjectRuntime) -> Bool {
+        for tree in project.tabList.trees {
+            for surface in tree.layout.surfaces {
+                if !(foregroundBySurface[surface.id] ?? "").isEmpty { return true }
+                let status = agentDetector.state(for: surface.id).status
+                if status == .running || status == .needsAttention { return true }
+            }
+        }
+        return false
+    }
+
+    /// Starts the auto-hibernation timer (safe to call repeatedly, e.g. on reload).
+    func startHibernationTimer() {
+        hibernationTimer?.invalidate()
+        hibernationTimer = Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { [weak self] _ in
+            self?.evaluateAutoHibernation()
+        }
+    }
+
+    private func evaluateAutoHibernation() {
+        let after = autoHibernateAfter?() ?? 0
+        guard after > 0, workspace.projects.count > 1 else { return }
+        let now = Date()
+        let activeID = workspace.activeProject.id
+        lastActiveAt[activeID] = now   // the active project is continuously "seen"
+        for project in workspace.projects where project.id != activeID {
+            let seen = lastActiveAt[project.id] ?? now   // first sight: full window before eligible
+            lastActiveAt[project.id] = seen
+            if HibernationPolicy.shouldHibernate(
+                idleFor: now.timeIntervalSince(seen),
+                hibernateAfter: after,
+                isBusy: projectIsBusy(project),
+                isActive: false,
+                isHibernated: project.isHibernated,
+                autoDisabled: autoHibernateDisabled?(project) ?? false) {
+                hibernateProject(project, confirmIfBusy: false)
+            }
         }
     }
 

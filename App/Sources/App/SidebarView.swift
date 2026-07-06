@@ -17,6 +17,7 @@ struct SidebarProject {
     let status: AgentStatus?             // project roll-up (most-severe across tabs)
     let projectColor: NSColor?           // per-project identity color (nil = default)
     let customGlyph: String?             // SF Symbol overriding the diamond (nil = default)
+    let isHibernated: Bool               // frozen: dimmed row + moon glyph
 }
 
 /// Maps an agent status to its status-dot color, or nil for "no agent".
@@ -107,6 +108,7 @@ final class SidebarView: NSView {
 
     /// Called with the project index for the context menu's "Rename…".
     var onRenameProject: ((Int) -> Void)?
+    var onToggleHibernate: ((Int) -> Void)?
 
     /// Called with the project index for the context menu's "Project Settings…".
     var onOpenProjectSettings: ((Int) -> Void)?
@@ -555,6 +557,12 @@ final class SidebarView: NSView {
         onRemoveProject?(projectIndex)
     }
 
+    @objc private func hibernateMenuClicked(_ sender: NSMenuItem) {
+        let projectIndex = sender.tag
+        guard projects.indices.contains(projectIndex) else { return }
+        onToggleHibernate?(projectIndex)
+    }
+
     @objc private func renameProjectMenuClicked(_ sender: NSMenuItem) {
         let projectIndex = sender.tag
         guard projects.indices.contains(projectIndex) else { return }
@@ -592,6 +600,13 @@ extension SidebarView: NSMenuDelegate {
         settings.target = self
         settings.tag = p
         menu.addItem(settings)
+
+        let hibernate = NSMenuItem(
+            title: projects[p].isHibernated ? "Wake Project" : "Hibernate Project",
+            action: #selector(hibernateMenuClicked(_:)), keyEquivalent: "")
+        hibernate.target = self
+        hibernate.tag = p
+        menu.addItem(hibernate)
 
         menu.addItem(.separator())
 
@@ -754,6 +769,7 @@ extension SidebarView: NSOutlineViewDelegate {
                 toolIcon: project.icon,
                 projectColor: project.projectColor,
                 customGlyph: project.customGlyph,
+                isHibernated: project.isHibernated,
                 projectIndex: p,
                 target: self,
                 action: #selector(pinButtonClicked(_:))
@@ -957,32 +973,34 @@ private final class ProjectCellView: NSTableCellView {
 
     func configure(name: String, isPinned: Bool, isActive: Bool, agentStatus: AgentStatus?,
                    toolIcon: NSImage? = nil, projectColor: NSColor? = nil,
-                   customGlyph: String? = nil, projectIndex: Int,
+                   customGlyph: String? = nil, isHibernated: Bool = false, projectIndex: Int,
                    target: AnyObject, action: Selector) {
         nameLabel.stringValue = name
-        nameLabel.textColor = isActive ? ZTheme.current.fgColor : ZTheme.current.fg2Color
+        // Hibernated rows read as dormant: dim text regardless of active state.
+        nameLabel.textColor = isHibernated ? ZTheme.current.fg3Color
+            : (isActive ? ZTheme.current.fgColor : ZTheme.current.fg2Color)
 
         // Single-tab projects surface the pane's tool logo on the row itself
         // (multi-tab projects show logos on their tab child rows instead).
-        toolIconView.image = toolIcon
+        toolIconView.image = isHibernated ? nil : toolIcon
         toolIconView.contentTintColor = nameLabel.textColor
-        toolIconWidth.constant = toolIcon == nil ? 0 : 13
-        toolIconGap.constant = toolIcon == nil ? 0 : 6
+        toolIconWidth.constant = (toolIcon == nil || isHibernated) ? 0 : 13
+        toolIconGap.constant = (toolIcon == nil || isHibernated) ? 0 : 6
 
-        // Project glyph: a custom SF Symbol when set, else the diamond
-        // (filled when an agent is present or the project is active). Tint
-        // precedence: agent status > project color > active accent / dim —
+        // Project glyph: a moon when hibernated; else a custom SF Symbol when
+        // set, else the diamond (filled when an agent is present or active).
+        // Tint precedence: agent status > project color > active accent / dim —
         // status colors carry meaning and always win.
         let hasAgent = agentStatus != nil
         let defaultGlyph = (hasAgent || isActive) ? "diamond.fill" : "diamond"
+        let glyphName = isHibernated ? "moon.zzz" : (customGlyph ?? defaultGlyph)
         let glyphConfig = NSImage.SymbolConfiguration(pointSize: 13, weight: .medium)
-        glyphView.image = (customGlyph.flatMap {
-            NSImage(systemSymbolName: $0, accessibilityDescription: "Project")
-        } ?? NSImage(systemSymbolName: defaultGlyph, accessibilityDescription: "Project"))?
+        glyphView.image = NSImage(systemSymbolName: glyphName, accessibilityDescription: "Project")?
             .withSymbolConfiguration(glyphConfig)
-        glyphView.contentTintColor = agentStatusColor(agentStatus)
-            ?? projectColor
-            ?? (isActive ? ZTheme.current.accentColor : ZTheme.current.fg3Color)
+        glyphView.contentTintColor = isHibernated ? ZTheme.current.fg3Color
+            : (agentStatusColor(agentStatus)
+                ?? projectColor
+                ?? (isActive ? ZTheme.current.accentColor : ZTheme.current.fg3Color))
 
         // Pinned rows use a filled accent star; unpinned rows show a dim hollow star.
         let symbolName = isPinned ? "star.fill" : "star"
