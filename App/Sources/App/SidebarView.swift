@@ -933,8 +933,8 @@ private final class ProjectCellView: NSTableCellView {
         NSLayoutConstraint.activate([
             glyphView.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 4),
             glyphView.centerYAnchor.constraint(equalTo: centerYAnchor),
-            glyphView.widthAnchor.constraint(equalToConstant: 11),
-            glyphView.heightAnchor.constraint(equalToConstant: 11),
+            glyphView.widthAnchor.constraint(equalToConstant: 15),
+            glyphView.heightAnchor.constraint(equalToConstant: 15),
 
             toolIconView.leadingAnchor.constraint(equalTo: glyphView.trailingAnchor, constant: 7),
             toolIconView.centerYAnchor.constraint(equalTo: centerYAnchor),
@@ -975,9 +975,11 @@ private final class ProjectCellView: NSTableCellView {
         // status colors carry meaning and always win.
         let hasAgent = agentStatus != nil
         let defaultGlyph = (hasAgent || isActive) ? "diamond.fill" : "diamond"
-        glyphView.image = customGlyph.flatMap {
+        let glyphConfig = NSImage.SymbolConfiguration(pointSize: 13, weight: .medium)
+        glyphView.image = (customGlyph.flatMap {
             NSImage(systemSymbolName: $0, accessibilityDescription: "Project")
-        } ?? NSImage(systemSymbolName: defaultGlyph, accessibilityDescription: "Project")
+        } ?? NSImage(systemSymbolName: defaultGlyph, accessibilityDescription: "Project"))?
+            .withSymbolConfiguration(glyphConfig)
         glyphView.contentTintColor = agentStatusColor(agentStatus)
             ?? projectColor
             ?? (isActive ? ZTheme.current.accentColor : ZTheme.current.fg3Color)
