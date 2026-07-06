@@ -55,6 +55,9 @@ final class TerminalViewController: NSViewController {
 
     /// The currently installed root content view (a `SurfaceNodeView`).
     private var rootContentView: SurfaceNodeView?
+    /// The dormant-project placeholder, shown instead of `rootContentView` when
+    /// the active project is hibernated.
+    private var placeholderView: NSView?
 
     /// The tab bar strip shown above the pane area.
     private var tabBarView: TabBarView?
@@ -459,9 +462,8 @@ final class TerminalViewController: NSViewController {
         // Wire sidebar callbacks.
         sidebar.onSelectProject = { [weak self] index in
             guard let self, self.workspace.projects.indices.contains(index) else { return }
-            // A hibernated project stays dormant on a plain click — wake it via
-            // the context menu, command palette, or CLI.
-            guard !self.workspace.projects[index].isHibernated else { return }
+            // Selecting a hibernated project SHOWS it (a dormant placeholder with
+            // a Wake button) — it stays hibernated until the wake is intentional.
             self.selectProject(at: index)
         }
         sidebar.onToggleHibernate = { [weak self] index in self?.toggleHibernation(at: index) }
@@ -470,8 +472,6 @@ final class TerminalViewController: NSViewController {
         sidebar.onOpenSettings = { [weak self] in self?.onOpenSettings?() }
         sidebar.onSelectTab = { [weak self] projectIndex, tabIndex in
             guard let self, self.workspace.projects.indices.contains(projectIndex) else { return }
-            // Hibernated projects stay dormant on click — wake intentionally.
-            guard !self.workspace.projects[projectIndex].isHibernated else { return }
             self.workspace.select(index: projectIndex)
             // Same activation hook as selectProject(at:) — a tab click can
             // switch projects too (per-project theme must follow).
@@ -2332,6 +2332,37 @@ final class TerminalViewController: NSViewController {
         exitCopyModeIfActive()
 
         rootContentView?.removeFromSuperview()
+        rootContentView = nil
+        placeholderView?.removeFromSuperview()
+        placeholderView = nil
+
+        // Pin below the tab bar (28 pt), or to the top if there is no tab bar yet;
+        // and above the status bar (if present), else to the container bottom.
+        let topGuide: NSLayoutYAxisAnchor = tabBarView?.bottomAnchor ?? container.topAnchor
+        let bottomGuide = statusBarView?.topAnchor ?? container.bottomAnchor
+
+        // Active project hibernated → render a dormant placeholder (status +
+        // Wake button) instead of terminal panes. Viewing never wakes it; the
+        // button (or context menu / palette / CLI) is the intentional wake.
+        if workspace.activeProject.isHibernated {
+            let project = workspace.activeProject
+            let placeholder = HibernationPlaceholderView(
+                projectName: project.name,
+                tabCount: project.tabList.trees.count
+            ) { [weak self] in self?.wakeProject(project) }
+            placeholder.translatesAutoresizingMaskIntoConstraints = false
+            container.addSubview(placeholder)
+            NSLayoutConstraint.activate([
+                placeholder.topAnchor.constraint(equalTo: topGuide),
+                placeholder.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+                placeholder.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+                placeholder.bottomAnchor.constraint(equalTo: bottomGuide),
+            ])
+            placeholderView = placeholder
+            registry.prune(keeping: Set(allSurfaceIDs))   // free the frozen surfaces
+            onWorkspaceDidChange?()
+            return
+        }
 
         // A zoomed pane renders alone (tmux prefix+z). Background panes stay
         // alive — pruning uses the union of ALL surfaces, not the rendered node.
@@ -2363,17 +2394,6 @@ final class TerminalViewController: NSViewController {
         newRoot.translatesAutoresizingMaskIntoConstraints = false
         container.addSubview(newRoot)
 
-        // Pin below the tab bar (28 pt), or to the top if there is no tab bar yet.
-        let topGuide: NSLayoutYAxisAnchor
-        if let tabBar = tabBarView {
-            topGuide = tabBar.bottomAnchor
-        } else {
-            topGuide = container.topAnchor
-        }
-
-        // Sit above the status bar (if present), else to the container bottom.
-        let bottomGuide = statusBarView?.topAnchor ?? container.bottomAnchor
-
         NSLayoutConstraint.activate([
             newRoot.topAnchor.constraint(equalTo: topGuide),
             newRoot.leadingAnchor.constraint(equalTo: container.leadingAnchor),
@@ -2382,16 +2402,10 @@ final class TerminalViewController: NSViewController {
         ])
         rootContentView = newRoot
 
-        // Prune to the union of ALL projects' ALL tabs' surfaces so background
-        // sessions survive project switches as well as tab switches.
-        let allIDs = Set(
-            workspace.projects.flatMap { project in
-                project.tabList.trees.flatMap { tree in
-                    tree.layout.surfaces.map(\.id)
-                }
-            }
-        )
-        registry.prune(keeping: allIDs)
+        // Prune to the union of ALL awake projects' surfaces so background
+        // sessions survive project/tab switches — but hibernated projects'
+        // surfaces are freed (allSurfaceIDs excludes them).
+        registry.prune(keeping: Set(allSurfaceIDs))
 
         // Any structural change (tab add/close, split/close, project add, switch)
         // funnels through here — autosave so disk reflects the current layout.

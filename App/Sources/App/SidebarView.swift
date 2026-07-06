@@ -36,11 +36,13 @@ func agentStatusColor(_ status: AgentStatus?) -> NSColor? {
 private enum SidebarSection: Hashable {
     case pinned
     case projects
+    case hibernated
 
     var title: String {
         switch self {
-        case .pinned:   return "Pinned"
-        case .projects: return "Projects"
+        case .pinned:     return "Pinned"
+        case .projects:   return "Projects"
+        case .hibernated: return "Hibernated"
         }
     }
 }
@@ -131,6 +133,7 @@ final class SidebarView: NSView {
     private var topLevel: [OutlineItem.Kind] = []
     private var pinnedCount = 0
     private var projectsCount = 0
+    private var hibernatedCount = 0
 
     // Item-object cache — keyed by Kind so we reuse the same object across
     // reloads (NSOutlineView uses pointer/isEqual identity for expansion state).
@@ -460,10 +463,15 @@ final class SidebarView: NSView {
         let visible = projects.enumerated().filter { _, p in
             query.isEmpty || p.name.lowercased().contains(query)
         }
-        let pinned = visible.filter { $0.element.isPinned }
-        let unpinned = visible.filter { !$0.element.isPinned }
+        // Hibernated projects live in their own section at the bottom, regardless
+        // of pin state; awake projects split into Pinned / Projects as before.
+        let awake = visible.filter { !$0.element.isHibernated }
+        let hibernated = visible.filter { $0.element.isHibernated }
+        let pinned = awake.filter { $0.element.isPinned }
+        let unpinned = awake.filter { !$0.element.isPinned }
         pinnedCount = pinned.count
         projectsCount = unpinned.count
+        hibernatedCount = hibernated.count
 
         var rows: [OutlineItem.Kind] = []
         if !pinned.isEmpty {
@@ -473,6 +481,10 @@ final class SidebarView: NSView {
         if !unpinned.isEmpty {
             rows.append(.header(.projects))
             rows += unpinned.map { .project($0.offset) }
+        }
+        if !hibernated.isEmpty {
+            rows.append(.header(.hibernated))
+            rows += hibernated.map { .project($0.offset) }
         }
         topLevel = rows
 
@@ -488,19 +500,20 @@ final class SidebarView: NSView {
 
         outlineView.reloadData()
 
-        // Auto-expand the active project if it is visible + expandable.
+        // Auto-expand the active project if it is visible + expandable (never a
+        // hibernated project — those are dormant leaf rows).
+        let activeExpandable = activeProject >= 0
+            && projects.indices.contains(activeProject)
+            && !projects[activeProject].isHibernated
+            && projects[activeProject].tabTitles.count >= 2
         let activeVisible = topLevel.contains(.project(activeProject))
-        if activeVisible,
-           projects.indices.contains(activeProject),
-           projects[activeProject].tabTitles.count >= 2 {
+        if activeVisible, activeExpandable {
             outlineView.expandItem(item(for: .project(activeProject)))
         }
 
         // Select the active tab child (or the project row), if visible.
         let rowToSelect: Int
-        if activeVisible,
-           projects.indices.contains(activeProject),
-           projects[activeProject].tabTitles.count >= 2 {
+        if activeVisible, activeExpandable {
             rowToSelect = outlineView.row(forItem: item(for: .tab(project: activeProject, tab: activeTab)))
         } else if activeVisible {
             rowToSelect = outlineView.row(forItem: item(for: .project(activeProject)))
@@ -639,6 +652,8 @@ extension SidebarView: NSOutlineViewDataSource {
         guard let obj = item as? OutlineItem,
               case .project(let p) = obj.kind,
               projects.indices.contains(p) else { return 0 }
+        // Hibernated projects are dormant leaf rows — no tab children.
+        if projects[p].isHibernated { return 0 }
         let count = projects[p].tabTitles.count
         return count >= 2 ? count : 0
     }
@@ -658,7 +673,7 @@ extension SidebarView: NSOutlineViewDataSource {
         guard let obj = item as? OutlineItem,
               case .project(let p) = obj.kind,
               projects.indices.contains(p) else { return false }
-        return projects[p].tabTitles.count >= 2
+        return !projects[p].isHibernated && projects[p].tabTitles.count >= 2
     }
 
     // MARK: Tab drag-reorder
@@ -745,8 +760,13 @@ extension SidebarView: NSOutlineViewDelegate {
                 cellView = HeaderCellView()
                 cellView.identifier = identifier
             }
-            cellView.configure(title: section.title,
-                               count: section == .pinned ? pinnedCount : projectsCount)
+            let count: Int
+            switch section {
+            case .pinned:     count = pinnedCount
+            case .projects:   count = projectsCount
+            case .hibernated: count = hibernatedCount
+            }
+            cellView.configure(title: section.title, count: count)
             return cellView
 
         case .project(let p):
