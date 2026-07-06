@@ -76,6 +76,40 @@ by the tool it's running.
 > the reliable path. Developer ID signing + notarization is planned, which
 > removes this step entirely.
 
+### "Zetty would like to access files in…" prompts
+
+macOS shows a folder-access (TCC) prompt the first time a process **you run
+inside a pane** touches a protected folder — Desktop, Documents, Downloads,
+iCloud Drive, or removable/network volumes. The access is attributed to Zetty
+because Zetty spawned that process. This is normal — every terminal emulator
+(Terminal, iTerm2, Ghostty, WezTerm) behaves the same way. It is **not** a bug,
+and Zetty stores nothing about your folders.
+
+**Make it stop for good — grant Full Disk Access (one time):**
+
+1. **System Settings → Privacy & Security → Full Disk Access**
+2. Click **`+`**, add **`/Applications/zetty.app`**, and turn it on
+   (shortcut: `open "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles"`)
+3. **Quit and relaunch Zetty.**
+
+After that, the per-folder prompts stop.
+
+> **Why does it keep coming back?** Two reasons:
+>
+> - **It re-triggers on re-access.** Any tool that re-scans its working
+>   directory pops the prompt again until access is granted app-wide — for
+>   example, clearing and restarting an AI agent session (Claude Code's
+>   `/clear`, etc.) makes it re-read the project directory, so the prompt
+>   reappears. Full Disk Access covers all of these at once.
+> - **Unsigned builds change identity.** macOS ties the grant to the app's
+>   code signature, and current builds are ad-hoc signed (the signature
+>   changes every build), so an **update** can reset the grant and re-prompt.
+>   Developer ID signing + notarization (planned) gives Zetty a stable
+>   identity so the grant sticks across updates.
+>
+> You do **not** need to "trust" each project — that's an App Sandbox concept,
+> and Zetty is not sandboxed. Granting folder access once is all it takes.
+
 ### Build from source
 
 #### Prerequisites

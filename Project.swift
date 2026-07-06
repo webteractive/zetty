@@ -43,6 +43,20 @@ let project = Project(
                 "CFBundleDisplayName": "Zetty",
                 "CFBundleIconFile": "AppIcon",
                 "CFBundleShortVersionString": "0.1.6",
+                // Folder-access (TCC) prompt copy: terminals launched in a pane
+                // touch these protected folders, so macOS asks once per folder
+                // until the user grants Full Disk Access. These strings just
+                // make the prompt say why — they don't remove it.
+                "NSDesktopFolderUsageDescription":
+                    "Zetty needs access so terminals you open in it can read and write files on your Desktop.",
+                "NSDocumentsFolderUsageDescription":
+                    "Zetty needs access so terminals you open in it can read and write files in your Documents.",
+                "NSDownloadsFolderUsageDescription":
+                    "Zetty needs access so terminals you open in it can read and write files in your Downloads.",
+                "NSRemovableVolumesUsageDescription":
+                    "Zetty needs access so terminals you open in it can read and write files on removable volumes.",
+                "NSNetworkVolumesUsageDescription":
+                    "Zetty needs access so terminals you open in it can read and write files on network volumes.",
             ]),
             sources: ["App/Sources/App/**"],
             resources: ["App/Resources/**/*.svg", "App/Resources/*.icns",
