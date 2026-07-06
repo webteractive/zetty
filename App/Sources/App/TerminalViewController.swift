@@ -1262,7 +1262,7 @@ final class TerminalViewController: NSViewController {
     /// Adds the directory at `path` as a new project (CLI `add-project`),
     /// makes it active so its first pane spawns, and returns that pane's
     /// short id — or an error message.
-    func addProject(path: String, name: String?) -> Result<String, ControlError> {
+    func addProject(path: String, name: String?, focus: Bool = false) -> Result<String, ControlError> {
         let root = URL(fileURLWithPath: (path as NSString).expandingTildeInPath).standardizedFileURL.path
         var isDirectory: ObjCBool = false
         guard FileManager.default.fileExists(atPath: root, isDirectory: &isDirectory),
@@ -1273,9 +1273,10 @@ final class TerminalViewController: NSViewController {
             return .failure(.protocolError("project \"\(existing.name)\" already uses \(root)"))
         }
         let trimmed = name?.trimmingCharacters(in: .whitespaces)
-        addProjectFromURL(URL(fileURLWithPath: root), name: (trimmed?.isEmpty ?? true) ? nil : trimmed)
-        guard let surface = workspace.activeTabList.activeTree.focusedSurface
-                ?? workspace.activeTabList.activeTree.layout.surfaces.first else {
+        let project = addProjectFromURL(
+            URL(fileURLWithPath: root), name: (trimmed?.isEmpty ?? true) ? nil : trimmed, activate: focus)
+        guard let surface = project.tabList.activeTree.focusedSurface
+                ?? project.tabList.activeTree.layout.surfaces.first else {
             return .failure(.noSuchPane("project added but no pane found"))
         }
         return .success(SessionPersistence.shortID(for: surface.id))
@@ -1337,12 +1338,12 @@ final class TerminalViewController: NSViewController {
     /// Creates a new project folder then adds it (CLI `new-project`). Returns
     /// the first pane's short id. A failed `git init` is non-fatal: the project
     /// is still created and its pane id returned.
-    func newProject(path: String, name: String?, gitInit: Bool) -> Result<String, ControlError> {
+    func newProject(path: String, name: String?, gitInit: Bool, focus: Bool = false) -> Result<String, ControlError> {
         switch createProjectDirectory(atPath: path, gitInit: gitInit) {
         case .failure(let error):
             return .failure(error)
         case .success:
-            return addProject(path: path, name: name)
+            return addProject(path: path, name: name, focus: focus)
         }
     }
 
@@ -1815,8 +1816,14 @@ final class TerminalViewController: NSViewController {
         }
     }
 
-    private func addProjectFromURL(_ url: URL, name: String? = nil) {
-        let project = workspace.addProject(name: name ?? url.lastPathComponent, rootPath: url.path)
+    /// Adds the directory as a project and returns it. `activate` (default true)
+    /// switches to the new project and focuses its pane; pass false to add it in
+    /// the background without disturbing the current view (its pane spawns lazily
+    /// when the project is later opened).
+    @discardableResult
+    private func addProjectFromURL(_ url: URL, name: String? = nil, activate: Bool = true) -> ProjectRuntime {
+        let project = workspace.addProject(
+            name: name ?? url.lastPathComponent, rootPath: url.path, makeActive: activate)
         // A resolved layout template replaces the default single-pane seed
         // (fresh project → nothing to confirm-discard).
         if let template = layoutTemplateProvider?(project),
@@ -1824,13 +1831,18 @@ final class TerminalViewController: NSViewController {
             project.tabList.replaceTrees(from: built.tabList)
             pendingStartupCommands.merge(built.commands) { _, new in new }
         }
-        onActiveProjectChanged?()
         refreshTabBar()
-        rebuildSurfaceNodeView()   // spawns the pane + autosaves (tail call)
         refreshSidebar()
-        if let focused = focusedTerminalView() {
-            view.window?.makeFirstResponder(focused)
+        if activate {
+            onActiveProjectChanged?()
+            rebuildSurfaceNodeView()   // spawns the pane + autosaves
+            if let focused = focusedTerminalView() {
+                view.window?.makeFirstResponder(focused)
+            }
+        } else {
+            onWorkspaceDidChange?()     // persist the added project
         }
+        return project
     }
 
     // MARK: - Create Project via NSOpenPanel (+ accessory)

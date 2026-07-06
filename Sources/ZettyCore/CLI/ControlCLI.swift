@@ -23,14 +23,16 @@ public enum ControlCLI {
                                               preserved zmx session)
       zetty new-tab [--project <name>]      open a tab (active project by default);
                                               prints the new pane's id on stdout
-      zetty add-project <path> [--name <name>]
-                                              add a directory as a project (made
-                                              active, one fresh tab); prints its
-                                              first pane's id on stdout
-      zetty new-project <path> [--name <name>] [--git]
-                                              create a new directory and add it
-                                              as a project (--git runs git init);
+      zetty add-project <path> [--name <name>] [--focus]
+                                              add a directory as a project in the
+                                              background (--focus switches to it);
                                               prints its first pane's id on stdout
+      zetty new-project <path> [--name <name>] [--git] [--focus]
+                                              create a new directory and add it
+                                              as a project in the background
+                                              (--git runs git init; --focus
+                                              switches to it); prints its first
+                                              pane's id on stdout
       zetty remove-project <name>           remove a project (closes its tabs and
                                               ends their sessions; no confirmation;
                                               the last project can't be removed)
@@ -57,8 +59,10 @@ public enum ControlCLI {
         cwd, running tool, agent status, focus). `new-tab`/`split` print just
         the pane id, so: zetty send --pane "$(zetty new-tab)" ls --enter
       - Give a fresh pane ~1–2s for its shell to start before sending input.
-      - new-tab/split/add-project select the new pane (it must be visible for
-        its shell to spawn); close/send/capture leave the visible view alone.
+      - new-tab/split select the new pane (it must be visible for its shell to
+        spawn); close/send/capture leave the visible view alone. add-project/
+        new-project add in the background — the pane spawns when you open the
+        project (or pass --focus to switch to it and spawn now).
       - Exit codes: 0 success · 1 error (message on stderr) · 2 usage.
       - Requires the zetty app to be running (socket: ~/.zetty/zetty.sock).
     """
@@ -226,6 +230,7 @@ public enum ControlCLI {
 
     private static func runAddProject(_ arguments: [String]) -> Int32 {
         var name: String?
+        var focus = false
         var pathParts: [String] = []
         var index = 0
         while index < arguments.count {
@@ -234,6 +239,8 @@ public enum ControlCLI {
                 index += 1
                 guard index < arguments.count else { return failure("--name needs a value") }
                 name = arguments[index]
+            case "--focus":
+                focus = true
             case "--help", "-h":
                 print(usage)
                 return 0
@@ -250,12 +257,13 @@ public enum ControlCLI {
         // Resolve here: relative paths are relative to the CLI's cwd, not the app's.
         let expanded = (raw as NSString).expandingTildeInPath
         let absolute = URL(fileURLWithPath: expanded).standardizedFileURL.path
-        return expectPane(.addProject(path: absolute, name: name))
+        return expectPane(.addProject(path: absolute, name: name, focus: focus))
     }
 
     private static func runNewProject(_ arguments: [String]) -> Int32 {
         var name: String?
         var gitInit = false
+        var focus = false
         var pathParts: [String] = []
         var index = 0
         while index < arguments.count {
@@ -266,6 +274,8 @@ public enum ControlCLI {
                 name = arguments[index]
             case "--git":
                 gitInit = true
+            case "--focus":
+                focus = true
             case "--help", "-h":
                 print(usage)
                 return 0
@@ -282,7 +292,7 @@ public enum ControlCLI {
         // Resolve here: relative paths are relative to the CLI's cwd, not the app's.
         let expanded = (raw as NSString).expandingTildeInPath
         let absolute = URL(fileURLWithPath: expanded).standardizedFileURL.path
-        return expectPane(.newProject(path: absolute, name: name, gitInit: gitInit))
+        return expectPane(.newProject(path: absolute, name: name, gitInit: gitInit, focus: focus))
     }
 
     private static func runRemoveProject(_ arguments: [String]) -> Int32 {

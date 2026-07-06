@@ -79,6 +79,18 @@ import Foundation
     #expect(ws.activeIndex == 1)
 }
 
+@Test func addProjectInBackgroundKeepsActiveProject() {
+    let ws = WorkspaceModel(restoring: [
+        ProjectRuntime(name: "alpha", rootPath: "/a"),
+        ProjectRuntime(name: "zeta", rootPath: "/z"),
+    ], activeIndex: 0)!
+    let activeBefore = ws.activeProject.id
+    let m = ws.addProject(name: "mike", rootPath: "/m", makeActive: false)
+    #expect(ws.projects.map(\.name) == ["alpha", "mike", "zeta"])  // still inserted + sorted
+    #expect(ws.activeProject.id == activeBefore)                    // active did NOT switch
+    #expect(ws.projects.contains { $0.id == m.id })
+}
+
 @Test func removingLastRemainingProjectIsNoOp() {
     let ws = WorkspaceModel()
     ws.removeProject(at: 0)

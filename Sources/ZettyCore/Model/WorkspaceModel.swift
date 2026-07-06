@@ -41,11 +41,13 @@ public final class WorkspaceModel {
     public var activeTabList: TabList { projects[activeIndex].tabList }
 
     @discardableResult
-    public func addProject(name: String, rootPath: String) -> ProjectRuntime {
+    /// Adds a project. `makeActive` (default true) switches to it; pass false to
+    /// add it in the background, leaving the current active project selected.
+    public func addProject(name: String, rootPath: String, makeActive: Bool = true) -> ProjectRuntime {
         let p = ProjectRuntime(name: name, rootPath: rootPath)
         projects.append(p)
-        activeIndex = projects.count - 1
-        resort()   // insert into sorted position; active stays on `p`
+        if makeActive { activeIndex = projects.count - 1 }
+        resort()   // preserves the active project by identity
         return p
     }
 

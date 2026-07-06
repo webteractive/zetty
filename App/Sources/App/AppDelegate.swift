@@ -956,8 +956,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             case .success(let pane): return .pane(pane)
             case .failure(let error): return .error(error.localizedDescription)
             }
-        case .addProject(let path, let name):
-            switch tvc.addProject(path: path, name: name) {
+        case .addProject(let path, let name, let focus):
+            switch tvc.addProject(path: path, name: name, focus: focus) {
             case .success(let pane): return .pane(pane)
             case .failure(let error): return .error(error.localizedDescription)
             }
@@ -966,8 +966,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 return .error(message)
             }
             return .ok
-        case .newProject(let path, let name, let gitInit):
-            switch tvc.newProject(path: path, name: name, gitInit: gitInit) {
+        case .newProject(let path, let name, let gitInit, let focus):
+            switch tvc.newProject(path: path, name: name, gitInit: gitInit, focus: focus) {
             case .success(let pane): return .pane(pane)
             case .failure(let error): return .error(error.localizedDescription)
             }
