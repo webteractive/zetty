@@ -1577,22 +1577,35 @@ final class TerminalViewController: NSViewController {
     /// Surfaces already given their post-reattach repaint nudge.
     private var nudgedSurfaces: Set<UUID> = []
 
-    /// One-shot repaint nudge for preserved panes. A zmx reattach replays the
-    /// screen contents, but a running TUI paints only deltas on top of what it
-    /// believes is on screen — the pane stays half-drawn until a size change
-    /// forces a full redraw (user-confirmed: resizing fixes it). Shortly after
-    /// the pane appears, shrink it by about a cell row and restore it, so the
-    /// program gets SIGWINCH and repaints.
+    private var reattachNudgeScheduled = false
+
+    /// Repaint nudge for preserved panes. A zmx reattach replays the screen,
+    /// but a running TUI paints only deltas on top of what it believes is on
+    /// screen — the pane stays half-drawn until a size change forces a full
+    /// redraw (user-confirmed: resizing the WINDOW fixes it). Resizing the pane
+    /// view directly doesn't work: it's Auto-Layout-pinned, so the constraint
+    /// system reverts the frame before libghostty registers a real resize. So
+    /// we nudge the window by 1pt and restore it, exactly like the manual fix —
+    /// which repaints every reattached pane at once. Debounced so simultaneous
+    /// reattaches trigger a single nudge.
     private func nudgeAfterReattach(_ surfaceID: UUID) {
         guard sessionCommandProvider != nil, !nudgedSurfaces.contains(surfaceID) else { return }
         nudgedSurfaces.insert(surfaceID)
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
-            guard let self, let surface = self.surface(with: surfaceID) else { return }
-            let view = self.registry.terminalView(for: surface)
-            let original = view.frame.size
-            guard original.height > 40 else { return }
-            view.setFrameSize(NSSize(width: original.width, height: original.height - 20))
-            DispatchQueue.main.async { view.setFrameSize(original) }
+        guard !reattachNudgeScheduled else { return }
+        reattachNudgeScheduled = true
+        // Fire after reattach/scrollback replay has settled, else the repaint
+        // races the still-arriving output.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
+            guard let self else { return }
+            self.reattachNudgeScheduled = false
+            guard let window = self.view.window else { return }
+            let frame = window.frame
+            var shrunk = frame
+            shrunk.size.height -= 1
+            window.setFrame(shrunk, display: true)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                window.setFrame(frame, display: true)
+            }
         }
     }
 
