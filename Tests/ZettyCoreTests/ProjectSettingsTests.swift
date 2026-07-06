@@ -99,3 +99,26 @@ import Foundation
         ProjectSettings.self, from: JSONEncoder().encode(settings))
     #expect(decoded.env?["API_KEY"] == "abc 123")
 }
+
+@Test func projectSettingsRoundTripsAgents() throws {
+    var s = ProjectSettings()
+    s.agents = [ProjectAgent(id: "claude", command: "claude"),
+                ProjectAgent(id: "cursor", command: "cursor-agent")]
+    let data = try JSONEncoder().encode(s)
+    let decoded = try JSONDecoder().decode(ProjectSettings.self, from: data)
+    #expect(decoded.agents == s.agents)
+    #expect(!s.isEmpty)
+}
+
+@Test func projectSettingsAgentsNilStaysEmpty() {
+    #expect(ProjectSettings().agents == nil)
+    #expect(ProjectSettings().isEmpty)
+}
+
+@Test func projectSettingsTolerantDecodeWithoutAgents() throws {
+    // A file written before this field existed decodes with agents == nil.
+    let json = #"{"name":"X"}"#.data(using: .utf8)!
+    let decoded = try JSONDecoder().decode(ProjectSettings.self, from: json)
+    #expect(decoded.name == "X")
+    #expect(decoded.agents == nil)
+}

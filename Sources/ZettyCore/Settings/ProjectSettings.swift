@@ -29,6 +29,10 @@ public struct ProjectSettings: Codable, Sendable, Equatable {
     /// ONLY here (the private per-user store) — the repo file carries names
     /// at most (`ProjectFile.envNames`). New panes/sessions only.
     public var env: [String: String]?
+    /// Per-project spawnable agents (Agents tab). nil/empty → feature off.
+    /// Presence of an entry = that agent is enabled; `command` is its launch
+    /// command. Stored in the private store only.
+    public var agents: [ProjectAgent]?
 
     public init(
         name: String? = nil,
@@ -39,7 +43,8 @@ public struct ProjectSettings: Codable, Sendable, Equatable {
         themeLightOverride: String? = nil,
         preserveSessionsOverride: Bool? = nil,
         notificationsOverride: Bool? = nil,
-        env: [String: String]? = nil
+        env: [String: String]? = nil,
+        agents: [ProjectAgent]? = nil
     ) {
         self.name = name
         self.color = color
@@ -50,6 +55,7 @@ public struct ProjectSettings: Codable, Sendable, Equatable {
         self.preserveSessionsOverride = preserveSessionsOverride
         self.notificationsOverride = notificationsOverride
         self.env = env
+        self.agents = agents
     }
 
     /// True when every field is nil — the store drops such entries.
@@ -66,6 +72,7 @@ public struct ProjectSettings: Codable, Sendable, Equatable {
         preserveSessionsOverride = try c.decodeIfPresent(Bool.self, forKey: .preserveSessionsOverride)
         notificationsOverride = try c.decodeIfPresent(Bool.self, forKey: .notificationsOverride)
         env = try c.decodeIfPresent([String: String].self, forKey: .env)
+        agents = try c.decodeIfPresent([ProjectAgent].self, forKey: .agents)
     }
 }
 
