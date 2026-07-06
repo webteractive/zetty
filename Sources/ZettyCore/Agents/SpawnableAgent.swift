@@ -64,3 +64,26 @@ public struct ResolvedSpawnAgent: Sendable, Equatable {
         self.command = command
     }
 }
+
+/// A project's agent-chooser configuration: which agents to offer, and whether
+/// the new-pane chooser prompt is enabled at all.
+public struct AgentSpawnConfig: Sendable, Equatable {
+    public let agents: [ResolvedSpawnAgent]
+    public let promptOnNewPane: Bool
+
+    public init(agents: [ResolvedSpawnAgent], promptOnNewPane: Bool) {
+        self.agents = agents
+        self.promptOnNewPane = promptOnNewPane
+    }
+
+    /// No agents and no prompt.
+    public static let disabled = AgentSpawnConfig(agents: [], promptOnNewPane: false)
+}
+
+extension SpawnableAgent {
+    /// Builds a chooser config from stored per-project fields: the resolved
+    /// enabled agents plus whether the prompt should show.
+    public static func spawnConfig(agents: [ProjectAgent]?, promptOnNewPane: Bool) -> AgentSpawnConfig {
+        AgentSpawnConfig(agents: resolve(agents), promptOnNewPane: promptOnNewPane)
+    }
+}

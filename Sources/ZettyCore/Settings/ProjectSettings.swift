@@ -33,6 +33,10 @@ public struct ProjectSettings: Codable, Sendable, Equatable {
     /// Presence of an entry = that agent is enabled; `command` is its launch
     /// command. Stored in the private store only.
     public var agents: [ProjectAgent]?
+    /// Master switch for the new-pane agent chooser. nil (default) or true →
+    /// the modal shows when ≥1 agent is enabled; false → never prompt (a direct
+    /// off switch that keeps the enabled-agent list intact).
+    public var promptAgentOnNewPane: Bool?
 
     public init(
         name: String? = nil,
@@ -44,7 +48,8 @@ public struct ProjectSettings: Codable, Sendable, Equatable {
         preserveSessionsOverride: Bool? = nil,
         notificationsOverride: Bool? = nil,
         env: [String: String]? = nil,
-        agents: [ProjectAgent]? = nil
+        agents: [ProjectAgent]? = nil,
+        promptAgentOnNewPane: Bool? = nil
     ) {
         self.name = name
         self.color = color
@@ -56,6 +61,7 @@ public struct ProjectSettings: Codable, Sendable, Equatable {
         self.notificationsOverride = notificationsOverride
         self.env = env
         self.agents = agents
+        self.promptAgentOnNewPane = promptAgentOnNewPane
     }
 
     /// True when every field is nil — the store drops such entries.
@@ -73,6 +79,7 @@ public struct ProjectSettings: Codable, Sendable, Equatable {
         notificationsOverride = try c.decodeIfPresent(Bool.self, forKey: .notificationsOverride)
         env = try c.decodeIfPresent([String: String].self, forKey: .env)
         agents = try c.decodeIfPresent([ProjectAgent].self, forKey: .agents)
+        promptAgentOnNewPane = try c.decodeIfPresent(Bool.self, forKey: .promptAgentOnNewPane)
     }
 }
 

@@ -26,3 +26,14 @@ import Testing
     #expect(SpawnableAgent.resolve(nil).isEmpty)
     #expect(SpawnableAgent.resolve([]).isEmpty)
 }
+
+@Test func spawnConfigCarriesAgentsAndPromptFlag() {
+    let on = SpawnableAgent.spawnConfig(agents: [ProjectAgent(id: "claude", command: "claude")], promptOnNewPane: true)
+    #expect(on.promptOnNewPane)
+    #expect(on.agents.map(\.agent.id) == ["claude"])
+
+    let off = SpawnableAgent.spawnConfig(agents: [ProjectAgent(id: "claude", command: "claude")], promptOnNewPane: false)
+    #expect(!off.promptOnNewPane)
+    #expect(AgentSpawnConfig.disabled.agents.isEmpty)
+    #expect(!AgentSpawnConfig.disabled.promptOnNewPane)
+}
