@@ -91,16 +91,22 @@ final class TerminalViewController: NSViewController {
     /// Keep in sync with `Project.swift`'s package requirement.
     private static let libghosttyVersion = "1.2.7"
 
-    /// Build identity for the status bar: the short git commit stamped into
-    /// Info.plist by the "Stamp build commit" build phase ("*" suffix = built
-    /// from a dirty tree). Falls back to the marketing version, then "dev"
-    /// (e.g. running from a build that skipped the stamp phase).
+    /// Build identity for the status bar: the marketing version (`CFBundle
+    /// ShortVersionString`) for clean builds — every release DMG and any clean
+    /// local build. A dirty (WIP) build instead shows the short git commit with
+    /// a `*` suffix (stamped by the "Stamp build commit" phase) for precise
+    /// identity; `dev` when neither is available.
     private static let buildStamp: String = {
         let info = Bundle.main.infoDictionary
-        if let commit = info?["ZettyBuildCommit"] as? String, !commit.isEmpty {
-            return commit
+        let commit = (info?["ZettyBuildCommit"] as? String) ?? ""
+        // A dirty (WIP) build shows its commit for precise identity; a clean
+        // build — every release DMG, and any clean local build — shows the
+        // marketing version instead.
+        if commit.hasSuffix("*") { return commit }
+        if let version = info?["CFBundleShortVersionString"] as? String, !version.isEmpty {
+            return version
         }
-        return (info?["CFBundleShortVersionString"] as? String) ?? "dev"
+        return commit.isEmpty ? "dev" : commit
     }()
 
     /// Background queue + debounce for `git` probes feeding the status bar.
