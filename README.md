@@ -25,12 +25,17 @@ by the tool it's running.
 - **Vi-keyed copy mode** — `Ctrl+B [` enters a modal copy mode with vi
   motions, visual selection, and yank-to-clipboard, rendered as a native
   Ghostty selection.
+- **Broadcast input** — type once, send the same keystrokes to every pane in
+  the current tab, the whole workspace, or **only the panes running an AI
+  agent** — steer a whole swarm with one prompt. A yellow `BROADCAST` chip
+  keeps the mode obvious.
 - **Session persistence** — with `preserve-sessions` enabled, panes run inside
   [zmx](https://zmx.sh) sessions that survive app quit/relaunch, and
   reattached panes replay their full scrollback history (colors intact) so
   scrolling up works as if the app never quit.
 - **Per-project settings** — right-click a project → **Rename…** or **Project
-  Settings…**: custom name, identity color, and icon for the sidebar; a
+  Settings…**: custom name, identity color, and an SF Symbol or emoji icon
+  for the sidebar; a
   per-project **theme** (the whole app re-themes when you switch projects);
   per-project overrides (Follow global / On / Off) of session preservation
   and agent notifications; and per-project **environment variables**
@@ -220,14 +225,19 @@ Press `Ctrl+B` (the prefix, configurable), then:
 
 **Copy mode** is vi-keyed: `h/j/k/l` `w/b/e` `0/$` `g/G` to move,
 `Ctrl+U/D/F/B` to page, `v`/`V` to select, `y` or `Enter` to yank,
-`q`/`Esc` to exit. The status bar shows `PREFIX` / `COPY` / `ZOOM` chips so
-you always know what mode you're in.
+`q`/`Esc` to exit. The status bar shows `PREFIX` / `COPY` / `ZOOM` /
+`BROADCAST` chips so you always know what mode you're in.
+
+**Broadcast input** has no default key (typing-goes-everywhere is opt-in). Reach
+it from **View → Broadcast Input**, the command palette, or bind it yourself
+(`broadcast-toggle` = current tab, `broadcast-agents-toggle` = agents only).
 
 Remap anything in the config file:
 
 ```
 prefix = ctrl+b
 bind = s split-vertical
+bind = ctrl+a broadcast-toggle
 copy-bind = n copy-cursor-down
 ```
 
