@@ -26,6 +26,9 @@ public enum BindingCommand: Hashable, Sendable {
     case paste
     case sendPrefixLiteral
     case cancelPrefix
+    // Broadcast / synchronized input (toggles; App fans out — not a KeyMode)
+    case broadcastToggle
+    case broadcastAgentsToggle
     // Copy mode — cursor motions
     case copyCursorLeft
     case copyCursorRight
@@ -70,6 +73,8 @@ public enum BindingCommand: Hashable, Sendable {
         .paste: "paste",
         .sendPrefixLiteral: "send-prefix",
         .cancelPrefix: "cancel",
+        .broadcastToggle: "broadcast-toggle",
+        .broadcastAgentsToggle: "broadcast-agents-toggle",
         .copyCursorLeft: "copy-cursor-left",
         .copyCursorRight: "copy-cursor-right",
         .copyCursorUp: "copy-cursor-up",

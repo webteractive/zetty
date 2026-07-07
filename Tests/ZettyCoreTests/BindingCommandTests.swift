@@ -26,6 +26,13 @@ private func copyDefault(_ chordText: String) -> BindingCommand? {
     }
 }
 
+@Test func commandConfigNameRoundTripsForBroadcast() {
+    #expect(BindingCommand.broadcastToggle.configName == "broadcast-toggle")
+    #expect(BindingCommand.broadcastAgentsToggle.configName == "broadcast-agents-toggle")
+    #expect(BindingCommand(configName: "broadcast-toggle") == .broadcastToggle)
+    #expect(BindingCommand(configName: "broadcast-agents-toggle") == .broadcastAgentsToggle)
+}
+
 @Test func commandConfigNameRoundTripsForSelectTab() {
     for n in 1...9 {
         let command = BindingCommand.selectTab(n)
