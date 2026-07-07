@@ -28,4 +28,9 @@ rm -f "$DMG"
 hdiutil create -volname "Zetty $VERSION" -srcfolder "$STAGE" -ov -format UDZO "$DMG"
 rm -rf "$STAGE"
 
-echo "Packaged $DMG (version $VERSION, commit $COMMIT)"
+# SHA-256 sidecar (bare lowercase hex) — the in-app self-updater verifies the
+# download against this. Upload it alongside the DMG in the release.
+SHA="$DMG.sha256"
+shasum -a 256 "$DMG" | awk '{print $1}' > "$SHA"
+
+echo "Packaged $DMG + $SHA (version $VERSION, commit $COMMIT)"
