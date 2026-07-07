@@ -71,16 +71,30 @@ extension TerminalViewController {
 
     // MARK: - Broadcast (synchronized input)
 
-    /// Toggle broadcast mode for a scope: selecting the active scope turns it
-    /// off, any other scope switches to it. Updates the status chip.
-    func toggleBroadcast(_ scope: BroadcastScope) {
-        broadcastScope = (broadcastScope == scope) ? .off : scope
+    /// Set the active project's broadcast scope (menu / palette / live toggle).
+    /// Persisted per-project by AppDelegate; updates the chip.
+    func setBroadcast(_ scope: BroadcastScope) {
+        onSetBroadcastScope?(workspace.activeProject, scope)
         refreshStatusBar()
     }
 
-    @objc func toggleBroadcastCurrentTab(_ sender: Any?) { toggleBroadcast(.currentTab) }
-    @objc func toggleBroadcastWorkspace(_ sender: Any?) { toggleBroadcast(.workspace) }
-    @objc func toggleBroadcastAgents(_ sender: Any?) { toggleBroadcast(.agents) }
+    /// Toggle a specific scope on/off (per-scope bindable keys).
+    func toggleBroadcast(_ scope: BroadcastScope) {
+        setBroadcast(broadcastScope == scope ? .off : scope)
+    }
+
+    /// Advance one step: Off → Tab → Project → Agents → Workspace → Off.
+    func cycleBroadcast() { setBroadcast(broadcastScope.next) }
+
+    /// Menu/shortcut entry point for the cycle (⇧⌘B), mirroring Cycle
+    /// Appearance / Cycle Color Scheme.
+    @objc func broadcastCycle(_ sender: Any?) { cycleBroadcast() }
+
+    @objc func broadcastOff(_ sender: Any?) { setBroadcast(.off) }
+    @objc func broadcastTab(_ sender: Any?) { setBroadcast(.currentTab) }
+    @objc func broadcastProject(_ sender: Any?) { setBroadcast(.project) }
+    @objc func broadcastAgents(_ sender: Any?) { setBroadcast(.agents) }
+    @objc func broadcastWorkspace(_ sender: Any?) { setBroadcast(.workspace) }
 
     // MARK: - Close action
 

@@ -23,6 +23,15 @@ import Foundation
     #expect(ProjectSettings().isEmpty)
     #expect(!ProjectSettings(name: "x").isEmpty)
     #expect(!ProjectSettings(notificationsOverride: false).isEmpty)
+    #expect(!ProjectSettings(broadcastScope: "project").isEmpty)
+}
+
+@Test func projectSettingsPersistsBroadcastScope() throws {
+    let settings = ProjectSettings(broadcastScope: "agents")
+    let decoded = try JSONDecoder().decode(
+        ProjectSettings.self, from: JSONEncoder().encode(settings))
+    #expect(decoded.broadcastScope == "agents")
+    #expect(BroadcastScope(code: decoded.broadcastScope) == .agents)
 }
 
 @Test func canonicalKeyNormalizesPaths() {

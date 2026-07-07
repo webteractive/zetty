@@ -4,36 +4,56 @@ import Testing
 
 // MARK: - Target-set resolution
 
-private let a = UUID(), b = UUID(), c = UUID()
+private let a = UUID(), b = UUID(), c = UUID(), d = UUID()
+
+private func resolve(_ scope: BroadcastScope, hasAgent: @escaping (UUID) -> Bool = { _ in false }) -> [UUID] {
+    Broadcast.targets(
+        scope: scope,
+        currentTabSurfaces: [a],
+        currentProjectSurfaces: [a, b],
+        allSurfaces: [a, b, c, d],
+        hasAgent: hasAgent)
+}
 
 @Test func broadcastOffTargetsNothing() {
-    let targets = Broadcast.targets(
-        scope: .off, currentTabSurfaces: [a, b], allSurfaces: [a, b, c], hasAgent: { _ in true })
-    #expect(targets.isEmpty)
+    #expect(resolve(.off, hasAgent: { _ in true }).isEmpty)
 }
 
 @Test func broadcastCurrentTabTargetsTheTab() {
-    let targets = Broadcast.targets(
-        scope: .currentTab, currentTabSurfaces: [a, b], allSurfaces: [a, b, c], hasAgent: { _ in false })
-    #expect(targets == [a, b])
+    #expect(resolve(.currentTab) == [a])
+}
+
+@Test func broadcastProjectTargetsTheProject() {
+    #expect(resolve(.project) == [a, b])
 }
 
 @Test func broadcastWorkspaceTargetsEverything() {
-    let targets = Broadcast.targets(
-        scope: .workspace, currentTabSurfaces: [a], allSurfaces: [a, b, c], hasAgent: { _ in false })
-    #expect(targets == [a, b, c])
+    #expect(resolve(.workspace) == [a, b, c, d])
 }
 
 @Test func broadcastAgentsTargetsOnlyAgentPanes() {
-    let targets = Broadcast.targets(
-        scope: .agents, currentTabSurfaces: [a], allSurfaces: [a, b, c], hasAgent: { $0 == b })
-    #expect(targets == [b])
+    #expect(resolve(.agents, hasAgent: { $0 == c }) == [c])
 }
 
 @Test func broadcastAgentsWithNoAgentsIsEmpty() {
-    let targets = Broadcast.targets(
-        scope: .agents, currentTabSurfaces: [a], allSurfaces: [a, b, c], hasAgent: { _ in false })
-    #expect(targets.isEmpty)
+    #expect(resolve(.agents).isEmpty)
+}
+
+@Test func broadcastScopeCodeRoundTrips() {
+    for scope in [BroadcastScope.currentTab, .project, .agents, .workspace] {
+        #expect(BroadcastScope(code: scope.code) == scope)
+    }
+    #expect(BroadcastScope.off.code == nil)
+    #expect(BroadcastScope(code: nil) == .off)
+    #expect(BroadcastScope(code: "bogus") == .off)
+}
+
+@Test func broadcastScopeCyclesOffTabProjectAgentsWorkspace() {
+    #expect(BroadcastScope.off.next == .currentTab)
+    #expect(BroadcastScope.currentTab.next == .project)
+    #expect(BroadcastScope.project.next == .agents)
+    #expect(BroadcastScope.agents.next == .workspace)
+    #expect(BroadcastScope.workspace.next == .off)
 }
 
 // MARK: - Chord → terminal bytes

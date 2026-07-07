@@ -5,11 +5,47 @@ import Foundation
 /// flowing (the engine stays `.normal`); the App layer decides to fan out.
 public enum BroadcastScope: Sendable, Equatable {
     case off
-    case currentTab   // every pane in the focused tab
+    case currentTab   // split panes in the focused tab
+    case project      // every pane in every tab of the active project
+    case agents       // only panes running a resolved AI agent (anywhere)
     case workspace    // every pane in every project/tab
-    case agents       // only panes running a resolved AI agent
 
     public var isActive: Bool { self != .off }
+
+    /// Stable string code for persistence (per-project settings). `.off` has no
+    /// code — an absent/nil stored value means Off.
+    public var code: String? {
+        switch self {
+        case .off: return nil
+        case .currentTab: return "tab"
+        case .project: return "project"
+        case .agents: return "agents"
+        case .workspace: return "workspace"
+        }
+    }
+
+    /// Parses a stored code; nil/unknown → `.off`.
+    public init(code: String?) {
+        switch code {
+        case "tab": self = .currentTab
+        case "project": self = .project
+        case "agents": self = .agents
+        case "workspace": self = .workspace
+        default: self = .off
+        }
+    }
+
+    /// Next scope for a single cycling toggle key:
+    /// Off → Tab → Project → Agents → Workspace → Off.
+    public var next: BroadcastScope {
+        switch self {
+        case .off:        return .currentTab
+        case .currentTab: return .project
+        case .project:    return .agents
+        case .agents:     return .workspace
+        case .workspace:  return .off
+        }
+    }
 }
 
 public enum Broadcast {
@@ -18,17 +54,20 @@ public enum Broadcast {
     ///
     /// - Parameters:
     ///   - currentTabSurfaces: surface IDs in the focused tab.
+    ///   - currentProjectSurfaces: surface IDs across the active project's tabs.
     ///   - allSurfaces: every surface ID in the workspace.
     ///   - hasAgent: whether a surface has a resolved agent (for `.agents`).
     public static func targets(
         scope: BroadcastScope,
         currentTabSurfaces: [UUID],
+        currentProjectSurfaces: [UUID],
         allSurfaces: [UUID],
         hasAgent: (UUID) -> Bool
     ) -> [UUID] {
         switch scope {
         case .off: return []
         case .currentTab: return currentTabSurfaces
+        case .project: return currentProjectSurfaces
         case .workspace: return allSurfaces
         case .agents: return allSurfaces.filter(hasAgent)
         }

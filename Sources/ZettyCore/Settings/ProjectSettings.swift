@@ -40,6 +40,11 @@ public struct ProjectSettings: Codable, Sendable, Equatable {
     /// Tri-state override of global auto-hibernation: nil = follow global,
     /// false = never auto-hibernate this project (manual hibernate still works).
     public var autoHibernate: Bool?
+    /// Broadcast (synchronized input) scope for this project, as a
+    /// `BroadcastScope` code ("tab"/"project"/"agents"/"workspace"); nil = Off.
+    /// Broadcast is per-project and Off by default. Edited live (menu/cycle) or
+    /// in Project Settings.
+    public var broadcastScope: String?
 
     public init(
         name: String? = nil,
@@ -53,7 +58,8 @@ public struct ProjectSettings: Codable, Sendable, Equatable {
         env: [String: String]? = nil,
         agents: [ProjectAgent]? = nil,
         promptAgentOnNewPane: Bool? = nil,
-        autoHibernate: Bool? = nil
+        autoHibernate: Bool? = nil,
+        broadcastScope: String? = nil
     ) {
         self.name = name
         self.color = color
@@ -67,6 +73,7 @@ public struct ProjectSettings: Codable, Sendable, Equatable {
         self.agents = agents
         self.promptAgentOnNewPane = promptAgentOnNewPane
         self.autoHibernate = autoHibernate
+        self.broadcastScope = broadcastScope
     }
 
     /// True when every field is nil — the store drops such entries.
@@ -86,6 +93,7 @@ public struct ProjectSettings: Codable, Sendable, Equatable {
         agents = try c.decodeIfPresent([ProjectAgent].self, forKey: .agents)
         promptAgentOnNewPane = try c.decodeIfPresent(Bool.self, forKey: .promptAgentOnNewPane)
         autoHibernate = try c.decodeIfPresent(Bool.self, forKey: .autoHibernate)
+        broadcastScope = try c.decodeIfPresent(String.self, forKey: .broadcastScope)
     }
 }
 

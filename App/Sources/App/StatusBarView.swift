@@ -30,6 +30,7 @@ final class StatusBarView: NSView {
     private let modeChip = NSTextField(labelWithString: "")
     private let zoomChip = NSTextField(labelWithString: " ZOOM ")
     private let broadcastChip = NSTextField(labelWithString: " BROADCAST ")
+    private var shownBroadcastScope: BroadcastScope = .off
 
     // Left: working directory, then git.
     private let cwdLabel = NSTextField(labelWithString: "")
@@ -136,8 +137,8 @@ final class StatusBarView: NSView {
             chip.isHidden = true
         }
 
-        configureStack(leftStack, views: [modeChip, zoomChip, broadcastChip, cwdLabel, branchIcon, branchLabel, aheadLabel, behindLabel, changesLabel])
-        leftStack.setCustomSpacing(10, after: broadcastChip)
+        configureStack(leftStack, views: [modeChip, zoomChip, cwdLabel, branchIcon, branchLabel, aheadLabel, behindLabel, changesLabel])
+        leftStack.setCustomSpacing(10, after: zoomChip)
         leftStack.setCustomSpacing(10, after: cwdLabel)
         // The cwd is the one label allowed to give way: the stack may compress
         // and the path truncates (by the head) before anything else moves.
@@ -180,7 +181,8 @@ final class StatusBarView: NSView {
             cliButton.centerYAnchor.constraint(equalTo: cliPill.centerYAnchor),
         ])
 
-        configureStack(rightStack, views: [cliPill, editorPill, appearanceButton, sep0, schemeDot, schemeButton, sep1, shellLabel, sep2, ghosttyLabel, sep3, versionPill])
+        configureStack(rightStack, views: [broadcastChip, cliPill, editorPill, appearanceButton, sep0, schemeDot, schemeButton, sep1, shellLabel, sep2, ghosttyLabel, sep3, versionPill])
+        rightStack.setCustomSpacing(10, after: broadcastChip)
         rightStack.setCustomSpacing(10, after: cliPill)
         rightStack.setCustomSpacing(10, after: editorPill)
         rightStack.setCustomSpacing(8, after: sep3)
@@ -376,13 +378,8 @@ final class StatusBarView: NSView {
 
     /// Shows/hides the broadcast warning chip, labeled with the active scope.
     func setBroadcasting(_ scope: BroadcastScope) {
-        switch scope {
-        case .off:        broadcastChip.isHidden = true
-        case .currentTab: broadcastChip.stringValue = " BROADCAST "; broadcastChip.isHidden = false
-        case .workspace:  broadcastChip.stringValue = " BROADCAST · ALL "; broadcastChip.isHidden = false
-        case .agents:     broadcastChip.stringValue = " BROADCAST · AGENTS "; broadcastChip.isHidden = false
-        }
-        styleChips()
+        shownBroadcastScope = scope
+        renderBroadcastChip()
     }
 
     func updateGit(_ status: GitStatus) {
@@ -459,20 +456,49 @@ final class StatusBarView: NSView {
             chip.layer?.shadowOffset = .zero
         }
 
-        // Broadcast is a "dangerous" mode — every keystroke hits N shells — so
-        // it warns with the yellow attention token + glow rather than the
-        // accent the other chips use (deliberate DESIGN.md rule-3 deviation).
-        broadcastChip.font = ZTheme.monoFont(size: 10, weight: .semibold)
-        broadcastChip.textColor = theme.yellowColor
-        broadcastChip.layer?.backgroundColor = theme.bg3Color.cgColor
-        if broadcastChip.isHidden {
+        renderBroadcastChip()
+    }
+
+    /// The broadcast chip: an antenna icon + scope label. Broadcast is a
+    /// "dangerous" mode — every keystroke hits N shells — so it warns with the
+    /// yellow attention token + glow rather than the accent the other chips use
+    /// (deliberate DESIGN.md rule-3 deviation). Rebuilt on scope + theme change.
+    private func renderBroadcastChip() {
+        guard shownBroadcastScope.isActive else {
+            broadcastChip.isHidden = true
             broadcastChip.layer?.shadowOpacity = 0
-        } else {
-            broadcastChip.layer?.shadowColor = theme.yellowColor.cgColor
-            broadcastChip.layer?.shadowOpacity = 0.45
-            broadcastChip.layer?.shadowRadius = 5
-            broadcastChip.layer?.shadowOffset = .zero
+            return
         }
+        let label: String
+        switch shownBroadcastScope {
+        case .project:   label = " BROADCAST · PROJECT "
+        case .agents:    label = " BROADCAST · AGENTS "
+        case .workspace: label = " BROADCAST · WORKSPACE "
+        default:         label = " BROADCAST · TAB "
+        }
+        let theme = ZTheme.current
+        let text = NSMutableAttributedString()
+        let config = NSImage.SymbolConfiguration(pointSize: 9, weight: .semibold)
+            .applying(.init(paletteColors: [theme.yellowColor]))
+        if let symbol = NSImage(systemSymbolName: "antenna.radiowaves.left.and.right",
+                                accessibilityDescription: "Broadcast")?
+            .withSymbolConfiguration(config) {
+            let attachment = NSTextAttachment()
+            attachment.image = symbol
+            attachment.bounds = CGRect(x: 0, y: -1, width: symbol.size.width, height: symbol.size.height)
+            text.append(NSAttributedString(attachment: attachment))
+        }
+        text.append(NSAttributedString(string: label, attributes: [
+            .font: ZTheme.monoFont(size: 10, weight: .semibold),
+            .foregroundColor: theme.yellowColor,
+        ]))
+        broadcastChip.attributedStringValue = text
+        broadcastChip.isHidden = false
+        broadcastChip.layer?.backgroundColor = theme.bg3Color.cgColor
+        broadcastChip.layer?.shadowColor = theme.yellowColor.cgColor
+        broadcastChip.layer?.shadowOpacity = 0.45
+        broadcastChip.layer?.shadowRadius = 5
+        broadcastChip.layer?.shadowOffset = .zero
     }
 
     private func styleAppearanceButton() {

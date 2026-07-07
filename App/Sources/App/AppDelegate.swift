@@ -170,6 +170,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         tvc.autoHibernateDisabled = { [weak self] project in
             self?.projectSettings.settings(for: project.rootPath)?.autoHibernate == false
         }
+        tvc.broadcastScopeProvider = { [weak self] project in
+            BroadcastScope(code: self?.projectSettings.settings(for: project.rootPath)?.broadcastScope)
+        }
+        tvc.onSetBroadcastScope = { [weak self] project, scope in
+            self?.setBroadcastScope(scope, for: project)
+        }
         tvc.onActiveProjectChanged = { [weak self] in self?.applyThemeForActiveProject() }
         tvc.layoutTemplateProvider = { [weak self] project in
             ProjectFileIO.load(projectRoot: project.rootPath)?.layoutTemplate
@@ -676,6 +682,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     /// influence: runtime name (+ sidebar re-sort), session preservation for
     /// future panes, and chrome refresh. Notifications are resolved at fire
     /// time, so no re-apply is needed there.
+    /// Persists just the active project's broadcast scope. Light on purpose —
+    /// broadcast is toggled live, so it skips the rename/re-sort/session re-apply
+    /// that `updateProjectSettings` does. `.off` clears the stored field.
+    func setBroadcastScope(_ scope: BroadcastScope, for project: ProjectRuntime) {
+        var settings = projectSettings.settings(for: project.rootPath) ?? ProjectSettings()
+        settings.broadcastScope = scope.code
+        projectSettings.set(settings, for: project.rootPath)
+        try? projectSettingsStore.save(projectSettings)
+    }
+
     func updateProjectSettings(_ new: ProjectSettings, for project: ProjectRuntime) {
         projectSettings.set(new, for: project.rootPath)
         try? projectSettingsStore.save(projectSettings)
@@ -1357,15 +1373,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         toggleSidebar.keyEquivalentModifierMask = [.command]
         viewMenu.addItem(toggleSidebar)
 
+        // "Cycle Broadcast"  ⇧⌘B — mirrors Cycle Appearance / Cycle Color Scheme:
+        // one shortcut steps Off → Tab → Project → Agents → Workspace → Off.
+        let cycleBroadcast = NSMenuItem(
+            title: "Cycle Broadcast Input",
+            action: #selector(TerminalViewController.broadcastCycle(_:)),
+            keyEquivalent: "B"
+        )
+        cycleBroadcast.keyEquivalentModifierMask = [.command, .shift]
+        viewMenu.addItem(cycleBroadcast)
+
         // "Broadcast Input" submenu — synchronized input across panes.
         let broadcastItem = NSMenuItem()
         broadcastItem.title = "Broadcast Input"
         let broadcastMenu = NSMenu(title: "Broadcast Input")
         broadcastItem.submenu = broadcastMenu
         for (title, action) in [
-            ("Current Tab", #selector(TerminalViewController.toggleBroadcastCurrentTab(_:))),
-            ("Whole Workspace", #selector(TerminalViewController.toggleBroadcastWorkspace(_:))),
-            ("Agents Only", #selector(TerminalViewController.toggleBroadcastAgents(_:))),
+            ("Off", #selector(TerminalViewController.broadcastOff(_:))),
+            ("Tab", #selector(TerminalViewController.broadcastTab(_:))),
+            ("Project", #selector(TerminalViewController.broadcastProject(_:))),
+            ("Agents", #selector(TerminalViewController.broadcastAgents(_:))),
+            ("Workspace", #selector(TerminalViewController.broadcastWorkspace(_:))),
         ] {
             broadcastMenu.addItem(NSMenuItem(title: title, action: action, keyEquivalent: ""))
         }

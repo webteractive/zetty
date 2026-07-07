@@ -25,10 +25,10 @@ by the tool it's running.
 - **Vi-keyed copy mode** — `Ctrl+B [` enters a modal copy mode with vi
   motions, visual selection, and yank-to-clipboard, rendered as a native
   Ghostty selection.
-- **Broadcast input** — type once, send the same keystrokes to every pane in
-  the current tab, the whole workspace, or **only the panes running an AI
-  agent** — steer a whole swarm with one prompt. A yellow `BROADCAST` chip
-  keeps the mode obvious.
+- **Broadcast input** — type once, send the same keystrokes to a set of panes:
+  the current **tab**'s splits, the whole **project** (every tab), the whole
+  **workspace**, or **only the panes running an AI agent** — steer a whole
+  swarm with one prompt. A yellow `BROADCAST` chip keeps the mode obvious.
 - **Session persistence** — with `preserve-sessions` enabled, panes run inside
   [zmx](https://zmx.sh) sessions that survive app quit/relaunch, and
   reattached panes replay their full scrollback history (colors intact) so
@@ -196,6 +196,7 @@ Command Line** and click install — this symlinks `zetty` into
 | `⌥⌘,` | Project Settings (active project) |
 | `⇧⌘,` | Reload configuration |
 | `⇧⌘T` / `⇧⌘A` | Cycle color scheme / appearance |
+| `⇧⌘B` | Cycle broadcast scope (Off → Tab → Project → Agents → Workspace) |
 | `⌘C` / `⌘V` | Copy / paste (Ghostty defaults inside the terminal) |
 
 Everything above is also reachable from the menu bar and the command
@@ -228,16 +229,20 @@ Press `Ctrl+B` (the prefix, configurable), then:
 `q`/`Esc` to exit. The status bar shows `PREFIX` / `COPY` / `ZOOM` /
 `BROADCAST` chips so you always know what mode you're in.
 
-**Broadcast input** has no default key (typing-goes-everywhere is opt-in). Reach
-it from **View → Broadcast Input**, the command palette, or bind it yourself
-(`broadcast-toggle` = current tab, `broadcast-agents-toggle` = agents only).
+**Broadcast input is per-project and Off by default.** Each project remembers
+its own scope; pick it in **Project Settings → Broadcast Input**, from **View →
+Broadcast Input** (Off / Tab / Project / Agents / Workspace), the command
+palette, or **⇧⌘B** to cycle scopes (Off → Tab → Project → Agents → Workspace →
+Off). You can also bind it on the prefix layer: `broadcast-cycle`, plus
+`broadcast-toggle` / `broadcast-agents-toggle` to flip the Tab / Agents scopes
+directly. Whichever you use edits the active project's scope.
 
 Remap anything in the config file:
 
 ```
 prefix = ctrl+b
 bind = s split-vertical
-bind = ctrl+a broadcast-toggle
+bind = ctrl+a broadcast-cycle
 copy-bind = n copy-cursor-down
 ```
 

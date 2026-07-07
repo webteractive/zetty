@@ -215,6 +215,7 @@ extension TerminalViewController {
         case .cancelPrefix: break   // chip already cleared by the mode change
         case .broadcastToggle: toggleBroadcast(.currentTab)
         case .broadcastAgentsToggle: toggleBroadcast(.agents)
+        case .broadcastCycle: cycleBroadcast()
 
         // Copy mode
         case .copyYank, .copyExit:

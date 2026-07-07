@@ -26,9 +26,10 @@ public enum BindingCommand: Hashable, Sendable {
     case paste
     case sendPrefixLiteral
     case cancelPrefix
-    // Broadcast / synchronized input (toggles; App fans out — not a KeyMode)
-    case broadcastToggle
-    case broadcastAgentsToggle
+    // Broadcast / synchronized input (App fans out — not a KeyMode)
+    case broadcastToggle        // toggle Tab scope on/off
+    case broadcastAgentsToggle  // toggle Agents scope on/off
+    case broadcastCycle         // cycle Off → Tab → Project → Agents → Workspace → Off
     // Copy mode — cursor motions
     case copyCursorLeft
     case copyCursorRight
@@ -75,6 +76,7 @@ public enum BindingCommand: Hashable, Sendable {
         .cancelPrefix: "cancel",
         .broadcastToggle: "broadcast-toggle",
         .broadcastAgentsToggle: "broadcast-agents-toggle",
+        .broadcastCycle: "broadcast-cycle",
         .copyCursorLeft: "copy-cursor-left",
         .copyCursorRight: "copy-cursor-right",
         .copyCursorUp: "copy-cursor-up",

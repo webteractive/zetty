@@ -90,9 +90,12 @@ final class TerminalViewController: NSViewController {
     private var foregroundBySurface: [UUID: String] = [:]
     private var foregroundPollTimer: Timer?
 
-    /// Broadcast (synchronized input) scope; `.off` when inactive. Set via
-    /// `toggleBroadcast(_:)` (PaneActions).
-    var broadcastScope: BroadcastScope = .off
+    /// Broadcast (synchronized input) is per-project and Off by default. The
+    /// active project's scope is read/written through these (AppDelegate owns
+    /// the persisted per-project store).
+    var broadcastScopeProvider: ((ProjectRuntime) -> BroadcastScope)?
+    var onSetBroadcastScope: ((ProjectRuntime, BroadcastScope) -> Void)?
+    var broadcastScope: BroadcastScope { broadcastScopeProvider?(workspace.activeProject) ?? .off }
     var isBroadcasting: Bool { broadcastScope.isActive }
 
     /// The pinned libghostty-spm version (no runtime version API is exposed).
@@ -719,9 +722,11 @@ final class TerminalViewController: NSViewController {
         guard broadcastScope.isActive else { return }
         let all = workspace.projects.flatMap { $0.tabList.trees.flatMap { $0.layout.surfaces } }
         let byID = Dictionary(all.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        let projectSurfaces = workspace.activeProject.tabList.trees.flatMap { $0.layout.surfaces }
         let targets = Broadcast.targets(
             scope: broadcastScope,
             currentTabSurfaces: paneTree.layout.surfaces.map(\.id),
+            currentProjectSurfaces: projectSurfaces.map(\.id),
             allSurfaces: all.map(\.id),
             hasAgent: { self.agentIdentity(for: byID[$0]) != nil })
         for id in targets {
@@ -1202,9 +1207,12 @@ final class TerminalViewController: NSViewController {
             },
             PaletteCommand(glyph: "−", label: "Remove Current Project…", kbd: "") { [weak self] in self?.removeProject(nil) },
             PaletteCommand(glyph: "⛶", label: "Toggle Sidebar", kbd: "⌘B") { [weak self] in self?.toggleSidebar(nil) },
-            PaletteCommand(glyph: "⇉", label: "Broadcast Input: Current Tab", kbd: "") { [weak self] in self?.toggleBroadcast(.currentTab) },
-            PaletteCommand(glyph: "⇉", label: "Broadcast Input: Whole Workspace", kbd: "") { [weak self] in self?.toggleBroadcast(.workspace) },
-            PaletteCommand(glyph: "⇉", label: "Broadcast Input: Agents Only", kbd: "") { [weak self] in self?.toggleBroadcast(.agents) },
+            PaletteCommand(glyph: "⇉", label: "Broadcast: Tab", kbd: "") { [weak self] in self?.setBroadcast(.currentTab) },
+            PaletteCommand(glyph: "⇉", label: "Broadcast: Project", kbd: "") { [weak self] in self?.setBroadcast(.project) },
+            PaletteCommand(glyph: "⇉", label: "Broadcast: Agents", kbd: "") { [weak self] in self?.setBroadcast(.agents) },
+            PaletteCommand(glyph: "⇉", label: "Broadcast: Workspace", kbd: "") { [weak self] in self?.setBroadcast(.workspace) },
+            PaletteCommand(glyph: "⇥", label: "Broadcast: Cycle Scope", kbd: "⇧⌘B") { [weak self] in self?.cycleBroadcast() },
+            PaletteCommand(glyph: "○", label: "Broadcast: Off", kbd: "") { [weak self] in self?.setBroadcast(.off) },
             PaletteCommand(glyph: "◎", label: "Clear All Notifications", kbd: "") { [weak self] in self?.clearAllNotifications(nil) },
             PaletteCommand(glyph: "◐", label: "Cycle Color Scheme", kbd: "⇧⌘T") { [weak self] in self?.onCycleScheme?() },
             PaletteCommand(glyph: "◑", label: "Cycle Appearance", kbd: "⇧⌘A") { [weak self] in self?.onCycleAppearance?() },
