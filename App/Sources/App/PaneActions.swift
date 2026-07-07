@@ -69,6 +69,19 @@ extension TerminalViewController {
         refreshStatusBar()
     }
 
+    // MARK: - Broadcast (synchronized input)
+
+    /// Toggle broadcast mode for a scope: selecting the active scope turns it
+    /// off, any other scope switches to it. Updates the status chip.
+    func toggleBroadcast(_ scope: BroadcastScope) {
+        broadcastScope = (broadcastScope == scope) ? .off : scope
+        refreshStatusBar()
+    }
+
+    @objc func toggleBroadcastCurrentTab(_ sender: Any?) { toggleBroadcast(.currentTab) }
+    @objc func toggleBroadcastWorkspace(_ sender: Any?) { toggleBroadcast(.workspace) }
+    @objc func toggleBroadcastAgents(_ sender: Any?) { toggleBroadcast(.agents) }
+
     // MARK: - Close action
 
     /// Close the focused pane.  If it is the only pane, this is a no-op.

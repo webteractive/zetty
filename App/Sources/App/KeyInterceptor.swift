@@ -156,6 +156,15 @@ final class KeyInterceptor {
 
         switch resolution {
         case .passthrough:
+            // Broadcast: mirror the keystroke to the target set and swallow the
+            // native event (the focused pane is in the set, so it's not
+            // doubled). Runs only after the text-editing/IME guards above, and
+            // only for simple encodable chords — cmd/alt shortcuts fall through
+            // to normal local handling.
+            if viewController.isBroadcasting, let bytes = chord.terminalBytes {
+                viewController.broadcast(bytes)
+                return nil
+            }
             return event
         case .consumeNoop:
             return nil
@@ -204,6 +213,8 @@ extension TerminalViewController {
         case .paste: pasteIntoFocusedPane()
         case .sendPrefixLiteral: sendPrefixLiteral(interceptor.engine)
         case .cancelPrefix: break   // chip already cleared by the mode change
+        case .broadcastToggle: toggleBroadcast(.currentTab)
+        case .broadcastAgentsToggle: toggleBroadcast(.agents)
 
         // Copy mode
         case .copyYank, .copyExit:

@@ -1357,6 +1357,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         toggleSidebar.keyEquivalentModifierMask = [.command]
         viewMenu.addItem(toggleSidebar)
 
+        // "Broadcast Input" submenu — synchronized input across panes.
+        let broadcastItem = NSMenuItem()
+        broadcastItem.title = "Broadcast Input"
+        let broadcastMenu = NSMenu(title: "Broadcast Input")
+        broadcastItem.submenu = broadcastMenu
+        for (title, action) in [
+            ("Current Tab", #selector(TerminalViewController.toggleBroadcastCurrentTab(_:))),
+            ("Whole Workspace", #selector(TerminalViewController.toggleBroadcastWorkspace(_:))),
+            ("Agents Only", #selector(TerminalViewController.toggleBroadcastAgents(_:))),
+        ] {
+            broadcastMenu.addItem(NSMenuItem(title: title, action: action, keyEquivalent: ""))
+        }
+        viewMenu.addItem(broadcastItem)
+
         // "Cycle Color Scheme"  ⇧⌘T — targets the app delegate (owns the config).
         let cycleScheme = NSMenuItem(
             title: "Cycle Color Scheme",
