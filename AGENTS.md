@@ -1,6 +1,9 @@
-# AGENTS.md — Zetty
+# Zetty — Agent & Contributor Guide
 
 Guidance for AI agents and contributors working in this repo.
+
+> **`CLAUDE.md` and `AGENTS.md` are kept byte-identical** — edit one and mirror
+> the change to the other in the same commit (see Conventions).
 
 ## What this is
 
@@ -260,6 +263,9 @@ Commands (see `zetty --help` for full grammar and agent notes):
 - `remove-project <name>` — remove a project (case-insensitive), closing
   its tabs/panes and ending their zmx sessions; no confirmation dialog,
   and the last remaining project can't be removed.
+- `scratch` — open a project-less, ephemeral scratch terminal (rooted at
+  home, plain shell, never persisted) in the Scratch section.
+  `scratch-clear` closes and clears every scratch terminal at once.
 - `focus (--pane|--cwd)` · `close (--pane|--cwd) [--tab]` · `reload` ·
   `quit [--kill-sessions]` (no dialog; the flag kills every preserved
   session first — full shutdown).
@@ -318,3 +324,8 @@ id libghostty doesn't expose).
 - Do not commit debug `NSLog`/`print` statements.
 - Never commit or push without being asked; never add `Co-Authored-By` or a
   session link to commit messages.
+- **Document every new feature or user-facing change in `README.md`** (its
+  usage — Features, shortcuts, Configuration, and/or the Control CLI list) as
+  part of the same change. A feature isn't done until the README covers it.
+- **Keep `CLAUDE.md` and `AGENTS.md` byte-identical.** They share one canonical
+  content; any edit to one must be replicated to the other in the same commit.

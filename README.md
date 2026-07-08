@@ -14,9 +14,20 @@ by the tool it's running.
 
 ## Features
 
-- **Projects → tabs → splits** — **create a new project folder** or add an
-  existing directory; every project owns its own tabs, each tab an arbitrarily
-  nested tree of split panes. Break any pane out into its own tab.
+- **Projects → tabs → splits** — add a project from one picker (**New Folder**
+  to create one, optionally `git init`, or pick an existing directory); every
+  project owns its own tabs, each tab an arbitrarily nested tree of split
+  panes. Break any pane out into its own tab. **Drag project rows** to reorder
+  them within their section (Pinned / Projects).
+- **Scratch terminals** — spin up a throwaway, project-less terminal rooted at
+  home (`⌃⌘N`, the command palette, or `zetty scratch`). They live in their own
+  **Scratch** sidebar section, are never saved to the workspace, and every tab
+  is closable — closing the last returns you to your first pinned project.
+  Clear them all at once with **Close All Scratch Terminals** (`zetty
+  scratch-clear`).
+- **Live status bar** — the bottom strip tracks the **focused pane**: its
+  working directory (updates as you `cd`), git branch/ahead-behind/changes,
+  and the shell, alongside the color scheme and libghostty version.
 - **Full Ghostty terminal** — GPU rendering, ligatures/text shaping, and the
   Kitty keyboard + graphics protocols come from full libghostty. Zetty builds
   the multiplexer shell, not the terminal.
@@ -167,10 +178,11 @@ Command Line** and click install — this symlinks `zetty` into
 
 ### Getting started
 
-1. Launch Zetty. The sidebar lists your **projects**. Click the **+** to
-   **New Project…** (create a folder, optionally `git init` it) or **Add
-   Existing Project…** (pick a directory). Each project keeps its own tabs and
-   layout.
+1. Launch Zetty. The sidebar lists your **projects**. Click the **+** to open
+   the **Add Project** picker — use **New Folder** to create one (with an
+   optional *Initialize git repository*) or pick an existing directory. Each
+   project keeps its own tabs and layout. Drag project rows to reorder them.
+   Need a quick throwaway shell? `⌃⌘N` opens a **scratch terminal** (see below).
 2. Open tabs and split panes with the prefix keys below (or the menus).
    Layout, tab titles, and sidebar state persist across relaunches
    (`~/Library/Application Support/zetty/workspace.json`).
@@ -190,8 +202,8 @@ Command Line** and click install — this symlinks `zetty` into
 | `⌘1`–`⌘9` | Jump to tab |
 | `⌘K` | Command palette |
 | `⌘B` | Toggle sidebar |
-| `⇧⌘N` | New project (create a folder) |
-| `⌘O` | Add existing project |
+| `⌘O` (or `⇧⌘N`) | Add project (create or pick a folder) |
+| `⌃⌘N` | New scratch terminal |
 | `⌘,` | Settings |
 | `⌥⌘,` | Project Settings (active project) |
 | `⇧⌘,` | Reload configuration |
@@ -369,6 +381,8 @@ zetty new-project ~/work/new --git       # create a folder + add it (optional gi
 zetty remove-project api                 # close a project's tabs (no confirmation)
 zetty hibernate api                      # free a project's sessions/processes (keeps layout)
 zetty wake api                           # wake a hibernated project (fresh shells)
+zetty scratch                            # open a project-less, ephemeral terminal
+zetty scratch-clear                      # close and clear all scratch terminals
 zetty focus --cwd ~/work/api
 zetty close --pane 1a2b3c4d --tab
 zetty reload                             # same as ⇧⌘,
