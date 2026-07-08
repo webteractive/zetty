@@ -759,7 +759,7 @@ final class TerminalViewController: NSViewController {
             let all = history.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
             return Array(all.suffix(rows))
         }
-        let interceptor = KeyInterceptor(configuration: configuration, host: self)
+        let interceptor = KeyInterceptor(configuration: configuration, viewController: self)
         interceptor.install()
         keyInterceptor = interceptor
     }

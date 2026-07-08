@@ -632,8 +632,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         saveConfig()
     }
 
-    // MARK: - Mini terminal windows
-
     // MARK: - Font
 
     /// Renders a font size for the config file: locale-independent, no
