@@ -60,7 +60,11 @@ public enum SessionSnapshot {
     /// active-project index, each project's active tab, and each tab's focused
     /// pane are persisted so restoration reopens exactly where the user left off.
     public static func workspace(from model: WorkspaceModel) -> Workspace {
-        let projects = model.projects.enumerated().map { index, runtime in
+        // Scratch projects are ephemeral — never persisted. Filtering them here
+        // also means `activeProjectIndex` must be remapped to the saved list.
+        let persistable = model.projects.enumerated().filter { !$0.element.isScratch }
+        let projects = persistable.enumerated().map { savedIndex, entry in
+            let runtime = entry.element
             let tabs = runtime.tabList.trees.map { tree in
                 Tab(title: tree.manualTitle ?? "",
                     layout: tree.layout,
@@ -70,12 +74,17 @@ public enum SessionSnapshot {
                 name: runtime.name,
                 rootPath: runtime.rootPath,
                 isPinned: runtime.isPinned,
-                sortOrder: index,
+                sortOrder: savedIndex,
                 isHibernated: runtime.isHibernated,
                 sessions: [Session(title: "main", tabs: tabs, activeTabIndex: runtime.tabList.activeIndex)]
             )
         }
-        return Workspace(projects: projects, activeProjectIndex: model.activeIndex)
+        // Map the model's active index into the filtered list; fall back to 0
+        // when the active project is a scratch one (not saved).
+        let activeIndex = persistable.firstIndex { $0.offset == model.activeIndex }.map {
+            persistable.distance(from: persistable.startIndex, to: $0)
+        } ?? 0
+        return Workspace(projects: projects, activeProjectIndex: activeIndex)
     }
 
     // MARK: - Workspace → [ProjectRuntime]

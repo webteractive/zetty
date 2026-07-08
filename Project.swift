@@ -63,8 +63,15 @@ let project = Project(
                     "Zetty needs access so terminals you open in it can read and write files on network volumes.",
             ]),
             sources: ["App/Sources/App/**"],
-            resources: ["App/Resources/**/*.svg", "App/Resources/*.icns",
-                        "App/Resources/Fonts/**"],
+            resources: [
+                "App/Resources/**/*.svg", "App/Resources/*.icns",
+                "App/Resources/Fonts/**",
+                // Bundled ghostty shell-integration + terminfo (folder reference
+                // so the tree, dotfiles, and terminfo hash dirs copy verbatim).
+                // GHOSTTY_RESOURCES_DIR (main.swift) points here; terminfo keeps
+                // xterm-ghostty resolvable so keys (backspace) don't break.
+                .folderReference(path: "App/Resources/ghostty"),
+            ],
             scripts: [
                 .post(script: stampBuildCommit,
                       name: "Stamp build commit",

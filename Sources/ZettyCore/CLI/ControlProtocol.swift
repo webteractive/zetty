@@ -9,6 +9,9 @@ import Foundation
 public enum ControlRequest: Equatable, Sendable {
     case status
     case reload
+    /// Open a project-less, ephemeral "scratch" terminal (plain shell, not
+    /// persisted) in the Scratch sidebar section. Response `.ok`.
+    case scratch
     /// Inject input into a pane: `text` first (verbatim), then each key in
     /// `keys` (see `KeyNotation`), then a carriage return when `enter` is set.
     case send(target: PaneSelector, text: String?, enter: Bool, keys: [String])
@@ -67,6 +70,7 @@ extension ControlRequest: Codable {
         switch try container.decode(String.self, forKey: .command) {
         case "status": self = .status
         case "reload": self = .reload
+        case "scratch": self = .scratch
         case "send":
             self = .send(
                 target: try container.decodeIfPresent(PaneSelector.self, forKey: .target) ?? .focused,
@@ -128,6 +132,8 @@ extension ControlRequest: Codable {
             try container.encode("status", forKey: .command)
         case .reload:
             try container.encode("reload", forKey: .command)
+        case .scratch:
+            try container.encode("scratch", forKey: .command)
         case .send(let target, let text, let enter, let keys):
             try container.encode("send", forKey: .command)
             try container.encode(target, forKey: .target)

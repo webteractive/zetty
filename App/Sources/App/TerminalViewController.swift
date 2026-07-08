@@ -100,14 +100,14 @@ final class TerminalViewController: NSViewController {
 
     /// The pinned libghostty-spm version (no runtime version API is exposed).
     /// Keep in sync with `Project.swift`'s package requirement.
-    private static let libghosttyVersion = "1.2.7"
+    static let libghosttyVersion = "1.2.7"
 
     /// Build identity for the status bar: the marketing version (`CFBundle
     /// ShortVersionString`) for clean builds — every release DMG and any clean
     /// local build. A dirty (WIP) build instead shows the short git commit with
     /// a `*` suffix (stamped by the "Stamp build commit" phase) for precise
     /// identity; `dev` when neither is available.
-    private static let buildStamp: String = {
+    static let buildStamp: String = {
         let info = Bundle.main.infoDictionary
         let commit = (info?["ZettyBuildCommit"] as? String) ?? ""
         // A dirty (WIP) build shows its commit for precise identity; a clean
@@ -222,7 +222,13 @@ final class TerminalViewController: NSViewController {
     /// Called with surface IDs removed by an explicit close (pane/tab/project),
     /// so their persistent sessions can be killed. App quit never fires this.
     var onSurfacesClosed: (([UUID]) -> Void)? {
-        didSet { registry.onSurfacesRemoved = onSurfacesClosed }
+        didSet {
+            let handler = onSurfacesClosed
+            registry.onSurfacesRemoved = { ids in
+                ids.forEach(PaneCwdStore.remove)   // drop each closed pane's cwd file
+                handler?(ids)
+            }
+        }
     }
 
     /// Every surface ID across all projects/tabs/panes (for orphan diffing).
@@ -698,7 +704,8 @@ final class TerminalViewController: NSViewController {
     func refreshStatusBar() {
         guard let statusBar = statusBarView else { return }
         let focused = paneTree.focusedSurface
-        let rawCwd = focused.flatMap { registry.workingDirectory(for: $0) }
+        let rawCwd = focused.flatMap { PaneCwdStore.read($0.id) }
+            ?? focused.flatMap { registry.workingDirectory(for: $0) }
             ?? focused?.workingDir
             ?? NSHomeDirectory()
         let cwd = Self.normalizedPath(rawCwd)
@@ -752,7 +759,7 @@ final class TerminalViewController: NSViewController {
             let all = history.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
             return Array(all.suffix(rows))
         }
-        let interceptor = KeyInterceptor(configuration: configuration, viewController: self)
+        let interceptor = KeyInterceptor(configuration: configuration, host: self)
         interceptor.install()
         keyInterceptor = interceptor
     }
@@ -1204,6 +1211,7 @@ final class TerminalViewController: NSViewController {
             PaletteCommand(glyph: "←", label: "Previous Tab", kbd: "⌘{") { [weak self] in self?.selectPreviousTab(nil) },
             PaletteCommand(glyph: "★", label: "Pin / Unpin Current Project", kbd: "") { [weak self] in self?.togglePinActiveProject() },
             PaletteCommand(glyph: "＋", label: "Add Project…", kbd: "⌘O") { [weak self] in self?.addProject(nil) },
+            PaletteCommand(glyph: "⧉", label: "New Scratch Terminal", kbd: "⌃⌘N") { [weak self] in self?.newScratchTerminal() },
             PaletteCommand(glyph: "☾", label: "Hibernate Current Project", kbd: "") { [weak self] in
                 guard let self else { return }
                 self.hibernateProject(self.workspace.activeProject)
@@ -1259,7 +1267,7 @@ final class TerminalViewController: NSViewController {
                     StatusSnapshot.Pane(
                         id: SessionPersistence.shortID(for: surface.id),
                         title: displayTitle(for: surface),
-                        cwd: registry.workingDirectory(for: surface) ?? surface.workingDir,
+                        cwd: PaneCwdStore.read(surface.id) ?? registry.workingDirectory(for: surface) ?? surface.workingDir,
                         tool: foregroundBySurface[surface.id].flatMap { $0.isEmpty ? nil : $0 },
                         agentStatus: agentDetector.state(for: surface.id).status?.rawValue,
                         isFocused: isActiveTab && surface.id == tree.focusedSurfaceID
@@ -1777,7 +1785,10 @@ final class TerminalViewController: NSViewController {
                 index: idx
             )
         }
-        tabBarView?.update(titles: titles, icons: icons, selectedIndex: tabList.activeIndex)
+        // Scratch terminals are disposable: every tab is closable (closing the
+        // last one closes the scratch project), so always show the × there.
+        tabBarView?.update(titles: titles, icons: icons, selectedIndex: tabList.activeIndex,
+                           alwaysShowClose: workspace.activeProject.isScratch)
         // The status bar tracks the same focused-pane / active-tab state.
         refreshStatusBar()
     }
@@ -1834,7 +1845,8 @@ final class TerminalViewController: NSViewController {
                 status: rollup,
                 projectColor: identity?.color,
                 customGlyph: identity?.glyph,
-                isHibernated: project.isHibernated
+                isHibernated: project.isHibernated,
+                isScratch: project.isScratch
             )
         }
         sidebarView?.update(
@@ -1933,6 +1945,20 @@ final class TerminalViewController: NSViewController {
         return project
     }
 
+    /// Creates a project-less, ephemeral "scratch" terminal (⌃⌘N / palette /
+    /// CLI) rooted at home, switches to it, and spawns its shell. Scratch
+    /// projects live only in the Scratch sidebar section and are never persisted.
+    @objc func newScratchTerminal(_ sender: Any? = nil) {
+        workspace.addScratchProject()
+        refreshTabBar()
+        refreshSidebar()
+        onActiveProjectChanged?()
+        rebuildSurfaceNodeView()   // spawns the pane
+        if let focused = focusedTerminalView() {
+            view.window?.makeFirstResponder(focused)
+        }
+    }
+
     /// Runs `git init` on `path` unless it is already a git repository. A failed
     /// init is surfaced as a non-blocking warning — the project is still added.
     private func gitInitIfNeeded(atPath path: String) {
@@ -1994,11 +2020,18 @@ final class TerminalViewController: NSViewController {
     }
 
     private func performRemoveProject(at index: Int) {
+        let wasScratch = workspace.projects[index].isScratch
         let closingSurfaces = workspace.projects[index].tabList.trees
             .flatMap { $0.layout.surfaces.map(\.id) }
         let countBefore = workspace.projects.count
         workspace.removeProject(at: index)
         guard workspace.projects.count != countBefore else { return }   // last project — no-op
+        // Closing the last scratch terminal returns focus to the first pinned
+        // project (or the first project if none are pinned), rather than
+        // whichever neighbour `removeProject` happened to land on.
+        if wasScratch, !workspace.projects.contains(where: \.isScratch) {
+            workspace.select(index: workspace.projects.firstIndex(where: \.isPinned) ?? 0)
+        }
         onActiveProjectChanged?()   // removal can shift which project is active
         // Same reasoning as closeTab: report the closed surfaces explicitly so
         // never-spawned panes' zmx sessions are killed too.
@@ -2050,7 +2083,20 @@ final class TerminalViewController: NSViewController {
     /// no-confirmation, and a modal would block the control socket.
     func closeTab(atIndex index: Int, confirmIfBusy: Bool = true) {
         let tabList = workspace.activeTabList
-        guard tabList.trees.indices.contains(index), tabList.trees.count > 1 else { return }
+        guard tabList.trees.indices.contains(index) else { return }
+
+        // A scratch terminal's last tab closes the whole (ephemeral) scratch
+        // project; a normal project keeps its last tab (no-op).
+        if tabList.trees.count == 1 {
+            guard workspace.activeProject.isScratch else { return }
+            let closing = tabList.trees[index].layout.surfaces.map(\.id)
+            if confirmIfBusy {
+                guard confirmClosingBusyPanes(closing, what: "Terminal") else { return }
+            }
+            performRemoveProject(at: workspace.activeIndex)
+            return
+        }
+
         let closingSurfaces = tabList.trees[index].layout.surfaces.map(\.id)
         if confirmIfBusy {
             guard confirmClosingBusyPanes(closingSurfaces, what: "Tab") else { return }

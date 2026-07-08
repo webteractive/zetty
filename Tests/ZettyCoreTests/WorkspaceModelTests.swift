@@ -193,6 +193,28 @@ import Foundation
     #expect(model.project(containing: UUID()) == nil)
 }
 
+@Test func addScratchProjectIsHomeRootedAndActive() {
+    let ws = WorkspaceModel(restoring: [
+        ProjectRuntime(name: "a", rootPath: "/a"),
+    ], activeIndex: 0)!
+    let s = ws.addScratchProject()
+    #expect(s.isScratch)
+    #expect(s.rootPath == NSHomeDirectory())
+    #expect(s.name == "scratch")
+    #expect(ws.activeProject.id == s.id)          // switches to it
+    #expect(ws.projects.map(\.isScratch) == [false, true])  // lands after the regular project
+}
+
+@Test func scratchNamesIncrementUniquely() {
+    let ws = WorkspaceModel()
+    let a = ws.addScratchProject()
+    let b = ws.addScratchProject()
+    let c = ws.addScratchProject()
+    #expect(a.name == "scratch")
+    #expect(b.name == "scratch 2")
+    #expect(c.name == "scratch 3")
+}
+
 @Test func renameDoesNotMoveProject() {
     let ws = WorkspaceModel(restoring: [
         ProjectRuntime(name: "zebra", rootPath: "/z"),

@@ -30,6 +30,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     /// is released on last-window-close, BEFORE terminate; a weak ref would be nil
     /// at save time and the workspace would never persist).
     private var terminalViewController: TerminalViewController?
+
     private lazy var updateChecker = UpdateChecker(
         currentVersion: (Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String) ?? "")
     private let updateInstaller = UpdateInstaller()
@@ -182,9 +183,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 ?? self?.layoutTemplateStore.load()
         }
         tvc.surfaceEnvironmentProvider = { [weak self, weak tvc] id in
-            guard let self, let project = tvc?.workspace.project(containing: id) else { return nil }
-            let env = self.resolvedSettings(for: project).env
-            return env.isEmpty ? nil : env
+            var env: [String: String] = [:]
+            if let self, let project = tvc?.workspace.project(containing: id) {
+                env = self.resolvedSettings(for: project).env
+            }
+            // The bundled zsh integration writes $PWD here on every cd so the
+            // status bar can show the focused pane's live working directory.
+            env["ZETTY_CWD_FILE"] = PaneCwdStore.path(for: id)
+            return env
         }
         tvc.onAttentionCountChanged = { [weak self] count in
             guard let self else { return }
@@ -626,6 +632,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         saveConfig()
     }
 
+    // MARK: - Mini terminal windows
+
     // MARK: - Font
 
     /// Renders a font size for the config file: locale-independent, no
@@ -822,6 +830,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 // Resolve the owning project's effective value; a surface not
                 // yet in the model (shouldn't happen) follows the global.
                 if let project = tvc?.workspace.project(containing: id) {
+                    // Scratch terminals are ephemeral — always a plain shell.
+                    if project.isScratch { return nil }
                     guard self.resolvedSettings(for: project).preserveSessions else { return nil }
                 } else {
                     guard self.appConfig.preserveSessions else { return nil }
@@ -1053,6 +1063,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         case .reload:
             self.reloadConfiguration(nil)
             return .ok
+        case .scratch:
+            tvc.newScratchTerminal()
+            return .ok
         case .send(let target, let text, let enter, let keys):
             if let message = tvc.sendInput(target: target, text: text, enter: enter, keys: keys) {
                 return .error(message)
@@ -1239,6 +1252,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         mainMenu.addItem(shellMenuItem)
         let shellMenu = NSMenu(title: "Shell")
         shellMenuItem.submenu = shellMenu
+
+        // "New Scratch Terminal"  ⌃⌘N — a project-less, ephemeral terminal in
+        // the Scratch sidebar section. Routed to the TVC by the loop below.
+        let newScratch = NSMenuItem(
+            title: "New Scratch Terminal",
+            action: #selector(TerminalViewController.newScratchTerminal(_:)),
+            keyEquivalent: "n"
+        )
+        newScratch.keyEquivalentModifierMask = [.command, .control]
+        shellMenu.addItem(newScratch)
+
+        shellMenu.addItem(.separator())
 
         // "New Tab"  ⌘T
         let newTab = NSMenuItem(

@@ -23,6 +23,25 @@ if isatty(STDIN_FILENO) != 0 {
     exit(0)
 }
 
+// Point libghostty at our bundled resources (shell-integration scripts +
+// terminfo) so spawned shells get working-directory reports (for the status
+// bar) and prompt marks. The bundled terminfo keeps `xterm-ghostty` resolvable
+// once resources are present — without it ghostty switches TERM to
+// xterm-ghostty but can't find its terminfo, breaking keys like backspace.
+// Set before the first `ghostty_init` (lazy, on the first terminal surface).
+if let ghosttyResources = Bundle.main.resourceURL?
+    .appendingPathComponent("ghostty", isDirectory: true).path {
+    setenv("GHOSTTY_RESOURCES_DIR", ghosttyResources, 1)
+    // Ghostty sets TERM=xterm-ghostty but the embedded lib doesn't install that
+    // terminfo, so shells can't resolve it (breaking keys like backspace). Point
+    // them at our bundled copy; a trailing empty entry keeps the system default
+    // (so xterm-256color etc. still resolve).
+    let terminfo = ghosttyResources + "/terminfo"
+    let existing = ProcessInfo.processInfo.environment["TERMINFO_DIRS"]
+    setenv("TERMINFO_DIRS", existing.map { "\(terminfo):\($0)" } ?? "\(terminfo):", 1)
+}
+PaneCwdStore.ensureDirectory()
+
 // Programmatic AppKit entry point. We deliberately avoid `@main` /
 // NSApplicationMain (see AppDelegate) because Tuist's default Info.plist
 // declares NSMainStoryboardFile = "Main"; NSApplicationMain would try to load

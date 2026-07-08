@@ -18,6 +18,7 @@ struct SidebarProject {
     let projectColor: NSColor?           // per-project identity color (nil = default)
     let customGlyph: String?             // SF Symbol overriding the diamond (nil = default)
     let isHibernated: Bool               // frozen: dimmed row + moon glyph
+    let isScratch: Bool                  // project-less ephemeral terminal (Scratch section)
 }
 
 /// Maps an agent status to its status-dot color, or nil for "no agent".
@@ -36,12 +37,14 @@ func agentStatusColor(_ status: AgentStatus?) -> NSColor? {
 private enum SidebarSection: Hashable {
     case pinned
     case projects
+    case scratch
     case hibernated
 
     var title: String {
         switch self {
         case .pinned:     return "Pinned"
         case .projects:   return "Projects"
+        case .scratch:    return "Scratch"
         case .hibernated: return "Hibernating"
         }
     }
@@ -135,6 +138,7 @@ final class SidebarView: NSView {
     private var topLevel: [OutlineItem.Kind] = []
     private var pinnedCount = 0
     private var projectsCount = 0
+    private var scratchCount = 0
     private var hibernatedCount = 0
 
     // Item-object cache — keyed by Kind so we reuse the same object across
@@ -465,14 +469,18 @@ final class SidebarView: NSView {
         let visible = projects.enumerated().filter { _, p in
             query.isEmpty || p.name.lowercased().contains(query)
         }
-        // Hibernated projects live in their own section at the bottom, regardless
-        // of pin state; awake projects split into Pinned / Projects as before.
+        // Sections: Pinned · Projects · Scratch · Hibernating. Scratch terminals
+        // (project-less, ephemeral) get their own group; hibernated projects sit
+        // at the bottom regardless of pin state.
         let awake = visible.filter { !$0.element.isHibernated }
         let hibernated = visible.filter { $0.element.isHibernated }
-        let pinned = awake.filter { $0.element.isPinned }
-        let unpinned = awake.filter { !$0.element.isPinned }
+        let scratch = awake.filter { $0.element.isScratch }
+        let regular = awake.filter { !$0.element.isScratch }
+        let pinned = regular.filter { $0.element.isPinned }
+        let unpinned = regular.filter { !$0.element.isPinned }
         pinnedCount = pinned.count
         projectsCount = unpinned.count
+        scratchCount = scratch.count
         hibernatedCount = hibernated.count
 
         var rows: [OutlineItem.Kind] = []
@@ -483,6 +491,10 @@ final class SidebarView: NSView {
         if !unpinned.isEmpty {
             rows.append(.header(.projects))
             rows += unpinned.map { .project($0.offset) }
+        }
+        if !scratch.isEmpty {
+            rows.append(.header(.scratch))
+            rows += scratch.map { .project($0.offset) }
         }
         if !hibernated.isEmpty {
             rows.append(.header(.hibernated))
@@ -580,6 +592,8 @@ extension SidebarView: NSMenuDelegate {
               case .project(let p) = obj.kind,
               projects.indices.contains(p) else { return }
 
+        let isScratch = projects[p].isScratch
+
         let rename = NSMenuItem(title: "Rename\u{2026}",
                                 action: #selector(renameProjectMenuClicked(_:)),
                                 keyEquivalent: "")
@@ -587,23 +601,27 @@ extension SidebarView: NSMenuDelegate {
         rename.tag = p
         menu.addItem(rename)
 
-        let settings = NSMenuItem(title: "Project Settings\u{2026}",
-                                  action: #selector(projectSettingsMenuClicked(_:)),
-                                  keyEquivalent: "")
-        settings.target = self
-        settings.tag = p
-        menu.addItem(settings)
+        // Scratch terminals are project-less and ephemeral: no per-project
+        // settings and no hibernation.
+        if !isScratch {
+            let settings = NSMenuItem(title: "Project Settings\u{2026}",
+                                      action: #selector(projectSettingsMenuClicked(_:)),
+                                      keyEquivalent: "")
+            settings.target = self
+            settings.tag = p
+            menu.addItem(settings)
 
-        let hibernate = NSMenuItem(
-            title: projects[p].isHibernated ? "Wake Project" : "Hibernate Project",
-            action: #selector(hibernateMenuClicked(_:)), keyEquivalent: "")
-        hibernate.target = self
-        hibernate.tag = p
-        menu.addItem(hibernate)
+            let hibernate = NSMenuItem(
+                title: projects[p].isHibernated ? "Wake Project" : "Hibernate Project",
+                action: #selector(hibernateMenuClicked(_:)), keyEquivalent: "")
+            hibernate.target = self
+            hibernate.tag = p
+            menu.addItem(hibernate)
+        }
 
         menu.addItem(.separator())
 
-        let remove = NSMenuItem(title: "Remove Project\u{2026}",
+        let remove = NSMenuItem(title: isScratch ? "Close Terminal" : "Remove Project\u{2026}",
                                 action: #selector(removeProjectMenuClicked(_:)),
                                 keyEquivalent: "")
         remove.target = self
@@ -712,7 +730,7 @@ extension SidebarView: NSOutlineViewDataSource {
         // Project row: only top-level gaps, snapped to stay inside its section.
         guard let from = draggedProject(from: info),
               projects.indices.contains(from),
-              let range = projectRowRange(for: projects[from].isPinned ? .pinned : .projects)
+              let range = projectRowRange(for: section(forProjectAt: from))
         else { return [] }
         let clamped = clampProjectDrop(index, into: range)
         if item != nil || index != clamped {
@@ -742,7 +760,7 @@ extension SidebarView: NSOutlineViewDataSource {
         // Project row move within a section.
         guard let from = draggedProject(from: info),
               projects.indices.contains(from),
-              let range = projectRowRange(for: projects[from].isPinned ? .pinned : .projects) else { return false }
+              let range = projectRowRange(for: section(forProjectAt: from)) else { return false }
         let sectionOffsets = topLevel[range].compactMap { kind -> Int? in
             if case .project(let o) = kind { return o } else { return nil }
         }
@@ -770,6 +788,16 @@ extension SidebarView: NSOutlineViewDataSource {
     /// Decodes the dragged project's offset from its pasteboard payload.
     private func draggedProject(from info: NSDraggingInfo) -> Int? {
         info.draggingPasteboard.string(forType: SidebarView.projectDragType).flatMap(Int.init)
+    }
+
+    /// Which sidebar section a project row belongs to (drives drag-reorder
+    /// scoping — a row can only be reordered within its own section).
+    private func section(forProjectAt index: Int) -> SidebarSection {
+        guard projects.indices.contains(index) else { return .projects }
+        let p = projects[index]
+        if p.isHibernated { return .hibernated }
+        if p.isScratch { return .scratch }
+        return p.isPinned ? .pinned : .projects
     }
 
     /// The half-open `topLevel` index range of the project rows under `section`'s
@@ -812,6 +840,7 @@ extension SidebarView: NSOutlineViewDelegate {
             switch section {
             case .pinned:     count = pinnedCount
             case .projects:   count = projectsCount
+            case .scratch:    count = scratchCount
             case .hibernated: count = hibernatedCount
             }
             cellView.configure(title: section.title, count: count)
@@ -838,6 +867,7 @@ extension SidebarView: NSOutlineViewDelegate {
                 projectColor: project.projectColor,
                 customGlyph: project.customGlyph,
                 isHibernated: project.isHibernated,
+                isScratch: project.isScratch,
                 projectIndex: p,
                 target: self,
                 action: #selector(pinButtonClicked(_:))
@@ -1041,8 +1071,8 @@ private final class ProjectCellView: NSTableCellView {
 
     func configure(name: String, isPinned: Bool, isActive: Bool, agentStatus: AgentStatus?,
                    toolIcon: NSImage? = nil, projectColor: NSColor? = nil,
-                   customGlyph: String? = nil, isHibernated: Bool = false, projectIndex: Int,
-                   target: AnyObject, action: Selector) {
+                   customGlyph: String? = nil, isHibernated: Bool = false, isScratch: Bool = false,
+                   projectIndex: Int, target: AnyObject, action: Selector) {
         nameLabel.stringValue = name
         // Hibernated rows read as dormant: dim text regardless of active state.
         nameLabel.textColor = isHibernated ? ZTheme.current.fg3Color
@@ -1075,6 +1105,9 @@ private final class ProjectCellView: NSTableCellView {
                     ?? projectColor
                     ?? (isActive ? ZTheme.current.accentColor : ZTheme.current.fg3Color))
         }
+
+        // Scratch terminals can't be pinned — hide the star entirely.
+        pinButton.isHidden = isScratch
 
         // Pinned rows use a filled accent star; unpinned rows show a dim hollow star.
         let symbolName = isPinned ? "star.fill" : "star"

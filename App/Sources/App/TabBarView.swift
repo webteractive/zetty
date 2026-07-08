@@ -152,7 +152,9 @@ final class TabBarView: NSView {
     /// Rebuilds tab items from `titles` and marks `selectedIndex` as selected.
     /// `icons` (parallel to `titles`, padded with nil) show an agent logo in
     /// the pill when one is bundled.
-    func update(titles: [String], icons: [NSImage?] = [], selectedIndex: Int) {
+    /// `alwaysShowClose` forces a × on every tab even when there's only one
+    /// (scratch terminals, where closing the last tab closes the project).
+    func update(titles: [String], icons: [NSImage?] = [], selectedIndex: Int, alwaysShowClose: Bool = false) {
         // Live agents retitle their tabs every second; rebuilding the pills
         // mid-drag would destroy the one being dragged and kill the gesture.
         // Skip refreshes until the drag commits (which triggers one anyway).
@@ -169,7 +171,7 @@ final class TabBarView: NSView {
         // Build new items.
         for (index, title) in titles.enumerated() {
             let icon = index < icons.count ? icons[index] : nil
-            let item = TabItemView(title: title, icon: icon, index: index, isSelected: index == selectedIndex, showsClose: titles.count > 1)
+            let item = TabItemView(title: title, icon: icon, index: index, isSelected: index == selectedIndex, showsClose: alwaysShowClose || titles.count > 1)
             item.onSelect = { [weak self] idx in
                 self?.onSelect?(idx)
             }

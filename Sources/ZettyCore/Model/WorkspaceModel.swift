@@ -8,15 +8,21 @@ public final class ProjectRuntime {
     /// When true, the project's sessions/processes/panes are freed; only its
     /// layout remains. Waking re-spawns fresh shells.
     public var isHibernated: Bool
+    /// A project-less, ephemeral "scratch" terminal: rooted at home, shown in
+    /// the Scratch sidebar section, never persisted, and its panes never use
+    /// zmx. Not pinnable or hibernatable.
+    public let isScratch: Bool
     public let tabList: TabList
 
     public init(id: UUID = UUID(), name: String, rootPath: String,
-                isPinned: Bool = false, isHibernated: Bool = false, tabList: TabList? = nil) {
+                isPinned: Bool = false, isHibernated: Bool = false,
+                isScratch: Bool = false, tabList: TabList? = nil) {
         self.id = id
         self.name = name
         self.rootPath = rootPath
         self.isPinned = isPinned
         self.isHibernated = isHibernated
+        self.isScratch = isScratch
         // Default the project's tab list to open terminals in the project root.
         self.tabList = tabList ?? TabList(defaultWorkingDir: rootPath)
     }
@@ -54,6 +60,27 @@ public final class WorkspaceModel {
         if makeActive { activeIndex = projects.count - 1 }
         regroup()   // preserves the active project by identity
         return p
+    }
+
+    /// Adds and activates a project-less scratch terminal (rooted at home). It
+    /// is unpinned (so it lands in the Scratch section) and ephemeral.
+    @discardableResult
+    public func addScratchProject() -> ProjectRuntime {
+        let home = NSHomeDirectory()
+        let p = ProjectRuntime(name: nextScratchName(), rootPath: home, isScratch: true)
+        projects.append(p)
+        activeIndex = projects.count - 1
+        regroup()   // keeps it after the pinned group
+        return p
+    }
+
+    /// A unique scratch name: "scratch", then "scratch 2", "scratch 3", …
+    private func nextScratchName() -> String {
+        let existing = Set(projects.filter(\.isScratch).map(\.name))
+        if !existing.contains("scratch") { return "scratch" }
+        var n = 2
+        while existing.contains("scratch \(n)") { n += 1 }
+        return "scratch \(n)"
     }
 
     public func removeProject(at index: Int) {

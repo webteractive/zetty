@@ -38,15 +38,39 @@ extension KeyChord {
     }
 }
 
+// MARK: - KeyInterceptorHost
+
+/// What a window's controller must provide for the prefix-key layer to drive it.
+/// Implemented by both the main `TerminalViewController` and the standalone
+/// `MiniTerminalWindowController`, so one interceptor type serves either window.
+/// Each host owns its own `perform(binding:)` dispatch — the main window routes
+/// pane/tab/broadcast/copy commands; a mini window handles only the pane/copy
+/// subset and no-ops the rest.
+@MainActor
+protocol KeyInterceptorHost: AnyObject {
+    /// The window this host's events must belong to (the interceptor's filter).
+    var commandWindow: NSWindow? { get }
+    /// Whether keystrokes should be mirrored to a broadcast target (main window
+    /// only; mini windows return false).
+    var isBroadcasting: Bool { get }
+    func broadcast(_ text: String)
+    func keyModeDidChange(_ mode: KeyMode)
+    func exitCopyModeIfActive()
+    func perform(binding command: BindingCommand, interceptor: KeyInterceptor)
+}
+
 // MARK: - KeyInterceptor
 
 /// The single keyDown intercept point for the prefix-key layer: an app-local
 /// `NSEvent` monitor that runs before any view sees the key, asks the
 /// `KeyBindingEngine` what to do, and either swallows the event (dispatching
-/// the resolved command to the view controller) or lets it flow to the
-/// terminal untouched.
+/// the resolved command to the host) or lets it flow to the terminal untouched.
 ///
-/// Guards, in order: only events in the main terminal window are considered;
+/// Each window installs its own interceptor bound to its host; the monitor is
+/// app-global but self-filters to `host.commandWindow`, so multiple windows'
+/// interceptors coexist without interfering.
+///
+/// Guards, in order: only events in the host's window are considered;
 /// a first responder that is editing text (command palette, tab rename,
 /// settings fields — all `NSTextView` field editors) forces passthrough and
 /// resets the engine; active IME composition on the terminal passes through
@@ -55,18 +79,18 @@ extension KeyChord {
 final class KeyInterceptor {
 
     private(set) var engine: KeyBindingEngine
-    private weak var viewController: TerminalViewController?
+    private weak var host: KeyInterceptorHost?
     private var monitor: Any?
     private var mouseMonitor: Any?
     private var focusObservers: [NSObjectProtocol] = []
 
-    init(configuration: KeyBindingConfiguration, viewController: TerminalViewController) {
+    init(configuration: KeyBindingConfiguration, host: KeyInterceptorHost) {
         self.engine = KeyBindingEngine(
             prefix: configuration.prefix,
             prefixTable: configuration.prefixTable,
             copyTable: configuration.copyTable
         )
-        self.viewController = viewController
+        self.host = host
     }
 
     /// Replaces the binding tables (config reload). Any armed/copy state is
@@ -115,7 +139,7 @@ final class KeyInterceptor {
     private func disarmPrefixIfArmed() {
         guard engine.mode == .prefixArmed else { return }
         engine.reset()
-        viewController?.keyModeDidChange(.normal)
+        host?.keyModeDidChange(.normal)
     }
 
     deinit {
@@ -125,8 +149,8 @@ final class KeyInterceptor {
     }
 
     private func handle(_ event: NSEvent) -> NSEvent? {
-        guard let viewController,
-              let window = viewController.view.window,
+        guard let host,
+              let window = host.commandWindow,
               event.window === window else { return event }
 
         // Text editing anywhere (palette, rename, settings) owns the keyboard.
@@ -134,9 +158,9 @@ final class KeyInterceptor {
             if engine.mode != .normal {
                 // Full teardown, not just engine.reset(): abandoning copy mode
                 // must also clear its Ghostty selection + active-surface state.
-                viewController.exitCopyModeIfActive()
+                host.exitCopyModeIfActive()
                 engine.reset()
-                viewController.keyModeDidChange(.normal)
+                host.keyModeDidChange(.normal)
             }
             return event
         }
@@ -151,7 +175,7 @@ final class KeyInterceptor {
         let modeBefore = engine.mode
         let resolution = engine.handle(chord)
         if engine.mode != modeBefore {
-            viewController.keyModeDidChange(engine.mode)
+            host.keyModeDidChange(engine.mode)
         }
 
         switch resolution {
@@ -161,15 +185,15 @@ final class KeyInterceptor {
             // doubled). Runs only after the text-editing/IME guards above, and
             // only for simple encodable chords — cmd/alt shortcuts fall through
             // to normal local handling.
-            if viewController.isBroadcasting, let bytes = chord.terminalBytes {
-                viewController.broadcast(bytes)
+            if host.isBroadcasting, let bytes = chord.terminalBytes {
+                host.broadcast(bytes)
                 return nil
             }
             return event
         case .consumeNoop:
             return nil
         case .consume(let command):
-            viewController.perform(binding: command, interceptor: self)
+            host.perform(binding: command, interceptor: self)
             return nil
         }
     }
@@ -177,7 +201,10 @@ final class KeyInterceptor {
 
 // MARK: - Command dispatch
 
-extension TerminalViewController {
+extension TerminalViewController: KeyInterceptorHost {
+
+    /// The interceptor filters events to this window.
+    var commandWindow: NSWindow? { view.window }
 
     /// Executes one resolved binding command. Pane/tab commands reuse the
     /// existing action methods; copy-mode commands forward to the

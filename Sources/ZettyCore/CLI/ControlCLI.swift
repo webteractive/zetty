@@ -51,6 +51,8 @@ public enum ControlCLI {
                                               close a pane (a tab's last pane closes
                                               the tab; --tab closes the whole tab)
       zetty reload                          reload zetty config (⇧⌘, equivalent)
+      zetty scratch                         open a project-less, ephemeral
+                                              terminal (Scratch section)
       zetty quit [--kill-sessions]          quit the app (no confirmation dialog);
                                               --kill-sessions also kills every
                                               preserved zmx session (full shutdown)
@@ -75,7 +77,7 @@ public enum ControlCLI {
     public static func recognizes(_ arguments: [String]) -> Bool {
         guard let first = arguments.first else { return false }
         return ["status", "ls", "send", "capture", "new-tab", "add-project", "new-project",
-                "remove-project", "hibernate", "wake", "split", "break", "focus", "close", "reload", "quit",
+                "remove-project", "hibernate", "wake", "split", "break", "focus", "close", "reload", "scratch", "quit",
                 "help", "--help", "-h"].contains(first)
     }
 
@@ -119,6 +121,8 @@ public enum ControlCLI {
             return runClose(arguments)
         case "reload":
             return expectOK(.reload, success: "reloaded")
+        case "scratch":
+            return expectOK(.scratch, success: "opened")
         case "quit":
             return expectOK(.quit(killSessions: arguments.contains("--kill-sessions")), success: nil)
         default:

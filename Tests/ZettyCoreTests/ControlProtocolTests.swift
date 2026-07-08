@@ -14,6 +14,7 @@ import Foundation
 
     #expect(try ControlWire.decodeRequest(ControlWire.encodeLine(ControlRequest.status)) == .status)
     #expect(try ControlWire.decodeRequest(ControlWire.encodeLine(ControlRequest.reload)) == .reload)
+    #expect(try ControlWire.decodeRequest(ControlWire.encodeLine(ControlRequest.scratch)) == .scratch)
     #expect(try ControlWire.decodeRequest(ControlWire.encodeLine(ControlRequest.newTab(project: "glen"))) == .newTab(project: "glen"))
     #expect(try ControlWire.decodeRequest(ControlWire.encodeLine(ControlRequest.newTab(project: nil))) == .newTab(project: nil))
     #expect(try ControlWire.decodeRequest(ControlWire.encodeLine(ControlRequest.addProject(path: "/Users/x/proj", name: "proj", focus: true)))

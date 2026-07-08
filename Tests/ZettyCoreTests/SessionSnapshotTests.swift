@@ -173,6 +173,18 @@ private func tempDir() throws -> URL {
     #expect(runtimes.map(\.name) == ["a", "b"])
 }
 
+@Test func scratchProjectsAreNotPersisted() throws {
+    let ws = WorkspaceModel(restoring: [
+        ProjectRuntime(name: "real", rootPath: "/real"),
+    ], activeIndex: 0)!
+    ws.addScratchProject()   // becomes active
+    let snap = SessionSnapshot.workspace(from: ws)
+    // The scratch project is dropped; only the real one persists.
+    #expect(snap.projects.map(\.name) == ["real"])
+    // Active index falls back to the (surviving) real project, not the scratch.
+    #expect(snap.activeProjectIndex == 0)
+}
+
 @Test func projectDecodesWithoutHibernatedField() throws {
     let json = #"{"id":"\#(UUID().uuidString)","name":"a","rootPath":"/a","isPinned":false,"sortOrder":0,"preserveSessions":false,"sessions":[]}"#
     let p = try JSONDecoder().decode(Project.self, from: Data(json.utf8))
