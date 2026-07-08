@@ -32,7 +32,7 @@ let project = Project(
             name: "zetty",
             destinations: .macOS,
             product: .app,
-            bundleId: "dev.more.zetty",
+            bundleId: "co.webteractive.zetty",
             deploymentTargets: .macOS("14.0"),
             infoPlist: .extendingDefault(with: [
                 "LSUIElement": false,
@@ -92,7 +92,7 @@ let project = Project(
             name: "ZettyGhostty",
             destinations: .macOS,
             product: .framework,
-            bundleId: "dev.more.zetty.ZettyGhostty",
+            bundleId: "co.webteractive.zetty.ZettyGhostty",
             deploymentTargets: .macOS("14.0"),
             sources: ["App/Sources/ZettyGhostty/**"],
             dependencies: [
@@ -113,7 +113,7 @@ let project = Project(
             name: "ZettyGhosttyTests",
             destinations: .macOS,
             product: .unitTests,
-            bundleId: "dev.more.zetty.ZettyGhosttyTests",
+            bundleId: "co.webteractive.zetty.ZettyGhosttyTests",
             deploymentTargets: .macOS("14.0"),
             sources: ["App/Tests/ZettyGhosttyTests/**"],
             dependencies: [

@@ -19,7 +19,7 @@ final class ControlSocketServer {
 
     private let socketURL: URL
     private let handler: (ControlRequest) -> ControlResponse
-    private let queue = DispatchQueue(label: "dev.more.zetty.control-socket")
+    private let queue = DispatchQueue(label: "co.webteractive.zetty.control-socket")
     private var listenerFD: Int32 = -1
     private var acceptSource: DispatchSourceRead?
 

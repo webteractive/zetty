@@ -121,7 +121,7 @@ final class TerminalViewController: NSViewController {
     }()
 
     /// Background queue + debounce for `git` probes feeding the status bar.
-    private let gitQueue = DispatchQueue(label: "dev.more.zetty.git", qos: .utility)
+    private let gitQueue = DispatchQueue(label: "co.webteractive.zetty.git", qos: .utility)
     private var gitProbeWork: DispatchWorkItem?
 
     /// The container that wraps the tab-bar + pane area (right side of the split).

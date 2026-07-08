@@ -658,8 +658,8 @@ extension SidebarView: NSOutlineViewDataSource {
 
     // MARK: Drag-reorder (tab children within a project · project rows within a section)
 
-    static let tabDragType = NSPasteboard.PasteboardType("dev.more.zetty.sidebar-tab")
-    static let projectDragType = NSPasteboard.PasteboardType("dev.more.zetty.sidebar-project")
+    static let tabDragType = NSPasteboard.PasteboardType("co.webteractive.zetty.sidebar-tab")
+    static let projectDragType = NSPasteboard.PasteboardType("co.webteractive.zetty.sidebar-project")
 
     func outlineView(_ outlineView: NSOutlineView, pasteboardWriterForItem item: Any) -> NSPasteboardWriting? {
         guard let obj = item as? OutlineItem else { return nil }
