@@ -66,6 +66,53 @@ public final class TabList {
         activeIndex = trees.count - 1
     }
 
+    /// Appends a fresh single-pane tab WITHOUT changing `activeIndex` — the
+    /// currently visible tab stays visible. Returns the new tab's pane id.
+    @discardableResult
+    public func newBackgroundTab() -> UUID {
+        let tree = TabList.freshTree(workingDir: defaultWorkingDir)
+        trees.append(tree)
+        // A fresh tree always has exactly one surface.
+        return tree.focusedSurfaceID ?? tree.layout.surfaces[0].id
+    }
+
+    /// Splits `paneID` inside the tree at `treeIndex`, keeping focus on the
+    /// tree's previously focused pane (no active-tab change). Returns the new
+    /// pane's id, or nil when the index/pane is invalid.
+    @discardableResult
+    public func splitPane(inTreeAt treeIndex: Int, paneID: UUID, direction: SplitDirection,
+                          newSurface: Surface, ratio: Double = 0.5) -> UUID? {
+        guard trees.indices.contains(treeIndex) else { return nil }
+        var tree = trees[treeIndex]
+        guard let newID = tree.splitPane(paneID, direction: direction, newSurface: newSurface, ratio: ratio) else {
+            return nil
+        }
+        trees[treeIndex] = tree
+        return newID
+    }
+
+    /// Moves `paneID` out of the tree at `treeIndex` into a new single-pane tab
+    /// inserted at `treeIndex + 1`, WITHOUT selecting it (the same logical tab
+    /// stays visible). Returns the moved pane's id (identity preserved), or nil
+    /// when the pane is the tab's only pane or the index/pane is invalid.
+    @discardableResult
+    public func breakPaneToNewTab(inTreeAt treeIndex: Int, paneID: UUID) -> UUID? {
+        guard trees.indices.contains(treeIndex) else { return nil }
+        var tree = trees[treeIndex]
+        guard tree.layout.surfaces.count > 1,
+              let surface = tree.layout.surfaces.first(where: { $0.id == paneID }) else {
+            return nil
+        }
+        tree.focus(paneID)
+        guard tree.closeFocused() else { return nil }
+        trees[treeIndex] = tree
+        let newTree = PaneTree(layout: Layout(root: .leaf(surface)), focusedSurfaceID: surface.id)
+        trees.insert(newTree, at: treeIndex + 1)
+        // Keep pointing at the SAME logical tab the caller was viewing.
+        if activeIndex > treeIndex { activeIndex += 1 }
+        return surface.id
+    }
+
     /// Move the active tab's focused pane into a new single-pane tab inserted
     /// right after the current tab, which becomes active. The moved `Surface`
     /// keeps its identity (id/workingDir/command/lastTitle), so the live

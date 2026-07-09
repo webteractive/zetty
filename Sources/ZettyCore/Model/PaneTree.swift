@@ -35,6 +35,21 @@ public struct PaneTree: Codable, Sendable, Equatable {
         return true
     }
 
+    /// Splits the pane `id` (regardless of current focus) and restores focus to
+    /// whatever pane was focused before — so a background split never moves the
+    /// keyboard focus. Returns `newSurface.id`, or nil when `id` is not present.
+    @discardableResult
+    public mutating func splitPane(_ id: UUID, direction: SplitDirection, newSurface: Surface, ratio: Double = 0.5) -> UUID? {
+        guard layout.surfaces.contains(where: { $0.id == id }) else { return nil }
+        let priorFocus = focusedSurfaceID
+        focus(id)
+        guard splitFocused(direction: direction, newSurface: newSurface, ratio: ratio) else { return nil }
+        if let priorFocus, layout.surfaces.contains(where: { $0.id == priorFocus }) {
+            focus(priorFocus)
+        }
+        return newSurface.id
+    }
+
     /// Close the focused leaf; focus moves to the first remaining surface. False if it was the only one.
     @discardableResult
     public mutating func closeFocused() -> Bool {

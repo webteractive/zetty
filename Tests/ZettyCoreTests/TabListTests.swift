@@ -168,3 +168,61 @@ private func twoPaneTabList() -> TabList {
     // Replacing from an empty list is impossible by construction (TabList is
     // never empty), so no empty-guard case to test.
 }
+
+// MARK: - Background structural ops (CLI no-focus-steal)
+
+@Test func newBackgroundTabDoesNotChangeActiveIndex() {
+    let list = TabList(defaultWorkingDir: "/tmp")
+    let priorActive = list.activeIndex
+    let newID = list.newBackgroundTab()
+    #expect(list.trees.count == 2)
+    #expect(list.activeIndex == priorActive)             // visible tab unchanged
+    #expect(list.trees[1].layout.surfaces.contains { $0.id == newID })
+}
+
+@Test func splitPaneKeepsFocusOnOriginalPane() {
+    let original = Surface(workingDir: "/tmp")
+    var tree = PaneTree(layout: Layout(root: .leaf(original)), focusedSurfaceID: original.id)
+    let added = Surface(workingDir: "/tmp")
+    let newID = tree.splitPane(original.id, direction: .vertical, newSurface: added)
+    #expect(newID == added.id)
+    #expect(tree.layout.surfaces.count == 2)
+    #expect(tree.focusedSurfaceID == original.id)        // focus did NOT move to the new pane
+}
+
+@Test func splitPaneInBackgroundTreeWritesBack() {
+    let list = TabList(defaultWorkingDir: "/tmp")
+    _ = list.newBackgroundTab()                          // tab index 1, not active
+    let target = list.trees[1].focusedSurfaceID!
+    let added = Surface(workingDir: "/tmp")
+    let newID = list.splitPane(inTreeAt: 1, paneID: target, direction: .horizontal, newSurface: added)
+    #expect(newID == added.id)
+    #expect(list.trees[1].layout.surfaces.count == 2)
+    #expect(list.activeIndex == 0)                       // visible tab still 0
+}
+
+@Test func breakPaneToNewTabKeepsCurrentTabVisible() {
+    let first = Surface(workingDir: "/tmp")
+    var tree = PaneTree(layout: Layout(root: .leaf(first)), focusedSurfaceID: first.id)
+    let added = Surface(workingDir: "/tmp")
+    _ = tree.splitPane(first.id, direction: .vertical, newSurface: added)
+    let list = TabList(restoring: [tree], activeIndex: 0)!  // one tab, two panes
+    let movedID = list.breakPaneToNewTab(inTreeAt: 0, paneID: added.id)
+    #expect(movedID == added.id)
+    #expect(list.trees.count == 2)                       // new tab inserted
+    #expect(list.activeIndex == 0)                       // still viewing the source tab
+    #expect(list.trees[1].layout.surfaces.map(\.id) == [added.id])
+}
+
+@Test func breakPaneToNewTabRejectsSolePane() {
+    let list = TabList(defaultWorkingDir: "/tmp")        // single tab, single pane
+    let only = list.trees[0].focusedSurfaceID!
+    #expect(list.breakPaneToNewTab(inTreeAt: 0, paneID: only) == nil)
+}
+
+@Test func addScratchProjectBackgroundKeepsActive() {
+    let ws = WorkspaceModel(restoring: [ProjectRuntime(name: "a", rootPath: "/a")])!
+    _ = ws.addScratchProject(makeActive: false)
+    #expect(ws.activeIndex == 0)                         // active project unchanged
+    #expect(ws.projects.contains { $0.isScratch })
+}

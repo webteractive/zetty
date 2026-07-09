@@ -62,14 +62,15 @@ public final class WorkspaceModel {
         return p
     }
 
-    /// Adds and activates a project-less scratch terminal (rooted at home). It
-    /// is unpinned (so it lands in the Scratch section) and ephemeral.
+    /// Adds a project-less scratch terminal (rooted at home). It is unpinned (so
+    /// it lands in the Scratch section) and ephemeral. `makeActive` (default
+    /// true) switches to it; pass false to add it in the background.
     @discardableResult
-    public func addScratchProject() -> ProjectRuntime {
+    public func addScratchProject(makeActive: Bool = true) -> ProjectRuntime {
         let home = NSHomeDirectory()
         let p = ProjectRuntime(name: nextScratchName(), rootPath: home, isScratch: true)
         projects.append(p)
-        activeIndex = projects.count - 1
+        if makeActive { activeIndex = projects.count - 1 }
         regroup()   // keeps it after the pinned group
         return p
     }
