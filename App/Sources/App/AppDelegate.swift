@@ -1061,9 +1061,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         case .reload:
             self.reloadConfiguration(nil)
             return .ok
-        case .scratch:
-            tvc.newScratchTerminal()
-            return .ok
+        case .scratch(let focus):
+            return .pane(tvc.newScratchTerminal(focus: focus))
         case .scratchClear:
             tvc.closeAllScratchTerminals()
             return .ok
@@ -1072,8 +1071,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 return .error(message)
             }
             return .ok
-        case .newTab(let project):
-            switch tvc.openNewTab(inProject: project) {
+        case .newTab(let project, let focus):
+            switch tvc.openNewTab(inProject: project, focus: focus) {
             case .success(let pane): return .pane(pane)
             case .failure(let error): return .error(error.localizedDescription)
             }
@@ -1103,13 +1102,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 return .error(message)
             }
             return .ok
-        case .split(let target, let vertical):
-            switch tvc.splitPane(target: target, vertical: vertical) {
+        case .split(let target, let vertical, let focus):
+            switch tvc.splitPane(target: target, vertical: vertical, focus: focus) {
             case .success(let pane): return .pane(pane)
             case .failure(let error): return .error(error.localizedDescription)
             }
-        case .breakPane(let target):
-            switch tvc.breakPaneToTab(target: target) {
+        case .breakPane(let target, let focus):
+            switch tvc.breakPaneToTab(target: target, focus: focus) {
             case .success(let pane): return .pane(pane)
             case .failure(let error): return .error(error.localizedDescription)
             }

@@ -1315,22 +1315,42 @@ final class TerminalViewController: NSViewController {
     /// Opens a new tab (CLI `new-tab`) in the named project (case-insensitive,
     /// nil → active project), makes it visible so its pane spawns, and returns
     /// the new pane's short id — or an error message.
-    func openNewTab(inProject name: String?) -> Result<String, ControlError> {
+    func openNewTab(inProject name: String?, focus: Bool = false) -> Result<String, ControlError> {
+        let targetIndex: Int
         if let name {
-            guard let index = workspace.projects.firstIndex(where: {
+            guard let idx = workspace.projects.firstIndex(where: {
                 $0.name.lowercased() == name.lowercased()
             }) else {
                 return .failure(.noSuchPane("no project named \"\(name)\""))
             }
-            if index != workspace.activeIndex { selectProject(at: index) }
+            targetIndex = idx
+        } else {
+            targetIndex = workspace.activeIndex
         }
-        newTab(nil)
-        guard let surface = workspace.activeTabList.activeTree.focusedSurface
-                ?? workspace.activeTabList.activeTree.layout.surfaces.first else {
-            return .failure(.noSuchPane("tab created but no pane found"))
+        let tabList = workspace.projects[targetIndex].tabList
+        let newPaneID = tabList.newBackgroundTab()
+        let newTabIndex = tabList.trees.count - 1
+
+        if focus {
+            tabList.select(index: newTabIndex)
+            if targetIndex != workspace.activeIndex {
+                selectProject(at: targetIndex)          // rebuilds + focuses the now-active tab
+            } else {
+                refreshTabBar()
+                rebuildSurfaceNodeView()
+                refreshSidebar()
+                if let focused = focusedTerminalView() {
+                    view.window?.makeFirstResponder(focused)
+                }
+            }
+        } else {
+            // Background: the tab exists and shows in the bar, but the visible
+            // tab and keyboard focus are unchanged.
+            refreshTabBar()
+            refreshSidebar()
         }
         onWorkspaceDidChange?()
-        return .success(SessionPersistence.shortID(for: surface.id))
+        return .success(SessionPersistence.shortID(for: newPaneID))
     }
 
     /// Adds the directory at `path` as a new project (CLI `add-project`),
@@ -1491,19 +1511,39 @@ final class TerminalViewController: NSViewController {
     }
 
     /// Splits the targeted pane (CLI `split`) and returns the new pane's id.
-    func splitPane(target: PaneSelector, vertical: Bool) -> Result<String, ControlError> {
+    func splitPane(target: PaneSelector, vertical: Bool, focus: Bool = false) -> Result<String, ControlError> {
         do {
             let pane = try target.resolve(in: statusSnapshot().panes)
             guard let location = locate(shortID: pane.id) else {
                 return .failure(.noSuchPane("pane \(pane.id) not found"))
             }
-            focusPane(at: location)
-            if vertical { splitVertical(nil) } else { splitHorizontal(nil) }
-            guard let focused = paneTree.focusedSurfaceID, focused != location.surfaceID else {
+            let tabList = workspace.projects[location.projectIndex].tabList
+            let workingDir = tabList.trees[location.tabIndex].layout.surfaces
+                .first(where: { $0.id == location.surfaceID })?.workingDir ?? NSHomeDirectory()
+            let newSurface = Surface(workingDir: workingDir)
+            guard let newID = tabList.splitPane(
+                inTreeAt: location.tabIndex, paneID: location.surfaceID,
+                direction: vertical ? .vertical : .horizontal, newSurface: newSurface
+            ) else {
                 return .failure(.noSuchPane("split failed"))
             }
+
+            if focus {
+                focusPane(at: (location.projectIndex, location.tabIndex, newID))
+            } else if location.projectIndex == workspace.activeIndex,
+                      tabList.activeIndex == location.tabIndex {
+                // Visible tree: show the new split, keep the caret on the user's
+                // pane (splitPane restored focus to the original in-model).
+                rebuildSurfaceNodeView()
+                refreshSidebar()
+                if let focused = focusedTerminalView() {
+                    view.window?.makeFirstResponder(focused)
+                }
+            } else {
+                refreshSidebar()
+            }
             onWorkspaceDidChange?()
-            return .success(SessionPersistence.shortID(for: focused))
+            return .success(SessionPersistence.shortID(for: newID))
         } catch {
             return .failure(.noSuchPane(error.localizedDescription))
         }
@@ -1511,20 +1551,45 @@ final class TerminalViewController: NSViewController {
 
     /// Break the targeted pane into a new adjacent tab (CLI `break`), returning
     /// the moved pane's short id. Fails when the pane's tab has a single pane.
-    func breakPaneToTab(target: PaneSelector) -> Result<String, ControlError> {
+    func breakPaneToTab(target: PaneSelector, focus: Bool = false) -> Result<String, ControlError> {
         do {
             let pane = try target.resolve(in: statusSnapshot().panes)
             guard let location = locate(shortID: pane.id) else {
                 return .failure(.noSuchPane("pane \(pane.id) not found"))
             }
-            focusPane(at: location)
-            guard workspace.activeTabList.breakFocusedPaneIntoNewTab() else {
+            let tabList = workspace.projects[location.projectIndex].tabList
+            guard let movedID = tabList.breakPaneToNewTab(
+                inTreeAt: location.tabIndex, paneID: location.surfaceID
+            ) else {
                 return .failure(.noSuchPane("pane \(pane.id) is the only pane in its tab"))
             }
-            refreshTabBar()
-            refreshSidebar()
-            rebuildAndFocus()
-            return .success(pane.id)
+            let newTabIndex = location.tabIndex + 1
+
+            if focus {
+                if location.projectIndex != workspace.activeIndex {
+                    selectProject(at: location.projectIndex)
+                }
+                tabList.select(index: newTabIndex)
+                refreshTabBar()
+                rebuildSurfaceNodeView()
+                refreshSidebar()
+                if let focused = focusedTerminalView() {
+                    view.window?.makeFirstResponder(focused)
+                }
+            } else {
+                refreshTabBar()
+                refreshSidebar()
+                if location.projectIndex == workspace.activeIndex {
+                    // The pane left the visible tab — re-render and keep focus on
+                    // whatever pane the visible tab now focuses.
+                    rebuildSurfaceNodeView()
+                    if let focused = focusedTerminalView() {
+                        view.window?.makeFirstResponder(focused)
+                    }
+                }
+            }
+            onWorkspaceDidChange?()
+            return .success(SessionPersistence.shortID(for: movedID))
         } catch {
             return .failure(.noSuchPane(error.localizedDescription))
         }
@@ -1946,18 +2011,34 @@ final class TerminalViewController: NSViewController {
         return project
     }
 
-    /// Creates a project-less, ephemeral "scratch" terminal (⌃⌘N / palette /
-    /// CLI) rooted at home, switches to it, and spawns its shell. Scratch
-    /// projects live only in the Scratch sidebar section and are never persisted.
+    /// Interactive entry (⌃⌘N / palette / menu): always switches to the new
+    /// scratch terminal. Scratch projects live only in the Scratch sidebar
+    /// section and are never persisted.
     @objc func newScratchTerminal(_ sender: Any? = nil) {
-        workspace.addScratchProject()
+        _ = newScratchTerminal(focus: true)
+    }
+
+    /// Creates a project-less, ephemeral scratch terminal rooted at home. When
+    /// `focus` is true it becomes active and spawns immediately; when false it is
+    /// added to the Scratch section without stealing the current view (its shell
+    /// spawns when first viewed). Returns the new pane's short id.
+    @discardableResult
+    func newScratchTerminal(focus: Bool) -> String {
+        let project = workspace.addScratchProject(makeActive: focus)
         refreshTabBar()
         refreshSidebar()
-        onActiveProjectChanged?()
-        rebuildSurfaceNodeView()   // spawns the pane
-        if let focused = focusedTerminalView() {
-            view.window?.makeFirstResponder(focused)
+        if focus {
+            onActiveProjectChanged?()
+            rebuildSurfaceNodeView()   // spawns the pane
+            if let focused = focusedTerminalView() {
+                view.window?.makeFirstResponder(focused)
+            }
+        } else {
+            onWorkspaceDidChange?()     // persist without switching
         }
+        let surface = project.tabList.activeTree.focusedSurface
+            ?? project.tabList.activeTree.layout.surfaces[0]
+        return SessionPersistence.shortID(for: surface.id)
     }
 
     /// Closes and clears every scratch terminal at once (palette / CLI), killing
