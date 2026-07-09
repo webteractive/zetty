@@ -21,8 +21,11 @@ public enum ControlCLI {
       zetty capture [--pane <id> | --cwd <path>] [--lines <n>]
                                               print a pane's recent output (via its
                                               preserved zmx session)
-      zetty new-tab [--project <name>]      open a tab (active project by default);
-                                              prints the new pane's id on stdout
+      zetty new-tab [--project <name>] [--focus]
+                                              open a tab in the background (active
+                                              project by default); --focus switches
+                                              to it. Prints the new pane's id
+
       zetty add-project <path> [--name <name>] [--focus]
                                               add a directory as a project in the
                                               background (--focus switches to it);
@@ -39,20 +42,25 @@ public enum ControlCLI {
       zetty hibernate <name>                free a project's sessions/processes/
                                               panes (keeps its layout)
       zetty wake <name>                     wake a hibernated project (fresh shells)
-      zetty split [--pane <id> | --cwd <path>] [--horizontal]
-                                              split a pane (vertical by default);
-                                              prints the new pane's id on stdout
-      zetty break [--pane <id> | --cwd <path>]
-                                              break a pane into a new adjacent tab;
-                                              prints the moved pane's id on stdout
+      zetty split [--pane <id> | --cwd <path>] [--horizontal] [--focus]
+                                              split a pane in the background,
+                                              vertical by default (focus stays put);
+                                              --focus moves focus to the new pane.
+                                              Prints the new pane's id
+      zetty break [--pane <id> | --cwd <path>] [--focus]
+                                              move a pane into a new adjacent tab in
+                                              the background; --focus switches to it.
+                                              Prints the moved pane's id
       zetty focus (--pane <id> | --cwd <path>)
                                               focus a pane (selects its project/tab)
       zetty close (--pane <id> | --cwd <path>) [--tab]
                                               close a pane (a tab's last pane closes
                                               the tab; --tab closes the whole tab)
       zetty reload                          reload zetty config (⇧⌘, equivalent)
-      zetty scratch                         open a project-less, ephemeral
-                                              terminal (Scratch section)
+      zetty scratch [--focus]               open a project-less, ephemeral terminal
+                                              (Scratch section) in the background;
+                                              --focus switches to it. Prints its
+                                              pane id
       zetty scratch-clear                   close and clear all scratch terminals
       zetty quit [--kill-sessions]          quit the app (no confirmation dialog);
                                               --kill-sessions also kills every
@@ -65,10 +73,12 @@ public enum ControlCLI {
         cwd, running tool, agent status, focus). `new-tab`/`split` print just
         the pane id, so: zetty send --pane "$(zetty new-tab)" ls --enter
       - Give a fresh pane ~1–2s for its shell to start before sending input.
-      - new-tab/split select the new pane (it must be visible for its shell to
-        spawn); close/send/capture leave the visible view alone. add-project/
-        new-project add in the background — the pane spawns when you open the
-        project (or pass --focus to switch to it and spawn now).
+      - new-tab/split/break/scratch run in the BACKGROUND by default: they never
+        change the active project or keyboard focus, so an agent can reshape the
+        workspace while you keep typing. Pass --focus to switch to the result.
+      - a background pane's shell spawns when you first view it (like add-project),
+        so `zetty send` to a brand-new background pane fails until it is viewed or
+        created with --focus.
       - Exit codes: 0 success · 1 error (message on stderr) · 2 usage.
       - Requires the zetty app to be running (socket: ~/.zetty/zetty.sock).
     """
@@ -124,7 +134,7 @@ public enum ControlCLI {
         case "reload":
             return expectOK(.reload, success: "reloaded")
         case "scratch":
-            return expectOK(.scratch, success: "opened")
+            return runScratch(arguments)
         case "scratch-clear":
             return expectOK(.scratchClear, success: "cleared")
         case "quit":
@@ -225,6 +235,7 @@ public enum ControlCLI {
 
     private static func runNewTab(_ arguments: [String]) -> Int32 {
         var project: String?
+        var focus = false
         var index = 0
         while index < arguments.count {
             switch arguments[index] {
@@ -232,6 +243,8 @@ public enum ControlCLI {
                 index += 1
                 guard index < arguments.count else { return failure("--project needs a value") }
                 project = arguments[index]
+            case "--focus":
+                focus = true
             case "--help", "-h":
                 print(usage)
                 return 0
@@ -240,7 +253,25 @@ public enum ControlCLI {
             }
             index += 1
         }
-        return expectPane(.newTab(project: project))
+        return expectPane(.newTab(project: project, focus: focus))
+    }
+
+    private static func runScratch(_ arguments: [String]) -> Int32 {
+        var focus = false
+        var index = 0
+        while index < arguments.count {
+            switch arguments[index] {
+            case "--focus":
+                focus = true
+            case "--help", "-h":
+                print(usage)
+                return 0
+            default:
+                return failure("unknown argument \"\(arguments[index])\"")
+            }
+            index += 1
+        }
+        return expectPane(.scratch(focus: focus))
     }
 
     private static func runAddProject(_ arguments: [String]) -> Int32 {
@@ -340,6 +371,7 @@ public enum ControlCLI {
     private static func runSplit(_ arguments: [String]) -> Int32 {
         var target = PaneSelector.focused
         var vertical = true
+        var focus = false
         var index = 0
         while index < arguments.count {
             switch arguments[index] {
@@ -355,6 +387,8 @@ public enum ControlCLI {
                 vertical = false
             case "--vertical":
                 vertical = true
+            case "--focus":
+                focus = true
             case "--help", "-h":
                 print(usage)
                 return 0
@@ -363,11 +397,12 @@ public enum ControlCLI {
             }
             index += 1
         }
-        return expectPane(.split(target: target, vertical: vertical))
+        return expectPane(.split(target: target, vertical: vertical, focus: focus))
     }
 
     private static func runBreak(_ arguments: [String]) -> Int32 {
         var target = PaneSelector.focused
+        var focus = false
         var index = 0
         while index < arguments.count {
             switch arguments[index] {
@@ -379,6 +414,8 @@ public enum ControlCLI {
                 index += 1
                 guard index < arguments.count else { return failure("--cwd needs a value") }
                 target = .cwd(arguments[index])
+            case "--focus":
+                focus = true
             case "--help", "-h":
                 print(usage)
                 return 0
@@ -387,7 +424,7 @@ public enum ControlCLI {
             }
             index += 1
         }
-        return expectPane(.breakPane(target: target))
+        return expectPane(.breakPane(target: target, focus: focus))
     }
 
     private static func runFocus(_ arguments: [String]) -> Int32 {
