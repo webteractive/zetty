@@ -10,16 +10,18 @@ public enum ControlRequest: Equatable, Sendable {
     case status
     case reload
     /// Open a project-less, ephemeral "scratch" terminal (plain shell, not
-    /// persisted) in the Scratch sidebar section. Response `.ok`.
-    case scratch
+    /// persisted) in the Scratch sidebar section. Background by default; `focus`
+    /// switches to it. Response `.pane` with the new pane's short id.
+    case scratch(focus: Bool)
     /// Close and clear every scratch terminal at once. Response `.ok`.
     case scratchClear
     /// Inject input into a pane: `text` first (verbatim), then each key in
     /// `keys` (see `KeyNotation`), then a carriage return when `enter` is set.
     case send(target: PaneSelector, text: String?, enter: Bool, keys: [String])
-    /// Open a new tab in the named project (nil → the active project); the
-    /// response is `.pane` with the new pane's short id.
-    case newTab(project: String?)
+    /// Open a new tab in the named project (nil → the active project). Background
+    /// by default — the active project/tab and keyboard focus stay put; `focus`
+    /// switches to the new tab. Response `.pane` with the new pane's short id.
+    case newTab(project: String?, focus: Bool)
     /// Add the directory at `path` (absolute — the CLI resolves relative paths
     /// against its own cwd) as a new project named `name` (nil → the
     /// directory's last path component). Added in the background by default;
@@ -48,13 +50,15 @@ public enum ControlRequest: Equatable, Sendable {
     /// confirmation). With `killSessions`, every preserved zmx session is
     /// killed first: a full shutdown, nothing survives to reattach.
     case quit(killSessions: Bool)
-    /// Split the targeted pane (vertical = side by side); the response is
-    /// `.pane` with the new pane's short id.
-    case split(target: PaneSelector, vertical: Bool)
+    /// Split the targeted pane (vertical = side by side). Background by default —
+    /// the split appears but keyboard focus stays on the current pane; `focus`
+    /// moves focus to the new pane. Response `.pane` with the new pane's short id.
+    case split(target: PaneSelector, vertical: Bool, focus: Bool)
     /// Break the targeted pane out into a new tab inserted right after the
-    /// current one; the response is `.pane` with the moved pane's short id.
+    /// current one. Background by default — the new tab is not selected; `focus`
+    /// switches to it. The response is `.pane` with the moved pane's short id.
     /// Fails when the pane is the only one in its tab.
-    case breakPane(target: PaneSelector)
+    case breakPane(target: PaneSelector, focus: Bool)
     /// Focus the targeted pane (selecting its project/tab).
     case focus(target: PaneSelector)
     /// The targeted pane's recent output (`lines` from the end; nil → all
@@ -72,7 +76,7 @@ extension ControlRequest: Codable {
         switch try container.decode(String.self, forKey: .command) {
         case "status": self = .status
         case "reload": self = .reload
-        case "scratch": self = .scratch
+        case "scratch": self = .scratch(focus: try container.decodeIfPresent(Bool.self, forKey: .focus) ?? false)
         case "scratch-clear": self = .scratchClear
         case "send":
             self = .send(
@@ -82,7 +86,10 @@ extension ControlRequest: Codable {
                 keys: try container.decodeIfPresent([String].self, forKey: .keys) ?? []
             )
         case "new-tab":
-            self = .newTab(project: try container.decodeIfPresent(String.self, forKey: .project))
+            self = .newTab(
+                project: try container.decodeIfPresent(String.self, forKey: .project),
+                focus: try container.decodeIfPresent(Bool.self, forKey: .focus) ?? false
+            )
         case "add-project":
             self = .addProject(
                 path: try container.decode(String.self, forKey: .path),
@@ -112,10 +119,14 @@ extension ControlRequest: Codable {
         case "split":
             self = .split(
                 target: try container.decodeIfPresent(PaneSelector.self, forKey: .target) ?? .focused,
-                vertical: try container.decodeIfPresent(Bool.self, forKey: .vertical) ?? true
+                vertical: try container.decodeIfPresent(Bool.self, forKey: .vertical) ?? true,
+                focus: try container.decodeIfPresent(Bool.self, forKey: .focus) ?? false
             )
         case "break":
-            self = .breakPane(target: try container.decodeIfPresent(PaneSelector.self, forKey: .target) ?? .focused)
+            self = .breakPane(
+                target: try container.decodeIfPresent(PaneSelector.self, forKey: .target) ?? .focused,
+                focus: try container.decodeIfPresent(Bool.self, forKey: .focus) ?? false
+            )
         case "focus":
             self = .focus(target: try container.decode(PaneSelector.self, forKey: .target))
         case "capture":
@@ -135,8 +146,9 @@ extension ControlRequest: Codable {
             try container.encode("status", forKey: .command)
         case .reload:
             try container.encode("reload", forKey: .command)
-        case .scratch:
+        case .scratch(let focus):
             try container.encode("scratch", forKey: .command)
+            try container.encode(focus, forKey: .focus)
         case .scratchClear:
             try container.encode("scratch-clear", forKey: .command)
         case .send(let target, let text, let enter, let keys):
@@ -145,9 +157,10 @@ extension ControlRequest: Codable {
             try container.encodeIfPresent(text, forKey: .text)
             try container.encode(enter, forKey: .enter)
             try container.encode(keys, forKey: .keys)
-        case .newTab(let project):
+        case .newTab(let project, let focus):
             try container.encode("new-tab", forKey: .command)
             try container.encodeIfPresent(project, forKey: .project)
+            try container.encode(focus, forKey: .focus)
         case .addProject(let path, let name, let focus):
             try container.encode("add-project", forKey: .command)
             try container.encode(path, forKey: .path)
@@ -175,13 +188,15 @@ extension ControlRequest: Codable {
         case .quit(let killSessions):
             try container.encode("quit", forKey: .command)
             try container.encode(killSessions, forKey: .killSessions)
-        case .split(let target, let vertical):
+        case .split(let target, let vertical, let focus):
             try container.encode("split", forKey: .command)
             try container.encode(target, forKey: .target)
             try container.encode(vertical, forKey: .vertical)
-        case .breakPane(let target):
+            try container.encode(focus, forKey: .focus)
+        case .breakPane(let target, let focus):
             try container.encode("break", forKey: .command)
             try container.encode(target, forKey: .target)
+            try container.encode(focus, forKey: .focus)
         case .focus(let target):
             try container.encode("focus", forKey: .command)
             try container.encode(target, forKey: .target)

@@ -14,10 +14,11 @@ import Foundation
 
     #expect(try ControlWire.decodeRequest(ControlWire.encodeLine(ControlRequest.status)) == .status)
     #expect(try ControlWire.decodeRequest(ControlWire.encodeLine(ControlRequest.reload)) == .reload)
-    #expect(try ControlWire.decodeRequest(ControlWire.encodeLine(ControlRequest.scratch)) == .scratch)
+    #expect(try ControlWire.decodeRequest(ControlWire.encodeLine(ControlRequest.scratch(focus: false))) == .scratch(focus: false))
+    #expect(try ControlWire.decodeRequest(ControlWire.encodeLine(ControlRequest.scratch(focus: true))) == .scratch(focus: true))
     #expect(try ControlWire.decodeRequest(ControlWire.encodeLine(ControlRequest.scratchClear)) == .scratchClear)
-    #expect(try ControlWire.decodeRequest(ControlWire.encodeLine(ControlRequest.newTab(project: "glen"))) == .newTab(project: "glen"))
-    #expect(try ControlWire.decodeRequest(ControlWire.encodeLine(ControlRequest.newTab(project: nil))) == .newTab(project: nil))
+    #expect(try ControlWire.decodeRequest(ControlWire.encodeLine(ControlRequest.newTab(project: "glen", focus: true))) == .newTab(project: "glen", focus: true))
+    #expect(try ControlWire.decodeRequest(ControlWire.encodeLine(ControlRequest.newTab(project: nil, focus: false))) == .newTab(project: nil, focus: false))
     #expect(try ControlWire.decodeRequest(ControlWire.encodeLine(ControlRequest.addProject(path: "/Users/x/proj", name: "proj", focus: true)))
             == .addProject(path: "/Users/x/proj", name: "proj", focus: true))
     #expect(try ControlWire.decodeRequest(ControlWire.encodeLine(ControlRequest.addProject(path: "/Users/x/proj", name: nil, focus: false)))
@@ -36,18 +37,28 @@ import Foundation
             == .close(target: .pane("ab12"), wholeTab: true))
     #expect(try ControlWire.decodeRequest(ControlWire.encodeLine(ControlRequest.quit(killSessions: false))) == .quit(killSessions: false))
     #expect(try ControlWire.decodeRequest(ControlWire.encodeLine(ControlRequest.quit(killSessions: true))) == .quit(killSessions: true))
-    #expect(try ControlWire.decodeRequest(ControlWire.encodeLine(ControlRequest.split(target: .focused, vertical: true)))
-            == .split(target: .focused, vertical: true))
-    #expect(try ControlWire.decodeRequest(ControlWire.encodeLine(ControlRequest.breakPane(target: .pane("ab12"))))
-            == .breakPane(target: .pane("ab12")))
-    #expect(try ControlWire.decodeRequest(ControlWire.encodeLine(ControlRequest.breakPane(target: .focused)))
-            == .breakPane(target: .focused))
+    #expect(try ControlWire.decodeRequest(ControlWire.encodeLine(ControlRequest.split(target: .focused, vertical: true, focus: false)))
+            == .split(target: .focused, vertical: true, focus: false))
+    #expect(try ControlWire.decodeRequest(ControlWire.encodeLine(ControlRequest.split(target: .pane("ab12"), vertical: false, focus: true)))
+            == .split(target: .pane("ab12"), vertical: false, focus: true))
+    #expect(try ControlWire.decodeRequest(ControlWire.encodeLine(ControlRequest.breakPane(target: .pane("ab12"), focus: true)))
+            == .breakPane(target: .pane("ab12"), focus: true))
+    #expect(try ControlWire.decodeRequest(ControlWire.encodeLine(ControlRequest.breakPane(target: .focused, focus: false)))
+            == .breakPane(target: .focused, focus: false))
     #expect(try ControlWire.decodeRequest(ControlWire.encodeLine(ControlRequest.focus(target: .pane("ab12"))))
             == .focus(target: .pane("ab12")))
     #expect(try ControlWire.decodeRequest(ControlWire.encodeLine(ControlRequest.capture(target: .cwd("/x"), lines: 40)))
             == .capture(target: .cwd("/x"), lines: 40))
     #expect(try ControlWire.decodeRequest(ControlWire.encodeLine(ControlRequest.capture(target: .focused, lines: nil)))
             == .capture(target: .focused, lines: nil))
+}
+
+@Test func focusDefaultsToFalseWhenAbsent() throws {
+    // Simulate an older CLI that omits the focus key (backward compatibility).
+    #expect(try ControlWire.decodeRequest(#"{"command":"new-tab"}"#) == .newTab(project: nil, focus: false))
+    #expect(try ControlWire.decodeRequest(#"{"command":"scratch"}"#) == .scratch(focus: false))
+    #expect(try ControlWire.decodeRequest(#"{"command":"split","target":{"kind":"focused"}}"#) == .split(target: .focused, vertical: true, focus: false))
+    #expect(try ControlWire.decodeRequest(#"{"command":"break","target":{"kind":"focused"}}"#) == .breakPane(target: .focused, focus: false))
 }
 
 @Test func controlResponseCarriesText() throws {
