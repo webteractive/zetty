@@ -125,9 +125,12 @@ in `ZettyCore` (`AppConfig` / `ConfigStore`); `AppDelegate` resolves + applies i
 ### Home project
 
 A permanent **Home** project (`ProjectRuntime.isHome`) is seeded by default
-(`WorkspaceModel.init()` / `makeHome()`, rooted at `~`) and lives in its own
-top sidebar section (`SidebarSection.home`, above Pinned · Projects · Scratch —
-it stays there dimmed when hibernated, never moving to Hibernating). It can be
+(`WorkspaceModel.init()` / `makeHome()`, rooted at `~`). It renders as a single
+row pinned to the very top of the sidebar — **no section header**, **no pin
+button**, a default **`house.fill`** glyph (overridable by a custom icon), and
+**no expandable tab children** (tabs still work, they're just not listed in the
+sidebar). It stays put and dims when hibernated (never moves to Hibernating).
+It can be
 hibernated/woken like any project but **never removed**: `removeProject(at:)`
 rejects `isHome`, the sidebar row omits its Remove item, and CLI
 `remove-project Home` returns an error. Because Home is the guaranteed floor,

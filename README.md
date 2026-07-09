@@ -14,10 +14,12 @@ by the tool it's running.
 
 ## Features
 
-- **Home** — a permanent terminal that's always there in its own top sidebar
-  section. It's seeded on first launch (rooted at your home directory), can't be
-  removed, but *can* be hibernated/woken like any project, and carries its own
-  project settings (color, icon, theme, env, preserve-sessions, notifications).
+- **Home** — a permanent terminal that's always there as a single row at the top
+  of the sidebar (its own house icon, no pin, and — though it supports tabs —
+  they aren't listed in the sidebar). Seeded on first launch (rooted at your home
+  directory), it can't be removed but *can* be hibernated/woken like any project,
+  and carries its own project settings (color, icon, theme, env,
+  preserve-sessions, notifications).
 - **Projects → tabs → splits** — add a project from one picker (**New Folder**
   to create one, optionally `git init`, or pick an existing directory); every
   project owns its own tabs, each tab an arbitrarily nested tree of split

@@ -493,10 +493,8 @@ final class SidebarView: NSView {
         hibernatedCount = hibernated.count
 
         var rows: [OutlineItem.Kind] = []
-        if !home.isEmpty {
-            rows.append(.header(.home))
-            rows += home.map { .project($0.offset) }
-        }
+        // Home renders as a single row at the very top — no section header.
+        rows += home.map { .project($0.offset) }
         if !pinned.isEmpty {
             rows.append(.header(.pinned))
             rows += pinned.map { .project($0.offset) }
@@ -666,8 +664,9 @@ extension SidebarView: NSOutlineViewDataSource {
         guard let obj = item as? OutlineItem,
               case .project(let p) = obj.kind,
               projects.indices.contains(p) else { return 0 }
-        // Hibernated projects are dormant leaf rows — no tab children.
-        if projects[p].isHibernated { return 0 }
+        // Hibernated projects are dormant leaf rows — no tab children. Home is
+        // always a single collapsed row (tabs still work, just not listed here).
+        if projects[p].isHibernated || projects[p].isHome { return 0 }
         let count = projects[p].tabTitles.count
         return count >= 2 ? count : 0
     }
@@ -687,7 +686,7 @@ extension SidebarView: NSOutlineViewDataSource {
         guard let obj = item as? OutlineItem,
               case .project(let p) = obj.kind,
               projects.indices.contains(p) else { return false }
-        return !projects[p].isHibernated && projects[p].tabTitles.count >= 2
+        return !projects[p].isHibernated && !projects[p].isHome && projects[p].tabTitles.count >= 2
     }
 
     // MARK: Drag-reorder (tab children within a project · project rows within a section)
@@ -886,6 +885,7 @@ extension SidebarView: NSOutlineViewDelegate {
                 customGlyph: project.customGlyph,
                 isHibernated: project.isHibernated,
                 isScratch: project.isScratch,
+                isHome: project.isHome,
                 projectIndex: p,
                 target: self,
                 action: #selector(pinButtonClicked(_:))
@@ -1090,6 +1090,7 @@ private final class ProjectCellView: NSTableCellView {
     func configure(name: String, isPinned: Bool, isActive: Bool, agentStatus: AgentStatus?,
                    toolIcon: NSImage? = nil, projectColor: NSColor? = nil,
                    customGlyph: String? = nil, isHibernated: Bool = false, isScratch: Bool = false,
+                   isHome: Bool = false,
                    projectIndex: Int, target: AnyObject, action: Selector) {
         nameLabel.stringValue = name
         // Hibernated rows read as dormant: dim text regardless of active state.
@@ -1108,7 +1109,8 @@ private final class ProjectCellView: NSTableCellView {
         // Tint precedence: agent status > project color > active accent / dim —
         // status colors carry meaning and always win.
         let hasAgent = agentStatus != nil
-        let defaultGlyph = (hasAgent || isActive) ? "diamond.fill" : "diamond"
+        // Home's default glyph is a house (still overridable by a custom icon).
+        let defaultGlyph = isHome ? "house.fill" : ((hasAgent || isActive) ? "diamond.fill" : "diamond")
         let glyphConfig = NSImage.SymbolConfiguration(pointSize: 13, weight: .medium)
         if !isHibernated, let custom = customGlyph, ProjectIcon.isEmoji(custom) {
             // Emoji icons are colored glyphs — draw as-is, no template tint.
@@ -1124,8 +1126,8 @@ private final class ProjectCellView: NSTableCellView {
                     ?? (isActive ? ZTheme.current.accentColor : ZTheme.current.fg3Color))
         }
 
-        // Scratch terminals can't be pinned — hide the star entirely.
-        pinButton.isHidden = isScratch
+        // Scratch terminals and Home can't be pinned — hide the star entirely.
+        pinButton.isHidden = isScratch || isHome
 
         // Pinned rows use a filled accent star; unpinned rows show a dim hollow star.
         let symbolName = isPinned ? "star.fill" : "star"
