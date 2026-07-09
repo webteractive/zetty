@@ -331,6 +331,10 @@ id libghostty doesn't expose).
 - Do not commit debug `NSLog`/`print` statements.
 - Never commit or push without being asked; never add `Co-Authored-By` or a
   session link to commit messages.
+- **Don't create a git branch unless it's implied.** Work directly on the
+  current branch (usually `main`) by default; only branch out when the user
+  asks for one or the task clearly calls for it (e.g. a PR workflow). This
+  overrides any workflow skill that would auto-branch before implementing.
 - **Document every new feature or user-facing change in `README.md`** (its
   usage — Features, shortcuts, Configuration, and/or the Control CLI list) as
   part of the same change. A feature isn't done until the README covers it.
