@@ -122,6 +122,25 @@ in `ZettyCore` (`AppConfig` / `ConfigStore`); `AppDelegate` resolves + applies i
     one (`SurfaceRegistry.title` returns nil for the empty initial title so
     the fallback engages).
 
+### Home project
+
+A permanent **Home** project (`ProjectRuntime.isHome`) is seeded by default
+(`WorkspaceModel.init()` / `makeHome()`, rooted at `~`) and lives in its own
+top sidebar section (`SidebarSection.home`, above Pinned · Projects · Scratch —
+it stays there dimmed when hibernated, never moving to Hibernating). It can be
+hibernated/woken like any project but **never removed**: `removeProject(at:)`
+rejects `isHome`, the sidebar row omits its Remove item, and CLI
+`remove-project Home` returns an error. Because Home is the guaranteed floor,
+the old "can't remove the last project" rule is gone — every other project
+(incl. the last non-home one) is freely removable, and `hibernateProject` may
+now hibernate the last awake project (the dormant placeholder renders).
+Restore injects a Home when a saved workspace has none
+(`WorkspaceModel.restored(from:activeIndex:)`), so existing users' old
+home-rooted project stays as an ordinary, now-removable project. Home's
+settings are keyed by the reserved sentinel `ProjectSettingsStore.homeKey`
+(`@home`) via `ProjectRuntime.settingsKey`, so they never collide with a
+user-added `~` project. `isHome` is persisted in `workspace.json`.
+
 ### Per-project settings
 
 Right-click a project row → **Rename…** / **Project Settings…** (name, curated

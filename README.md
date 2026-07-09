@@ -14,6 +14,10 @@ by the tool it's running.
 
 ## Features
 
+- **Home** — a permanent terminal that's always there in its own top sidebar
+  section. It's seeded on first launch (rooted at your home directory), can't be
+  removed, but *can* be hibernated/woken like any project, and carries its own
+  project settings (color, icon, theme, env, preserve-sessions, notifications).
 - **Projects → tabs → splits** — add a project from one picker (**New Folder**
   to create one, optionally `git init`, or pick an existing directory); every
   project owns its own tabs, each tab an arbitrarily nested tree of split
@@ -389,6 +393,10 @@ zetty close --pane 1a2b3c4d --tab
 zetty reload                             # same as ⇧⌘,
 zetty quit --kill-sessions               # full shutdown, ends preserved sessions
 ```
+
+The **Home** project is targetable by name (`zetty new-tab --project Home`,
+`zetty hibernate Home`), but `zetty remove-project Home` is rejected — Home
+can't be removed.
 
 `new-tab`, `split`, `break`, and `scratch` never change the active project or
 keyboard focus by default — an agent can reshape your workspace while you keep
