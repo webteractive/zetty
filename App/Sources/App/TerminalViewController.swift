@@ -1455,8 +1455,8 @@ final class TerminalViewController: NSViewController {
         guard matches.count == 1 else {
             return "\(matches.count) projects named \"\(name)\" — remove it via the sidebar"
         }
-        guard workspace.projects.count > 1 else {
-            return "cannot remove the only project"
+        guard !match.element.isHome else {
+            return "Home can't be removed"
         }
         performRemoveProject(at: match.offset)
         return nil
@@ -1912,7 +1912,8 @@ final class TerminalViewController: NSViewController {
                 projectColor: identity?.color,
                 customGlyph: identity?.glyph,
                 isHibernated: project.isHibernated,
-                isScratch: project.isScratch
+                isScratch: project.isScratch,
+                isHome: project.isHome
             )
         }
         sidebarView?.update(
@@ -2304,15 +2305,19 @@ final class TerminalViewController: NSViewController {
     /// Never hibernates the active project (switches away first).
     func hibernateProject(_ project: ProjectRuntime, confirmIfBusy: Bool = true) {
         guard let index = workspace.projects.firstIndex(where: { $0.id == project.id }),
-              workspace.projects.count > 1, !project.isHibernated else { return }
+              !project.isHibernated else { return }
         let surfaceIDs = project.tabList.trees.flatMap { $0.layout.surfaces.map(\.id) }
         if confirmIfBusy, !confirmClosingBusyPanes(surfaceIDs, what: "project “\(project.name)”") { return }
 
         if index == workspace.activeIndex {
-            guard let target = workspace.projects.indices.first(where: {
+            // Switch to another awake project if one exists; otherwise stay put
+            // and let the dormant placeholder render (full dormancy is allowed —
+            // Home guarantees the workspace is never gone, only dormant).
+            if let target = workspace.projects.indices.first(where: {
                 $0 != index && !workspace.projects[$0].isHibernated
-            }) else { return }
-            workspace.select(index: target)
+            }) {
+                workspace.select(index: target)
+            }
         }
         project.isHibernated = true
         onSurfacesClosed?(surfaceIDs)          // kill zmx sessions

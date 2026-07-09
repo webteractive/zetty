@@ -19,6 +19,7 @@ struct SidebarProject {
     let customGlyph: String?             // SF Symbol overriding the diamond (nil = default)
     let isHibernated: Bool               // frozen: dimmed row + moon glyph
     let isScratch: Bool                  // project-less ephemeral terminal (Scratch section)
+    let isHome: Bool                     // permanent Home project (own top section)
 }
 
 /// Maps an agent status to its status-dot color, or nil for "no agent".
@@ -35,6 +36,7 @@ func agentStatusColor(_ status: AgentStatus?) -> NSColor? {
 
 /// A top-level section grouping.
 private enum SidebarSection: Hashable {
+    case home
     case pinned
     case projects
     case scratch
@@ -42,6 +44,7 @@ private enum SidebarSection: Hashable {
 
     var title: String {
         switch self {
+        case .home:       return "Home"
         case .pinned:     return "Pinned"
         case .projects:   return "Projects"
         case .scratch:    return "Scratch"
@@ -136,6 +139,7 @@ final class SidebarView: NSView {
 
     /// The top-level rows currently displayed (headers + visible projects).
     private var topLevel: [OutlineItem.Kind] = []
+    private var homeCount = 0
     private var pinnedCount = 0
     private var projectsCount = 0
     private var scratchCount = 0
@@ -469,21 +473,30 @@ final class SidebarView: NSView {
         let visible = projects.enumerated().filter { _, p in
             query.isEmpty || p.name.lowercased().contains(query)
         }
-        // Sections: Pinned · Projects · Scratch · Hibernating. Scratch terminals
-        // (project-less, ephemeral) get their own group; hibernated projects sit
-        // at the bottom regardless of pin state.
-        let awake = visible.filter { !$0.element.isHibernated }
-        let hibernated = visible.filter { $0.element.isHibernated }
+        // Sections: Home · Pinned · Projects · Scratch · Hibernating. Home always
+        // sits first in its own section (even when hibernated — it dims in place
+        // rather than moving to Hibernating). Scratch terminals (project-less,
+        // ephemeral) get their own group; other hibernated projects sit at the
+        // bottom regardless of pin state.
+        let home = visible.filter { $0.element.isHome }
+        let rest = visible.filter { !$0.element.isHome }
+        let awake = rest.filter { !$0.element.isHibernated }
+        let hibernated = rest.filter { $0.element.isHibernated }
         let scratch = awake.filter { $0.element.isScratch }
         let regular = awake.filter { !$0.element.isScratch }
         let pinned = regular.filter { $0.element.isPinned }
         let unpinned = regular.filter { !$0.element.isPinned }
+        homeCount = home.count
         pinnedCount = pinned.count
         projectsCount = unpinned.count
         scratchCount = scratch.count
         hibernatedCount = hibernated.count
 
         var rows: [OutlineItem.Kind] = []
+        if !home.isEmpty {
+            rows.append(.header(.home))
+            rows += home.map { .project($0.offset) }
+        }
         if !pinned.isEmpty {
             rows.append(.header(.pinned))
             rows += pinned.map { .project($0.offset) }
@@ -593,6 +606,7 @@ extension SidebarView: NSMenuDelegate {
               projects.indices.contains(p) else { return }
 
         let isScratch = projects[p].isScratch
+        let isHome = projects[p].isHome
 
         let rename = NSMenuItem(title: "Rename\u{2026}",
                                 action: #selector(renameProjectMenuClicked(_:)),
@@ -619,15 +633,17 @@ extension SidebarView: NSMenuDelegate {
             menu.addItem(hibernate)
         }
 
-        menu.addItem(.separator())
+        // Home is permanent — it offers settings/hibernation but no removal.
+        if !isHome {
+            menu.addItem(.separator())
 
-        let remove = NSMenuItem(title: isScratch ? "Close Terminal" : "Remove Project\u{2026}",
-                                action: #selector(removeProjectMenuClicked(_:)),
-                                keyEquivalent: "")
-        remove.target = self
-        remove.tag = p
-        remove.isEnabled = projects.count > 1   // the last project can't be removed
-        menu.addItem(remove)
+            let remove = NSMenuItem(title: isScratch ? "Close Terminal" : "Remove Project\u{2026}",
+                                    action: #selector(removeProjectMenuClicked(_:)),
+                                    keyEquivalent: "")
+            remove.target = self
+            remove.tag = p
+            menu.addItem(remove)   // Home is the floor, so any other project is removable
+        }
     }
 }
 
@@ -795,6 +811,7 @@ extension SidebarView: NSOutlineViewDataSource {
     private func section(forProjectAt index: Int) -> SidebarSection {
         guard projects.indices.contains(index) else { return .projects }
         let p = projects[index]
+        if p.isHome { return .home }
         if p.isHibernated { return .hibernated }
         if p.isScratch { return .scratch }
         return p.isPinned ? .pinned : .projects
@@ -838,6 +855,7 @@ extension SidebarView: NSOutlineViewDelegate {
             }
             let count: Int
             switch section {
+            case .home:       count = homeCount
             case .pinned:     count = pinnedCount
             case .projects:   count = projectsCount
             case .scratch:    count = scratchCount

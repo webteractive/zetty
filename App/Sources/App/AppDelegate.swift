@@ -154,7 +154,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
         tvc.agentsProvider = { [weak self] project in
             guard let self else { return .disabled }
-            let settings = self.projectSettings.settings(for: project.rootPath)
+            let settings = self.projectSettings.settings(for: project.settingsKey)
             return SpawnableAgent.spawnConfig(
                 agents: settings?.agents,
                 promptOnNewPane: settings?.promptAgentOnNewPane != false)
@@ -169,10 +169,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
         tvc.autoHibernateAfter = { [weak self] in self?.appConfig.hibernateAfter ?? 0 }
         tvc.autoHibernateDisabled = { [weak self] project in
-            self?.projectSettings.settings(for: project.rootPath)?.autoHibernate == false
+            self?.projectSettings.settings(for: project.settingsKey)?.autoHibernate == false
         }
         tvc.broadcastScopeProvider = { [weak self] project in
-            BroadcastScope(code: self?.projectSettings.settings(for: project.rootPath)?.broadcastScope)
+            BroadcastScope(code: self?.projectSettings.settings(for: project.settingsKey)?.broadcastScope)
         }
         tvc.onSetBroadcastScope = { [weak self] project, scope in
             self?.setBroadcastScope(scope, for: project)
@@ -679,8 +679,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     /// runtime name may already carry the override.
     func resolvedSettings(for project: ProjectRuntime) -> ResolvedProjectSettings {
         ProjectSettingsResolver.resolve(
-            projectSettings.settings(for: project.rootPath),
-            fallbackName: (project.rootPath as NSString).lastPathComponent,
+            projectSettings.settings(for: project.settingsKey),
+            fallbackName: project.isHome ? "Home" : (project.rootPath as NSString).lastPathComponent,
             global: appConfig)
     }
 
@@ -692,14 +692,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     /// broadcast is toggled live, so it skips the rename/re-sort/session re-apply
     /// that `updateProjectSettings` does. `.off` clears the stored field.
     func setBroadcastScope(_ scope: BroadcastScope, for project: ProjectRuntime) {
-        var settings = projectSettings.settings(for: project.rootPath) ?? ProjectSettings()
+        var settings = projectSettings.settings(for: project.settingsKey) ?? ProjectSettings()
         settings.broadcastScope = scope.code
-        projectSettings.set(settings, for: project.rootPath)
+        projectSettings.set(settings, for: project.settingsKey)
         try? projectSettingsStore.save(projectSettings)
     }
 
     func updateProjectSettings(_ new: ProjectSettings, for project: ProjectRuntime) {
-        projectSettings.set(new, for: project.rootPath)
+        projectSettings.set(new, for: project.settingsKey)
         try? projectSettingsStore.save(projectSettings)
         guard let tvc = terminalViewController else { return }
         if let index = tvc.workspace.projects.firstIndex(where: { $0 === project }) {
@@ -736,7 +736,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
         ProjectSettingsSheet.present(
             for: project.name,
-            current: projectSettings.settings(for: project.rootPath) ?? ProjectSettings(),
+            current: projectSettings.settings(for: project.settingsKey) ?? ProjectSettings(),
             fallbackName: (project.rootPath as NSString).lastPathComponent,
             layoutStatus: layoutStatus,
             onSaveLayout: { [weak self] in
@@ -784,7 +784,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         alert.window.initialFirstResponder = field
         alert.beginSheetModal(for: window) { [weak self] response in
             guard let self, response == .alertFirstButtonReturn else { return }
-            var settings = self.projectSettings.settings(for: project.rootPath) ?? ProjectSettings()
+            var settings = self.projectSettings.settings(for: project.settingsKey) ?? ProjectSettings()
             let trimmed = field.stringValue.trimmingCharacters(in: .whitespaces)
             settings.name = trimmed.isEmpty ? nil : trimmed
             self.updateProjectSettings(settings, for: project)
@@ -1143,11 +1143,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             let workspace = try workspaceStore.load()
             tvc.restoreSidebar(collapsed: workspace.sidebarCollapsed, width: workspace.sidebarWidth)
             let runtimes = SessionSnapshot.projectRuntimes(from: workspace)
-            if let model = WorkspaceModel(restoring: runtimes, activeIndex: workspace.activeProjectIndex) {
+            // Empty runtimes → fall back to the default WorkspaceModel already in
+            // tvc (keeps the reap-safety contract: no restored surfaces to own).
+            guard !runtimes.isEmpty else { return false }
+            // `restored(from:)` guarantees a Home exists (injecting one for
+            // pre-Home saved files) and never returns nil for non-empty input.
+            if let model = WorkspaceModel.restored(from: runtimes, activeIndex: workspace.activeProjectIndex) {
                 tvc.restore(workspace: model)
                 return true
             }
-            // Empty runtimes → fall back to the default WorkspaceModel already in tvc.
             return false
         } catch {
             // Corrupt or unreadable — start fresh (tvc already has a default model).
