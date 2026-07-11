@@ -29,5 +29,8 @@ vendor/**/.zig-cache/
 build/
 dist/
 
+# Local process artifacts (brainstorming specs + implementation plans)
+docs/superpowers/
+
 # Misc
 *.log
