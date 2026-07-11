@@ -56,7 +56,7 @@ let project = Project(
                 "CFBundleName": "Zetty",
                 "CFBundleDisplayName": "Zetty",
                 "CFBundleIconFile": "AppIcon",
-                "CFBundleShortVersionString": "0.1.18",
+                "CFBundleShortVersionString": "0.1.19",
                 // Folder-access (TCC) prompt copy: terminals launched in a pane
                 // touch these protected folders, so macOS asks once per folder
                 // until the user grants Full Disk Access. These strings just
