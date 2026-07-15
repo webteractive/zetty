@@ -1,0 +1,157 @@
+import Foundation
+
+/// Everything decidable about a clone before touching the filesystem: the
+/// target directory under `~/.zetty/clones/`, the display name, and the git
+/// branch the clone's work will live on.
+public struct ClonePlan: Equatable, Sendable {
+    public let cloneName: String       // "fork-1"
+    public let projectName: String     // "zetty/fork-1" (sidebar + CLI name)
+    public let sourceRootPath: String
+    public let targetPath: String      // <home>/.zetty/clones/zetty-fork-1
+    public let branchName: String      // "zetty/fork-1"
+
+    public init(cloneName: String, projectName: String, sourceRootPath: String,
+                targetPath: String, branchName: String) {
+        self.cloneName = cloneName
+        self.projectName = projectName
+        self.sourceRootPath = sourceRootPath
+        self.targetPath = targetPath
+        self.branchName = branchName
+    }
+}
+
+public enum CloneError: Error, Equatable, LocalizedError {
+    case invalidName(String)
+    case nameTaken(String)
+
+    public var errorDescription: String? {
+        switch self {
+        case .invalidName(let n):
+            return "invalid clone name \"\(n)\" — use letters, digits, '.', '-', '_' (must start alphanumeric)"
+        case .nameTaken(let n):
+            return "clone name \"\(n)\" is already in use for this project"
+        }
+    }
+}
+
+/// What a clone would lose if deleted right now.
+public enum CloneWorkState: Equatable, Sendable {
+    case clean                     // nothing to save (no commits beyond source, no dirty files)
+    case unfetched                 // committed work the source repo doesn't have yet
+    case dirty(unfetched: Bool)    // uncommitted changes (possibly plus unfetched commits)
+}
+
+/// Pure planning + parsing for project clones. Process spawning (`cp`, `git`)
+/// lives in the app layer (`CloneRunner`) — same split as `GitStatus`.
+public enum CloneSupport {
+
+    /// The zetty-owned directory all clone copies live under.
+    public static func clonesRoot(home: String) -> String {
+        (home as NSString).appendingPathComponent(".zetty/clones")
+    }
+
+    /// Lowercased, non-alphanumeric runs collapsed to single dashes, trimmed.
+    public static func slug(_ name: String) -> String {
+        let lowered = name.lowercased()
+        var out = ""
+        var pendingDash = false
+        for scalar in lowered.unicodeScalars {
+            if CharacterSet.alphanumerics.contains(scalar) && scalar.isASCII {
+                if pendingDash && !out.isEmpty { out.append("-") }
+                pendingDash = false
+                out.unicodeScalars.append(scalar)
+            } else {
+                pendingDash = true
+            }
+        }
+        return out
+    }
+
+    /// "fork-1", "fork-2", … skipping names already in use.
+    public static func defaultCloneName(existing: Set<String>) -> String {
+        var n = 1
+        while existing.contains("fork-\(n)") { n += 1 }
+        return "fork-\(n)"
+    }
+
+    /// Letters/digits/'.'/'-'/'_' only, first character alphanumeric, ≤64 chars.
+    public static func isValidCloneName(_ name: String) -> Bool {
+        guard !name.isEmpty, name.count <= 64,
+              let first = name.unicodeScalars.first,
+              CharacterSet.alphanumerics.contains(first) else { return false }
+        let allowed = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "._-"))
+        return name.unicodeScalars.allSatisfy { allowed.contains($0) && $0.isASCII }
+    }
+
+    /// Validates the clone name (nil → next free default) and derives every
+    /// path/name the clone needs. Filesystem existence checks are the
+    /// caller's job — this stays pure.
+    public static func plan(
+        sourceName: String, sourceRootPath: String, cloneName: String?,
+        takenCloneNames: Set<String>, home: String
+    ) -> Result<ClonePlan, CloneError> {
+        let name: String
+        if let cloneName {
+            guard isValidCloneName(cloneName) else { return .failure(.invalidName(cloneName)) }
+            guard !takenCloneNames.contains(cloneName) else { return .failure(.nameTaken(cloneName)) }
+            name = cloneName
+        } else {
+            name = defaultCloneName(existing: takenCloneNames)
+        }
+        let target = (clonesRoot(home: home) as NSString)
+            .appendingPathComponent("\(slug(sourceName))-\(name)")
+        return .success(ClonePlan(
+            cloneName: name,
+            projectName: "\(sourceName)/\(name)",
+            sourceRootPath: sourceRootPath,
+            targetPath: target,
+            branchName: "zetty/\(name)"
+        ))
+    }
+
+    // MARK: - Git argument builders (run via `git -C <dir>` in the app layer)
+
+    /// Inside the CLONE right after copying: put its work on its own branch.
+    public static func createBranchArgs(branch: String) -> [String] {
+        ["switch", "-c", branch]
+    }
+
+    /// Inside the SOURCE at removal: land the clone's branch as a local branch.
+    public static func fetchBackArgs(clonePath: String, branch: String) -> [String] {
+        ["fetch", clonePath, "\(branch):\(branch)"]
+    }
+
+    /// Inside the CLONE: its current tip commit.
+    public static let tipArgs = ["rev-parse", "HEAD"]
+
+    /// Inside the SOURCE: exit 0 iff the commit object already exists there
+    /// (i.e. the clone's work was already fetched or never diverged).
+    public static func commitExistsArgs(sha: String) -> [String] {
+        ["cat-file", "-e", "\(sha)^{commit}"]
+    }
+
+    /// Trims `rev-parse HEAD` output to a hex SHA; nil for empty/garbage.
+    public static func parseTipSHA(_ output: String) -> String? {
+        let trimmed = output.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty,
+              trimmed.unicodeScalars.allSatisfy({ CharacterSet(charactersIn: "0123456789abcdef").contains($0) })
+        else { return nil }
+        return trimmed
+    }
+
+    // MARK: - Removal
+
+    public static func workState(hasUncommittedChanges: Bool, hasUnfetchedCommits: Bool) -> CloneWorkState {
+        if hasUncommittedChanges { return .dirty(unfetched: hasUnfetchedCommits) }
+        return hasUnfetchedCommits ? .unfetched : .clean
+    }
+
+    /// Belt-and-braces delete guard: only paths STRICTLY inside
+    /// `~/.zetty/clones/` (not the root itself, no `..` traversal) may be
+    /// deleted by zetty.
+    public static func isSafeToDelete(path: String, home: String) -> Bool {
+        let root = clonesRoot(home: home)
+        let normalized = (path as NSString).standardizingPath
+        return normalized.hasPrefix(root + "/") && normalized != root
+    }
+}
