@@ -196,6 +196,47 @@ v2/v3 additions (same design doc):
   New panes only — a preserved zmx session captures env at first creation.
   Sheet editor: KEY=VALUE lines.
 
+### Project clones
+
+An instant APFS copy-on-write fork of a project — untracked files, `.env`,
+`node_modules` all included — checked out onto its own git branch. Persisted
+as `cloneSource: String?` (the source's canonical rootPath, nil for ordinary
+projects) on `Project`/`ProjectRuntime`, decoded tolerantly like `isHome` so
+old `workspace.json` files load unchanged.
+
+The split mirrors `GitStatus`: pure planning in `CloneSupport`
+(`ZettyCore/Clone/`) — `ClonePlan` (target path under
+`~/.zetty/clones/<slug(source)>-<name>`, branch `zetty/<name>`, display name
+`<source>/<name>`), name validation/slugging, git argument builders, and the
+removal classifier (`CloneWorkState`: clean / unfetched / dirty) — versus
+process IO in the app-layer `CloneRunner` (`cp -Rc` with a `cp -R` fallback
+for non-APFS volumes, `git switch -c`, fetch-back, branch/dirty probes,
+guarded delete).
+
+`clone` is a **slow verb**: `AppDelegate.startControlSocket` special-cases it
+(alongside `capture`/`quit`) to plan on main (workspace state), copy on the
+socket queue (a non-APFS fallback `cp -R` can be slow), then register on main
+— `handleOnMain`'s default switch deliberately errors if one of these three
+lands there ("internal: slow verb routed to the main handler").
+
+Removal (`CloneRunner.fetchBack`, wired from both `zetty remove-project
+--fetch` and the GUI's Remove Clone… dialog) runs `git fetch <clonePath>
+<branch>:<branch>` in the SOURCE repo; a failure aborts before anything is
+deleted — nothing is lost on a bad fetch. Deletion itself is guarded by
+`CloneSupport.isSafeToDelete` — strictly inside `~/.zetty/clones/`, never the
+root itself, no `..` traversal.
+
+Settings inherit until the clone gets its own:
+`AppDelegate.resolvedSettings(for:)` uses the clone's own settings file
+wholesale if one exists; otherwise it falls back to the source project's
+settings with `name` cleared (so an inherited file doesn't rename the clone
+to match its source).
+
+Limits: no clones of clones (`cloneSource == nil` required on the source),
+Home/Scratch can't be cloned. `WorkspaceModel.regroup()` slots each clone row
+immediately after its source in sidebar/CLI order; an orphaned clone (source
+removed) falls back to an ordinary position.
+
 ### `ssh://` URL handover
 
 Zetty is a registered macOS `ssh://` handler (`CFBundleURLTypes` in

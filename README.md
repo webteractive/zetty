@@ -25,6 +25,16 @@ by the tool it's running.
   project owns its own tabs, each tab an arbitrarily nested tree of split
   panes. Break any pane out into its own tab. **Drag project rows** to reorder
   them within their section (Pinned / Projects).
+- **Project clones** — right-click a project → **Clone Project…** (or the
+  command palette / `zetty clone`) to fork it into an instant APFS
+  copy-on-write copy under `~/.zetty/clones/<project>-<name>` — every
+  untracked file, `.env`, and `node_modules` included — checked out on its
+  own git branch (`zetty/<name>`); it nests under its source in the sidebar
+  behind a fork glyph. **Remove Clone…** offers **Fetch & Delete** (lands the
+  branch back in the original repo first — merge it with your normal tools)
+  or a plain delete, warning before discarding uncommitted or unfetched work.
+  No clones of clones, Home/Scratch can't be cloned, and non-APFS volumes
+  fall back to a full copy.
 - **Scratch terminals** — spin up a throwaway, project-less terminal rooted at
   home (`⌃⌘N`, the command palette, or `zetty scratch`). They live in their own
   **Scratch** sidebar section, are never saved to the workspace, and every tab
@@ -400,7 +410,9 @@ zetty split --pane 1a2b3c4d --focus      # ...or bring the new pane to front
 zetty break --pane 1a2b3c4d              # move a pane into its own (background) tab
 zetty add-project ~/work/api             # add an existing directory as a project
 zetty new-project ~/work/new --git       # create a folder + add it (optional git init)
+zetty clone --project api --name fork-1  # instant CoW clone, own branch zetty/fork-1
 zetty remove-project api                 # close a project's tabs (no confirmation)
+zetty remove-project api/fork-1 --fetch  # clone: land its branch in the source repo, then delete
 zetty hibernate api                      # free a project's sessions/processes (keeps layout)
 zetty wake api                           # wake a hibernated project (fresh shells)
 zetty scratch                            # background scratch terminal; prints its pane id
