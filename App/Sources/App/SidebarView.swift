@@ -151,6 +151,10 @@ final class SidebarView: NSView {
     private var scratchCount = 0
     private var hibernatedCount = 0
 
+    /// Whether the Hibernating section is collapsed (its dormant project rows
+    /// hidden). Transient — resets to expanded on relaunch, like zoom.
+    private var hibernatedCollapsed = false
+
     // Item-object cache — keyed by Kind so we reuse the same object across
     // reloads (NSOutlineView uses pointer/isEqual identity for expansion state).
     private var itemCache: [OutlineItem.Kind: OutlineItem] = [:]
@@ -468,6 +472,12 @@ final class SidebarView: NSView {
         rebuildOutline()
     }
 
+    /// Toggles the Hibernating section's collapsed state and rebuilds.
+    private func toggleHibernatedCollapsed() {
+        hibernatedCollapsed.toggle()
+        rebuildOutline()
+    }
+
     /// Applies the current filter, rebuilds the section/project rows, reloads,
     /// and restores expansion + selection for the active project.
     private func rebuildOutline() {
@@ -487,7 +497,10 @@ final class SidebarView: NSView {
         let home = visible.filter { $0.element.isHome }
         let rest = visible.filter { !$0.element.isHome }
         let awake = rest.filter { !$0.element.isHibernated }
+        // Hibernated projects are dormant — sorted by name (display order only;
+        // real indices are preserved, so no model mutation).
         let hibernated = rest.filter { $0.element.isHibernated }
+            .sorted { $0.element.name.localizedCaseInsensitiveCompare($1.element.name) == .orderedAscending }
         let scratch = awake.filter { $0.element.isScratch }
         let regular = awake.filter { !$0.element.isScratch }
         // A clone with a visible, awake source renders attached — spliced in right
@@ -534,7 +547,9 @@ final class SidebarView: NSView {
         }
         if !hibernated.isEmpty {
             rows.append(.header(.hibernated))
-            rows += hibernated.map { .project($0.offset) }
+            if !hibernatedCollapsed {
+                rows += hibernated.map { .project($0.offset) }
+            }
         }
         topLevel = rows
 
@@ -909,7 +924,15 @@ extension SidebarView: NSOutlineViewDelegate {
             case .scratch:    count = scratchCount
             case .hibernated: count = hibernatedCount
             }
-            cellView.configure(title: section.title, count: count)
+            // Only the Hibernating section collapses (dormant rows tuck away).
+            let collapsible = section == .hibernated
+            cellView.configure(
+                title: section.title,
+                count: count,
+                collapsible: collapsible,
+                collapsed: collapsible && hibernatedCollapsed,
+                onToggle: collapsible ? { [weak self] in self?.toggleHibernatedCollapsed() } : nil
+            )
             return cellView
 
         case .project(let p):
@@ -1003,13 +1026,29 @@ extension SidebarView: NSOutlineViewDelegate {
 // MARK: - HeaderCellView
 
 /// A section header row: uppercase title on the left, count on the right.
+/// A collapsible section (Hibernating) also shows a leading disclosure chevron
+/// and captures clicks anywhere in the row via a transparent overlay button.
 private final class HeaderCellView: NSTableCellView {
 
+    /// Leading disclosure chevron, shown only for collapsible sections.
+    private let chevronView = NSImageView()
     private let titleLabel = NSTextField(labelWithString: "")
     private let countLabel = NSTextField(labelWithString: "")
+    /// Full-bleed transparent button that toggles a collapsible section — a
+    /// button (not a gesture recognizer) so clicks land reliably inside the
+    /// outline view, mirroring the project row's pin button.
+    private let toggleButton = NSButton()
+    private var chevronWidth: NSLayoutConstraint!
+    private var chevronGap: NSLayoutConstraint!
+    private var onToggle: (() -> Void)?
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
+
+        chevronView.imageScaling = .scaleProportionallyDown
+        chevronView.contentTintColor = ZTheme.current.fg3Color
+        chevronView.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(chevronView)
 
         titleLabel.font = ZTheme.chromeFont(size: 10.5, weight: .bold)
         titleLabel.textColor = ZTheme.current.fg3Color
@@ -1022,18 +1061,55 @@ private final class HeaderCellView: NSTableCellView {
         countLabel.translatesAutoresizingMaskIntoConstraints = false
         addSubview(countLabel)
 
+        toggleButton.title = ""
+        toggleButton.isBordered = false
+        toggleButton.setButtonType(.momentaryChange)
+        toggleButton.focusRingType = .none
+        toggleButton.target = self
+        toggleButton.action = #selector(toggleClicked)
+        toggleButton.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(toggleButton)   // topmost — captures clicks, draws nothing
+
+        chevronWidth = chevronView.widthAnchor.constraint(equalToConstant: 0)
+        chevronGap = titleLabel.leadingAnchor.constraint(equalTo: chevronView.trailingAnchor, constant: 0)
         NSLayoutConstraint.activate([
-            titleLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 4),
+            chevronView.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 4),
+            chevronView.centerYAnchor.constraint(equalTo: titleLabel.centerYAnchor),
+            chevronWidth,
+            chevronGap,
             titleLabel.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -3),
             countLabel.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
             countLabel.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -3),
+            toggleButton.leadingAnchor.constraint(equalTo: leadingAnchor),
+            toggleButton.trailingAnchor.constraint(equalTo: trailingAnchor),
+            toggleButton.topAnchor.constraint(equalTo: topAnchor),
+            toggleButton.bottomAnchor.constraint(equalTo: bottomAnchor),
         ])
     }
 
     @available(*, unavailable)
     required init?(coder _: NSCoder) { fatalError("not supported") }
 
-    func configure(title: String, count: Int) {
+    @objc private func toggleClicked() { onToggle?() }
+
+    func configure(title: String, count: Int,
+                   collapsible: Bool = false,
+                   collapsed: Bool = false,
+                   onToggle: (() -> Void)? = nil) {
+        self.onToggle = onToggle
+        toggleButton.isHidden = !collapsible
+        chevronView.isHidden = !collapsible
+        chevronWidth.constant = collapsible ? 9 : 0
+        chevronGap.constant = collapsible ? 3 : 0
+        if collapsible {
+            let symbol = collapsed ? "chevron.right" : "chevron.down"
+            chevronView.image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)?
+                .withSymbolConfiguration(NSImage.SymbolConfiguration(pointSize: 8, weight: .semibold))
+            chevronView.contentTintColor = ZTheme.current.fg3Color
+        } else {
+            chevronView.image = nil
+        }
+
         // Uppercase with light letter-spacing (handoff section headers).
         titleLabel.attributedStringValue = NSAttributedString(
             string: title.uppercased(),

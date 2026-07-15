@@ -51,6 +51,11 @@ by the tool it's running.
   is closable — closing the last returns you to your first pinned project.
   Clear them all at once with **Close All Scratch Terminals** (`zetty
   scratch-clear`).
+- **Hibernating projects** — right-click a project → **Hibernate Project** (or
+  `zetty hibernate`) to free its sessions/processes while keeping its layout.
+  Hibernated projects collect at the bottom of the sidebar in a **Hibernating**
+  section that is **collapsible** (click the header to tuck the dormant rows
+  away) and **sorted by name**.
 - **Live status bar** — the bottom strip tracks the **focused pane**: its
   working directory (updates as you `cd`), git branch/ahead-behind/changes,
   and the shell, alongside the color scheme and libghostty version.
