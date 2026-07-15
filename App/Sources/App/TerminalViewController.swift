@@ -1443,6 +1443,13 @@ final class TerminalViewController: NSViewController {
         guard source.cloneSource == nil else {
             return .failure(.protocolError("\"\(source.name)\" is already a clone — clone the original instead"))
         }
+        // Legacy pre-Home workspaces can have ORDINARY projects rooted at ~ —
+        // the isHome flag alone doesn't catch those, and cloning the home
+        // directory copies the whole account (TCC-protected ~/Library, GBs).
+        guard CloneSupport.isCloneableSource(path: source.rootPath, home: NSHomeDirectory()) else {
+            return .failure(.protocolError(
+                "\"\(source.name)\" is rooted at your home directory — cloning it would copy your entire account. Clone a project folder instead."))
+        }
         // Bare clone names already taken for this source ("src/fork-1" → "fork-1").
         let taken = Set(workspace.clones(of: source).map {
             String($0.name.dropFirst(source.name.count + 1))

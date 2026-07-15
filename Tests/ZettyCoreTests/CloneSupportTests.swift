@@ -88,3 +88,44 @@ import Foundation
     #expect(!CloneSupport.isSafeToDelete(path: "/Users/g/.zetty/clones/../hooks", home: home)) // traversal
     #expect(!CloneSupport.isSafeToDelete(path: "/Users/g/.zetty/clonesX/z", home: home))     // prefix trick
 }
+
+// MARK: - Source eligibility + copy-noise tolerance (v0.1.20 hotfix)
+
+@Test func homeAndAncestorsAreNotCloneableSources() {
+    let home = "/Users/regine"
+    #expect(!CloneSupport.isCloneableSource(path: "/Users/regine", home: home))    // home itself
+    #expect(!CloneSupport.isCloneableSource(path: "/Users/regine/", home: home))   // trailing slash
+    #expect(!CloneSupport.isCloneableSource(path: "/Users", home: home))           // ancestor
+    #expect(!CloneSupport.isCloneableSource(path: "/", home: home))                // root
+    #expect(CloneSupport.isCloneableSource(path: "/Users/regine/work/api", home: home))
+    #expect(CloneSupport.isCloneableSource(path: "/Users/regineX", home: home))    // prefix trick
+}
+
+@Test func socketAndFifoOnlyCopyErrorsAreTolerable() {
+    let socketsOnly = """
+    cp: /src/.cursor/projects/worker.sock is a socket (not copied).
+    cp: /src/Library/Herd/herd84.sock is a socket (not copied).
+    """
+    #expect(CloneSupport.copyErrorsAreTolerable(socketsOnly))
+    let fifo = "cp: /src/tmp/pipe is a fifo (not copied)."
+    #expect(CloneSupport.copyErrorsAreTolerable(fifo))
+    let mixed = """
+    cp: /src/a.sock is a socket (not copied).
+    cp: /src/Library: unable to copy extended attributes: Operation not permitted
+    """
+    #expect(!CloneSupport.copyErrorsAreTolerable(mixed))
+    // Nonzero exit with NO stderr is unexplained — never tolerable.
+    #expect(!CloneSupport.copyErrorsAreTolerable(""))
+    #expect(!CloneSupport.copyErrorsAreTolerable("  \n \n"))
+}
+
+@Test func summarizeCopyErrorsCapsLongDumps() {
+    let short = "cp: one error"
+    #expect(CloneSupport.summarizeCopyErrors(short) == short)
+    let long = (1...40).map { "cp: error line \($0)" }.joined(separator: "\n")
+    let summary = CloneSupport.summarizeCopyErrors(long, maxLines: 12)
+    #expect(summary.hasPrefix("cp: error line 1\n"))
+    #expect(summary.contains("cp: error line 12"))
+    #expect(!summary.contains("cp: error line 13"))
+    #expect(summary.hasSuffix("… and 28 more errors"))
+}

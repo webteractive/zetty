@@ -36,15 +36,21 @@ enum CloneRunner {
             return .failure(.copyFailed("target already exists: \(plan.targetPath)"))
         }
 
+        // cp exits nonzero when ANY entry fails; sockets/fifos always fail
+        // (they can't be copied and are recreatable runtime artifacts), so a
+        // copy whose only errors are those still counts as success — without
+        // this, one stray .sock file forces a pointless full-copy fallback.
         var usedCoW = true
-        if runProcess("/bin/cp", ["-Rc", plan.sourceRootPath, plan.targetPath]) != nil {
+        if let error = runProcess("/bin/cp", ["-Rc", plan.sourceRootPath, plan.targetPath]),
+           !CloneSupport.copyErrorsAreTolerable(error) {
             // clonefile unavailable (non-APFS) or failed midway — clean up and
             // fall back to a byte copy.
             try? fm.removeItem(atPath: plan.targetPath)
             usedCoW = false
-            if let error = runProcess("/bin/cp", ["-R", plan.sourceRootPath, plan.targetPath]) {
+            if let fallbackError = runProcess("/bin/cp", ["-R", plan.sourceRootPath, plan.targetPath]),
+               !CloneSupport.copyErrorsAreTolerable(fallbackError) {
                 try? fm.removeItem(atPath: plan.targetPath)
-                return .failure(.copyFailed(error))
+                return .failure(.copyFailed(CloneSupport.summarizeCopyErrors(fallbackError)))
             }
         }
 

@@ -243,7 +243,13 @@ path as the new-pane agent chooser. CLI `zetty clone` never injects a
 command.
 
 Limits: no clones of clones (`cloneSource == nil` required on the source),
-Home/Scratch can't be cloned. `WorkspaceModel.regroup()` slots each clone row
+Home/Scratch can't be cloned, and neither can any project whose rootPath IS
+the home directory or an ancestor of it (`CloneSupport.isCloneableSource` —
+legacy pre-Home workspaces have ordinary projects rooted at ~, and cloning ~
+drags in the whole TCC-protected account). `cp` copy noise from sockets/fifos
+is tolerated (`copyErrorsAreTolerable`) — without that, one stray `.sock`
+file forces a pointless full-copy fallback; real failures surface truncated
+via `summarizeCopyErrors`. `WorkspaceModel.regroup()` slots each clone row
 immediately after its source in sidebar/CLI order; an orphaned clone (source
 removed) falls back to an ordinary position.
 

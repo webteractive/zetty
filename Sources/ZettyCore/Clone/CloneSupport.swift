@@ -139,6 +139,44 @@ public enum CloneSupport {
         return trimmed
     }
 
+    // MARK: - Source eligibility + copy-noise tolerance
+
+    /// Whether a directory is safe to clone at all. The user's home directory
+    /// — or any ancestor of it — is not: copying it drags in the whole
+    /// account (TCC-protected ~/Library, sockets, potentially hundreds of
+    /// GB). Legacy pre-Home workspaces have ordinary projects rooted at ~,
+    /// so this must be checked by PATH, not just the `isHome` flag.
+    public static func isCloneableSource(path: String, home: String) -> Bool {
+        let p = (path as NSString).standardizingPath
+        let h = (home as NSString).standardizingPath
+        return p != "/" && p != h && !h.hasPrefix(p + "/")
+    }
+
+    /// `cp` exits nonzero when ANY entry fails, but some failures are
+    /// expected noise: sockets and fifos can't be copied by cp at all and
+    /// are recreatable runtime artifacts (dev dirs are full of `.sock`
+    /// files). A copy whose only errors are those still counts as success.
+    /// Nonzero exit with no stderr at all is unexplained — never tolerable.
+    public static func copyErrorsAreTolerable(_ stderr: String) -> Bool {
+        let lines = stderr.split(separator: "\n")
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty }
+        guard !lines.isEmpty else { return false }
+        return lines.allSatisfy {
+            $0.hasSuffix("is a socket (not copied).") || $0.hasSuffix("is a fifo (not copied).")
+        }
+    }
+
+    /// Caps a cp stderr dump to something an alert can actually show.
+    public static func summarizeCopyErrors(_ stderr: String, maxLines: Int = 12) -> String {
+        let lines = stderr.split(separator: "\n", omittingEmptySubsequences: true)
+        guard lines.count > maxLines else {
+            return stderr.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        return lines.prefix(maxLines).joined(separator: "\n")
+            + "\n… and \(lines.count - maxLines) more errors"
+    }
+
     // MARK: - Removal
 
     public static func workState(hasUncommittedChanges: Bool, hasUnfetchedCommits: Bool) -> CloneWorkState {
