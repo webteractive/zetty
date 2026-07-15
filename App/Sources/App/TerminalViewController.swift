@@ -1548,10 +1548,10 @@ final class TerminalViewController: NSViewController {
         }
     }
 
-    private func presentCloneError(_ text: String) {
+    private func presentCloneError(_ text: String, title: String = "Clone failed") {
         let alert = NSAlert()
         alert.alertStyle = .warning
-        alert.messageText = "Clone failed"
+        alert.messageText = title
         alert.informativeText = text
         alert.addButton(withTitle: "OK")
         if let window = view.window { alert.beginSheetModal(for: window, completionHandler: nil) }
@@ -1623,49 +1623,62 @@ final class TerminalViewController: NSViewController {
         }
     }
 
-    /// Removes the named project (CLI `remove-project`, case-insensitive),
-    /// closing all of its tabs/panes and ending their zmx sessions. No
-    /// confirmation dialog — the CLI call IS the confirmation. Returns an
-    /// error message, or nil on success.
-    func removeProjectNamed(_ name: String, fetch: Bool = false, discard: Bool = false) -> String? {
+    /// Outcome of planning a CLI `remove-project` (see `planRemoveProject`):
+    /// either resolved immediately on main (an ordinary project is removed
+    /// right there, or the request is invalid), or a clone that needs
+    /// off-main git work before it can be removed — see
+    /// `AppDelegate.startControlSocket`'s `.removeProject` case, which does
+    /// that work on the socket queue so a slow `git fetch` can't beachball
+    /// the app.
+    enum RemoveProjectPlan {
+        case failed(String)
+        case completed
+        case clonePending(cloneID: UUID, cloneRoot: String, sourceRoot: String)
+    }
+
+    /// Phase 1 of CLI `remove-project` (case-insensitive), main thread only:
+    /// resolves + validates the target against workspace state. An ordinary
+    /// project is removed here and now — closing all of its tabs/panes and
+    /// ending their zmx sessions, no confirmation dialog (the CLI call IS the
+    /// confirmation). A clone target defers its git work to phase 2/3 instead
+    /// of running it here, off-main.
+    func planRemoveProject(name: String, fetch: Bool, discard: Bool) -> RemoveProjectPlan {
         let matches = workspace.projects.enumerated().filter {
             $0.element.name.lowercased() == name.lowercased()
         }
         guard let match = matches.first else {
-            return "no project named \"\(name)\""
+            return .failed("no project named \"\(name)\"")
         }
         guard matches.count == 1 else {
-            return "\(matches.count) projects named \"\(name)\" — remove it via the sidebar"
+            return .failed("\(matches.count) projects named \"\(name)\" — remove it via the sidebar")
         }
         guard !match.element.isHome else {
-            return "Home can't be removed"
+            return .failed("Home can't be removed")
         }
 
         guard let sourceRoot = match.element.cloneSource else {
             // Ordinary project — the clone flags don't apply.
             guard !fetch, !discard else {
-                return "\"\(name)\" is not a clone — --fetch/--discard don't apply"
+                return .failed("\"\(name)\" is not a clone — --fetch/--discard don't apply")
             }
             performRemoveProject(at: match.offset)
-            return nil
+            return .completed
         }
+        return .clonePending(cloneID: match.element.id, cloneRoot: match.element.rootPath,
+                              sourceRoot: sourceRoot)
+    }
 
-        // Clone: no dialogs on the CLI — unsaved work demands an explicit flag.
-        let cloneRoot = match.element.rootPath
-        let state = CloneRunner.probeWorkState(cloneRoot: cloneRoot, sourceRoot: sourceRoot)
-        if state != .clean && !fetch && !discard {
-            return "clone has unsaved work — pass --fetch to land its branch in the original first, or --discard to delete anyway"
+    /// Phase 3 of CLI `remove-project` for a clone, main thread only: called
+    /// after phase 2's off-main state/flag policy check has passed (and any
+    /// requested fetch-back has succeeded). Re-resolves the clone BY ID —
+    /// it may have moved or been removed entirely while phase 2 ran — then
+    /// removes it and deletes its directory. Returns an error message, or
+    /// nil on success.
+    func completeRemoveClone(cloneID: UUID, cloneRoot: String) -> String? {
+        guard let index = workspace.projects.firstIndex(where: { $0.id == cloneID }) else {
+            return "the clone was already removed"
         }
-        if fetch {
-            guard let branch = CloneRunner.currentBranch(in: cloneRoot) else {
-                return "fetch-back failed — the clone has no current branch (detached HEAD?); nothing was deleted"
-            }
-            if let error = CloneRunner.fetchBack(sourceRoot: sourceRoot, clonePath: cloneRoot,
-                                                 branch: branch) {
-                return "fetch-back failed — nothing was deleted: \(error)"
-            }
-        }
-        performRemoveProject(at: match.offset)
+        performRemoveProject(at: index)
         if let error = CloneRunner.deleteCloneDirectory(at: cloneRoot) {
             return "clone removed from zetty, but its directory couldn't be deleted: \(error)"
         }
@@ -2440,19 +2453,21 @@ final class TerminalViewController: NSViewController {
                 // against project renames (never derived from the display name).
                 guard let branch = CloneRunner.currentBranch(in: cloneRoot) else {
                     self.presentCloneError("Fetch-back failed — the clone has no current"
-                        + " branch (detached HEAD?). Nothing was deleted.")
+                        + " branch (detached HEAD?). Nothing was deleted.",
+                        title: "Remove clone failed")
                     return
                 }
                 if let error = CloneRunner.fetchBack(sourceRoot: sourceRoot,
                                                      clonePath: cloneRoot, branch: branch) {
-                    self.presentCloneError("Fetch-back failed — nothing was deleted:\n\(error)")
+                    self.presentCloneError("Fetch-back failed — nothing was deleted:\n\(error)",
+                        title: "Remove clone failed")
                     return
                 }
             }
             self.performRemoveProject(at: current)
             if let error = CloneRunner.deleteCloneDirectory(at: cloneRoot) {
                 self.presentCloneError("The clone was removed from zetty, but its directory"
-                    + " couldn't be deleted:\n\(error)")
+                    + " couldn't be deleted:\n\(error)", title: "Remove clone failed")
             }
         }
         if let window = view.window {

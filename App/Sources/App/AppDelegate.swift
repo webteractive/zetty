@@ -1123,6 +1123,52 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                         }
                     }
                 }
+            case .removeProject(let name, let fetch, let discard):
+                // Plan on main (workspace state); a clone's git probe/fetch-back
+                // runs on this socket queue so a slow `git fetch` can't beachball
+                // the app; the actual removal happens back on main.
+                let planned = DispatchQueue.main.sync { () -> Result<TerminalViewController.RemoveProjectPlan, ControlError> in
+                    guard let tvc = self.terminalViewController else {
+                        return .failure(.protocolError("Zetty is still starting up"))
+                    }
+                    return .success(tvc.planRemoveProject(name: name, fetch: fetch, discard: discard))
+                }
+                switch planned {
+                case .failure(let error):
+                    return .error(error.localizedDescription)
+                case .success(.failed(let message)):
+                    return .error(message)
+                case .success(.completed):
+                    return .ok
+                case .success(.clonePending(let cloneID, let cloneRoot, let sourceRoot)):
+                    // No dialogs on the CLI — unsaved work demands an explicit flag.
+                    let state = CloneRunner.probeWorkState(cloneRoot: cloneRoot, sourceRoot: sourceRoot)
+                    if state != .clean && !fetch && !discard {
+                        return .error(
+                            "clone has unsaved work — pass --fetch to land its branch in the"
+                            + " original first, or --discard to delete anyway")
+                    }
+                    if fetch {
+                        guard let branch = CloneRunner.currentBranch(in: cloneRoot) else {
+                            return .error(
+                                "fetch-back failed — the clone has no current branch"
+                                + " (detached HEAD?); nothing was deleted")
+                        }
+                        if let error = CloneRunner.fetchBack(sourceRoot: sourceRoot, clonePath: cloneRoot,
+                                                             branch: branch) {
+                            return .error("fetch-back failed — nothing was deleted: \(error)")
+                        }
+                    }
+                    return DispatchQueue.main.sync {
+                        guard let tvc = self.terminalViewController else {
+                            return .error("Zetty is shutting down")
+                        }
+                        if let message = tvc.completeRemoveClone(cloneID: cloneID, cloneRoot: cloneRoot) {
+                            return .error(message)
+                        }
+                        return .ok
+                    }
+                }
             default:
                 return DispatchQueue.main.sync { self.handleOnMain(request) }
             }
@@ -1162,11 +1208,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             case .success(let pane): return .pane(pane)
             case .failure(let error): return .error(error.localizedDescription)
             }
-        case .removeProject(let name, let fetch, let discard):
-            if let message = tvc.removeProjectNamed(name, fetch: fetch, discard: discard) {
-                return .error(message)
-            }
-            return .ok
         case .hibernateProject(let name):
             if let message = tvc.hibernateProjectNamed(name) { return .error(message) }
             return .ok
@@ -1198,7 +1239,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 return .error(message)
             }
             return .ok
-        case .capture, .quit, .cloneProject:
+        case .capture, .quit, .cloneProject, .removeProject:
             // Slow verbs — handled on the socket queue in startControlSocket.
             return .error("internal: slow verb routed to the main handler")
         }
