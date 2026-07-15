@@ -644,14 +644,18 @@ extension SidebarView: NSMenuDelegate {
         menu.addItem(rename)
 
         // Scratch terminals are project-less and ephemeral: no per-project
-        // settings and no hibernation.
+        // settings and no hibernation. Clones have no settings either — they
+        // inherit the source project's (a settings file of their own would
+        // break that inheritance).
         if !isScratch {
-            let settings = NSMenuItem(title: "Project Settings\u{2026}",
-                                      action: #selector(projectSettingsMenuClicked(_:)),
-                                      keyEquivalent: "")
-            settings.target = self
-            settings.tag = p
-            menu.addItem(settings)
+            if !projects[p].isClone {
+                let settings = NSMenuItem(title: "Project Settings\u{2026}",
+                                          action: #selector(projectSettingsMenuClicked(_:)),
+                                          keyEquivalent: "")
+                settings.target = self
+                settings.tag = p
+                menu.addItem(settings)
+            }
 
             let hibernate = NSMenuItem(
                 title: projects[p].isHibernated ? "Wake Project" : "Hibernate Project",

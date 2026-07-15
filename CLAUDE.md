@@ -226,12 +226,13 @@ deleted — nothing is lost on a bad fetch. Deletion itself is guarded by
 `CloneSupport.isSafeToDelete` — strictly inside `~/.zetty/clones/`, never the
 root itself, no `..` traversal.
 
-Settings inherit until the clone gets its own:
-`AppDelegate.resolvedSettings(for:)` uses the clone's own settings file
-wholesale if one exists; otherwise it falls back to the source project's
-settings with `name` and `icon` cleared (an inherited name would rename the
-clone to match its source; an inherited icon would suppress the fork glyph
-that marks the row as a clone).
+Clones inherit the source project's settings and offer no Project Settings…
+of their own (the sidebar context menu hides it — a clone-owned settings
+file would break inheritance). `AppDelegate.resolvedSettings(for:)` falls
+back to the source's settings with `name` and `icon` cleared (an inherited
+name would rename the clone to match its source; an inherited icon would
+suppress the fork glyph that marks the row as a clone). A clone-keyed
+settings entry, if one ever exists on disk, still wins wholesale.
 
 The clone sheet (`promptCloneProject`) shows an **Open with** picker when the
 SOURCE project has agents set (`agentsProvider`, Project Settings → Agents):

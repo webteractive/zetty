@@ -36,8 +36,9 @@ by the tool it's running.
   **Remove Clone…** offers **Fetch & Delete** (lands the
   branch back in the original repo first — merge it with your normal tools)
   or a plain delete, warning before discarding uncommitted or unfetched work.
-  No clones of clones, Home/Scratch can't be cloned, and non-APFS volumes
-  fall back to a full copy.
+  Clones inherit the source project's settings (env, theme, agents) and have
+  no Project Settings of their own. No clones of clones, Home/Scratch can't
+  be cloned, and non-APFS volumes fall back to a full copy.
 - **Scratch terminals** — spin up a throwaway, project-less terminal rooted at
   home (`⌃⌘N`, the command palette, or `zetty scratch`). They live in their own
   **Scratch** sidebar section, are never saved to the workspace, and every tab
