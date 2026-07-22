@@ -1,7 +1,7 @@
-# Clone merge-back — instruction + automated merge
+# Clone merge-back — instruction + "Update from Source" action
 
 **Date:** 2026-07-20
-**Status:** Approved design
+**Status:** Approved design (revised — feature-branch flow)
 
 ## Problem
 
@@ -12,132 +12,132 @@ Zetty puts the clone's work on its own branch `<name>` via `git switch -c
 
 1. They commit onto `main` in the clone and try to push — producing two
    divergent `main`s (and worse, the clone shares the source's `origin`).
-2. When the repo has **no origin remote**, "commit and push" has nowhere to go
-   at all.
+2. When the repo has **no origin remote**, "commit and push" has nowhere to go.
 
 The current `CloneWarningBanner` states the *what* ("commit and push, or merge
-back into the source branch") but not the *how*, and there is no in-app action
-to actually integrate the work.
+back into the source branch") but not the *how*, and there is no in-app help
+for the actual integration workflow.
+
+## Intended workflow (feature-branch flow)
+
+For a git clone, the safe path is:
+
+1. Work on the clone's own branch `<name>`.
+2. **Update from source:** merge the source's latest branch into the clone's
+   branch, so the clone is current — **resolve any conflicts here, in the
+   clone** (where your work and full context live).
+3. **PR:** push the clone's branch (`git push -u origin <name>`) and open a pull
+   request against the source's default branch. *(Primary integration path.)*
+4. **No origin (fallback):** merge the clone's branch into the source locally.
+   Documented, not automated.
 
 ## Goals
 
-- Teach the safe, branch-based integration path in-app and in docs.
-- Provide a safe automated "Merge into Source" action for the common case.
-- Handle non-git clones cleanly (they can't merge at all).
+- Teach this workflow in-app (banner popover) and in docs.
+- Provide one safe automated action, **Update from Source** (source → clone),
+  that fetches the source's branch and merges it into the clone, leaving any
+  conflicts in the clone for the user to resolve.
+- Handle non-git clones cleanly (nothing to update/merge).
 
 ## Non-goals
 
-- Resolving merge conflicts automatically.
-- Copying files back for non-git clones.
-- Removing the clone as part of merging (merge ≠ remove).
+- Automating the PR (that's the user's `git push` + host UI).
+- Automating the no-origin local merge-into-source (documented fallback only).
+- Removing the clone (Update from Source never deletes anything).
 
 ## Design
 
 ### 1. Pure logic — `Sources/ZettyCore/Clone/CloneSupport.swift` (unit-tested)
 
-- **Instruction text:** `mergeGuide(branch:clonePath:sourcePath:defaultBranch:)`
-  returns structured steps for both integration paths:
-  - **With origin (PR):** `git push -u origin <branch>` in the clone, then open a
-    PR against the source's default branch.
-  - **No origin (local merge):**
-    ```
-    # in the SOURCE repo
-    git fetch <clonePath> <branch>
-    git switch <defaultBranch>
-    git merge <branch>
-    ```
-- **Merge arg builders (run via `git -C <dir>` in the app layer):**
-  - `sourceStatusArgs` → `["status", "--porcelain"]`
-  - `currentBranchArgs` → `["rev-parse", "--abbrev-ref", "HEAD"]`
+- **Readiness classifier** `UpdateReadiness`:
+  - `.notGit` — clone or source is not a git work tree
+  - `.cloneDirty` — clone has uncommitted changes (commit before pulling source in)
+  - `.ready`
+  `updateReadiness(isCloneGitWorkTree:isSourceGitWorkTree:cloneDirty:)`.
+- **Git arg builders** (run via `git -C <dir>`):
   - `isGitWorkTreeArgs` → `["rev-parse", "--is-inside-work-tree"]`
-  - `mergeFetchArgs(clonePath:)` → `["fetch", clonePath, "HEAD"]` — fetch the
-    clone's **actual current HEAD** into `FETCH_HEAD` (no named refspec), so it
-    works whether the clone is on `<name>` or fell back to `main`.
-  - `mergeArgs` → `["merge", "--no-edit", "FETCH_HEAD"]`
-  - `mergeAbortArgs` → `["merge", "--abort"]`
-- **Readiness classifier** `MergeReadiness`:
-  - `.notGit` — clone is not a git work tree
-  - `.nothingToMerge` — no committed work beyond the source
-  - `.cloneDirty` — clone has uncommitted changes (only commits merge)
-  - `.sourceDirty` — source working tree is dirty (refuse; merge touches it)
-  - `.ready(fastForward: Bool)`
-  Derived from the probes + existing `CloneWorkState`.
+  - `cloneStatusArgs` → `["status", "--porcelain"]`
+  - `updateFetchArgs(sourcePath:)` → `["fetch", sourcePath, "HEAD"]` — fetch the
+    **source's current branch tip** into `FETCH_HEAD`.
+  - `alreadyCurrentArgs` → `["merge-base", "--is-ancestor", "FETCH_HEAD", "HEAD"]`
+    (exit 0 ⇒ clone already contains the source tip ⇒ up to date)
+  - `updateMergeArgs` → `["merge", "--no-edit", "FETCH_HEAD"]`
+  - `conflictFilesArgs` → `["diff", "--name-only", "--diff-filter=U"]`
+- **Instruction text** `SyncGuide` +
+  `syncGuide(branch:clonePath:sourcePath:defaultBranch:)`:
+  - `updateStep` — merge source's latest into the clone (or "use Update from Source")
+  - `prSteps` — `git push -u origin <branch>`, open a PR against `<defaultBranch>`
+  - `localFallbackSteps` — no-origin: `cd <sourcePath>`, `git fetch <clonePath>
+    <branch>`, `git switch <defaultBranch>`, `git merge <branch>`
 
 ### 2. Process IO — `App/Sources/App/CloneRunner.swift` (off-main)
 
-`merge(...)`:
-1. Probe: is the clone a git work tree? → `.notGit` refusal.
-2. Probe source `status --porcelain` + current branch; refuse on `.sourceDirty`.
-3. Refuse on `.cloneDirty` ("commit in the clone first") / `.nothingToMerge`.
-4. `git -C source fetch <clonePath> HEAD` → `git -C source merge --no-edit FETCH_HEAD`.
-5. **On conflict:** `git -C source merge --abort`, report the conflicting files.
-   Never leave the source repo mid-merge.
+`updateFromSource(cloneRoot:sourceRoot:) -> UpdateOutcome`:
+1. Probe clone + source are git work trees → `.refused(.notGit)`.
+2. Probe clone `status --porcelain`; refuse if dirty (`.cloneDirty`).
+3. `git -C clone fetch <sourceRoot> HEAD` → `.failed` on error.
+4. `git -C clone merge-base --is-ancestor FETCH_HEAD HEAD` exit 0 → `.upToDate`.
+5. `git -C clone merge --no-edit FETCH_HEAD`:
+   - status 0 → `.updated(summary)`
+   - else → list conflict files; **leave the merge in progress in the clone**
+     (do NOT abort) → `.conflicts(files)`. This is the intended "fix conflict
+     in the clone" step. If git failed without conflict files, abort and
+     `.failed`.
 
-The clone's current branch is probed (in the clone) only for display/messaging.
-Runs on a background/socket queue like the copy, so the UI never blocks. Returns
-a structured outcome (merged fast-forward / merged with commit / refused-reason /
-conflict-with-files).
+`UpdateOutcome`: `.updated(summary:)` · `.upToDate` · `.conflicts(files:)` ·
+`.refused(String)` · `.failed(String)`.
+
+**Conflict policy — leave-conflicts (clone side).** The opposite of a
+merge-into-source: because we merge INTO the disposable clone, leaving conflict
+markers there for the user to resolve is exactly the workflow. Standard `git
+merge` behavior; the clone is the user's working branch.
 
 ### 3. Instruction UI — `App/Sources/App/CloneWarningBanner.swift`
 
 - Trailing accent-text button **"How do I merge this back?"** (`ZTheme` accent,
-  mono font per the terminal-adjacent rule). Banner stays one line at 26pt.
-- Click opens an `NSPopover` (following the `IconPicker` popover pattern) hosting
-  a compact `CloneMergeGuideView`, filled with **this clone's real branch and
-  source path** from `mergeGuide(...)`.
-- **Non-git clone:** hide the button entirely — there is no version control to
-  merge; the base data-loss warning already applies (more strongly).
-
-Banner construction in `TerminalViewController.rebuildSurfaceNodeView()` gains
-the clone's branch name (derived: component of `name` after the source prefix =
-`ClonePlan.branchName`), clone path (`activeProject.rootPath`), and source path
-(`activeProject.cloneSource`).
+  mono font). Opens an `NSPopover` (IconPicker pattern) hosting
+  `CloneMergeGuideView`, filled with this clone's real branch + paths from
+  `syncGuide(...)`: **1) update from source & fix conflicts, 2) push + PR, 3)
+  no-origin local fallback**.
+- **Non-git clone:** hide the button (nothing to merge).
 
 ### 4. Automated action surfaces
 
-- **GUI:** clone-row context menu **"Merge into Source…"** + a button in the
-  popover. Confirmation shows target branch + ff-vs-merge-commit + warnings;
-  success/refusal alert afterward. Hidden/disabled for non-git clones.
-- **CLI:** `zetty merge-clone <name>` as a **slow verb** — routed in
-  `AppDelegate.startControlSocket` alongside `clone`/`capture`/`quit` (plan on
-  main, run fetch+merge off-main, report on main); `handleOnMain`'s default
-  errors if it lands there. New `ControlCommand.mergeClone` in
-  `ControlProtocol`, help + parse in `ControlCLI`. Returns a clear error for
-  non-git clones and for every refusal reason.
-- **Guards:** refuse if the source project is hibernated; requires committed,
-  non-dirty clone work; source working tree must be clean.
+- **GUI:** clone-row context menu **"Update from Source"**. Confirmation →
+  off-main `updateFromSource` → result alert (updated / already current /
+  conflicts-left-in-clone / refused). Hidden for non-git clones.
+- **CLI:** `zetty update-clone <name>` as a **slow verb** (routed in
+  `startControlSocket` like `clone`/`removeProject`; `handleOnMain` errors if it
+  lands there). New `ControlCommand.updateClone(name:)`; help + parse in
+  `ControlCLI`. Returns the summary via `.text`, refusals/conflicts via
+  `.error`.
+- **Guards:** clone must be a git work tree with a clean working tree; the
+  source directory must still exist.
 
-### 5. Conflict policy — abort-on-conflict
-
-Automate the clean/fast-forward case; on conflict `git merge --abort` and report,
-handing off to the instruction popover / PR path. Never leaves the source repo in
-a MERGING state. Matches the app's conservative posture (fetch-back aborts before
-deleting; delete guards; "nothing lost on a bad fetch").
-
-### 6. Docs
+### 5. Docs
 
 - `README.md` clone section gains **"Bringing clone work back"**: the
-  branch-based rule ("don't push the clone's `main`"), PR-with-origin,
-  local-merge-without, the **Merge into Source** action, and `zetty
-  merge-clone`.
-- Mirror any clone-section note added to `CLAUDE.md` into `AGENTS.md`
-  byte-identically.
+  feature-branch flow (update from source → fix conflicts → PR), the **Update
+  from Source** action + `zetty update-clone`, and the no-origin local-merge
+  fallback.
+- Mirror a clone-section note into `CLAUDE.md` / `AGENTS.md` byte-identically.
 
 ## Testing
 
-- `CloneSupportTests`: arg builders, `MergeReadiness` matrix (incl. `.notGit`),
-  `mergeGuide` assembly (origin + no-origin paths).
-- App-layer merge run (fast-forward, merge-commit, conflict abort,
-  dirty-source refusal, non-git refusal) verified manually / via the
-  live-relaunch technique since it is process IO; GUI verification is user-side
-  per the TCC-denied constraint.
+- `CloneSupportTests`: arg builders, `UpdateReadiness` matrix (incl. `.notGit`,
+  `.cloneDirty`), `syncGuide` assembly.
+- App-layer `updateFromSource` verified via a headless git integration script
+  (clean update, up-to-date, conflict-left-in-clone) — no GUI/TCC needed.
+- CLI round-trip unit-tested; GUI menu/popover verified user-side per the
+  TCC-denied constraint.
 
 ## Edge cases
 
 - **Non-git clone (source never git, or `git switch -c` failed):** button
-  hidden, action/CLI refuse with a clear message.
-- **Branch setup failed → clone on `main`:** the `fetch HEAD` approach merges it
-  regardless — this is the divergent-`main` scenario, now handled.
-- **Source already has a local branch named `<name>`:** avoided entirely by
-  fetching into `FETCH_HEAD` rather than a named refspec.
-- **Non-CoW full-copy clones:** unaffected — still real git repos.
+  hidden; action/CLI refuse with a clear message.
+- **Clone on a fallback `main` (branch setup failed):** still updates — we merge
+  the source's HEAD into whatever the clone has checked out.
+- **Source advanced, clone behind:** the common case — fast-forward or merge
+  commit into the clone.
+- **Conflicts:** left in the clone for the user to resolve, then commit + PR.
+- **No origin:** documented local merge-into-source fallback (manual).
