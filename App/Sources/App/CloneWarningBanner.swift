@@ -1,10 +1,15 @@
 import AppKit
+import ZettyCore
 
 /// A full-width caution strip shown below the tab bar whenever the active
 /// project is a clone (copy-on-write fork). It reminds the user that a clone's
 /// working copy is disposable: uncommitted changes vanish when the clone is
 /// removed, so durable work must be committed + pushed to origin or landed
 /// back into the source branch.
+///
+/// For git clones (branch/clonePath/sourcePath all present) it also shows a
+/// trailing "How do I merge this back?" button that opens an `NSPopover` with
+/// the feature-branch sync guide (`CloneMergeGuideView`).
 ///
 /// Recreated on every `rebuildSurfaceNodeView()` (so it appears/disappears as
 /// the active project switches), it reads `ZTheme.current` at init like the
@@ -15,8 +20,17 @@ final class CloneWarningBanner: NSView {
 
     static let height: CGFloat = 26
 
-    override init(frame: NSRect) {
-        super.init(frame: frame)
+    private let branch: String?
+    private let clonePath: String?
+    private let sourcePath: String?
+    private var popover: NSPopover?
+
+    /// `branch` nil → the clone is not a git repo; the merge affordance is hidden.
+    init(branch: String? = nil, clonePath: String? = nil, sourcePath: String? = nil) {
+        self.branch = branch
+        self.clonePath = clonePath
+        self.sourcePath = sourcePath
+        super.init(frame: .zero)
 
         wantsLayer = true
         layer?.backgroundColor = ZTheme.current.bg2Color.cgColor
@@ -48,7 +62,24 @@ final class CloneWarningBanner: NSView {
         label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         label.translatesAutoresizingMaskIntoConstraints = false
 
-        let stack = NSStackView(views: [icon, label])
+        let arranged: [NSView]
+        if branch != nil, clonePath != nil, sourcePath != nil {
+            let button = NSButton(title: "How do I merge this back?", target: self,
+                                  action: #selector(showGuide(_:)))
+            button.isBordered = false
+            button.attributedTitle = NSAttributedString(
+                string: "How do I merge this back?",
+                attributes: [.font: ZTheme.monoFont(size: 12),
+                             .foregroundColor: ZTheme.current.accentColor])
+            button.setContentHuggingPriority(.required, for: .horizontal)
+            button.setContentCompressionResistancePriority(.required, for: .horizontal)
+            button.translatesAutoresizingMaskIntoConstraints = false
+            arranged = [icon, label, button]
+        } else {
+            arranged = [icon, label]
+        }
+
+        let stack = NSStackView(views: arranged)
         stack.orientation = .horizontal
         stack.alignment = .centerY
         stack.spacing = 7
@@ -74,6 +105,17 @@ final class CloneWarningBanner: NSView {
 
     @available(*, unavailable)
     required init?(coder _: NSCoder) { fatalError("not supported") }
+
+    @objc private func showGuide(_ sender: NSButton) {
+        guard let branch, let clonePath, let sourcePath else { return }
+        let guide = CloneSupport.syncGuide(
+            branch: branch, clonePath: clonePath, sourcePath: sourcePath, defaultBranch: "main")
+        let popover = NSPopover()
+        popover.behavior = .transient
+        popover.contentViewController = CloneMergeGuideView(guide: guide)
+        popover.show(relativeTo: sender.bounds, of: sender, preferredEdge: .maxY)
+        self.popover = popover
+    }
 
     /// Bold lead-in ("Clone (copy-on-write).") + regular guidance, so the
     /// warning reads as one prose sentence in the content area's system font.

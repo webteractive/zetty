@@ -2927,7 +2927,17 @@ final class TerminalViewController: NSViewController {
         // tab bar and push the content (terminal OR hibernation placeholder)
         // down beneath it.
         if workspace.activeProject.cloneSource != nil {
-            let banner = CloneWarningBanner()
+            let clone = workspace.activeProject
+            // Git clones expose the merge-guide button; non-git clones don't.
+            let cloneGitDir = (clone.rootPath as NSString).appendingPathComponent(".git")
+            let isGitClone = FileManager.default.fileExists(atPath: cloneGitDir)
+            let branch = isGitClone
+                ? (clone.name.split(separator: "/").last.map(String.init) ?? clone.name)
+                : nil
+            let banner = CloneWarningBanner(
+                branch: branch,
+                clonePath: isGitClone ? clone.rootPath : nil,
+                sourcePath: isGitClone ? clone.cloneSource : nil)
             banner.translatesAutoresizingMaskIntoConstraints = false
             container.addSubview(banner)
             NSLayoutConstraint.activate([
