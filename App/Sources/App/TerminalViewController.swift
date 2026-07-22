@@ -2931,11 +2931,14 @@ final class TerminalViewController: NSViewController {
             // Git clones expose the merge-guide button; non-git clones don't.
             let cloneGitDir = (clone.rootPath as NSString).appendingPathComponent(".git")
             let isGitClone = FileManager.default.fileExists(atPath: cloneGitDir)
-            let branch = isGitClone
+            // Cheap, display-derived fallback only — the real branch is
+            // resolved from the repo lazily when the popover opens (a
+            // synchronous git spawn here would run on every chrome rebuild).
+            let fallbackBranch = isGitClone
                 ? (clone.name.split(separator: "/").last.map(String.init) ?? clone.name)
                 : nil
             let banner = CloneWarningBanner(
-                branch: branch,
+                fallbackBranch: fallbackBranch,
                 clonePath: isGitClone ? clone.rootPath : nil,
                 sourcePath: isGitClone ? clone.cloneSource : nil)
             banner.translatesAutoresizingMaskIntoConstraints = false

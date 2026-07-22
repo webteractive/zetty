@@ -20,14 +20,17 @@ final class CloneWarningBanner: NSView {
 
     static let height: CGFloat = 26
 
-    private let branch: String?
+    private let fallbackBranch: String?
     private let clonePath: String?
     private let sourcePath: String?
     private var popover: NSPopover?
 
-    /// `branch` nil → the clone is not a git repo; the merge affordance is hidden.
-    init(branch: String? = nil, clonePath: String? = nil, sourcePath: String? = nil) {
-        self.branch = branch
+    /// `fallbackBranch` is a cheap, display-derived guess (from the renamable
+    /// project name) used only if a live git read fails at click time — see
+    /// `showGuide`. `clonePath`/`sourcePath` nil → the clone is not a git repo;
+    /// the merge affordance is hidden.
+    init(fallbackBranch: String? = nil, clonePath: String? = nil, sourcePath: String? = nil) {
+        self.fallbackBranch = fallbackBranch
         self.clonePath = clonePath
         self.sourcePath = sourcePath
         super.init(frame: .zero)
@@ -63,9 +66,8 @@ final class CloneWarningBanner: NSView {
         label.translatesAutoresizingMaskIntoConstraints = false
 
         let arranged: [NSView]
-        if branch != nil, clonePath != nil, sourcePath != nil {
-            let button = NSButton(title: "How do I merge this back?", target: self,
-                                  action: #selector(showGuide(_:)))
+        if clonePath != nil, sourcePath != nil {
+            let button = NSButton(title: "", target: self, action: #selector(showGuide(_:)))
             button.isBordered = false
             button.attributedTitle = NSAttributedString(
                 string: "How do I merge this back?",
@@ -107,7 +109,10 @@ final class CloneWarningBanner: NSView {
     required init?(coder _: NSCoder) { fatalError("not supported") }
 
     @objc private func showGuide(_ sender: NSButton) {
-        guard let branch, let clonePath, let sourcePath else { return }
+        guard let clonePath, let sourcePath else { return }
+        // Repo-truthful branch, resolved lazily on click (not in the hot
+        // rebuild path) — robust against the project having been renamed.
+        let branch = CloneRunner.currentBranch(in: clonePath) ?? fallbackBranch ?? "HEAD"
         let guide = CloneSupport.syncGuide(
             branch: branch, clonePath: clonePath, sourcePath: sourcePath, defaultBranch: "main")
         let popover = NSPopover()
