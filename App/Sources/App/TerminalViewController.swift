@@ -2631,15 +2631,34 @@ final class TerminalViewController: NSViewController {
     private func presentMergeToSourceChooser(options: CloneSupport.MergeToSourceOptions,
                                              cloneRoot: String, sourceRoot: String, cloneName: String) {
         guard options.canMergeUpdates else {
-            // Non-git source — the file copy-back (diff modal) ships in Phase 2.
-            let alert = NSAlert()
-            alert.alertStyle = .informational
-            alert.messageText = "Can't merge “\(cloneName)” to its source yet"
-            alert.informativeText = "This clone's source isn't a git repository. Bringing "
-                + "changes back for non-git projects (a file diff + copy-back) is coming soon."
-            alert.addButton(withTitle: "OK")
-            if let window = view.window { alert.beginSheetModal(for: window, completionHandler: nil) }
-            else { alert.runModal() }
+            // Non-git source → the file copy-back diff modal.
+            guard let window = view.window else { return }
+            DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+                let changes = FileCopyBackRunner.changes(sourceRoot: sourceRoot, cloneRoot: cloneRoot)
+                DispatchQueue.main.async { [weak self] in
+                    guard let self else { return }
+                    guard !changes.isEmpty else {
+                        let alert = NSAlert()
+                        alert.alertStyle = .informational
+                        alert.messageText = "Nothing to bring back"
+                        alert.informativeText = "“\(cloneName)” has no changes its source doesn't already have."
+                        alert.addButton(withTitle: "OK")
+                        alert.beginSheetModal(for: window, completionHandler: nil)
+                        return
+                    }
+                    FileCopyBackSheet.present(cloneName: cloneName, sourceRoot: sourceRoot,
+                                              cloneRoot: cloneRoot, changes: changes, on: window) { [weak self] decisions in
+                        guard !decisions.isEmpty else { return }
+                        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+                            let result = FileCopyBackRunner.apply(sourceRoot: sourceRoot,
+                                                                  cloneRoot: cloneRoot, decisions: decisions)
+                            DispatchQueue.main.async {
+                                self?.presentCopyBackResult(result, cloneName: cloneName)
+                            }
+                        }
+                    }
+                }
+            }
             return
         }
 
@@ -2671,6 +2690,22 @@ final class TerminalViewController: NSViewController {
         }
         if let window = view.window { alert.beginSheetModal(for: window, completionHandler: run) }
         else { run(alert.runModal()) }
+    }
+
+    private func presentCopyBackResult(_ result: FileCopyBackRunner.ApplyResult, cloneName: String) {
+        let alert = NSAlert()
+        if result.errors.isEmpty {
+            alert.alertStyle = .informational
+            alert.messageText = "Brought \(result.applied) file\(result.applied == 1 ? "" : "s") to the source"
+            alert.informativeText = "Copied from “\(cloneName)” into its source directory."
+        } else {
+            alert.alertStyle = .warning
+            alert.messageText = "Brought \(result.applied) file\(result.applied == 1 ? "" : "s"); \(result.errors.count) failed"
+            alert.informativeText = result.errors.joined(separator: "\n")
+        }
+        alert.addButton(withTitle: "OK")
+        if let window = view.window { alert.beginSheetModal(for: window, completionHandler: nil) }
+        else { alert.runModal() }
     }
 
     private func presentMergeBackOutcome(_ outcome: CloneRunner.MergeBackOutcome, cloneName: String) {
