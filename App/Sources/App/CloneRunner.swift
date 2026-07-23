@@ -183,6 +183,85 @@ enum CloneRunner {
         return .failed("update failed and was aborted: \(result.output)")
     }
 
+    // MARK: - Merge to source (clone → source)
+
+    /// True iff `dir` is a git work tree.
+    static func isGitWorkTree(in dir: String) -> Bool {
+        runGitOutput(CloneSupport.isGitWorkTreeArgs(), in: dir)?
+            .trimmingCharacters(in: .whitespacesAndNewlines) == "true"
+    }
+
+    /// True iff the repo at `dir` has at least one configured remote.
+    static func hasRemote(in dir: String) -> Bool {
+        guard let out = runGitOutput(CloneSupport.hasRemoteArgs(), in: dir) else { return false }
+        return !out.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    enum MergeBackOutcome: Equatable {
+        case merged(summary: String)      // clone's work landed in the source
+        case syncConflicts(files: [String]) // the source→clone sync left conflicts in the clone
+        case sourceConflict(files: [String]) // merge into the source conflicted; aborted, source untouched
+        case refused(String)
+        case failed(String)
+    }
+
+    /// Merge updates: first sync the source's latest into the clone (reused
+    /// `updateFromSource`); then, if that was clean, merge the clone's branch into
+    /// the SOURCE. Fast-forward in the normal case; abort-on-conflict in the source.
+    static func mergeUpdates(cloneRoot: String, sourceRoot: String) -> MergeBackOutcome {
+        switch updateFromSource(cloneRoot: cloneRoot, sourceRoot: sourceRoot) {
+        case .conflicts(let files): return .syncConflicts(files: files)
+        case .refused(let m):       return .refused(m)
+        case .failed(let m):        return .failed(m)
+        case .updated, .upToDate:   break
+        }
+        // The source must be clean — a merge touches its working tree.
+        let srcStatus = runGitOutput(CloneSupport.cloneStatusArgs(), in: sourceRoot) ?? ""
+        if GitStatus.parseChangeCount(srcStatus) > 0 {
+            return .refused("the source has uncommitted changes — commit or stash them first")
+        }
+        if let fetchErr = runGit(CloneSupport.fetchHeadArgs(from: cloneRoot), in: sourceRoot) {
+            return .failed("fetching the clone into the source failed — nothing changed: \(fetchErr)")
+        }
+        let result = runGitResult(CloneSupport.updateMergeArgs, in: sourceRoot)
+        if result.status == 0 {
+            return .merged(summary: result.output.split(separator: "\n").first.map(String.init) ?? "merged")
+        }
+        let conflicts = (runGitOutput(CloneSupport.conflictFilesArgs, in: sourceRoot) ?? "")
+            .split(separator: "\n").map(String.init).filter { !$0.isEmpty }
+        _ = runGit(CloneSupport.mergeAbortArgs, in: sourceRoot)
+        if !conflicts.isEmpty { return .sourceConflict(files: conflicts) }
+        return .failed("merging into the source failed and was aborted: \(result.output)")
+    }
+
+    enum PushOutcome: Equatable {
+        case pushed(summary: String)
+        case syncConflicts(files: [String])
+        case refused(String)
+        case failed(String)
+    }
+
+    /// Push to branch: sync the source's latest into the clone, then push the
+    /// clone's current branch to `origin` (for a PR). The clone is not modified
+    /// beyond the sync; the source is not touched.
+    static func pushBranch(cloneRoot: String, sourceRoot: String) -> PushOutcome {
+        switch updateFromSource(cloneRoot: cloneRoot, sourceRoot: sourceRoot) {
+        case .conflicts(let files): return .syncConflicts(files: files)
+        case .refused(let m):       return .refused(m)
+        case .failed(let m):        return .failed(m)
+        case .updated, .upToDate:   break
+        }
+        guard let branch = currentBranch(in: cloneRoot) else {
+            return .refused("the clone has no current branch (detached HEAD?) — can't push")
+        }
+        let result = runGitResult(CloneSupport.pushBranchArgs(branch: branch), in: cloneRoot)
+        if result.status == 0 {
+            let line = result.output.split(separator: "\n").last.map(String.init) ?? "pushed \(branch)"
+            return .pushed(summary: line)
+        }
+        return .failed("push failed: \(result.output)")
+    }
+
     /// The clone's current branch — the branch its work actually lives on.
     /// Robust against renames: derived from the repo, not the project name.
     /// nil for a detached HEAD or non-repo.
