@@ -4,7 +4,7 @@ import Foundation
 
 @Test func fileCopyBackNameStatusArgs() {
     #expect(FileCopyBack.nameStatusArgs(sourceRoot: "/s", cloneRoot: "/c")
-            == ["diff", "--no-index", "--name-status", "-z", "/s", "/c"])
+            == ["diff", "--no-index", "--no-renames", "--name-status", "-z", "/s", "/c"])
 }
 
 @Test func fileCopyBackParsesAddedAndModifiedDropsDeleted() {

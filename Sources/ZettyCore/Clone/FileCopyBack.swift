@@ -35,10 +35,13 @@ public enum FileCopyBack {
         }
     }
 
-    /// `git diff --no-index --name-status -z <source> <clone>` — the changed-file
-    /// list. (Run in the app layer; exit 1 = "differences", which is success.)
+    /// `git diff --no-index --no-renames --name-status -z <source> <clone>` — the
+    /// changed-file list. (Run in the app layer; exit 1 = "differences", which is
+    /// success.) `--no-renames` forces plain 2-field `status\0path\0` records even
+    /// when the user's gitconfig sets `diff.renames`, so the pair-walk in
+    /// `parseNameStatusZ` can never be misaligned by a 3-field rename/copy entry.
     public static func nameStatusArgs(sourceRoot: String, cloneRoot: String) -> [String] {
-        ["diff", "--no-index", "--name-status", "-z", sourceRoot, cloneRoot]
+        ["diff", "--no-index", "--no-renames", "--name-status", "-z", sourceRoot, cloneRoot]
     }
 
     /// Parses `-z` name-status output (`status\0absPath\0` pairs) into the
