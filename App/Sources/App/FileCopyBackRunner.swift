@@ -39,13 +39,30 @@ enum FileCopyBackRunner {
             let src = (cloneRoot as NSString).appendingPathComponent(rel)
             let destRel = decision.action == .keepBoth ? FileCopyBack.keepBothName(rel) : rel
             let dest = (sourceRoot as NSString).appendingPathComponent(destRel)
+            let destURL = URL(fileURLWithPath: dest)
             do {
                 try fm.createDirectory(atPath: (dest as NSString).deletingLastPathComponent,
                                        withIntermediateDirectories: true)
-                if decision.action != .keepBoth, fm.fileExists(atPath: dest) {
-                    try fm.removeItem(atPath: dest)   // replace/copyNew overwrite
+                if decision.action == .keepBoth {
+                    // New name: never overwrites the source original. Fails if the
+                    // Keep-Both target already exists (don't clobber a real file).
+                    try fm.copyItem(atPath: src, toPath: dest)
+                } else if fm.fileExists(atPath: dest) {
+                    // Overwrite safely: copy the clone file to a sibling temp first, then
+                    // atomically replace the original. If the copy fails, the original is
+                    // untouched; replaceItemAt leaves the original intact on failure too.
+                    let tmp = dest + ".zetty-copyback-tmp"
+                    try? fm.removeItem(atPath: tmp)
+                    try fm.copyItem(atPath: src, toPath: tmp)
+                    do {
+                        _ = try fm.replaceItemAt(destURL, withItemAt: URL(fileURLWithPath: tmp))
+                    } catch {
+                        try? fm.removeItem(atPath: tmp)   // clean up the temp on failure
+                        throw error
+                    }
+                } else {
+                    try fm.copyItem(atPath: src, toPath: dest)   // new file, no existing dest
                 }
-                try fm.copyItem(atPath: src, toPath: dest)
                 applied += 1
             } catch {
                 errors.append("\(destRel): \(error.localizedDescription)")
