@@ -251,4 +251,29 @@ public enum CloneSupport {
                 "git merge \(branch)",
             ])
     }
+
+    // MARK: - Merge to source (clone → source strategies)
+
+    public static func hasRemoteArgs() -> [String] { ["remote"] }
+    /// Fetch a path's current HEAD into FETCH_HEAD (generalizes updateFetchArgs).
+    public static func fetchHeadArgs(from path: String) -> [String] { ["fetch", path, "HEAD"] }
+    public static var mergeAbortArgs: [String] { ["merge", "--abort"] }
+    public static func pushBranchArgs(branch: String) -> [String] { ["push", "-u", "origin", branch] }
+
+    /// Which clone→source strategies are available for a given source. Non-git
+    /// (either side) offers neither here — the non-git file copy-back is Phase 2.
+    public struct MergeToSourceOptions: Equatable, Sendable {
+        public let canMergeUpdates: Bool
+        public let canPushToBranch: Bool
+        public init(canMergeUpdates: Bool, canPushToBranch: Bool) {
+            self.canMergeUpdates = canMergeUpdates
+            self.canPushToBranch = canPushToBranch
+        }
+    }
+
+    public static func mergeToSourceOptions(isCloneGit: Bool, isSourceGit: Bool,
+                                            hasRemote: Bool) -> MergeToSourceOptions {
+        let git = isCloneGit && isSourceGit
+        return MergeToSourceOptions(canMergeUpdates: git, canPushToBranch: git && hasRemote)
+    }
 }

@@ -174,3 +174,29 @@ import Foundation
                                      "git switch main",
                                      "git merge fork-1"])
 }
+
+// MARK: - Merge-to-source arg builders + option availability
+
+@Test func mergeToSourceArgBuilders() {
+    #expect(CloneSupport.hasRemoteArgs() == ["remote"])
+    #expect(CloneSupport.fetchHeadArgs(from: "/c") == ["fetch", "/c", "HEAD"])
+    #expect(CloneSupport.mergeAbortArgs == ["merge", "--abort"])
+    #expect(CloneSupport.pushBranchArgs(branch: "fork-1") == ["push", "-u", "origin", "fork-1"])
+}
+
+@Test func mergeToSourceOptionsGitWithRemote() {
+    let o = CloneSupport.mergeToSourceOptions(isCloneGit: true, isSourceGit: true, hasRemote: true)
+    #expect(o == CloneSupport.MergeToSourceOptions(canMergeUpdates: true, canPushToBranch: true))
+}
+
+@Test func mergeToSourceOptionsGitNoRemote() {
+    let o = CloneSupport.mergeToSourceOptions(isCloneGit: true, isSourceGit: true, hasRemote: false)
+    #expect(o == CloneSupport.MergeToSourceOptions(canMergeUpdates: true, canPushToBranch: false))
+}
+
+@Test func mergeToSourceOptionsNonGitOffersNothing() {
+    let a = CloneSupport.mergeToSourceOptions(isCloneGit: false, isSourceGit: true, hasRemote: true)
+    let b = CloneSupport.mergeToSourceOptions(isCloneGit: true, isSourceGit: false, hasRemote: true)
+    #expect(a == CloneSupport.MergeToSourceOptions(canMergeUpdates: false, canPushToBranch: false))
+    #expect(b == CloneSupport.MergeToSourceOptions(canMergeUpdates: false, canPushToBranch: false))
+}
