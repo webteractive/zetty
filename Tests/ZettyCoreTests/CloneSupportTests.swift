@@ -166,7 +166,7 @@ import Foundation
     let g = CloneSupport.syncGuide(branch: "fork-1", clonePath: "/clone",
                                    sourcePath: "/src", defaultBranch: "main")
     #expect(g.branch == "fork-1")
-    #expect(g.updateStep == "git fetch /src HEAD && git merge FETCH_HEAD   # or use “Update from Source”")
+    #expect(g.updateStep == "git fetch /src HEAD && git merge FETCH_HEAD   # or use “Merge to Source…”")
     #expect(g.prSteps == ["git push -u origin fork-1",
                           "Open a pull request against main."])
     #expect(g.localFallbackSteps == ["cd /src",

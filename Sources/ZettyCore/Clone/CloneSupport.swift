@@ -239,7 +239,7 @@ public enum CloneSupport {
         SyncGuide(
             branch: branch,
             updateStep: "git fetch \(sourcePath) HEAD && git merge FETCH_HEAD"
-                + "   # or use “Update from Source”",
+                + "   # or use “Merge to Source…”",
             prSteps: [
                 "git push -u origin \(branch)",
                 "Open a pull request against \(defaultBranch).",
