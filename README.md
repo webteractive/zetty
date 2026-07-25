@@ -318,6 +318,13 @@ directives override the scheme; the app chrome stays scheme-driven. Font is
 uniform: the `font-family` / `font-size` directives drive both the terminal
 and the app chrome, and are also editable in Settings → Appearance.
 
+Ghostty validates its config **all-or-nothing**: one directive it doesn't
+recognize (a typo, or a Zetty key from a newer build) makes it discard *every*
+custom setting. Zetty guards both ends — Zetty's own keys, including ones this
+build predates, are never forwarded to Ghostty, and if a passthrough directive
+is still rejected, panes fall back to Zetty's own directives so
+`preserve-sessions` keeps working, with a one-time alert naming the problem.
+
 Built-in schemes — dark: Midnight, Nocturne, Frost, Twilight, Ember, Velvet,
 Eclipse, Rosewood, Neon, Ukiyo · light: Daylight, Paper, Glacier, Dawn,
 Latte, Porcelain, Harvest, Citrus, Daybreak, Sakura.

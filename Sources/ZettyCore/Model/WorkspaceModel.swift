@@ -195,6 +195,26 @@ public final class WorkspaceModel {
         }
     }
 
+    /// Every surface ID in the workspace — INCLUDING hibernated projects — i.e.
+    /// every pane a preserved zmx session could still belong to.
+    ///
+    /// Ownership, not attachment. The app layer's live-surface set excludes
+    /// hibernated projects because their panes are torn down, which is the right
+    /// question for "what should be on screen" and the wrong one for "what may I
+    /// kill": hibernating frees a project's sessions on a best-effort basis (it
+    /// can't when zmx has gone missing, and a crash can cut it short), so a
+    /// hibernated project's surface may still have a session behind it. Diffing
+    /// against the hibernation-filtered set makes those look orphaned and kills
+    /// them on the next launch — unattended, since auto-hibernation needs no user
+    /// action. Reaping stays reserved for sessions no project claims at all.
+    public var sessionOwnerSurfaceIDs: [UUID] {
+        projects.flatMap { project in
+            project.tabList.trees.flatMap { tree in
+                tree.layout.surfaces.map(\.id)
+            }
+        }
+    }
+
     /// Renames a project in place. Order is manual, so renaming never moves the
     /// project (unlike the old alphabetical sort).
     public func rename(projectAt index: Int, to newName: String) {

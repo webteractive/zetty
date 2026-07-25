@@ -139,6 +139,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         tvc.ghosttyConfiguration = makeTerminalConfiguration()
         tvc.onReloadConfig = { [weak self] in self?.reloadConfiguration(nil) }
         tvc.onOpenSettings = { [weak self] in self?.openSettings(nil) }
+        // A rejected terminal config used to be silent — and since rejection
+        // drops the session-preservation `command`, it stranded preserved
+        // sessions on every relaunch. Surface it once per run instead.
+        tvc.onGhosttyConfigurationRejected = { [weak self] issue in
+            self?.presentGhosttyConfigRejectedAlertOnce(issue: issue)
+        }
         // Session preservation must be threaded before the view loads (the
         // launch command is consulted when each pane spawns).
         applySessionPreservation(to: tvc)
@@ -920,11 +926,47 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     /// would accumulate silently (Settings also offers a manual kill).
     private func reapOrphanSessions(_ tvc: TerminalViewController) {
         guard let zmx = ZmxRunner.locate() else { return }
-        let liveIDs = tvc.allSurfaceIDs
+        // Ownership, NOT attachment: hibernating frees a project's sessions only
+        // best-effort, so a hibernated project's surface may still have one.
+        // `allSurfaceIDs` excludes those surfaces, which made any such session
+        // look orphaned and killed it on launch — unattended, since
+        // auto-hibernation needs no user action.
+        let liveIDs = tvc.sessionOwnerSurfaceIDs
         DispatchQueue.global(qos: .utility).async {
             let existing = ZmxRunner.listZettySessions(zmxPath: zmx)
             let orphans = SessionPersistence.orphans(existing: existing, liveSurfaceIDs: liveIDs)
             ZmxRunner.kill(sessions: orphans, zmxPath: zmx)
+        }
+    }
+
+    /// Shown once per run when libghostty rejected the merged terminal config.
+    /// Ghostty validates all-or-nothing, so one bad directive drops every
+    /// custom setting; panes keep working (Zetty's own directives are re-applied
+    /// alone) but the user's passthrough is inert until the key is fixed.
+    private var ghosttyConfigRejectedAlertShown = false
+
+    private func presentGhosttyConfigRejectedAlertOnce(issue: String?) {
+        guard !ghosttyConfigRejectedAlertShown else { return }
+        ghosttyConfigRejectedAlertShown = true
+        let unsupported = appConfig.unsupportedKeys
+        let configPath = ConfigStore().fileURL.path
+        // Deferred: this fires while a pane's surface is being built, and a modal
+        // must not run inside that.
+        DispatchQueue.main.async {
+            let cause = issue ?? (unsupported.isEmpty
+                ? "Check for a misspelled key."
+                : "Unrecognized Zetty keys: \(unsupported.joined(separator: ", ")).")
+            let alert = NSAlert()
+            alert.messageText = "Some terminal settings were ignored"
+            alert.informativeText = """
+            A directive in \(configPath) was rejected by the terminal, so your \
+            pasted ghostty settings (fonts, colors, …) are not being applied.
+
+            \(cause)
+
+            Panes still run normally — session preservation is unaffected.
+            """
+            alert.runModal()
         }
     }
 
@@ -955,7 +997,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     @objc private func openSettings(_ sender: Any?) {
         let controller = settingsWindowController ?? SettingsWindowController(
             installer: hookInstaller,
-            liveSurfaceIDs: { [weak self] in self?.terminalViewController?.allSurfaceIDs ?? [] }
+            liveSurfaceIDs: { [weak self] in self?.terminalViewController?.sessionOwnerSurfaceIDs ?? [] }
         )
         controller.onSetAppearance = { [weak self] mode in self?.setAppearanceMode(mode) }
         controller.onSelectTheme = { [weak self] scheme in self?.selectTheme(scheme) }

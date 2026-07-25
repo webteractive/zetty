@@ -234,9 +234,13 @@ final class TerminalViewController: NSViewController {
         }
     }
 
-    /// Every surface ID across all projects/tabs/panes (for orphan diffing).
-    /// Hibernated projects are excluded so their surfaces are pruned (torn down)
-    /// and never spawn until woken.
+    /// Every surface ID that should be *attached* right now. Hibernated projects
+    /// are excluded so their surfaces are pruned (torn down) and never spawn
+    /// until woken.
+    ///
+    /// NOT the set that owns preserved zmx sessions — a hibernated project's
+    /// session must keep running. Use `sessionOwnerSurfaceIDs` for orphan
+    /// diffing.
     var allSurfaceIDs: [UUID] {
         workspace.projects.filter { !$0.isHibernated }.flatMap { project in
             project.tabList.trees.flatMap { tree in
@@ -244,6 +248,21 @@ final class TerminalViewController: NSViewController {
             }
         }
     }
+
+    /// Called when libghostty rejected a pane's merged configuration, so the
+    /// pane fell back to Zetty's own directives (see
+    /// `SurfaceRegistry.onConfigurationRejected`). The argument is ghostty's own
+    /// diagnostic, when it reported one.
+    var onGhosttyConfigurationRejected: ((String?) -> Void)? {
+        didSet {
+            let handler = onGhosttyConfigurationRejected
+            registry.onConfigurationRejected = { issue in handler?(issue) }
+        }
+    }
+
+    /// Every surface ID across ALL projects, hibernated included — the panes
+    /// whose preserved zmx sessions this workspace owns (for orphan diffing).
+    var sessionOwnerSurfaceIDs: [UUID] { workspace.sessionOwnerSurfaceIDs }
 
     /// Called to reload configuration from disk (⇧⌘,).
     var onReloadConfig: (() -> Void)?

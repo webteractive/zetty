@@ -117,6 +117,13 @@ public final class SurfaceRegistry {
     /// surface creation; nil/empty → nothing added.
     public var surfaceEnvironment: ((Surface) -> [String: String]?)?
 
+    /// Called when libghostty rejected a surface's merged configuration and the
+    /// pane fell back to Zetty's own directives only (the user's passthrough
+    /// contains a directive ghostty won't accept). Carries ghostty's own
+    /// diagnostic when it reported one. The app layer surfaces this so a bad key
+    /// is visible instead of silently changing pane behavior.
+    public var onConfigurationRejected: ((String?) -> Void)?
+
     /// Called with the surface IDs removed by `prune(keeping:)` — the app layer
     /// uses this to kill those surfaces' persistent sessions on explicit close
     /// (app quit never prunes, so quit leaves sessions running).
@@ -306,14 +313,38 @@ public final class SurfaceRegistry {
             let command = surfaceCommand?(surface)
             let environment = surfaceEnvironment?(surface) ?? [:]
             if terminalConfiguration != nil || command != nil || !environment.isEmpty {
-                var config = terminalConfiguration ?? TerminalConfiguration()
-                if let command { config = config.custom("command", command) }
-                // Sorted for deterministic config; ghostty's `env` directive
-                // repeats, one KEY=VALUE per line.
-                for key in environment.keys.sorted() {
-                    config = config.custom("env", "\(key)=\(environment[key]!)")
+                // Zetty's own per-surface directives. Env keys are sorted for a
+                // deterministic config; ghostty's `env` directive repeats, one
+                // KEY=VALUE per line.
+                func addingZettyDirectives(to base: TerminalConfiguration) -> TerminalConfiguration {
+                    var merged = base
+                    if let command { merged = merged.custom("command", command) }
+                    for key in environment.keys.sorted() {
+                        merged = merged.custom("env", "\(key)=\(environment[key]!)")
+                    }
+                    return merged
                 }
-                tc.setTerminalConfiguration(config)
+
+                let config = addingZettyDirectives(to: terminalConfiguration ?? TerminalConfiguration())
+                // libghostty validates all-or-nothing: ONE key it rejects frees
+                // the whole config, so a single bad directive in the user's
+                // passthrough silently drops `command` and the pane launches a
+                // plain shell instead of attaching its preserved zmx session.
+                //
+                // `setTerminalConfiguration` also returns false for a config
+                // equal to the controller's current one, so compare first —
+                // otherwise a no-op would be reported as a rejection.
+                if config != tc.terminalConfiguration, !tc.setTerminalConfiguration(config) {
+                    // Re-apply Zetty's own directives alone so preservation
+                    // survives a bad user config.
+                    if command != nil || !environment.isEmpty {
+                        tc.setTerminalConfiguration(addingZettyDirectives(to: TerminalConfiguration()))
+                    }
+                    // Report even when there was nothing of ours to re-apply:
+                    // the user's passthrough is inert either way, and silence is
+                    // what made this failure mode so expensive to find.
+                    onConfigurationRejected?(tc.lastConfigurationIssue)
+                }
             }
         }
         let (view, state) = viewFactory(surface, ctrl)

@@ -83,9 +83,34 @@ public struct AppConfig: Equatable, Sendable {
     /// defaults. (Ghostty's own `keybind` directive is unrelated and still
     /// forwards via `ghostty`.)
     public var keybindings: KeyBindingConfiguration
+    /// Zetty keys this build doesn't implement (e.g. written by a newer or
+    /// feature-branch build). Recorded for diagnostics and **never** forwarded
+    /// to ghostty — see `isReservedButUnsupported`. Not re-emitted by
+    /// `rendered()`, so a runtime persist retires the key for good.
+    public var unsupportedKeys: [String]
 
     public static let defaultThemeDark = "Twilight"
     public static let defaultThemeLight = "Daylight"
+
+    /// Zetty keys that no longer (or don't yet) exist in this build but must
+    /// still never reach ghostty. Add retired keys here rather than deleting
+    /// their `case` outright.
+    public static let retiredReservedKeys: Set<String> = [
+        "notify-poke",      // agent coordination board (feature branch)
+    ]
+
+    /// True when `key` belongs to Zetty rather than ghostty, even though this
+    /// build has no `case` for it.
+    ///
+    /// Forwarding such a key is not a harmless no-op: libghostty rejects its
+    /// ENTIRE config when any key produces a diagnostic, which silently drops
+    /// every custom directive — including the per-surface `command` behind
+    /// session preservation — so panes launch plain shells and preserved
+    /// sessions are stranded. `notify-` is Zetty's namespace (ghostty defines
+    /// no such key), so unknown `notify-*` keys are swallowed too.
+    public static func isReservedButUnsupported(_ key: String) -> Bool {
+        retiredReservedKeys.contains(key) || key.hasPrefix("notify-")
+    }
 
     public init(
         appearance: AppearanceMode = .system,
@@ -102,7 +127,8 @@ public struct AppConfig: Equatable, Sendable {
         notifySystem: Bool = true,
         sidebarPosition: SidebarPosition = .left,
         ghostty: [GhosttyDirective] = [],
-        keybindings: KeyBindingConfiguration = KeyBindingConfiguration()
+        keybindings: KeyBindingConfiguration = KeyBindingConfiguration(),
+        unsupportedKeys: [String] = []
     ) {
         self.appearance = appearance
         self.themeDark = themeDark
@@ -119,6 +145,7 @@ public struct AppConfig: Equatable, Sendable {
         self.sidebarPosition = sidebarPosition
         self.ghostty = ghostty
         self.keybindings = keybindings
+        self.unsupportedKeys = unsupportedKeys
     }
 
     // MARK: Parsing
@@ -200,8 +227,15 @@ public struct AppConfig: Equatable, Sendable {
             case "copy-bind":
                 config.keybindings.applyBind(value, toCopyTable: true)
             default:
-                // Anything else is a pasted ghostty directive → forward verbatim.
-                config.ghostty.append(GhosttyDirective(key: rawKey, value: value))
+                // A Zetty key this build lacks must be swallowed, NOT forwarded:
+                // one key ghostty rejects discards the whole config (including
+                // the session-preservation `command`).
+                if AppConfig.isReservedButUnsupported(key) {
+                    config.unsupportedKeys.append(key)
+                } else {
+                    // Anything else is a pasted ghostty directive → forward verbatim.
+                    config.ghostty.append(GhosttyDirective(key: rawKey, value: value))
+                }
             }
         }
         return config

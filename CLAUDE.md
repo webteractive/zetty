@@ -82,6 +82,18 @@ in `ZettyCore` (`AppConfig` / `ConfigStore`); `AppDelegate` resolves + applies i
   `~/.config/ghostty/config`). Ghostty defines none of the reserved keys, so no
   collision. Comments are **full-line only** (`#` at line start) so `#`-prefixed
   color values survive.
+- **Ghostty validates all-or-nothing** — `TerminalController.prepareConfig`
+  frees the WHOLE config if any key yields a diagnostic, so a single stray
+  directive silently drops every custom setting *including the per-surface
+  `command`*, which strands preserved sessions (panes launch plain shells).
+  Two guards, both regression-tested: `AppConfig.isReservedButUnsupported`
+  swallows Zetty's own keys this build lacks (the `notify-` namespace plus
+  `retiredReservedKeys` — add a retired key there, don't just delete its
+  `case`; they're recorded in `unsupportedKeys` and dropped by `rendered()`),
+  and `SurfaceRegistry.pair(for:)` retries with a Zetty-only config when
+  `setTerminalConfiguration` returns false, reporting via
+  `onConfigurationRejected` → one-time alert. Real cause of a
+  4-relaunch session-loss incident (`notify-poke` from a feature branch).
 - **Precedence:** scheme theme → pasted ghostty directives (last wins). Pasted
   directives may override terminal colors; the app chrome stays scheme-driven.
 - **Reload:** ⇧⌘, (also App menu + command palette) re-reads config and
@@ -92,7 +104,14 @@ in `ZettyCore` (`AppConfig` / `ConfigStore`); `AppDelegate` resolves + applies i
   they survive app quit/relaunch; reattach replays terminal state. Quit
   survives, explicit close kills (via `registry.prune` → `zmx kill`); a
   one-shot startup reap kills `zetty-*` sessions no restored surface owns
-  (crash leftovers), and Settings offers a manual kill too. The
+  (crash leftovers), and Settings offers a manual kill too. Ownership for both
+  diffs is `WorkspaceModel.sessionOwnerSurfaceIDs` (ALL projects, hibernated
+  included) — **not** `TerminalViewController.allSurfaceIDs`, which excludes
+  hibernated projects so `prune` can free their surfaces. Hibernating frees a
+  project's sessions only best-effort (it can't when zmx has gone missing, and
+  a crash can cut it short), so reaping against the attachment set kills any
+  session that survived — unattended, since auto-hibernation needs no user
+  action. Reap only what no project claims. The
   Settings (⌘,) toggle offers to download the zmx release binary from zmx.sh
   into `~/.zetty/bin` when missing (Homebrew/manual installs are detected
   too); config-only enablement without zmx falls back to plain shells with a
