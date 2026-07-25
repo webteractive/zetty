@@ -15,6 +15,11 @@ DerivedData/
 # Tuist-generated Xcode projects (regenerate with `tuist generate`)
 zetty.xcodeproj/
 zetty.xcworkspace/
+# Tuist-generated Info.plists + bundle accessors. Tracking these makes the tree
+# permanently dirty after a version bump (generate rewrites them), which the
+# "Stamp build commit" phase reads as a WIP build and shows a commit hash
+# instead of the marketing version in the status bar.
+Derived/
 
 # macOS
 .DS_Store
