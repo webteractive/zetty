@@ -42,6 +42,7 @@ final class SurfaceNodeView: NSView {
         showsClose: Bool = false,
         onClose: ((UUID) -> Void)? = nil,
         onBreak: ((UUID) -> Void)? = nil,
+        onSplit: ((UUID, SplitDirection) -> Void)? = nil,
         nodePath: [SplitBranch] = [],
         onRatioChange: (([SplitBranch], Double) -> Void)? = nil
     ) {
@@ -54,6 +55,7 @@ final class SurfaceNodeView: NSView {
             showsClose: showsClose,
             onClose: onClose,
             onBreak: onBreak,
+            onSplit: onSplit,
             nodePath: nodePath,
             onRatioChange: onRatioChange
         )
@@ -87,6 +89,7 @@ final class SurfaceNodeView: NSView {
         showsClose: Bool,
         onClose: ((UUID) -> Void)?,
         onBreak: ((UUID) -> Void)?,
+        onSplit: ((UUID, SplitDirection) -> Void)?,
         nodePath: [SplitBranch],
         onRatioChange: (([SplitBranch], Double) -> Void)?
     ) {
@@ -100,7 +103,8 @@ final class SurfaceNodeView: NSView {
                 isFocused: surface.id == focusedSurfaceID,
                 showsClose: showsClose,
                 onClose: onClose,
-                onBreak: onBreak
+                onBreak: onBreak,
+                onSplit: onSplit
             )
             container.translatesAutoresizingMaskIntoConstraints = false
             addSubview(container)
@@ -122,6 +126,7 @@ final class SurfaceNodeView: NSView {
                 showsClose: showsClose,
                 onClose: onClose,
                 onBreak: onBreak,
+                onSplit: onSplit,
                 nodePath: nodePath,
                 onRatioChange: onRatioChange
             )
@@ -139,25 +144,28 @@ final class SurfaceNodeView: NSView {
 
 // MARK: - LeafContainerView
 
-/// A thin wrapper view that embeds a `TerminalView` and optionally draws a
-/// 2-pt accent-coloured focus ring around the pane.
+/// A thin wrapper view that embeds a `TerminalView` and floats the pane's
+/// chrome — a focus status dot and action buttons — in a top gutter.
 ///
-/// When `showsClose` is true a small × button is floated in the top-right
-/// corner; clicking it invokes `onClose` with this pane's `surfaceID`.
+/// The gutter is always present so the split buttons are reachable even from a
+/// lone pane. `showsClose` (true only when the tab holds more than one pane)
+/// additionally reveals the break-into-tab and × buttons, which are no-ops on a
+/// single pane.
 @MainActor
 private final class LeafContainerView: NSView {
 
     private static let borderWidth: CGFloat = 2
-    /// Top strip reserved for the × button when a pane is closable, so it never
-    /// overlaps the terminal's first line.
-    private static let closeGutterHeight: CGFloat = 24
+    /// Top strip reserved for the chrome buttons, so they never overlap the
+    /// terminal's first line.
+    private static let gutterHeight: CGFloat = 24
+    /// Square edge of each gutter button.
+    private static let buttonSize: CGFloat = 18
 
     let surfaceID: UUID
     private var isFocused: Bool
     private var onClose: ((UUID) -> Void)?
     private var onBreak: ((UUID) -> Void)?
-    private var closeButton: NSButton?
-    private var breakButton: NSButton?
+    private var onSplit: ((UUID, SplitDirection) -> Void)?
     private var statusDot: NSView?
 
     init(
@@ -166,12 +174,14 @@ private final class LeafContainerView: NSView {
         isFocused: Bool,
         showsClose: Bool,
         onClose: ((UUID) -> Void)?,
-        onBreak: ((UUID) -> Void)? = nil
+        onBreak: ((UUID) -> Void)? = nil,
+        onSplit: ((UUID, SplitDirection) -> Void)? = nil
     ) {
         self.surfaceID = surfaceID
         self.isFocused = isFocused
         self.onClose = onClose
         self.onBreak = onBreak
+        self.onSplit = onSplit
         super.init(frame: .zero)
         wantsLayer = true
         // Rounded, themed pane surface (handoff: 10pt radius panes on bg1).
@@ -180,24 +190,21 @@ private final class LeafContainerView: NSView {
         layer?.backgroundColor = ZTheme.current.bg1Color.cgColor
 
         let inset = LeafContainerView.borderWidth
-        // Reserve a top gutter for the × when closable so it sits above the
-        // terminal content instead of overlapping the first line.
-        let topInset = showsClose ? LeafContainerView.closeGutterHeight : inset
         terminalView.translatesAutoresizingMaskIntoConstraints = false
         addSubview(terminalView)
         NSLayoutConstraint.activate([
-            terminalView.topAnchor.constraint(equalTo: topAnchor, constant: topInset),
+            // The gutter inset keeps the chrome buttons above the terminal
+            // content instead of overlapping its first line.
+            terminalView.topAnchor.constraint(equalTo: topAnchor,
+                                              constant: LeafContainerView.gutterHeight),
             terminalView.leadingAnchor.constraint(equalTo: leadingAnchor, constant: inset),
             terminalView.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -inset),
             terminalView.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -inset),
         ])
 
-        if showsClose {
-            addStatusDot()
-            addCloseButton()
-            addBreakButton()
-            menu = makePaneMenu()
-        }
+        addStatusDot()
+        addGutterButtons(showsClose: showsClose)
+        menu = makePaneMenu(showsClose: showsClose)
 
         updateBorder()
     }
@@ -238,90 +245,103 @@ private final class LeafContainerView: NSView {
         statusDot = dot
     }
 
-    private func addCloseButton() {
+    /// Lays the gutter actions out right-to-left from the trailing edge:
+    /// split-vertical · split-horizontal · break · close. The split pair is
+    /// always available; break and × only when the pane is closable.
+    private func addGutterButtons(showsClose: Bool) {
+        let stack = NSStackView()
+        stack.orientation = .horizontal
+        stack.spacing = 4
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(stack)
+        NSLayoutConstraint.activate([
+            stack.topAnchor.constraint(equalTo: topAnchor, constant: 4),
+            stack.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -4),
+        ])
+
+        // "2x1" = two columns (a vertical divider), "1x2" = two rows.
+        stack.addArrangedSubview(makeGutterButton(
+            symbol: "square.split.2x1", fallback: "⇹",
+            toolTip: "Split vertically", action: #selector(splitVerticalTapped)
+        ))
+        stack.addArrangedSubview(makeGutterButton(
+            symbol: "square.split.1x2", fallback: "⇳",
+            toolTip: "Split horizontally", action: #selector(splitHorizontalTapped)
+        ))
+
+        guard showsClose else { return }
+        stack.addArrangedSubview(makeGutterButton(
+            symbol: "arrow.up.forward.square", fallback: "↗",
+            toolTip: "Break pane into tab", action: #selector(breakButtonTapped)
+        ))
+        stack.addArrangedSubview(makeGutterButton(
+            symbol: "xmark", fallback: "×",
+            toolTip: "Close pane", action: #selector(closeButtonTapped)
+        ))
+    }
+
+    private func makeGutterButton(
+        symbol: String,
+        fallback: String,
+        toolTip: String,
+        action: Selector
+    ) -> NSButton {
         let button = NSButton(frame: .zero)
         button.translatesAutoresizingMaskIntoConstraints = false
         button.bezelStyle = .circular
         button.isBordered = false
         button.title = ""
-        if let image = NSImage(systemSymbolName: "xmark", accessibilityDescription: "Close pane") {
+        if let image = NSImage(systemSymbolName: symbol, accessibilityDescription: toolTip) {
             button.image = image
         } else {
-            button.title = "×"
+            button.title = fallback
         }
         button.imageScaling = .scaleProportionallyDown
         button.contentTintColor = ZTheme.current.fg3Color
-        button.toolTip = "Close pane"
+        button.toolTip = toolTip
         button.target = self
-        button.action = #selector(closeButtonTapped)
-
-        addSubview(button)
+        button.action = action
         NSLayoutConstraint.activate([
-            button.widthAnchor.constraint(equalToConstant: 18),
-            button.heightAnchor.constraint(equalToConstant: 18),
-            button.topAnchor.constraint(equalTo: topAnchor, constant: 4),
-            button.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -4),
+            button.widthAnchor.constraint(equalToConstant: LeafContainerView.buttonSize),
+            button.heightAnchor.constraint(equalToConstant: LeafContainerView.buttonSize),
         ])
-
-        closeButton = button
+        return button
     }
 
     @objc private func closeButtonTapped() {
         onClose?(surfaceID)
     }
 
-    /// A break-into-tab button that sits just left of the × in the gutter,
-    /// shown alongside the close button when the pane is closable.
-    private func addBreakButton() {
-        let button = NSButton(frame: .zero)
-        button.translatesAutoresizingMaskIntoConstraints = false
-        button.bezelStyle = .circular
-        button.isBordered = false
-        button.title = ""
-        if let image = NSImage(systemSymbolName: "arrow.up.forward.square",
-                               accessibilityDescription: "Break pane into tab") {
-            button.image = image
-        } else {
-            button.title = "↗"
-        }
-        button.imageScaling = .scaleProportionallyDown
-        button.contentTintColor = ZTheme.current.fg3Color
-        button.toolTip = "Break pane into tab"
-        button.target = self
-        button.action = #selector(breakButtonTapped)
-
-        addSubview(button)
-        NSLayoutConstraint.activate([
-            button.widthAnchor.constraint(equalToConstant: 18),
-            button.heightAnchor.constraint(equalToConstant: 18),
-            button.topAnchor.constraint(equalTo: topAnchor, constant: 4),
-            // Sit just left of the × (× trailing = -4, width 18, +4 gap).
-            button.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -26),
-        ])
-
-        breakButton = button
-    }
-
     @objc private func breakButtonTapped() {
         onBreak?(surfaceID)
+    }
+
+    @objc private func splitVerticalTapped() {
+        onSplit?(surfaceID, .vertical)
+    }
+
+    @objc private func splitHorizontalTapped() {
+        onSplit?(surfaceID, .horizontal)
     }
 
     /// Right-click menu for the pane chrome (gutter). The terminal view fills
     /// the container below the gutter and handles its own right-click, so this
     /// menu appears only on the pane chrome — not over the terminal content.
-    private func makePaneMenu() -> NSMenu {
+    private func makePaneMenu(showsClose: Bool) -> NSMenu {
         let menu = NSMenu()
-        let breakItem = NSMenuItem(title: "Break Pane into Tab",
-                                   action: #selector(breakButtonTapped),
-                                   keyEquivalent: "")
-        breakItem.target = self
-        menu.addItem(breakItem)
-        let closeItem = NSMenuItem(title: "Close Pane",
-                                   action: #selector(closeButtonTapped),
-                                   keyEquivalent: "")
-        closeItem.target = self
-        menu.addItem(closeItem)
+        menu.addItem(makeMenuItem("Split Vertically", #selector(splitVerticalTapped)))
+        menu.addItem(makeMenuItem("Split Horizontally", #selector(splitHorizontalTapped)))
+        guard showsClose else { return menu }
+        menu.addItem(.separator())
+        menu.addItem(makeMenuItem("Break Pane into Tab", #selector(breakButtonTapped)))
+        menu.addItem(makeMenuItem("Close Pane", #selector(closeButtonTapped)))
         return menu
+    }
+
+    private func makeMenuItem(_ title: String, _ action: Selector) -> NSMenuItem {
+        let item = NSMenuItem(title: title, action: action, keyEquivalent: "")
+        item.target = self
+        return item
     }
 }
 
@@ -357,6 +377,7 @@ private final class RatioSplitView: NSSplitView, NSSplitViewDelegate {
         showsClose: Bool = false,
         onClose: ((UUID) -> Void)? = nil,
         onBreak: ((UUID) -> Void)? = nil,
+        onSplit: ((UUID, SplitDirection) -> Void)? = nil,
         nodePath: [SplitBranch] = [],
         onRatioChange: (([SplitBranch], Double) -> Void)? = nil
     ) {
@@ -376,6 +397,7 @@ private final class RatioSplitView: NSSplitView, NSSplitViewDelegate {
             showsClose: showsClose,
             onClose: onClose,
             onBreak: onBreak,
+            onSplit: onSplit,
             nodePath: nodePath + [.first],
             onRatioChange: onRatioChange
         )
@@ -386,6 +408,7 @@ private final class RatioSplitView: NSSplitView, NSSplitViewDelegate {
             showsClose: showsClose,
             onClose: onClose,
             onBreak: onBreak,
+            onSplit: onSplit,
             nodePath: nodePath + [.second],
             onRatioChange: onRatioChange
         )

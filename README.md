@@ -25,6 +25,10 @@ by the tool it's running.
   project owns its own tabs, each tab an arbitrarily nested tree of split
   panes. Break any pane out into its own tab. **Drag project rows** to reorder
   them within their section (Pinned / Projects).
+- **Pane gutter buttons** — every pane carries a thin top strip with a focus
+  dot and click targets for **split vertically** and **split horizontally**;
+  panes in a multi-pane tab additionally get **break into tab** and **close**.
+  Right-clicking the strip opens the same actions as a menu.
 - **Project clones** — right-click a project → **Clone Project…** (or the
   command palette / `zetty clone`) to fork it into an instant APFS
   copy-on-write copy under `~/.zetty/clones/<project>-<name>` — every

@@ -27,6 +27,25 @@ extension TerminalViewController {
         }
     }
 
+    /// Split the pane identified by `surfaceID` (called by the per-pane gutter
+    /// buttons and the pane context menu), so the new pane lands next to the
+    /// one whose button was clicked.
+    ///
+    /// Focus moves through the first-responder path rather than
+    /// `paneTree.focus` alone: the agent chooser can defer `performSplit`
+    /// indefinitely, and a cancelled chooser would otherwise leave the model
+    /// focused on this pane while the highlight and keystrokes stayed on the
+    /// old one.
+    func splitPane(surfaceID: UUID, direction: SplitDirection) {
+        if let target = terminalView(forSurface: surfaceID) {
+            view.window?.makeFirstResponder(target)
+        }
+        paneTree.focus(surfaceID)
+        chooseAgentThenSpawn { [weak self] command in
+            self?.performSplit(direction: direction, startupCommand: command)
+        }
+    }
+
     // MARK: - Resize actions
 
     /// Keyboard pane resizing (⌥⌘ arrows): each press moves the divider of the

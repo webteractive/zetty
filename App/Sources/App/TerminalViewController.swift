@@ -3183,6 +3183,9 @@ final class TerminalViewController: NSViewController {
             showsClose: showsClose,
             onClose: { [weak self] id in self?.closePane(surfaceID: id) },
             onBreak: { [weak self] id in self?.breakPane(surfaceID: id) },
+            onSplit: { [weak self] id, direction in
+                self?.splitPane(surfaceID: id, direction: direction)
+            },
             onRatioChange: { [weak self] path, ratio in
                 // Write the dragged divider position back to the model (no
                 // rebuild — the view already shows it) and autosave.
@@ -3219,6 +3222,14 @@ final class TerminalViewController: NSViewController {
     /// Declared `internal` so the `PaneActions` extension (same module) can call it.
     func focusedTerminalView() -> NSView? {
         guard let surface = paneTree.focusedSurface else { return nil }
+        return registry.terminalView(for: surface)
+    }
+
+    /// Returns the `NSView` for `surfaceID` if that surface is still in the
+    /// active tab. Declared `internal` for the `PaneActions` extension.
+    func terminalView(forSurface surfaceID: UUID) -> NSView? {
+        guard let surface = paneTree.layout.surfaces.first(where: { $0.id == surfaceID })
+        else { return nil }
         return registry.terminalView(for: surface)
     }
 
