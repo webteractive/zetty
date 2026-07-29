@@ -103,6 +103,16 @@ by the tool it's running.
   opt out with `check-updates = false`.
 - **Tab identity** — a foreground-process probe names each tab after what it's
   actually running, with bundled logos for 40+ CLI tools.
+- **Peek a file without leaving the terminal** — ⌘-click a file path in any
+  pane's output (a compiler error, a `grep` hit, a stack frame) to open it in a
+  transient **read-only** overlay, scrolled to the referenced line. ⌘-hover
+  underlines a path that resolves to a real file; Esc closes. Editing is
+  delegated: the overlay's **Open in ▾** button hands the file — at the right
+  line — to Zed, VS Code, Cursor, Windsurf, TextMate, or any editor Zetty
+  finds. Syntax highlighting comes from [`bat`](https://github.com/sharkdp/bat)
+  when installed, and falls back to plain text when it isn't. ⌘-click detection
+  reads the pane's preserved zmx session, so it needs `preserve-sessions = true`;
+  `zetty view` works either way.
 - **`ssh://` links** — Zetty registers as a macOS handler for `ssh://` URLs, so
   a handover from another app (Terminal, a browser link, `open ssh://host`)
   opens the session in a new Home tab.
@@ -313,6 +323,8 @@ seeds a documented starter file on first launch. Format is plain
 | `check-updates` | `true` | Notify when a newer Zetty release is available |
 | `notify-sound` / `notify-badge` / `notify-system` | `true` | Agent needs-attention alerts |
 | `editor` | — | App used by Settings → "Open in Editor" |
+| `viewer-highlight-command` | `bat --style=plain --color=always --paging=never` | Command the file viewer pipes a file through for syntax highlighting; `off` disables it |
+| `viewer-max-bytes` | `2097152` | Largest file the viewer will render |
 | `prefix` / `bind` / `copy-bind` | tmux-canonical | Prefix-key layer remapping |
 
 **Any other `key = value` is a Ghostty directive**, forwarded verbatim to
@@ -468,6 +480,7 @@ zetty status --json                      # projects → tabs → panes, agent st
 zetty send --cwd ~/work/api 'ls' --enter # type into a pane
 zetty send --key C-c                     # send a control key
 zetty capture --lines 100                # recent pane output (preserved sessions)
+zetty view README.md:20                  # peek a file read-only, scrolled to line 20
 zetty new-tab --project api              # background tab; prints the new pane id
 zetty split --pane 1a2b3c4d --horizontal # background split; prints the new pane id
 zetty split --pane 1a2b3c4d --focus      # ...or bring the new pane to front

@@ -392,6 +392,57 @@ words/named keys; bad lines are skipped and collected in
 `AppConfig.rendered()` so runtime persists don't drop them. Reload (⇧⌘,)
 rebuilds the tables and exits any armed/copy state.
 
+## Read-only file viewer
+
+⌘-click a file path in terminal output (or `zetty view <path>[:line[:col]]`) to
+peek it in a **transient read-only overlay**, scrolled to the line. Esc or a
+click outside closes it; at most one exists per window and a second click/CLI
+call replaces its content. There is **no write path** — the footer's
+`Open in ▾` hands the file to a real editor at the right line
+(`EditorURLScheme` builds the per-editor URL: `zed://`, `vscode://`, `cursor://`,
+`windsurf://`, `txmt://`; editors without a scheme get a plain `NSWorkspace`
+open, which cannot carry a line). The status bar's own `Open ▾` pill is
+untouched and still opens the focused pane's *directory*.
+
+Pure logic in `ZettyCore/Viewer/`: `FilePathToken` (token extraction + the
+`path:line:col` grammar, also used by the CLI), `PathResolution` (ordered
+candidates — pane cwd, project root, `a/`/`b/` diff prefixes; the caller stats
+them so ZettyCore stays filesystem-free), `FileViewerContent` (NUL sniff, byte
+cap, 20 000-line cap), `ANSIText` (SGR → styled runs, incl. 256-colour and
+truecolor), `TerminalCellGeometry` (point↔cell, both directions — lifted out of
+`CopyModeController`, which now uses it). App layer: `FileViewerLoader` (bounded
+read + the highlight subprocess off-main, `bat` located explicitly because a GUI
+app's `PATH` is too thin), `FileViewerOverlay` (the panel; built on a **TextKit 1**
+stack because TextKit 2 has no `layoutManager` and the line-number ruler needs
+one), `PathHoverTracker` (⌘-hover underline + ⌘-click, via one local event
+monitor). Config reaches the controller through
+`viewerSettingsProvider` (set by `AppDelegate`), never a re-read of the file.
+
+Gotchas, all deliberate:
+- **`viewer-highlight-command` / `viewer-max-bytes` are reserved keys.** They
+  must stay in `AppConfig`'s `switch`; forwarded to ghostty, either would fail
+  its all-or-nothing validation and drop the whole config including the
+  per-surface `command`, stranding preserved sessions. Regression-tested.
+- **Detection needs preserve-sessions.** Text comes from zmx capture (the same
+  `captureLines` closure copy mode uses); a plain-shell pane gets no underline
+  and no ⌘-click, silently. `zetty view` works regardless.
+- **Rows are approximate.** Capture is `history` + `suffix(rows)`, so wrapped
+  lines can shift which line is believed to be under the cursor. It fails
+  closed — a drifted row rarely yields a path that both parses and resolves —
+  but two nearby lines both holding valid paths can peek the wrong one.
+- **The underline is drawn over the surface,** not into it: libghostty owns the
+  text, so a transparent child view with `hitTest` → nil paints the 1pt accent
+  line and can never swallow a click. `rebuildSurfaceNodeView` calls
+  `pathHover.reset()` for the same reason it exits copy mode.
+- **⌘-click is consumed only when it opens something,** so an ordinary ⌘-click
+  still reaches the terminal.
+- Esc works because `KeyInterceptor` passes keys through when the first
+  responder `is NSTextView`; `applyTheme()` skips its focus-restore while the
+  overlay is open, and the overlay reclaims first responder when content lands.
+
+Deferred: ⌘F find-in-file, Reveal in Finder, back/forward history between
+peeks, a viewer pane in the split tree, and any form of editing.
+
 ## Tab identity (logos + titles)
 
 Tab pills and sidebar tab rows show **what each pane is running**: a tool logo
@@ -434,6 +485,10 @@ Commands (see `zetty --help` for full grammar and agent notes):
   inject text/keys into a pane's pty (tmux-style key names incl. C-a…C-z).
 - `capture [--pane|--cwd] [--lines <n>]` — a pane's recent output via its
   preserved zmx session (`zmx history`).
+- `view <path>[:line[:col]]` — peek a text file in the read-only overlay,
+  scrolled to the line. No pane target (the overlay belongs to the window), and
+  no preserved session needed — the agent-facing path into the viewer. A fast
+  verb: the read happens async after `handleOnMain` returns.
 - `new-tab [--project <name>] [--focus]` / `split [--pane|--cwd]
   [--horizontal] [--focus]` / `break [--pane|--cwd] [--focus]` — create a
   tab / split a pane / break a pane into a new adjacent tab, in the
