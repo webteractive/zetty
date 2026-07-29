@@ -21,6 +21,10 @@ public enum ControlCLI {
       zetty capture [--pane <id> | --cwd <path>] [--lines <n>]
                                               print a pane's recent output (via its
                                               preserved zmx session)
+      zetty view <path>[:line[:col]]        peek a text file in a read-only
+                                              overlay, scrolled to the line
+                                              (editing is delegated to your
+                                              editor from the overlay)
       zetty new-tab [--project <name>] [--focus]
                                               open a tab in the background (active
                                               project by default); --focus switches
@@ -101,7 +105,7 @@ public enum ControlCLI {
     /// binary to decide CLI mode vs. launching the GUI).
     public static func recognizes(_ arguments: [String]) -> Bool {
         guard let first = arguments.first else { return false }
-        return ["status", "ls", "send", "capture", "new-tab", "add-project", "new-project", "clone", "update-clone",
+        return ["status", "ls", "send", "capture", "view", "new-tab", "add-project", "new-project", "clone", "update-clone",
                 "remove-project", "hibernate", "wake", "split", "break", "focus", "close", "reload",
                 "scratch", "scratch-clear", "quit",
                 "help", "--help", "-h"].contains(first)
@@ -125,6 +129,8 @@ public enum ControlCLI {
             return runSend(arguments)
         case "capture":
             return runCapture(arguments)
+        case "view":
+            return runView(arguments)
         case "new-tab":
             return runNewTab(arguments)
         case "add-project":
@@ -290,6 +296,28 @@ public enum ControlCLI {
             index += 1
         }
         return expectPane(.scratch(focus: focus))
+    }
+
+    private static func runView(_ arguments: [String]) -> Int32 {
+        var parts: [String] = []
+        for argument in arguments {
+            if argument == "--help" || argument == "-h" {
+                print(usage)
+                return 0
+            }
+            parts.append(argument)
+        }
+        // Positional path — joined so unquoted paths with spaces still work.
+        let raw = parts.joined(separator: " ").trimmingCharacters(in: .whitespaces)
+        guard !raw.isEmpty else { return failure("view needs a file path") }
+        guard let token = FilePathToken.parse(raw) else {
+            return failure("not a usable path: \(raw)")
+        }
+        // Resolve here: relative paths are relative to the CLI's cwd, not the app's.
+        let expanded = (token.path as NSString).expandingTildeInPath
+        let absolute = URL(fileURLWithPath: expanded).standardizedFileURL.path
+        return expectOK(.viewFile(path: absolute, line: token.line, column: token.column),
+                        success: nil)
     }
 
     private static func runAddProject(_ arguments: [String]) -> Int32 {

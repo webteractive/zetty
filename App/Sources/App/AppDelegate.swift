@@ -1276,6 +1276,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         case .reload:
             self.reloadConfiguration(nil)
             return .ok
+        case .viewFile(let path, let line, let column):
+            if let message = tvc.presentFileViewer(path: path, line: line, column: column) {
+                return .error(message)
+            }
+            return .ok
         case .scratch(let focus):
             return .pane(tvc.newScratchTerminal(focus: focus))
         case .scratchClear:

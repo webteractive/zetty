@@ -77,11 +77,16 @@ public enum ControlRequest: Equatable, Sendable {
     /// The targeted pane's recent output (`lines` from the end; nil → all
     /// retained scrollback). Requires the pane's preserved zmx session.
     case capture(target: PaneSelector, lines: Int?)
+    /// Peek a text file in the read-only overlay, scrolled to `line`. The path
+    /// is absolute (the CLI resolves relative paths against its own cwd). The
+    /// overlay belongs to the window, so there's no pane target — it presents
+    /// over whatever project and tab are active. Response `.ok`.
+    case viewFile(path: String, line: Int?, column: Int?)
 }
 
 extension ControlRequest: Codable {
     private enum CodingKeys: String, CodingKey {
-        case command, target, text, enter, keys, project, wholeTab, killSessions, vertical, lines, path, name, gitInit, focus, fetch, discard
+        case command, target, text, enter, keys, project, wholeTab, killSessions, vertical, lines, path, name, gitInit, focus, fetch, discard, line, column
     }
 
     public init(from decoder: Decoder) throws {
@@ -158,6 +163,12 @@ extension ControlRequest: Codable {
             self = .capture(
                 target: try container.decodeIfPresent(PaneSelector.self, forKey: .target) ?? .focused,
                 lines: try container.decodeIfPresent(Int.self, forKey: .lines)
+            )
+        case "view":
+            self = .viewFile(
+                path: try container.decode(String.self, forKey: .path),
+                line: try container.decodeIfPresent(Int.self, forKey: .line),
+                column: try container.decodeIfPresent(Int.self, forKey: .column)
             )
         case let other:
             throw ControlError.protocolError("unknown command \"\(other)\"")
@@ -239,6 +250,11 @@ extension ControlRequest: Codable {
             try container.encode("capture", forKey: .command)
             try container.encode(target, forKey: .target)
             try container.encodeIfPresent(lines, forKey: .lines)
+        case .viewFile(let path, let line, let column):
+            try container.encode("view", forKey: .command)
+            try container.encode(path, forKey: .path)
+            try container.encodeIfPresent(line, forKey: .line)
+            try container.encodeIfPresent(column, forKey: .column)
         }
     }
 }
