@@ -22,8 +22,12 @@ owning **tabs** and nested **split panes**. See [`README.md`](README.md).
 
 ## Build / run
 
-The Xcode project is **Tuist-generated**. Sources are listed explicitly, so
-**after adding or removing a file you must regenerate**:
+The Xcode project is **Tuist-generated**. `Project.swift` declares sources as
+**globs** (`App/Sources/App/**`), but the generated `.xcodeproj` enumerates the
+resolved file list — so **after adding or removing a file you must regenerate**.
+You do *not* edit `Project.swift` to register a new file; only new targets,
+resources, or settings need a manifest change. Files under `Sources/ZettyCore/`
+need nothing at all for `swift test` (SwiftPM globs them at build time).
 
 ```sh
 mise exec -- tuist generate --no-open
