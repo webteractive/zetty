@@ -73,6 +73,11 @@ final class TerminalViewController: NSViewController {
 
     /// The command palette overlay, when open.
     private var commandPaletteView: CommandPaletteView?
+    /// The read-only file viewer overlay, when open.
+    private var fileViewerOverlay: FileViewerOverlay?
+    /// Supplies the viewer's config. A provider (like `agentsProvider`) so the
+    /// controller never re-reads the config file itself.
+    var viewerSettingsProvider: (() -> (highlightCommand: String, maxBytes: Int))?
 
     /// The prefix-key layer's event monitor + engine (nil until the owner
     /// calls `installKeyBindings`).
@@ -449,11 +454,13 @@ final class TerminalViewController: NSViewController {
         tabBarView?.applyTheme()
         sidebarView?.applyTheme()
         statusBarView?.applyTheme()
+        fileViewerOverlay?.applyTheme()
         registry.reapplyTerminalTheme(ZTheme.current.terminalTheme())
         refreshTabBar()
         refreshSidebar()
         rebuildSurfaceNodeView()
-        if let focused = focusedTerminalView() {
+        // An open overlay keeps focus — taking it back would break its Esc.
+        if fileViewerOverlay == nil, let focused = focusedTerminalView() {
             view.window?.makeFirstResponder(focused)
         }
     }
@@ -1241,6 +1248,55 @@ final class TerminalViewController: NSViewController {
     private func dismissCommandPalette() {
         commandPaletteView?.removeFromSuperview()
         commandPaletteView = nil
+        if let focused = focusedTerminalView() {
+            view.window?.makeFirstResponder(focused)
+        }
+    }
+
+    // MARK: - File viewer
+
+    /// Peeks a file in the read-only overlay, scrolled to `line`. Returns nil
+    /// on success or a message describing why it couldn't be shown. The single
+    /// entry point for ⌘-click and `zetty view` alike.
+    @discardableResult
+    func presentFileViewer(path: String, line: Int?, column: Int?) -> String? {
+        var isDirectory: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: path, isDirectory: &isDirectory) else {
+            return "no such file: \(path)"
+        }
+        guard !isDirectory.boolValue else { return "not a file: \(path)" }
+
+        // At most one peek per window: an existing overlay is reused, so a
+        // second click replaces the content instead of stacking panels.
+        let overlay: FileViewerOverlay
+        if let existing = fileViewerOverlay {
+            overlay = existing
+        } else {
+            overlay = FileViewerOverlay(onClose: { [weak self] in self?.dismissFileViewer() })
+            view.addSubview(overlay)
+            NSLayoutConstraint.activate([
+                overlay.topAnchor.constraint(equalTo: view.topAnchor),
+                overlay.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+                overlay.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+                overlay.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+            ])
+            fileViewerOverlay = overlay
+        }
+
+        let settings = viewerSettingsProvider?()
+        let root = workspace.activeProject.rootPath
+        FileViewerLoader.load(path: path, line: line,
+                              highlightCommand: settings?.highlightCommand ?? "",
+                              maxBytes: settings?.maxBytes ?? AppConfig.defaultViewerMaxBytes) { [weak self] loaded in
+            guard self?.fileViewerOverlay === overlay else { return }
+            overlay.show(loaded, projectRoot: root)
+        }
+        return nil
+    }
+
+    func dismissFileViewer() {
+        fileViewerOverlay?.removeFromSuperview()
+        fileViewerOverlay = nil
         if let focused = focusedTerminalView() {
             view.window?.makeFirstResponder(focused)
         }

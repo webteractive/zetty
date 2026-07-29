@@ -192,6 +192,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             self?.setBroadcastScope(scope, for: project)
         }
         tvc.onActiveProjectChanged = { [weak self] in self?.applyThemeForActiveProject() }
+        tvc.viewerSettingsProvider = { [weak self] in
+            let config = self?.appConfig ?? AppConfig()
+            return (config.viewerHighlightCommand, config.viewerMaxBytes)
+        }
         tvc.layoutTemplateProvider = { [weak self] project in
             ProjectFileIO.load(projectRoot: project.rootPath)?.layoutTemplate
                 ?? self?.layoutTemplateStore.load()
