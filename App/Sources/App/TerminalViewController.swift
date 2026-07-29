@@ -78,6 +78,8 @@ final class TerminalViewController: NSViewController {
     /// Supplies the viewer's config. A provider (like `agentsProvider`) so the
     /// controller never re-reads the config file itself.
     var viewerSettingsProvider: (() -> (highlightCommand: String, maxBytes: Int))?
+    /// ⌘-hover/⌘-click path detection over the terminal surfaces.
+    private let pathHover = PathHoverTracker()
 
     /// The prefix-key layer's event monitor + engine (nil until the owner
     /// calls `installKeyBindings`).
@@ -799,6 +801,27 @@ final class TerminalViewController: NSViewController {
         let interceptor = KeyInterceptor(configuration: configuration, viewController: self)
         interceptor.install()
         keyInterceptor = interceptor
+
+        pathHover.gridMetrics = { [weak self] id in self?.registry.viewState(for: id)?.surfaceSize }
+        // Reuse copy mode's capture so there's exactly one implementation.
+        pathHover.captureLines = copyMode.captureLines
+        pathHover.paneCwd = { PaneCwdStore.read($0) }
+        pathHover.projectRoot = { [weak self] id in
+            self?.workspace.project(containing: id)?.rootPath
+        }
+        pathHover.terminalViewAndSurface = { [weak self] windowPoint in
+            guard let self else { return nil }
+            for id in self.allSurfaceIDs {
+                guard let view = self.registry.appTerminalView(for: id) else { continue }
+                let local = view.convert(windowPoint, from: nil)
+                if view.bounds.contains(local) { return (view, id) }
+            }
+            return nil
+        }
+        pathHover.onOpen = { [weak self] path, line, column in
+            self?.presentFileViewer(path: path, line: line, column: column)
+        }
+        pathHover.install()
     }
 
     /// Applies reloaded binding tables (⇧⌘,) and drops any armed/copy state.
@@ -3155,6 +3178,9 @@ final class TerminalViewController: NSViewController {
         // Any layout/tab change invalidates an active copy-mode session (its
         // selection and viewport-relative cursor no longer mean anything).
         exitCopyModeIfActive()
+        // Same reasoning for the hover underline, which is parented to a
+        // surface view that's about to be torn down.
+        pathHover.reset()
 
         rootContentView?.removeFromSuperview()
         rootContentView = nil
