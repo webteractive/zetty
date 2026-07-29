@@ -36,14 +36,18 @@ final class PathHoverTracker {
 
     func install() {
         guard monitor == nil else { return }
-        // Mouse-moved events only arrive if the window opts in.
-        NSApp.windows.forEach { $0.acceptsMouseMovedEvents = true }
         monitor = NSEvent.addLocalMonitorForEvents(
             matching: [.mouseMoved, .flagsChanged, .leftMouseDown]
         ) { [weak self] event in
             guard let self else { return event }
             switch event.type {
             case .mouseMoved, .flagsChanged:
+                // Mouse-moved events only arrive if the window opts in, and the
+                // window may not exist yet at install time. `flagsChanged` is a
+                // key event that arrives regardless, so ⌘ bootstraps tracking.
+                if let window = event.window, !window.acceptsMouseMovedEvents {
+                    window.acceptsMouseMovedEvents = true
+                }
                 self.updateHover(event)
                 return event
             case .leftMouseDown:

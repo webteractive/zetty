@@ -398,35 +398,62 @@ rebuilds the tables and exits any armed/copy state.
 
 ## Read-only file viewer
 
-⌘-click a file path in terminal output (or `zetty view <path>[:line[:col]]`) to
-peek it in a **transient read-only overlay**, scrolled to the line. Esc or a
-click outside closes it; at most one exists per window and a second click/CLI
-call replaces its content. There is **no write path** — the footer's
-`Open in ▾` hands the file to a real editor at the right line
-(`EditorURLScheme` builds the per-editor URL: `zed://`, `vscode://`, `cursor://`,
-`windsurf://`, `txmt://`; editors without a scheme get a plain `NSWorkspace`
-open, which cannot carry a line). The status bar's own `Open ▾` pill is
-untouched and still opens the focused pane's *directory*.
+⌘-click a file path in terminal output (or `zetty view <path>[:line[:col]]`) and
+Zetty routes by **content**, not extension:
+
+- **Text** → a transient read-only overlay, syntax-highlighted, scrolled to the
+  line (marked with `bg3`). Esc, the header ✕, or a click outside closes it. At
+  most one peek per window; a second click replaces its content.
+- **Not text** (binary, or past `viewer-max-bytes`) → no overlay at all; the file
+  goes to its default app (a PDF to Preview). The overlay is created only *after*
+  the load resolves, so a PDF never flashes an empty panel.
+- **Launchable** (installer, disk image, compiled binary) → revealed in Finder,
+  never opened. See the security note below.
+- **Unreadable** → the overlay shows the reason; there's nothing else to offer.
+
+There is **no write path**. The footer's `Open in ▾` hands the file to a real
+editor at the right line (`EditorURLScheme` builds the per-editor URL: `zed://`,
+`vscode://`, `cursor://`, `windsurf://`, `txmt://` — the last via `URLComponents`,
+because `urlPathAllowed` permits `&`/`=` and a filename like `Q&A.md` would
+otherwise corrupt the query). Editors with no scheme get a plain `NSWorkspace`
+open, which cannot carry a line. The menu also lists the system default app
+after a separator (suffixed `(default)` on the editor entry instead when it's
+already in the roster, so it never appears twice). The status bar's own
+`Open ▾` pill is untouched and still opens the focused pane's *directory*.
 
 Pure logic in `ZettyCore/Viewer/`: `FilePathToken` (token extraction + the
 `path:line:col` grammar, also used by the CLI), `PathResolution` (ordered
 candidates — pane cwd, project root, `a/`/`b/` diff prefixes; the caller stats
-them so ZettyCore stays filesystem-free), `FileViewerContent` (NUL sniff, byte
-cap, 20 000-line cap), `ANSIText` (SGR → styled runs, incl. 256-colour and
-truecolor), `TerminalCellGeometry` (point↔cell, both directions — lifted out of
-`CopyModeController`, which now uses it). App layer: `FileViewerLoader` (bounded
+them so ZettyCore stays filesystem-free), `FileViewerContent` (NUL sniff over the
+first 8 KB, byte cap, 20 000-line cap), `ANSIText` (SGR → styled runs, incl.
+256-colour and truecolor), `TerminalCellGeometry` (point↔cell, both directions —
+lifted out of `CopyModeController`, which now uses it), `EditorURLScheme`,
+`ExternalOpenPolicy` (launch-vs-reveal). App layer: `FileViewerLoader` (bounded
 read + the highlight subprocess off-main, `bat` located explicitly because a GUI
-app's `PATH` is too thin), `FileViewerOverlay` (the panel; built on a **TextKit 1**
-stack because TextKit 2 has no `layoutManager` and the line-number ruler needs
-one), `PathHoverTracker` (⌘-hover underline + ⌘-click, via one local event
-monitor). Config reaches the controller through
-`viewerSettingsProvider` (set by `AppDelegate`), never a re-read of the file.
+app's `PATH` is too thin), `FileViewerOverlay` (the panel), `PathHoverTracker`
+(⌘-hover underline + ⌘-click, one local event monitor). Config reaches the
+controller through `viewerSettingsProvider` (set by `AppDelegate`), never a
+re-read of the file.
 
-Gotchas, all deliberate:
-- **`viewer-highlight-command` / `viewer-max-bytes` are reserved keys.** They
-  must stay in `AppConfig`'s `switch`; forwarded to ghostty, either would fail
-  its all-or-nothing validation and drop the whole config including the
-  per-surface `command`, stranding preserved sessions. Regression-tested.
+### Security: paths are untrusted input
+
+A path can come from arbitrary terminal output (a log, a `curl` response), so
+⌘-click turns *reading output* into *asking LaunchServices to open a file*.
+Displaying a document is harmless; installing or executing one is not.
+`ExternalOpenPolicy` (pure, 11 tests) therefore reveals rather than launches:
+an extension denylist (`pkg`/`dmg`/`iso`/`xip`/`msi`, `jar`/`class`, bundle
+types, `scpt`/`workflow`/`command`/`exe`, …) plus **Mach-O and universal-binary
+magic bytes** in both byte orders — the magic check is the load-bearing one,
+since a compiled binary usually has no extension at all. Most of the surface is
+already closed by accident: shell scripts are *text* (so they render in the
+viewer) and `.app` bundles are *directories* (refused outright).
+
+### Gotchas, all deliberate
+
+- **`viewer-highlight-command` / `viewer-max-bytes` are reserved keys.** They must
+  stay in `AppConfig`'s `switch`; forwarded to ghostty, either would fail its
+  all-or-nothing validation and drop the whole config including the per-surface
+  `command`, stranding preserved sessions. Regression-tested.
 - **Detection needs preserve-sessions.** Text comes from zmx capture (the same
   `captureLines` closure copy mode uses); a plain-shell pane gets no underline
   and no ⌘-click, silently. `zetty view` works regardless.
@@ -434,19 +461,39 @@ Gotchas, all deliberate:
   lines can shift which line is believed to be under the cursor. It fails
   closed — a drifted row rarely yields a path that both parses and resolves —
   but two nearby lines both holding valid paths can peek the wrong one.
+- **Hit detection walks the real view hierarchy** (`contentView.hitTest`, then up
+  to an `AppTerminalView`). A per-surface `bounds.contains` check is wrong twice
+  over: `allSurfaceIDs` spans every non-hibernated project and tab, whose views
+  aren't in the window, and an open overlay would be peeked *through*.
 - **The underline is drawn over the surface,** not into it: libghostty owns the
   text, so a transparent child view with `hitTest` → nil paints the 1pt accent
   line and can never swallow a click. `rebuildSurfaceNodeView` calls
   `pathHover.reset()` for the same reason it exits copy mode.
 - **⌘-click is consumed only when it opens something,** so an ordinary ⌘-click
-  still reaches the terminal.
+  still reaches the terminal. `acceptsMouseMovedEvents` is enabled lazily on
+  `flagsChanged` (a key event, delivered regardless), so tracking works even if
+  the window didn't exist at install time.
+- **A stale load can't win.** Each peek bumps `fileViewerRequest`; a slow
+  highlighter landing after a newer click is dropped.
 - Esc works because `KeyInterceptor` passes keys through when the first
   responder `is NSTextView`; `applyTheme()` skips its focus-restore while the
   overlay is open, and the overlay reclaims first responder when content lands.
 
-Deferred: ⌘F find-in-file, Reveal in Finder, back/forward history between
-peeks, a viewer pane in the split tree, and any form of editing.
+### Do not reintroduce a TextKit stack
 
+The body is a **plain `NSTextView` in an `NSScrollView`**, configured exactly like
+`FileCopyBackSheet` — no hand-built `NSTextStorage`/`NSLayoutManager`/
+`NSTextContainer`, no manual frame, no `isVerticallyResizable`, no
+`NSRulerView`. An earlier version hand-rolled a TextKit 1 stack purely so a
+line-number ruler could reach `layoutManager`; text laid out correctly (glyph
+count, font, colour and frame all measured sane) but **never composited** — even
+a forced background colour refused to draw. Four fixes chased it before the
+stack itself turned out to be the cause. Line numbers were dropped rather than
+rebuilt, which also keeps copied text clean.
+
+Deferred: ⌘F find-in-file, Reveal in Finder for text files, back/forward history
+between peeks, a viewer pane in the split tree, magic-byte *format* detection
+(the text/binary split is still a NUL heuristic), and any form of editing.
 ## Tab identity (logos + titles)
 
 Tab pills and sidebar tab rows show **what each pane is running**: a tool logo
@@ -489,10 +536,14 @@ Commands (see `zetty --help` for full grammar and agent notes):
   inject text/keys into a pane's pty (tmux-style key names incl. C-a…C-z).
 - `capture [--pane|--cwd] [--lines <n>]` — a pane's recent output via its
   preserved zmx session (`zmx history`).
-- `view <path>[:line[:col]]` — peek a text file in the read-only overlay,
-  scrolled to the line. No pane target (the overlay belongs to the window), and
-  no preserved session needed — the agent-facing path into the viewer. A fast
-  verb: the read happens async after `handleOnMain` returns.
+- `view <path>[:line[:col]]` — open a file sensibly: text peeks in the read-only
+  overlay at that line, anything else goes to its default app (see "Read-only
+  file viewer"). No pane target (the overlay belongs to the window), and no
+  preserved session needed — the agent-facing path into the viewer. Relative
+  paths resolve against the CLI's own cwd (like `add-project`), so invoking it
+  inside a pane resolves against that pane's directory. A fast verb: the read
+  happens async after `handleOnMain` returns, so `.ok` means "accepted", not
+  "rendered".
 - `new-tab [--project <name>] [--focus]` / `split [--pane|--cwd]
   [--horizontal] [--focus]` / `break [--pane|--cwd] [--focus]` — create a
   tab / split a pane / break a pane into a new adjacent tab, in the

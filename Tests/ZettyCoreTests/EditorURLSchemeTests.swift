@@ -35,6 +35,20 @@ import Testing
     #expect(url?.absoluteString == "txmt://open?url=file:///work/a.swift&line=12")
 }
 
+/// `&` is legal in a filename and legal in `urlPathAllowed`, so interpolating
+/// it into TextMate's query string would truncate `url` and corrupt `line`.
+@Test func textMateEncodesAmpersandsInTheFilename() {
+    let url = EditorURLScheme.url(bundleID: "com.macromates.TextMate",
+                                  file: "/work/Q&A.md", line: 12, column: nil)
+    #expect(url?.absoluteString == "txmt://open?url=file:///work/Q%26A.md&line=12")
+}
+
+@Test func textMateEncodesSpaces() {
+    let url = EditorURLScheme.url(bundleID: "com.macromates.TextMate",
+                                  file: "/work/my file.md", line: nil, column: nil)
+    #expect(url?.absoluteString == "txmt://open?url=file:///work/my%20file.md")
+}
+
 @Test func bundleIDMatchingIsCaseInsensitive() {
     let url = EditorURLScheme.url(bundleID: "DEV.ZED.ZED",
                                   file: "/a.swift", line: nil, column: nil)

@@ -33,9 +33,17 @@ public enum EditorURLScheme {
         }
 
         if id == "com.macromates.textmate" {
-            var spec = "txmt://open?url=file://\(encoded)"
-            if let line { spec += "&line=\(line)" }
-            return URL(string: spec)
+            // Built through URLComponents, not string interpolation: the path
+            // sits in a query VALUE here, and `CharacterSet.urlPathAllowed`
+            // permits `&` and `=` — so a real filename like `Q&A.md` would
+            // otherwise truncate the url parameter and corrupt `line`.
+            var components = URLComponents()
+            components.scheme = "txmt"
+            components.host = "open"
+            var items = [URLQueryItem(name: "url", value: "file://\(file)")]
+            if let line { items.append(URLQueryItem(name: "line", value: String(line))) }
+            components.queryItems = items
+            return components.url
         }
 
         return nil

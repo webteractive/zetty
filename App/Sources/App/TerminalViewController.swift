@@ -80,6 +80,9 @@ final class TerminalViewController: NSViewController {
     var viewerSettingsProvider: (() -> (highlightCommand: String, maxBytes: Int))?
     /// ⌘-hover/⌘-click path detection over the terminal surfaces.
     private let pathHover = PathHoverTracker()
+    /// Bumped per peek request so a slow load (a big file, a slow highlighter)
+    /// can't land after a newer click and show the wrong file.
+    private var fileViewerRequest = 0
 
     /// The prefix-key layer's event monitor + engine (nil until the owner
     /// calls `installKeyBindings`).
@@ -809,12 +812,24 @@ final class TerminalViewController: NSViewController {
         pathHover.projectRoot = { [weak self] id in
             self?.workspace.project(containing: id)?.rootPath
         }
+        // Hit-test the real hierarchy rather than checking each surface's
+        // bounds: `allSurfaceIDs` spans every non-hibernated project and tab,
+        // and those views aren't in the window (so a bounds check can match a
+        // hidden pane). It also means chrome — and an open file-viewer overlay —
+        // correctly blocks detection instead of being peeked through.
         pathHover.terminalViewAndSurface = { [weak self] windowPoint in
-            guard let self else { return nil }
-            for id in self.allSurfaceIDs {
-                guard let view = self.registry.appTerminalView(for: id) else { continue }
-                let local = view.convert(windowPoint, from: nil)
-                if view.bounds.contains(local) { return (view, id) }
+            guard let self,
+                  let hit = self.view.window?.contentView?.hitTest(windowPoint)
+            else { return nil }
+            var candidate: NSView? = hit
+            while let current = candidate {
+                if let terminal = current as? AppTerminalView {
+                    guard let id = self.allSurfaceIDs.first(where: {
+                        self.registry.appTerminalView(for: $0) === terminal
+                    }) else { return nil }
+                    return (terminal, id)
+                }
+                candidate = current.superview
             }
             return nil
         }
@@ -1289,8 +1304,42 @@ final class TerminalViewController: NSViewController {
         }
         guard !isDirectory.boolValue else { return "not a file: \(path)" }
 
-        // At most one peek per window: an existing overlay is reused, so a
-        // second click replaces the content instead of stacking panels.
+        let settings = viewerSettingsProvider?()
+        let root = workspace.activeProject.rootPath
+        fileViewerRequest += 1
+        let request = fileViewerRequest
+        // The overlay is created only once the file is known to be text, so a
+        // PDF or an image never flashes an empty panel on its way to Preview.
+        FileViewerLoader.load(path: path, line: line,
+                              highlightCommand: settings?.highlightCommand ?? "",
+                              maxBytes: settings?.maxBytes ?? AppConfig.defaultViewerMaxBytes) { [weak self] loaded in
+            guard let self, request == self.fileViewerRequest else { return }
+            if let action = loaded.externalAction {
+                // Not text: hand it off. Any existing peek is left alone — this
+                // was a different file.
+                let url = URL(fileURLWithPath: loaded.path)
+                switch action {
+                case .openWithDefaultApp:
+                    // Nothing claims this type → reveal rather than fail silently.
+                    if !NSWorkspace.shared.open(url) {
+                        NSWorkspace.shared.activateFileViewerSelecting([url])
+                    }
+                case .revealInFinder:
+                    // Launching would install or execute something, and the path
+                    // came from untrusted terminal output. Show it instead.
+                    NSWorkspace.shared.activateFileViewerSelecting([url])
+                }
+                return
+            }
+            self.showFileViewer(loaded, projectRoot: root)
+        }
+        return nil
+    }
+
+    /// Presents (or reuses) the overlay for a loaded text file. At most one peek
+    /// exists per window, so a second click replaces the content rather than
+    /// stacking panels.
+    private func showFileViewer(_ loaded: FileViewerLoader.Loaded, projectRoot: String) {
         let overlay: FileViewerOverlay
         if let existing = fileViewerOverlay {
             overlay = existing
@@ -1305,16 +1354,7 @@ final class TerminalViewController: NSViewController {
             ])
             fileViewerOverlay = overlay
         }
-
-        let settings = viewerSettingsProvider?()
-        let root = workspace.activeProject.rootPath
-        FileViewerLoader.load(path: path, line: line,
-                              highlightCommand: settings?.highlightCommand ?? "",
-                              maxBytes: settings?.maxBytes ?? AppConfig.defaultViewerMaxBytes) { [weak self] loaded in
-            guard self?.fileViewerOverlay === overlay else { return }
-            overlay.show(loaded, projectRoot: root)
-        }
-        return nil
+        overlay.show(loaded, projectRoot: projectRoot)
     }
 
     func dismissFileViewer() {

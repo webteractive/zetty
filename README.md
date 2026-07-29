@@ -104,15 +104,20 @@ by the tool it's running.
 - **Tab identity** — a foreground-process probe names each tab after what it's
   actually running, with bundled logos for 40+ CLI tools.
 - **Peek a file without leaving the terminal** — ⌘-click a file path in any
-  pane's output (a compiler error, a `grep` hit, a stack frame) to open it in a
-  transient **read-only** overlay, scrolled to the referenced line. ⌘-hover
-  underlines a path that resolves to a real file; Esc closes. Editing is
-  delegated: the overlay's **Open in ▾** button hands the file — at the right
-  line — to Zed, VS Code, Cursor, Windsurf, TextMate, or any editor Zetty
-  finds. Syntax highlighting comes from [`bat`](https://github.com/sharkdp/bat)
-  when installed, and falls back to plain text when it isn't. ⌘-click detection
-  reads the pane's preserved zmx session, so it needs `preserve-sessions = true`;
-  `zetty view` works either way.
+  pane's output (a compiler error, a `grep` hit, a stack frame) and Zetty does
+  the obvious thing with it. **Text** opens in a transient **read-only** overlay,
+  syntax-highlighted and scrolled to the referenced line; ⌘-hover underlines a
+  path that resolves to a real file, and Esc, the ✕, or a click outside closes
+  it. **Anything else** — a PDF, an image — skips the overlay and opens in its
+  default app, so a ⌘-click is useful whatever you point it at. Editing is
+  delegated: the overlay's **Open in ▾** button hands the file, *at the right
+  line*, to Zed, VS Code, Cursor, Windsurf, TextMate, or any editor Zetty finds.
+  Highlighting comes from [`bat`](https://github.com/sharkdp/bat) when it's
+  installed and falls back to plain text when it isn't. Because paths come from
+  untrusted output, files macOS would *install or execute* (installers, disk
+  images, compiled binaries) are only revealed in Finder, never launched.
+  ⌘-click detection reads the pane's preserved zmx session, so it needs
+  `preserve-sessions = true`; `zetty view` works either way.
 - **`ssh://` links** — Zetty registers as a macOS handler for `ssh://` URLs, so
   a handover from another app (Terminal, a browser link, `open ssh://host`)
   opens the session in a new Home tab.
@@ -324,7 +329,7 @@ seeds a documented starter file on first launch. Format is plain
 | `notify-sound` / `notify-badge` / `notify-system` | `true` | Agent needs-attention alerts |
 | `editor` | — | App used by Settings → "Open in Editor" |
 | `viewer-highlight-command` | `bat --style=plain --color=always --paging=never` | Command the file viewer pipes a file through for syntax highlighting; `off` disables it |
-| `viewer-max-bytes` | `2097152` | Largest file the viewer will render |
+| `viewer-max-bytes` | `2097152` | Largest file the viewer will render; bigger files open in their default app instead |
 | `prefix` / `bind` / `copy-bind` | tmux-canonical | Prefix-key layer remapping |
 
 **Any other `key = value` is a Ghostty directive**, forwarded verbatim to
@@ -480,7 +485,7 @@ zetty status --json                      # projects → tabs → panes, agent st
 zetty send --cwd ~/work/api 'ls' --enter # type into a pane
 zetty send --key C-c                     # send a control key
 zetty capture --lines 100                # recent pane output (preserved sessions)
-zetty view README.md:20                  # peek a file read-only, scrolled to line 20
+zetty view README.md:20                  # peek text read-only at line 20 (else: default app)
 zetty new-tab --project api              # background tab; prints the new pane id
 zetty split --pane 1a2b3c4d --horizontal # background split; prints the new pane id
 zetty split --pane 1a2b3c4d --focus      # ...or bring the new pane to front
@@ -510,6 +515,12 @@ keyboard focus by default — an agent can reshape your workspace while you keep
 typing. Pass `--focus` to switch to the result. A background pane's shell spawns
 when you first view it, so `zetty send` to a brand-new background pane fails
 until it is viewed or created with `--focus`.
+
+`view` takes no pane target — the peek belongs to the window and appears over
+whichever project is active. Relative paths resolve against the **cwd of the
+shell you ran it in** (as `add-project` does), so running it inside a pane
+naturally resolves against that pane's directory. It needs no preserved session,
+which makes it the reliable way for an agent to put a file in front of you.
 
 Run `zetty --help` for the full grammar. This makes Zetty scriptable by
 anything — including the AI agents running inside it.

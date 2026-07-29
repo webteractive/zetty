@@ -2,11 +2,19 @@ import AppKit
 import ZettyCore
 
 /// A transient read-only file peek: scrim + centered panel with a header, the
-/// file's text (syntax-highlighted when available), a line-number gutter, and
-/// a footer offering the file to a real editor. Esc or a click outside closes.
+/// file's text (syntax-highlighted when available) with line numbers, and a
+/// footer offering the file to a real editor. Esc or a click outside closes.
 ///
 /// Read-only by construction — there is no write path here. "I want to edit
 /// this" is answered by the footer button, not by this view.
+///
+/// The text is a plain `NSTextView` in an `NSScrollView`, set up exactly like
+/// `FileCopyBackSheet` — the one text renderer in this app that is known to
+/// work. An earlier version hand-built a TextKit 1 stack so an `NSRulerView`
+/// gutter could reach `layoutManager`; text laid out correctly but never
+/// composited (even a forced background colour didn't draw). Line numbers are
+/// part of the attributed text instead, which costs us numbers-in-copied-text
+/// and buys the whole class of bug going away.
 @MainActor
 final class FileViewerOverlay: NSView {
 
@@ -15,31 +23,27 @@ final class FileViewerOverlay: NSView {
     private let panel = NSView()
     private let nameLabel = NSTextField(labelWithString: "")
     private let pathLabel = NSTextField(labelWithString: "")
+    private let headerStack = NSStackView()
+    private let closeButton = NSButton()
     private let scrollView = NSScrollView()
-    private let textView: NSTextView
+    private let textView = NSTextView()
     private let headerDivider = NSView()
     private let footerDivider = NSView()
     private let positionLabel = NSTextField(labelWithString: "")
     private let openPill = NSView()
     private let openButton = NSButton()
 
-    private var ruler: LineNumberRuler?
     /// Absolute path currently shown — what the footer button acts on.
+    /// What's on screen, retained so a scheme switch can re-render it: the body's
+    /// colours are baked into the attributed string at render time, so repainting
+    /// only the chrome would leave stale foregrounds on a new background.
+    private var shownLoaded: FileViewerLoader.Loaded?
+    private var shownProjectRoot: String?
     private var shownPath: String?
     private var shownLine: Int?
     private var shownColumn: Int?
 
     init(onClose: @escaping () -> Void) {
-        // TextKit 1 stack: TextKit 2 (the macOS 14+ default) has no
-        // `layoutManager`, which the line-number ruler needs.
-        let storage = NSTextStorage()
-        let layoutManager = NSLayoutManager()
-        storage.addLayoutManager(layoutManager)
-        let container = NSTextContainer()
-        container.widthTracksTextView = true
-        layoutManager.addTextContainer(container)
-        textView = NSTextView(frame: .zero, textContainer: container)
-
         self.onClose = onClose
         super.init(frame: .zero)
         translatesAutoresizingMaskIntoConstraints = false
@@ -69,37 +73,52 @@ final class FileViewerOverlay: NSView {
 
         nameLabel.lineBreakMode = .byTruncatingTail
         pathLabel.lineBreakMode = .byTruncatingHead
-        positionLabel.lineBreakMode = .byClipping
         for label in [nameLabel, pathLabel, positionLabel] {
             label.translatesAutoresizingMaskIntoConstraints = false
+            // Single line, always: a wrapped header would push the divider down.
+            label.maximumNumberOfLines = 1
         }
+        // Only the path gives way when the header is too narrow (truncating by
+        // the head, so the filename end stays readable).
         pathLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+
+        // A stack view rather than baseline-aligned constraints: side-by-side is
+        // then structural, which is how StatusBarView builds its clusters too.
+        headerStack.orientation = .horizontal
+        headerStack.alignment = .firstBaseline
+        headerStack.spacing = 10
+        headerStack.translatesAutoresizingMaskIntoConstraints = false
+        headerStack.setViews([nameLabel, pathLabel], in: .leading)
+
+        // Close ✕ — a bare glyph in the header's trailing edge; `fg3` because a
+        // dismiss control is idle chrome, not an accented action. Esc still works.
+        closeButton.isBordered = false
+        closeButton.bezelStyle = .inline
+        closeButton.imagePosition = .imageOnly
+        closeButton.target = self
+        closeButton.action = #selector(closeClicked)
+        closeButton.image = NSImage(systemSymbolName: "xmark", accessibilityDescription: "Close")?
+            .withSymbolConfiguration(NSImage.SymbolConfiguration(pointSize: 11, weight: .semibold))
+        closeButton.toolTip = "Close (Esc)"
+        closeButton.translatesAutoresizingMaskIntoConstraints = false
 
         for divider in [headerDivider, footerDivider] {
             divider.wantsLayer = true
             divider.translatesAutoresizingMaskIntoConstraints = false
         }
 
+        // Mirrors FileCopyBackSheet's diff view: a plain NSTextView, its own
+        // background, and no manual frame/autoresizing meddling — the scroll
+        // view owns the document view's geometry.
         textView.isEditable = false
         textView.isSelectable = true
-        textView.drawsBackground = false
-        textView.isRichText = false
-        textView.isAutomaticQuoteSubstitutionEnabled = false
+        textView.drawsBackground = true
         textView.textContainerInset = NSSize(width: 8, height: 10)
-        textView.translatesAutoresizingMaskIntoConstraints = false
 
         scrollView.documentView = textView
         scrollView.hasVerticalScroller = true
-        scrollView.autohidesScrollers = true
         scrollView.borderType = .noBorder
-        scrollView.drawsBackground = false
         scrollView.translatesAutoresizingMaskIntoConstraints = false
-
-        let ruler = LineNumberRuler(textView: textView, scrollView: scrollView)
-        scrollView.verticalRulerView = ruler
-        scrollView.hasVerticalRuler = true
-        scrollView.rulersVisible = true
-        self.ruler = ruler
 
         // "Open in ▾" — the same bordered pill idiom as the status bar's
         // switchers, but scoped to the file rather than the pane's directory.
@@ -118,8 +137,8 @@ final class FileViewerOverlay: NSView {
         openPill.translatesAutoresizingMaskIntoConstraints = false
         openPill.addSubview(openButton)
 
-        panel.addSubview(nameLabel)
-        panel.addSubview(pathLabel)
+        panel.addSubview(headerStack)
+        panel.addSubview(closeButton)
         panel.addSubview(headerDivider)
         panel.addSubview(scrollView)
         panel.addSubview(footerDivider)
@@ -132,13 +151,17 @@ final class FileViewerOverlay: NSView {
             panel.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -72),
             panel.widthAnchor.constraint(equalTo: widthAnchor, multiplier: 0.72),
 
-            nameLabel.leadingAnchor.constraint(equalTo: panel.leadingAnchor, constant: 16),
-            nameLabel.topAnchor.constraint(equalTo: panel.topAnchor, constant: 12),
-            pathLabel.leadingAnchor.constraint(equalTo: nameLabel.trailingAnchor, constant: 10),
-            pathLabel.trailingAnchor.constraint(lessThanOrEqualTo: panel.trailingAnchor, constant: -16),
-            pathLabel.firstBaselineAnchor.constraint(equalTo: nameLabel.firstBaselineAnchor),
+            headerStack.leadingAnchor.constraint(equalTo: panel.leadingAnchor, constant: 16),
+            headerStack.topAnchor.constraint(equalTo: panel.topAnchor, constant: 12),
+            headerStack.trailingAnchor.constraint(lessThanOrEqualTo: closeButton.leadingAnchor,
+                                                  constant: -10),
 
-            headerDivider.topAnchor.constraint(equalTo: nameLabel.bottomAnchor, constant: 12),
+            closeButton.trailingAnchor.constraint(equalTo: panel.trailingAnchor, constant: -14),
+            closeButton.centerYAnchor.constraint(equalTo: headerStack.centerYAnchor),
+            closeButton.widthAnchor.constraint(equalToConstant: 20),
+            closeButton.heightAnchor.constraint(equalToConstant: 20),
+
+            headerDivider.topAnchor.constraint(equalTo: headerStack.bottomAnchor, constant: 12),
             headerDivider.leadingAnchor.constraint(equalTo: panel.leadingAnchor),
             headerDivider.trailingAnchor.constraint(equalTo: panel.trailingAnchor),
             headerDivider.heightAnchor.constraint(equalToConstant: 1),
@@ -170,6 +193,8 @@ final class FileViewerOverlay: NSView {
     /// Renders a loaded file. Calling this again replaces the content — at most
     /// one peek exists per window.
     func show(_ loaded: FileViewerLoader.Loaded, projectRoot: String?) {
+        shownLoaded = loaded
+        shownProjectRoot = projectRoot
         shownPath = loaded.path
         shownLine = loaded.line
         shownColumn = nil
@@ -178,18 +203,26 @@ final class FileViewerOverlay: NSView {
         nameLabel.stringValue = (loaded.path as NSString).lastPathComponent
         pathLabel.stringValue = displayPath(loaded.path, projectRoot: projectRoot)
 
-        let body = NSMutableAttributedString()
         if let runs = loaded.runs {
+            let body = NSMutableAttributedString()
             for run in runs {
-                body.append(NSAttributedString(string: run.text, attributes: attributes(for: run.style)))
+                body.append(NSAttributedString(string: run.text,
+                                               attributes: attributes(for: run.style)))
             }
-        } else if let message = loaded.message {
-            body.append(NSAttributedString(string: message, attributes: [
-                .font: ZTheme.monoFont(size: 12),
-                .foregroundColor: theme.yellowColor,
-            ]))
+            textView.textStorage?.setAttributedString(body)
+            if let range = lineRange(in: body.string, line: loaded.line) {
+                textView.textStorage?.addAttribute(.backgroundColor, value: theme.bg3Color,
+                                                   range: range)
+                textView.scrollRangeToVisible(range)
+            } else {
+                textView.scrollRangeToVisible(NSRange(location: 0, length: 0))
+            }
+        } else {
+            textView.textStorage?.setAttributedString(NSAttributedString(
+                string: loaded.message ?? "",
+                attributes: [.font: ZTheme.monoFont(size: 12),
+                             .foregroundColor: theme.yellowColor]))
         }
-        textView.textStorage?.setAttributedString(body)
 
         var position: [String] = []
         if let line = loaded.line { position.append(":\(line)") }
@@ -198,40 +231,28 @@ final class FileViewerOverlay: NSView {
         }
         positionLabel.stringValue = position.joined(separator: "  ·  ")
 
-        ruler?.highlightedLine = loaded.line
         renderOpenButton()
-        if let line = loaded.line { highlightAndScroll(to: line) }
-        ruler?.needsDisplay = true
         // Content arrives asynchronously, and a pane rebuild in the meantime
         // can have handed focus back to a terminal — reclaim it so Esc works.
         if window?.firstResponder !== textView { window?.makeFirstResponder(textView) }
     }
 
-    /// Marks the target line with the selection surface and scrolls it into
-    /// view, roughly centered.
-    private func highlightAndScroll(to line: Int) {
-        guard let storage = textView.textStorage else { return }
-        let text = storage.string as NSString
-        var index = 0
+    /// Character range of a 1-based line, or nil when there's no target line or
+    /// the file has fewer lines than that.
+    private func lineRange(in text: String, line: Int?) -> NSRange? {
+        guard let line, line > 0 else { return nil }
+        let full = text as NSString
+        var start = 0
         var current = 1
-        while current < line, index < text.length {
-            index = NSMaxRange(text.lineRange(for: NSRange(location: index, length: 0)))
+        while current < line {
+            guard start < full.length else { return nil }
+            let next = NSMaxRange(full.lineRange(for: NSRange(location: start, length: 0)))
+            if next == start { return nil }
+            start = next
             current += 1
         }
-        guard index <= text.length else { return }
-        let lineRange = text.lineRange(for: NSRange(location: index, length: 0))
-        storage.addAttribute(.backgroundColor, value: ZTheme.current.bg3Color, range: lineRange)
-        textView.scrollRangeToVisible(lineRange)
-        // Center it rather than leaving it pinned to an edge.
-        if let layoutManager = textView.layoutManager, let container = textView.textContainer {
-            let glyphRange = layoutManager.glyphRange(forCharacterRange: lineRange,
-                                                      actualCharacterRange: nil)
-            let rect = layoutManager.boundingRect(forGlyphRange: glyphRange, in: container)
-            let visible = scrollView.contentView.bounds.height
-            let target = max(0, rect.midY - visible / 2)
-            scrollView.contentView.scroll(to: NSPoint(x: 0, y: target))
-            scrollView.reflectScrolledClipView(scrollView.contentView)
-        }
+        guard start <= full.length else { return nil }
+        return full.lineRange(for: NSRange(location: start, length: 0))
     }
 
     private func attributes(for style: ANSIStyle) -> [NSAttributedString.Key: Any] {
@@ -287,23 +308,63 @@ final class FileViewerOverlay: NSView {
 
     // MARK: - Open in editor
 
+    @objc private func closeClicked() { onClose() }
+
     @objc private func openClicked() {
-        guard shownPath != nil else { return }
+        guard let path = shownPath else { return }
+        let fileURL = URL(fileURLWithPath: path)
+        let defaultApp = NSWorkspace.shared.urlForApplication(toOpen: fileURL)
+        let editors = EditorCatalog.installed()
+
         let menu = NSMenu()
-        for editor in EditorCatalog.installed() {
-            let item = NSMenuItem(title: EditorCatalog.displayName(of: editor),
+        for editor in editors {
+            let isDefault = defaultApp.map { $0.standardizedFileURL == editor.standardizedFileURL } ?? false
+            let name = EditorCatalog.displayName(of: editor)
+            let item = NSMenuItem(title: isDefault ? "\(name) (default)" : name,
                                   action: #selector(openInEditor(_:)), keyEquivalent: "")
             item.target = self
             item.representedObject = editor
             item.image = EditorCatalog.icon(for: editor, size: 14)
             menu.addItem(item)
         }
+        // Whatever the file is now, it's text — so editors lead and the system
+        // default app is the secondary option (handy for e.g. .md in Marked).
+        if let item = defaultAppItem(defaultApp, among: editors) {
+            if !editors.isEmpty { menu.addItem(.separator()) }
+            menu.addItem(item)
+        }
         if menu.items.isEmpty {
-            let item = NSMenuItem(title: "No editors found", action: nil, keyEquivalent: "")
+            let item = NSMenuItem(title: "No apps found", action: nil, keyEquivalent: "")
             item.isEnabled = false
             menu.addItem(item)
         }
         menu.popUp(positioning: nil, at: NSPoint(x: 0, y: -6), in: openButton)
+    }
+
+    /// The system default app for this file, as a menu item — nil when it can't
+    /// be resolved, or when it's already listed among the editors (which get a
+    /// "(default)" suffix instead, so it never appears twice).
+    private func defaultAppItem(_ defaultApp: URL?, among editors: [URL]) -> NSMenuItem? {
+        guard let defaultApp else { return nil }
+        let alreadyListed = editors.contains { $0.standardizedFileURL == defaultApp.standardizedFileURL }
+        guard !alreadyListed else { return nil }
+        let item = NSMenuItem(title: "\(EditorCatalog.displayName(of: defaultApp)) (default)",
+                              action: #selector(openWithDefaultApp(_:)), keyEquivalent: "")
+        item.target = self
+        item.image = EditorCatalog.icon(for: defaultApp, size: 14)
+        return item
+    }
+
+    /// Hands the file to whatever the system opens it with — Preview for a PDF,
+    /// an image viewer for a PNG. No line addressing, by nature.
+    @objc private func openWithDefaultApp(_ sender: NSMenuItem) {
+        guard let path = shownPath else { return }
+        let url = URL(fileURLWithPath: path)
+        // Reveal rather than fail silently if nothing claims the type.
+        if !NSWorkspace.shared.open(url) {
+            NSWorkspace.shared.activateFileViewerSelecting([url])
+        }
+        onClose()
     }
 
     @objc private func openInEditor(_ sender: NSMenuItem) {
@@ -346,10 +407,14 @@ final class FileViewerOverlay: NSView {
         pathLabel.textColor = theme.fg3Color
         positionLabel.font = ZTheme.monoFont(size: 11)
         positionLabel.textColor = theme.fg2Color
+        closeButton.contentTintColor = theme.fg3Color
+        textView.backgroundColor = theme.bg1Color
         openPill.layer?.backgroundColor = theme.bg3Color.cgColor
         openPill.layer?.borderColor = theme.borderColor.cgColor
         renderOpenButton()
-        ruler?.needsDisplay = true
+        // Re-render the body so its baked-in colours follow the new scheme.
+        // `show` never calls back into `applyTheme`, so this can't recurse.
+        if let shownLoaded { show(shownLoaded, projectRoot: shownProjectRoot) }
     }
 
     // MARK: - Dismissal
@@ -366,77 +431,4 @@ final class FileViewerOverlay: NSView {
     }
 
     override func cancelOperation(_ sender: Any?) { onClose() }
-}
-
-// MARK: - LineNumberRuler
-
-/// Left gutter drawing 1-based line numbers aligned to the text view's lines.
-/// Requires the TextKit 1 stack built in `FileViewerOverlay.init`.
-private final class LineNumberRuler: NSRulerView {
-
-    /// Drawn in the accent colour — the peeked line.
-    var highlightedLine: Int?
-
-    init(textView: NSTextView, scrollView: NSScrollView) {
-        super.init(scrollView: scrollView, orientation: .verticalRuler)
-        clientView = textView
-        ruleThickness = 56
-    }
-
-    // NSRulerView's is non-failable, unlike NSView's.
-    @available(*, unavailable)
-    required init(coder _: NSCoder) { fatalError("not supported") }
-
-    override func drawHashMarksAndLabels(in rect: NSRect) {
-        guard let textView = clientView as? NSTextView,
-              let layoutManager = textView.layoutManager,
-              let container = textView.textContainer,
-              let clip = scrollView?.contentView
-        else { return }
-
-        let theme = ZTheme.current
-        theme.bg1Color.setFill()
-        rect.fill()
-        theme.borderColor.setFill()
-        NSRect(x: bounds.maxX - 1, y: rect.minY, width: 1, height: rect.height).fill()
-
-        let text = textView.string as NSString
-        guard text.length > 0 else { return }
-        let visible = clip.bounds
-        let glyphRange = layoutManager.glyphRange(forBoundingRect: visible, in: container)
-        let charRange = layoutManager.characterRange(forGlyphRange: glyphRange, actualGlyphRange: nil)
-
-        // Line number of the first visible character.
-        var lineNumber = 1
-        if charRange.location > 0 {
-            text.enumerateSubstrings(in: NSRange(location: 0, length: charRange.location),
-                                     options: [.byLines, .substringNotRequired]) { _, _, _, _ in
-                lineNumber += 1
-            }
-        }
-
-        var index = charRange.location
-        while index <= NSMaxRange(charRange), index < text.length {
-            let lineRange = text.lineRange(for: NSRange(location: index, length: 0))
-            let glyphIndex = layoutManager.glyphIndexForCharacter(at: lineRange.location)
-            var effective = NSRange()
-            let fragment = layoutManager.lineFragmentRect(forGlyphAt: glyphIndex,
-                                                          effectiveRange: &effective)
-            let isTarget = lineNumber == highlightedLine
-            let attributes: [NSAttributedString.Key: Any] = [
-                .font: ZTheme.monoFont(size: 11, weight: isTarget ? .semibold : .regular),
-                .foregroundColor: isTarget ? theme.accentColor : theme.fg3Color,
-            ]
-            let label = "\(lineNumber)" as NSString
-            let size = label.size(withAttributes: attributes)
-            let y = fragment.minY + textView.textContainerInset.height - visible.minY
-            label.draw(at: NSPoint(x: ruleThickness - size.width - 10, y: y),
-                       withAttributes: attributes)
-
-            lineNumber += 1
-            let next = NSMaxRange(lineRange)
-            if next == index { break }   // guard against a zero-length final line
-            index = next
-        }
-    }
 }

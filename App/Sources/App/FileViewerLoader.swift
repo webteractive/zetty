@@ -15,10 +15,15 @@ enum FileViewerLoader {
         let line: Int?
         /// Styled content, or nil when the file couldn't be rendered as text.
         let runs: [ANSIRun]?
-        /// Why there's no content (binary, oversize, unreadable).
+        /// Why there's no content (unreadable, missing).
         let message: String?
         /// Line the content was cut at, when it exceeded the line cap.
         let truncatedAtLine: Int?
+        /// Set when the file isn't text (binary, or past the size cap): the
+        /// viewer has nothing to show, and this says what to do with it instead
+        /// — open it, or merely reveal it when launching would install/execute
+        /// something. nil means it rendered as text.
+        let externalAction: ExternalOpenPolicy.Decision?
     }
 
     /// Wall-clock ceiling for the highlight subprocess; past it we fall back to
@@ -37,7 +42,13 @@ enum FileViewerLoader {
     static func loadSync(path: String, line: Int?,
                          highlightCommand: String, maxBytes: Int) -> Loaded {
         func failure(_ message: String) -> Loaded {
-            Loaded(path: path, line: line, runs: nil, message: message, truncatedAtLine: nil)
+            Loaded(path: path, line: line, runs: nil, message: message,
+                   truncatedAtLine: nil, externalAction: nil)
+        }
+        /// Not text — hand it off, but only launch what's safe to launch.
+        func external(_ action: ExternalOpenPolicy.Decision) -> Loaded {
+            Loaded(path: path, line: line, runs: nil, message: nil,
+                   truncatedAtLine: nil, externalAction: action)
         }
 
         var isDirectory: ObjCBool = false
@@ -50,10 +61,8 @@ enum FileViewerLoader {
         }
 
         switch FileViewerContent.classify(data, maxBytes: maxBytes) {
-        case .binary:
-            return failure("Binary file · \(byteText(data.count))")
-        case .tooLarge(let bytes):
-            return failure("Too large to preview · \(byteText(bytes))")
+        case .binary, .tooLarge:
+            return external(ExternalOpenPolicy.decision(path: path, header: data.prefix(8)))
         case .text(let text, let truncatedAtLine):
             // Highlighting reads the file itself, so a truncated body keeps the
             // plain text — the >20k-line case isn't worth a second code path.
@@ -61,7 +70,8 @@ enum FileViewerLoader {
                 ? highlight(path: path, command: highlightCommand) ?? text
                 : text
             return Loaded(path: path, line: line, runs: ANSIText.parse(rendered),
-                          message: nil, truncatedAtLine: truncatedAtLine)
+                          message: nil, truncatedAtLine: truncatedAtLine,
+                          externalAction: nil)
         }
     }
 
@@ -77,8 +87,10 @@ enum FileViewerLoader {
         let output = Pipe()
         process.standardOutput = output
         process.standardError = Pipe()   // discard: diagnostics aren't content
-        // A highlighter must not inherit a TTY-shaped environment.
-        process.environment = ["PATH": "/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin",
+        // A highlighter must not inherit a TTY-shaped environment. The child's
+        // PATH is the same list `locate` searches, so a tool that was found can
+        // also find its own helpers.
+        process.environment = ["PATH": binaryDirectories.joined(separator: ":"),
                                "TERM": "xterm-256color"]
 
         do { try process.run() } catch { return nil }
@@ -95,13 +107,10 @@ enum FileViewerLoader {
         return String(decoding: data, as: UTF8.self)
     }
 
-    /// Finds a tool without trusting `PATH` — a GUI app inherits a minimal one,
-    /// so the search is explicit (the same reason `ZmxRunner.locate()` exists).
-    static func locate(_ tool: String) -> String? {
-        if tool.contains("/") {
-            return FileManager.default.isExecutableFile(atPath: tool) ? tool : nil
-        }
-        let directories = [
+    /// Where a highlight tool may live. A GUI app inherits a minimal `PATH`, so
+    /// the search is explicit (the same reason `ZmxRunner.locate()` exists).
+    private static var binaryDirectories: [String] {
+        [
             "\(NSHomeDirectory())/.zetty/bin",
             "/opt/homebrew/bin",
             "/usr/local/bin",
@@ -109,12 +118,16 @@ enum FileViewerLoader {
             "/usr/bin",
             "/bin",
         ]
-        return directories
+    }
+
+    /// Resolves a tool name (or an explicit path) to an executable.
+    static func locate(_ tool: String) -> String? {
+        if tool.contains("/") {
+            return FileManager.default.isExecutableFile(atPath: tool) ? tool : nil
+        }
+        return binaryDirectories
             .map { "\($0)/\(tool)" }
             .first { FileManager.default.isExecutableFile(atPath: $0) }
     }
 
-    private static func byteText(_ bytes: Int) -> String {
-        ByteCountFormatter.string(fromByteCount: Int64(bytes), countStyle: .file)
-    }
 }
