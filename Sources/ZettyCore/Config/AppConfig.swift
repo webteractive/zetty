@@ -77,6 +77,12 @@ public struct AppConfig: Equatable, Sendable {
     public var sidebarPosition: SidebarPosition
     /// Raw ghostty directives (from `ghostty.<key> = <value>` lines), forwarded
     /// to the terminal unchanged.
+    /// Command the read-only file viewer pipes a file through for syntax
+    /// highlighting; its ANSI output is parsed into attributed text. Empty
+    /// disables highlighting (plain text).
+    public var viewerHighlightCommand: String
+    /// Largest file the viewer will render, in bytes.
+    public var viewerMaxBytes: Int
     public var ghostty: [GhosttyDirective]
     /// Prefix-key layer: `prefix = <chord>`, `bind = <chord> <command>`, and
     /// `copy-bind = <chord> <command>` lines applied over the tmux-canonical
@@ -91,6 +97,8 @@ public struct AppConfig: Equatable, Sendable {
 
     public static let defaultThemeDark = "Twilight"
     public static let defaultThemeLight = "Daylight"
+    public static let defaultViewerHighlightCommand = "bat --style=plain --color=always --paging=never"
+    public static let defaultViewerMaxBytes = 2_097_152
 
     /// Zetty keys that no longer (or don't yet) exist in this build but must
     /// still never reach ghostty. Add retired keys here rather than deleting
@@ -126,6 +134,8 @@ public struct AppConfig: Equatable, Sendable {
         notifyBadge: Bool = true,
         notifySystem: Bool = true,
         sidebarPosition: SidebarPosition = .left,
+        viewerHighlightCommand: String = AppConfig.defaultViewerHighlightCommand,
+        viewerMaxBytes: Int = AppConfig.defaultViewerMaxBytes,
         ghostty: [GhosttyDirective] = [],
         keybindings: KeyBindingConfiguration = KeyBindingConfiguration(),
         unsupportedKeys: [String] = []
@@ -143,6 +153,8 @@ public struct AppConfig: Equatable, Sendable {
         self.notifyBadge = notifyBadge
         self.notifySystem = notifySystem
         self.sidebarPosition = sidebarPosition
+        self.viewerHighlightCommand = viewerHighlightCommand
+        self.viewerMaxBytes = viewerMaxBytes
         self.ghostty = ghostty
         self.keybindings = keybindings
         self.unsupportedKeys = unsupportedKeys
@@ -220,6 +232,14 @@ public struct AppConfig: Equatable, Sendable {
                 if let position = SidebarPosition(rawValue: value.lowercased()) {
                     config.sidebarPosition = position
                 }
+            case "viewer-highlight-command":
+                // `off`/`none`/`false` disables highlighting. An empty VALUE
+                // can't reach here — the parser skips empty values — so these
+                // words are the documented way to turn it off.
+                let lowered = value.lowercased()
+                config.viewerHighlightCommand = ["off", "none", "false"].contains(lowered) ? "" : value
+            case "viewer-max-bytes":
+                if let bytes = Int(value), bytes > 0 { config.viewerMaxBytes = bytes }
             case "prefix":
                 config.keybindings.applyPrefix(value)
             case "bind":
@@ -321,6 +341,14 @@ public struct AppConfig: Equatable, Sendable {
 
         # Which side of the window the project sidebar sits on: left | right
         sidebar-position = \(sidebarPosition.rawValue)
+
+        # Syntax highlighting for the read-only file viewer: the file is piped
+        # through this command and its ANSI colors are rendered. `off` disables
+        # it. A missing or failing command falls back to plain text.
+        viewer-highlight-command = \(viewerHighlightCommand.isEmpty ? "off" : viewerHighlightCommand)
+
+        # Largest file the viewer will render, in bytes.
+        viewer-max-bytes = \(viewerMaxBytes)
 
         """
         if let editor, !editor.isEmpty {
