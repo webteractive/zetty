@@ -1,4 +1,5 @@
 import AppKit
+import ZettyCore
 
 /// Detection + resolution of GUI editors, shared by Settings' config opener
 /// and the status bar's "open project in editor" control.
@@ -66,5 +67,12 @@ enum EditorCatalog {
         let icon = NSWorkspace.shared.icon(forFile: url.path)
         icon.size = NSSize(width: size, height: size)
         return icon
+    }
+
+    /// The URL that opens `file` at `line` in the editor at `url`, or nil when
+    /// that editor has no line-addressing scheme (open the file plainly then).
+    static func openURL(for editor: URL, file: String, line: Int?, column: Int?) -> URL? {
+        guard let bundleID = Bundle(url: editor)?.bundleIdentifier else { return nil }
+        return EditorURLScheme.url(bundleID: bundleID, file: file, line: line, column: column)
     }
 }
