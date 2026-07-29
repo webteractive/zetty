@@ -184,8 +184,9 @@ final class CopyModeController {
         send(.leftMouseUp, at: point, in: view)
     }
 
+    /// Cell centre in ghostty's point space (shared with the hover tracker).
     private func cellCenter(_ cell: CopyModeCursor, cellW: CGFloat, cellH: CGFloat) -> NSPoint {
-        NSPoint(x: (CGFloat(cell.col) + 0.5) * cellW, y: (CGFloat(cell.row) + 0.5) * cellH)
+        TerminalCellGeometry.cellCenter(row: cell.row, col: cell.col, cellW: cellW, cellH: cellH)
     }
 
     private func drag(in view: AppTerminalView, from: NSPoint, to: NSPoint) {
@@ -205,7 +206,8 @@ final class CopyModeController {
     /// AppKit's bottom-left origin here.
     private func send(_ type: NSEvent.EventType, at ghosttyPoint: NSPoint, in view: AppTerminalView) {
         guard let window = view.window else { return }
-        let viewPoint = NSPoint(x: ghosttyPoint.x, y: view.bounds.height - ghosttyPoint.y)
+        let viewPoint = TerminalCellGeometry.viewPoint(fromGhostty: ghosttyPoint,
+                                                      viewHeight: view.bounds.height)
         let windowPoint = view.convert(viewPoint, to: nil)
         guard let event = NSEvent.mouseEvent(
             with: type,
