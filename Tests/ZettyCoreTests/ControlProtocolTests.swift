@@ -74,9 +74,16 @@ import Foundation
 
 @Test func controlResponseCarriesStatusSnapshot() throws {
     let snapshot = StatusSnapshot(projects: [
-        .init(name: "zetty", isActive: true, tabs: [
+        .init(name: "zetty", isActive: true, hibernated: false, tabs: [
             .init(title: "claude", isActive: true, panes: [
-                .init(id: "abcd1234", title: "✳ Claude Code", cwd: "/x", tool: "claude", agentStatus: "running", isFocused: true),
+                .init(id: "abcd1234", title: "✳ Claude Code", cwd: "/x", tool: "claude",
+                      agentStatus: "running", isFocused: true, live: true),
+            ]),
+        ]),
+        .init(name: "api", isActive: false, hibernated: true, tabs: [
+            .init(title: "shell", isActive: false, panes: [
+                .init(id: "beef0001", title: nil, cwd: "/y", tool: nil,
+                      agentStatus: nil, isFocused: false, live: false),
             ]),
         ]),
     ])
@@ -98,6 +105,54 @@ import Foundation
 
 @Test func malformedRequestLineThrows() {
     #expect(throws: (any Error).self) { try ControlWire.decodeRequest("not json") }
+}
+
+/// A payload written before `hibernated`/`live` existed must still decode — a
+/// stale standalone `zetty` build can talk to a newer app. Both default to the
+/// safe "nothing claimed" value rather than throwing.
+@Test func statusSnapshotDecodesPayloadWithoutHibernationFields() throws {
+    let legacy = """
+    {"ok":true,"status":{"projects":[{"name":"api","isActive":true,"tabs":[\
+    {"title":"shell","isActive":true,"panes":[{"id":"abcd1234","isFocused":true}]}]}]}}
+    """
+    guard case .status(let snapshot) = try ControlWire.decodeResponse(legacy) else {
+        Issue.record("expected status response")
+        return
+    }
+    let project = try #require(snapshot.projects.first)
+    #expect(project.hibernated == false)
+    #expect(project.isActive == true)
+    let pane = try #require(snapshot.panes.first)
+    #expect(pane.live == false)
+    #expect(pane.isFocused == true)
+}
+
+// MARK: - Status rendering
+
+@Test func statusLinesMarkHibernatedProjectsAndDeadPanes() {
+    let snapshot = StatusSnapshot(projects: [
+        .init(name: "zetty", isActive: true, hibernated: false, tabs: [
+            .init(title: "claude", isActive: true, panes: [
+                .init(id: "abcd1234", title: "claude", cwd: "/x", tool: "claude",
+                      agentStatus: "running", isFocused: true, live: true),
+            ]),
+        ]),
+        .init(name: "Event Platform", isActive: false, hibernated: true, tabs: [
+            .init(title: "shell", isActive: false, panes: [
+                .init(id: "d37a61a3", title: nil, cwd: "/y", tool: nil,
+                      agentStatus: nil, isFocused: false, live: false),
+            ]),
+        ]),
+    ])
+    let lines = ControlCLI.statusLines(snapshot)
+
+    #expect(lines.first { $0.contains("zetty") } == "● zetty")
+    #expect(lines.first { $0.contains("Event Platform") } == "☾ Event Platform  (hibernated)")
+
+    // The live pane carries no dormancy marker; the hibernated one does.
+    #expect(lines.first { $0.contains("abcd1234") }
+            == "      abcd1234  [claude]  (running)  claude  — /x  *")
+    #expect(lines.first { $0.contains("d37a61a3") } == "      d37a61a3  -  — /y")
 }
 
 // MARK: - Key notation
@@ -130,9 +185,12 @@ import Foundation
 // MARK: - Pane selection
 
 private let panes: [StatusSnapshot.Pane] = [
-    .init(id: "abcd1234", title: "claude", cwd: "/Users/x/proj", tool: "claude", agentStatus: nil, isFocused: false),
-    .init(id: "abff9999", title: "codex", cwd: "/Users/x/other", tool: "codex", agentStatus: nil, isFocused: true),
-    .init(id: "12345678", title: "vim", cwd: "/Users/x/proj", tool: nil, agentStatus: nil, isFocused: false),
+    .init(id: "abcd1234", title: "claude", cwd: "/Users/x/proj", tool: "claude",
+          agentStatus: nil, isFocused: false, live: true),
+    .init(id: "abff9999", title: "codex", cwd: "/Users/x/other", tool: "codex",
+          agentStatus: nil, isFocused: true, live: true),
+    .init(id: "12345678", title: "vim", cwd: "/Users/x/proj", tool: nil,
+          agentStatus: nil, isFocused: false, live: false),
 ]
 
 @Test func selectorFocusedPicksTheFocusedPane() throws {

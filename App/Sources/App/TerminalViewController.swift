@@ -1076,15 +1076,26 @@ final class TerminalViewController: NSViewController {
         refreshSidebar()
     }
 
-    /// Injects a template pane's startup command shortly after its view
-    /// spawns (the delay lets the shell — or the scrollback-restore wrapper's
-    /// attach — start reading the pty before the text arrives).
+    /// How long a freshly spawned pane needs before it reads its pty — the shell,
+    /// or the scrollback-restore wrapper's `zmx attach`, has to start first or the
+    /// text is written into nothing. Shared by template startup commands and by
+    /// CLI `send` when it had to spawn the pane itself.
+    private static let spawnGracePeriod: TimeInterval = 0.8
+
+    /// Writes `payload` verbatim into a just-spawned pane once it can read.
+    /// Re-resolves the surface at delivery time so a pane closed inside the grace
+    /// period is simply skipped.
+    private func deliverAfterSpawn(_ payload: String, to surfaceID: UUID) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.spawnGracePeriod) { [weak self] in
+            guard let self, let surface = self.surface(with: surfaceID) else { return }
+            _ = self.registry.sendText(payload, to: surface)
+        }
+    }
+
+    /// Injects a template pane's startup command shortly after its view spawns.
     private func injectStartupCommandIfPending(_ surfaceID: UUID) {
         guard let command = pendingStartupCommands.removeValue(forKey: surfaceID) else { return }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { [weak self] in
-            guard let self, let surface = self.surface(with: surfaceID) else { return }
-            _ = self.registry.sendText(command + "\r", to: surface)
-        }
+        deliverAfterSpawn(command + "\r", to: surfaceID)
     }
 
     /// Replaces `project`'s tabs with its resolved layout template (panes
@@ -1446,7 +1457,8 @@ final class TerminalViewController: NSViewController {
                         cwd: PaneCwdStore.read(surface.id) ?? registry.workingDirectory(for: surface) ?? surface.workingDir,
                         tool: foregroundBySurface[surface.id].flatMap { $0.isEmpty ? nil : $0 },
                         agentStatus: agentDetector.state(for: surface.id).status?.rawValue,
-                        isFocused: isActiveTab && surface.id == tree.focusedSurfaceID
+                        isFocused: isActiveTab && surface.id == tree.focusedSurfaceID,
+                        live: registry.isLive(surface.id)
                     )
                 }
                 let title = TabTitle.display(
@@ -1458,7 +1470,8 @@ final class TerminalViewController: NSViewController {
                 )
                 return StatusSnapshot.Tab(title: title, isActive: isActiveTab, panes: panes)
             }
-            return StatusSnapshot.Project(name: project.name, isActive: isActiveProject, tabs: tabs)
+            return StatusSnapshot.Project(name: project.name, isActive: isActiveProject,
+                                         hibernated: project.isHibernated, tabs: tabs)
         }
         return StatusSnapshot(projects: projects)
     }
@@ -1468,9 +1481,12 @@ final class TerminalViewController: NSViewController {
     func sendInput(target: PaneSelector, text: String?, enter: Bool, keys: [String]) -> String? {
         do {
             let pane = try target.resolve(in: statusSnapshot().panes)
-            guard let surface = surface(withShortID: pane.id) else {
-                return "pane \(pane.id) is not live"
+            guard let location = locate(shortID: pane.id),
+                  let surface = surface(withShortID: pane.id) else {
+                return "pane \(pane.id) not found"
             }
+            // Validate the payload BEFORE anything with side effects, so a typo'd
+            // key name can't wake a project on its way to an error.
             var payload = text ?? ""
             for key in keys {
                 guard let sequence = KeyNotation.encode(key) else { return "unknown key \"\(key)\"" }
@@ -1478,8 +1494,19 @@ final class TerminalViewController: NSViewController {
             }
             if enter { payload += "\r" }
             guard !payload.isEmpty else { return "nothing to send" }
-            guard registry.sendText(payload, to: surface) else {
-                return "pane \(pane.id) has no live terminal yet — focus its tab first"
+
+            switch ensurePaneIsLive(at: location) {
+            case .alreadyLive:
+                guard registry.sendText(payload, to: surface) else {
+                    return "pane \(pane.id) has no live terminal"
+                }
+            case .spawned:
+                // The shell was just created and isn't reading its pty yet, so an
+                // immediate write is swallowed. Deliver on the same grace period
+                // startup commands use — exit 0 here means "queued".
+                deliverAfterSpawn(payload, to: surface.id)
+            case .unavailable:
+                return "pane \(pane.id) could not be made live"
             }
             return nil
         } catch {
@@ -1502,14 +1529,16 @@ final class TerminalViewController: NSViewController {
         } else {
             targetIndex = workspace.activeIndex
         }
-        let tabList = workspace.projects[targetIndex].tabList
+        let project = workspace.projects[targetIndex]
+        let wasHibernated = project.isHibernated
+        let tabList = project.tabList
         let newPaneID = tabList.newBackgroundTab()
         let newTabIndex = tabList.trees.count - 1
 
         if focus {
             tabList.select(index: newTabIndex)
-            if targetIndex != workspace.activeIndex {
-                selectProject(at: targetIndex)          // rebuilds + focuses the now-active tab
+            if wasHibernated || targetIndex != workspace.activeIndex {
+                revealProject(at: targetIndex)          // wakes or selects; either rebuilds
             } else {
                 refreshTabBar()
                 rebuildSurfaceNodeView()
@@ -1523,6 +1552,7 @@ final class TerminalViewController: NSViewController {
             // tab and keyboard focus are unchanged.
             refreshTabBar()
             refreshSidebar()
+            spawnIfProjectDormant((targetIndex, newTabIndex, newPaneID))
         }
         onWorkspaceDidChange?()
         return .success(SessionPersistence.shortID(for: newPaneID))
@@ -2015,6 +2045,10 @@ final class TerminalViewController: NSViewController {
             } else {
                 refreshSidebar()
             }
+            // A split in a dormant project exists only in the model, so spawn the
+            // new pane before returning its id. A no-op when the `focus` branch
+            // above already woke the project.
+            spawnIfProjectDormant((location.projectIndex, location.tabIndex, newID))
             onWorkspaceDidChange?()
             return .success(SessionPersistence.shortID(for: newID))
         } catch {
@@ -2039,10 +2073,8 @@ final class TerminalViewController: NSViewController {
             let newTabIndex = location.tabIndex + 1
 
             if focus {
-                if location.projectIndex != workspace.activeIndex {
-                    selectProject(at: location.projectIndex)
-                }
                 tabList.select(index: newTabIndex)
+                revealProject(at: location.projectIndex)
                 refreshTabBar()
                 rebuildSurfaceNodeView()
                 refreshSidebar()
@@ -2060,6 +2092,8 @@ final class TerminalViewController: NSViewController {
                         view.window?.makeFirstResponder(focused)
                     }
                 }
+                // Dormant project: spawn the moved pane so its id is usable.
+                spawnIfProjectDormant((location.projectIndex, newTabIndex, movedID))
             }
             onWorkspaceDidChange?()
             return .success(SessionPersistence.shortID(for: movedID))
@@ -2099,6 +2133,15 @@ final class TerminalViewController: NSViewController {
             guard let surface = surface(withShortID: pane.id) else {
                 return .failure(.noSuchPane("pane \(pane.id) not found"))
             }
+            // The only verb that refuses a dormant pane instead of waking it:
+            // hibernating killed the zmx session this reads from, so waking would
+            // spawn a fresh shell with empty history — a side effect in exchange
+            // for nothing. Say that, rather than let zmx fail obscurely.
+            if let project = workspace.project(containing: surface.id), project.isHibernated {
+                return .failure(.noSuchPane(
+                    "project \"\(project.name)\" is hibernated — its sessions were freed, "
+                    + "so there is no captured output; `zetty wake \"\(project.name)\"` starts fresh shells"))
+            }
             guard let zmx = ZmxRunner.locate() else {
                 return .failure(.noSuchPane("zmx is not installed"))
             }
@@ -2112,11 +2155,101 @@ final class TerminalViewController: NSViewController {
         }
     }
 
-    /// Makes the pane at `location` the focused pane of the visible tab.
-    private func focusPane(at location: (projectIndex: Int, tabIndex: Int, surfaceID: UUID)) {
-        if location.projectIndex != workspace.activeIndex {
-            selectProject(at: location.projectIndex)
+    /// Whether a pane could be made live, and at what cost to the caller.
+    enum PaneLiveness {
+        /// The pane already had a terminal behind it; nothing was disturbed.
+        case alreadyLive
+        /// A terminal was created — a brand-new shell that isn't reading its pty
+        /// yet, so input must wait out `spawnGracePeriod`.
+        case spawned
+        /// No terminal could be created (the pane or its tab went away).
+        case unavailable
+    }
+
+    /// Brings the project at `index` on screen, waking it first when dormant.
+    /// The single expression of "showing a project means showing a *live* one" —
+    /// `selectProject` alone renders a hibernated project's placeholder, which is
+    /// what used to make `focus` on a dormant pane a no-op.
+    private func revealProject(at index: Int) {
+        guard workspace.projects.indices.contains(index) else { return }
+        let project = workspace.projects[index]
+        if project.isHibernated {
+            wakeProject(project)                        // selects + rebuilds
+        } else if index != workspace.activeIndex {
+            selectProject(at: index)
         }
+    }
+
+    /// Spawns `location`'s pane, but only when its project is hibernated — the
+    /// case where the id a background verb hands back would otherwise name a pane
+    /// that can never accept input.
+    ///
+    /// A never-viewed pane in an *awake* project is deliberately left lazy: that
+    /// is the documented background contract, and `send` materializes it on
+    /// demand anyway. So this is narrowly about dormancy, not about liveness in
+    /// general.
+    private func spawnIfProjectDormant(_ location: (projectIndex: Int, tabIndex: Int, surfaceID: UUID)) {
+        guard workspace.projects.indices.contains(location.projectIndex),
+              workspace.projects[location.projectIndex].isHibernated else { return }
+        ensurePaneIsLive(at: location)
+    }
+
+    /// Makes the pane at `location` live so it can accept input, without
+    /// permanently disturbing what the user is looking at.
+    ///
+    /// A pane has no terminal behind it in two cases: its project is hibernated
+    /// (panes deliberately freed), or its tab has never been viewed (shells
+    /// spawn lazily on first view). Both need the same remedy, because a surface
+    /// is only ever created while its project *and* tab are the visible ones —
+    /// so this wakes the project when needed, transiently reveals the pane, then
+    /// restores the caller's previous selection.
+    ///
+    /// Switching away does not undo the spawn: once created, a pair survives in
+    /// the registry because `allSurfaceIDs` covers every awake project, so
+    /// `prune` spares it. That is what lets a CLI verb hand back a pane that is
+    /// genuinely live without yanking the user's view — the same
+    /// select-then-restore shape `closePane` uses.
+    @discardableResult
+    private func ensurePaneIsLive(at location: (projectIndex: Int, tabIndex: Int, surfaceID: UUID)) -> PaneLiveness {
+        if registry.isLive(location.surfaceID) { return .alreadyLive }
+        guard workspace.projects.indices.contains(location.projectIndex) else { return .unavailable }
+        let project = workspace.projects[location.projectIndex]
+        guard project.tabList.trees.indices.contains(location.tabIndex) else { return .unavailable }
+
+        let previousProjectID = workspace.activeProject.id
+        let previousTabIndex = project.tabList.activeIndex
+
+        revealProject(at: location.projectIndex)
+        if project.tabList.activeIndex != location.tabIndex {
+            project.tabList.select(index: location.tabIndex)
+            refreshTabBar()
+            rebuildSurfaceNodeView()                    // creates the pane's terminal view
+        }
+        let liveness: PaneLiveness = registry.isLive(location.surfaceID) ? .spawned : .unavailable
+
+        // Put back what the user was looking at. The surface just created stays
+        // live across the switch (see above).
+        if project.tabList.activeIndex != previousTabIndex,
+           project.tabList.trees.indices.contains(previousTabIndex) {
+            project.tabList.select(index: previousTabIndex)
+        }
+        if let back = workspace.projects.firstIndex(where: { $0.id == previousProjectID }),
+           back != workspace.activeIndex {
+            selectProject(at: back)                     // rebuilds + restores first responder
+        } else {
+            refreshTabBar()
+            rebuildSurfaceNodeView()
+            if let focused = focusedTerminalView() { view.window?.makeFirstResponder(focused) }
+        }
+        refreshSidebar()
+        return liveness
+    }
+
+    /// Makes the pane at `location` the focused pane of the visible tab. Wakes a
+    /// hibernated project first — unlike the background verbs, `focus` exists to
+    /// switch the view, so it wakes and *stays* rather than restoring.
+    private func focusPane(at location: (projectIndex: Int, tabIndex: Int, surfaceID: UUID)) {
+        revealProject(at: location.projectIndex)
         let tabList = workspace.activeTabList
         if tabList.activeIndex != location.tabIndex {
             tabList.select(index: location.tabIndex)

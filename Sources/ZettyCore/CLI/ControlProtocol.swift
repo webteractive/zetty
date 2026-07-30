@@ -322,14 +322,40 @@ public struct StatusSnapshot: Codable, Equatable, Sendable {
         public let tool: String?         // probed foreground command
         public let agentStatus: String?  // running / idle / needsAttention
         public let isFocused: Bool       // focused pane of the active tab
+        /// Whether the pane has a live terminal behind it right now. False for a
+        /// background pane whose shell hasn't spawned yet and for every pane of a
+        /// hibernated project. `send` materializes a non-live pane on demand, so
+        /// this is a description of the pane's current state, not of whether it
+        /// can be driven — see `Project.hibernated` for the reason it is false.
+        public let live: Bool
 
-        public init(id: String, title: String?, cwd: String?, tool: String?, agentStatus: String?, isFocused: Bool) {
+        public init(id: String, title: String?, cwd: String?, tool: String?, agentStatus: String?,
+                    isFocused: Bool, live: Bool) {
             self.id = id
             self.title = title
             self.cwd = cwd
             self.tool = tool
             self.agentStatus = agentStatus
             self.isFocused = isFocused
+            self.live = live
+        }
+
+        private enum CodingKeys: String, CodingKey {
+            case id, title, cwd, tool, agentStatus, isFocused, live
+        }
+
+        /// Hand-written so `live` defaults instead of throwing when an older
+        /// payload omits it (a stale standalone `zetty` build talking to a newer
+        /// app). The encode side stays synthesized.
+        public init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            id = try c.decode(String.self, forKey: .id)
+            title = try c.decodeIfPresent(String.self, forKey: .title)
+            cwd = try c.decodeIfPresent(String.self, forKey: .cwd)
+            tool = try c.decodeIfPresent(String.self, forKey: .tool)
+            agentStatus = try c.decodeIfPresent(String.self, forKey: .agentStatus)
+            isFocused = try c.decodeIfPresent(Bool.self, forKey: .isFocused) ?? false
+            live = try c.decodeIfPresent(Bool.self, forKey: .live) ?? false
         }
     }
 
@@ -348,12 +374,33 @@ public struct StatusSnapshot: Codable, Equatable, Sendable {
     public struct Project: Codable, Equatable, Sendable {
         public let name: String
         public let isActive: Bool
+        /// Whether the project is hibernated — its sessions, processes and panes
+        /// are freed and only its layout remains, so every pane below it reports
+        /// `live: false`. The verbs that need a live pane wake it implicitly, so
+        /// this is diagnostic rather than an obstacle; `zetty wake <name>` makes
+        /// it explicit.
+        public let hibernated: Bool
         public let tabs: [Tab]
 
-        public init(name: String, isActive: Bool, tabs: [Tab]) {
+        public init(name: String, isActive: Bool, hibernated: Bool, tabs: [Tab]) {
             self.name = name
             self.isActive = isActive
+            self.hibernated = hibernated
             self.tabs = tabs
+        }
+
+        private enum CodingKeys: String, CodingKey {
+            case name, isActive, hibernated, tabs
+        }
+
+        /// Hand-written for the same reason as `Pane.init(from:)`: `hibernated`
+        /// defaults rather than throwing on an older payload.
+        public init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            name = try c.decode(String.self, forKey: .name)
+            isActive = try c.decodeIfPresent(Bool.self, forKey: .isActive) ?? false
+            hibernated = try c.decodeIfPresent(Bool.self, forKey: .hibernated) ?? false
+            tabs = try c.decodeIfPresent([Tab].self, forKey: .tabs) ?? []
         }
     }
 

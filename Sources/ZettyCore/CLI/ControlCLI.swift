@@ -59,7 +59,9 @@ public enum ControlCLI {
                                               clone with unsaved work requires one
       zetty hibernate <name>                free a project's sessions/processes/
                                               panes (keeps its layout)
-      zetty wake <name>                     wake a hibernated project (fresh shells)
+      zetty wake <name>                     wake a hibernated project (fresh shells).
+                                              Rarely needed by hand — send/new-tab/
+                                              split/break/focus wake as required
       zetty split [--pane <id> | --cwd <path>] [--horizontal] [--focus]
                                               split a pane in the background,
                                               vertical by default (focus stays put);
@@ -88,15 +90,23 @@ public enum ControlCLI {
       - The default send/capture/split target is the focused pane. Send text
         arguments are joined with spaces and sent verbatim; keys append after.
       - `status --json` prints the full machine-readable tree (pane ids, titles,
-        cwd, running tool, agent status, focus). `new-tab`/`split` print just
-        the pane id, so: zetty send --pane "$(zetty new-tab)" ls --enter
-      - Give a fresh pane ~1–2s for its shell to start before sending input.
+        cwd, running tool, agent status, focus, plus `hibernated` per project and
+        `live` per pane). `new-tab`/`split` print just the pane id, so:
+        zetty send --pane "$(zetty new-tab)" ls --enter
       - new-tab/split/break/scratch run in the BACKGROUND by default: they never
         change the active project or keyboard focus, so an agent can reshape the
         workspace while you keep typing. Pass --focus to switch to the result.
-      - a background pane's shell spawns when you first view it (like add-project),
-        so `zetty send` to a brand-new background pane fails until it is viewed or
-        created with --focus.
+      - `live: false` means the pane has no terminal behind it yet — either its
+        project is hibernated or its tab has not been viewed (shells spawn on
+        first view). You do NOT have to fix that yourself: `send` spawns the pane
+        on demand, waking its project if needed, and restores your view. The pane
+        ids new-tab/split/break print are always usable.
+      - a pane that had to be spawned needs ~1s before its shell reads input, so
+        `send` queues the payload and returns 0 — success means "delivered or
+        queued", not "the shell has already run it".
+      - `capture` is the exception: hibernating frees a project's zmx sessions, so
+        there is no output to read and it errors instead of waking. `zetty wake`
+        first if you want fresh shells.
       - Exit codes: 0 success · 1 error (message on stderr) · 2 usage.
       - Requires the zetty app to be running (socket: ~/.zetty/zetty.sock).
     """
@@ -683,20 +693,34 @@ public enum ControlCLI {
             }
             return
         }
+        for line in statusLines(snapshot) { print(line) }
+    }
+
+    /// The human-readable `status` tree, one entry per line. Pure so the markers
+    /// that tell a caller *why* a pane is dormant are unit-testable.
+    ///
+    /// A hibernated project reads `☾ name (hibernated)` and each of its panes is
+    /// marked `-` (no live terminal). The dot glyphs stay reserved for the
+    /// active/inactive distinction, so dormancy can't be confused with focus.
+    public static func statusLines(_ snapshot: StatusSnapshot) -> [String] {
+        var lines: [String] = []
         for project in snapshot.projects {
-            print("\(project.isActive ? "●" : "○") \(project.name)")
+            let glyph = project.hibernated ? "☾" : (project.isActive ? "●" : "○")
+            lines.append("\(glyph) \(project.name)\(project.hibernated ? "  (hibernated)" : "")")
             for tab in project.tabs {
-                print("  \(tab.isActive ? "▸" : " ") \(tab.title)")
+                lines.append("  \(tab.isActive ? "▸" : " ") \(tab.title)")
                 for pane in tab.panes {
                     var fields = [pane.id]
+                    if !pane.live { fields.append("-") }
                     if let tool = pane.tool { fields.append("[\(tool)]") }
                     if let status = pane.agentStatus { fields.append("(\(status))") }
                     if let title = pane.title, !title.isEmpty { fields.append(title) }
                     if let cwd = pane.cwd { fields.append("— \(cwd)") }
                     if pane.isFocused { fields.append("*") }
-                    print("      \(fields.joined(separator: "  "))")
+                    lines.append("      \(fields.joined(separator: "  "))")
                 }
             }
         }
+        return lines
     }
 }

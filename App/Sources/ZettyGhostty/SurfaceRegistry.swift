@@ -210,6 +210,14 @@ public final class SurfaceRegistry {
         return view.performBindingAction(GhosttyTextAction.encode(text))
     }
 
+    /// Whether a surface has a live terminal view — i.e. whether `sendText`
+    /// would reach a pty. Deliberately the *same* condition `sendText` guards
+    /// on, so a caller reporting liveness (CLI `status`'s `live` field) can
+    /// never disagree with whether a send actually lands.
+    public func isLive(_ id: UUID) -> Bool {
+        pairs[id]?.view is AppTerminalView
+    }
+
     /// Returns the live terminal title for a surface's focused pane, or `nil`
     /// if the surface has no entry yet, no state was created for it, or the
     /// terminal hasn't reported a title (the state's initial value is "", not

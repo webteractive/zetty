@@ -59,7 +59,10 @@ by the tool it's running.
   `zetty hibernate`) to free its sessions/processes while keeping its layout.
   Hibernated projects collect at the bottom of the sidebar in a **Hibernating**
   section that is **collapsible** (click the header to tuck the dormant rows
-  away) and **sorted by name**.
+  away) and **sorted by name**. Dormancy never blocks the CLI: `zetty status`
+  reports it (`hibernated` per project, `live` per pane) and `send`/`new-tab`/
+  `split`/`break`/`focus` wake a project on demand, so scripts and agents don't
+  have to call `zetty wake` themselves.
 - **Live status bar** — the bottom strip tracks the **focused pane**: its
   working directory (updates as you `cd`), git branch/ahead-behind/changes,
   and the shell, alongside the color scheme and libghostty version.
@@ -512,9 +515,20 @@ can't be removed.
 
 `new-tab`, `split`, `break`, and `scratch` never change the active project or
 keyboard focus by default — an agent can reshape your workspace while you keep
-typing. Pass `--focus` to switch to the result. A background pane's shell spawns
-when you first view it, so `zetty send` to a brand-new background pane fails
-until it is viewed or created with `--focus`.
+typing. Pass `--focus` to switch to the result.
+
+**Dormant panes never dead-end a script.** A pane has no terminal behind it
+until it is viewed (shells spawn lazily), and a hibernated project has none at
+all — `zetty status` shows this as `live: false` on the pane plus `hibernated:
+true` on the project, so a caller can tell the two apart. Either way you don't
+have to act on it: `send` spawns the pane on demand, waking its project if
+needed, and puts your view back where it was, so the pane ids `new-tab`, `split`
+and `break` print are always usable. A pane that had to be spawned needs a
+moment before its shell reads input, so `send` queues the payload and returns 0
+— success means "delivered or queued", not "already executed". `focus` also
+wakes, and stays switched, since switching is the point. `capture` is the one
+exception: hibernating frees a project's zmx sessions, so there is no output
+left to read and it errors instead of waking a shell for nothing.
 
 `view` takes no pane target — the peek belongs to the window and appears over
 whichever project is active. Relative paths resolve against the **cwd of the
