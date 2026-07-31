@@ -545,7 +545,16 @@ anything — including the AI agents running inside it.
 tuist generate --no-open   # regenerate after adding/removing files
 xcodebuild -project zetty.xcodeproj -scheme zetty -destination 'platform=macOS' build
 tuist test                 # unit tests (ZettyCore + ZettyGhostty)
+swift test                 # faster: the pure ZettyCore suite only
+
+scripts/package.sh                             # build dist/Zetty-<version>.dmg + .sha256
+scripts/release.sh --notes notes.md patch      # cut a release (add --dry-run first)
 ```
+
+Releases go through `scripts/release.sh` — it bumps the version, packages, tags,
+and uploads both the DMG and the `.sha256` sidecar the in-app updater verifies
+against. Don't assemble a release by hand or with a generic release tool; see the
+**Releasing** section of [`AGENTS.md`](AGENTS.md) for why.
 
 - `Sources/ZettyCore/**` — pure, unit-tested model layer (no AppKit):
   pane tree, workspace persistence, config parsing, keybinding engine,

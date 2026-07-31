@@ -674,3 +674,43 @@ id libghostty doesn't expose).
   introduces — a short, user-facing "What's new" list, not just the
   auto-generated "Full Changelog" link. Group by feature/fix and phrase it for
   users, mirroring the same changes documented in `README.md`.
+
+## Releasing  ← use `scripts/release.sh`, not a generic release tool
+
+```sh
+scripts/release.sh --notes notes.md patch      # or minor | major | X.Y.Z
+```
+
+The script is the whole process: preflight (clean tree, on `main`, up to date,
+`gh` authed, tag free) → `swift test` → bump → commit → push → package → verify
+→ tag → GitHub release with both assets. `--dry-run` prints the plan and
+changes nothing; it refuses to run without a notes file. Afterwards it prints
+the `ditto` line to refresh `/Applications` (Glen runs that copy, so it should
+match the release — verify `ZettyBuildCommit` against HEAD).
+
+**A generic release skill/tool WILL silently produce a broken release here.**
+Zetty is a distributed macOS app, and the two failure modes are quiet:
+
+- **The version lives in `Project.swift`** (`CFBundleShortVersionString`), not in
+  a package manifest. A tool that looks for `composer.json`/`Cargo.toml` finds
+  nothing to bump and ships a DMG stamped with the *previous* version — and
+  since the update check gates on `SemVer.isNewer(latest:than:)`, the release is
+  never offered.
+- **The release must carry `Zetty-<version>.dmg` AND its `.sha256` sidecar**
+  (`scripts/package.sh` writes both). `UpdateAssets.select` pairs them by name
+  suffix and `UpdateChecker.isInstallable` requires *both*, with
+  `UpdateChecksum.verify` checking the download — so a release missing either
+  asset silently loses in-app updating and drops users back to a manual
+  download. Artifact detection keyed to `Cargo.toml`/`go.mod`/`package.json`
+  `bin` matches none of this and skips the upload *without warning* — the exact
+  trap that motivated the script.
+
+Other conventions the script encodes: the annotated tag lands on the
+`chore(release): vX.Y.Z` commit (not on whatever HEAD happens to be), and the
+tag/commit use `v`-prefixed SemVer. Notes are never generated from the commit
+log — see the human-written-notes rule above.
+
+Signing: builds are **ad-hoc signed** (no Developer ID yet), so a downloaded
+DMG is quarantined and recipients must run `xattr -d com.apple.quarantine
+/Applications/zetty.app` once. In-app updates skip that. Swap in Developer ID
+signing + notarization in `scripts/package.sh` when an Apple account exists.
