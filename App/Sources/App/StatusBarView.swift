@@ -75,6 +75,31 @@ final class StatusBarView: NSView {
 
     private var appearanceMode = "System"
 
+    // MARK: - Render caches
+    //
+    // The status bar is refreshed on every chrome refresh, and `NSButton`'s
+    // `attributedTitle` setter leaks an AppKit KVO dependency record per
+    // assignment (`NSKeyValueDependency` + context + two blocks). At a few
+    // refreshes a second that reached ~3M live objects / ~550MB after two days
+    // of uptime. Each renderer below therefore no-ops when its inputs are
+    // unchanged; `invalidateRenderCaches()` forces them through on a theme
+    // change, where the inputs are equal but the colors are not.
+
+    private var renderedAppearance: String?
+    private var renderedScheme: String?
+    private var renderedVersion: String?
+    private var renderedCLIStatus: CLIStatus?
+    private var renderedBroadcastScope: BroadcastScope?
+
+    /// Drops every cached render token so the next call actually re-renders.
+    private func invalidateRenderCaches() {
+        renderedAppearance = nil
+        renderedScheme = nil
+        renderedVersion = nil
+        renderedCLIStatus = nil
+        renderedBroadcastScope = nil
+    }
+
     private var plainLabels: [NSTextField] {
         [branchLabel, aheadLabel, behindLabel, changesLabel,
          cwdLabel, sep0, sep1, shellLabel, sep2, sep3, ghosttyLabel]
@@ -322,6 +347,8 @@ final class StatusBarView: NSView {
     /// CLI matches this build.
     func setCLIStatus(_ status: CLIStatus) {
         cliStatus = status
+        guard renderedCLIStatus != status else { return }
+        renderedCLIStatus = status
         let theme = ZTheme.current
         switch status {
         case .current:
@@ -346,6 +373,9 @@ final class StatusBarView: NSView {
     }
 
     private func renderVersionPill() {
+        let token = pendingUpdate.map { "↑\($0.version)" } ?? baseVersion
+        guard renderedVersion != token else { return }
+        renderedVersion = token
         let theme = ZTheme.current
         if let pendingUpdate {
             versionButton.title = "↑ Update \(pendingUpdate.version)"
@@ -366,12 +396,14 @@ final class StatusBarView: NSView {
 
     func update(cwd: String, appearance: String, scheme: String, shell: String,
                 zetty: String, ghostty: String) {
-        cwdLabel.stringValue = cwd
+        // Every assignment is guarded: setting an unchanged `stringValue` still
+        // invalidates layout, and this runs on every chrome refresh.
+        if cwdLabel.stringValue != cwd { cwdLabel.stringValue = cwd }
         appearanceMode = appearance
-        shellLabel.stringValue = shell
+        if shellLabel.stringValue != shell { shellLabel.stringValue = shell }
         baseVersion = zetty
         renderVersionPill()
-        ghosttyLabel.stringValue = ghostty
+        if ghosttyLabel.stringValue != ghostty { ghosttyLabel.stringValue = ghostty }
         styleAppearanceButton()
         styleSchemeButton(scheme)
     }
@@ -394,6 +426,7 @@ final class StatusBarView: NSView {
 
     /// Shows/hides the `ZOOM` chip (a pane is temporarily maximized).
     func setZoomed(_ zoomed: Bool) {
+        guard zoomChip.isHidden != !zoomed else { return }
         zoomChip.isHidden = !zoomed
         styleChips()
     }
@@ -423,6 +456,8 @@ final class StatusBarView: NSView {
     // MARK: - Theme
 
     func applyTheme() {
+        // Same inputs, different colors — the renderers below must not no-op.
+        invalidateRenderCaches()
         let theme = ZTheme.current
         layer?.backgroundColor = theme.bg0Color.cgColor
         topBorder.layer?.backgroundColor = theme.borderColor.cgColor
@@ -489,6 +524,8 @@ final class StatusBarView: NSView {
     /// N shells), so it uses the attention token, not the accent (DESIGN.md
     /// rule-3 deviation). Rebuilt on scope + theme change.
     private func renderBroadcastPill() {
+        guard renderedBroadcastScope != shownBroadcastScope else { return }
+        renderedBroadcastScope = shownBroadcastScope
         let active = shownBroadcastScope.isActive
         let label: String
         switch shownBroadcastScope {
@@ -520,6 +557,8 @@ final class StatusBarView: NSView {
     }
 
     private func styleAppearanceButton() {
+        guard renderedAppearance != appearanceMode else { return }
+        renderedAppearance = appearanceMode
         let icon: String
         switch appearanceMode.lowercased() {
         case "dark":  icon = "moon.fill"
@@ -539,6 +578,8 @@ final class StatusBarView: NSView {
     }
 
     private func styleSchemeButton(_ name: String) {
+        guard renderedScheme != name else { return }
+        renderedScheme = name
         schemeButton.attributedTitle = NSAttributedString(
             string: name,
             attributes: [

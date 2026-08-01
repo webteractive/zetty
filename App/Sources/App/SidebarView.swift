@@ -7,7 +7,11 @@ import ZettyCore
 ///
 /// When `tabTitles.count >= 2` the project row is expandable and its children
 /// are the individual tab titles.  A single-tab project is a plain leaf row.
-struct SidebarProject {
+/// Equatable so `SidebarView.update` can skip identical reloads — agent status
+/// and title ticks arrive several times a second and most leave every row
+/// unchanged. `NSImage`/`NSColor` compare by `isEqual:`, and `AgentIcons` caches
+/// its logos, so an unchanged icon is the same instance.
+struct SidebarProject: Equatable {
     let name: String
     let isPinned: Bool
     let tabTitles: [String]              // .count >= 2 → expandable
@@ -380,7 +384,14 @@ final class SidebarView: NSView {
         styleBellButton()
     }
 
+    /// Bell count the button currently reflects, so re-publishing an unchanged
+    /// count doesn't re-set `attributedTitle` (an AppKit KVO leak per
+    /// assignment) or build another symbol image. Reset by `applyTheme()`.
+    private var renderedBellCount: Int?
+
     private func styleBellButton() {
+        guard renderedBellCount != attentionCount else { return }
+        renderedBellCount = attentionCount
         let theme = ZTheme.current
         let attention = attentionCount > 0
         if #available(macOS 11.0, *) {
@@ -444,9 +455,15 @@ final class SidebarView: NSView {
         scrollView.backgroundColor = ZTheme.current.bg0Color
         styleSearchField()
         styleAddButton()
+        renderedBellCount = nil   // same count, different colors
         styleBellButton()
         styleGearButton()
         styleTopAddButton()
+        // Row views take their colors from the theme at build time, and
+        // `update(...)` now skips reloads when the data is unchanged — so a
+        // scheme switch has to rebuild the rows itself or they keep the old
+        // palette. The selection hasn't moved, so this won't touch the scroller.
+        rebuildOutline()
     }
 
     // MARK: - Item-object helpers
@@ -464,11 +481,32 @@ final class SidebarView: NSView {
     /// view, so `outlineViewSelectionDidChange` doesn't re-fire callbacks.
     private var isUpdating = false
 
+    /// The logical selection the outline was last scrolled to, so a pure
+    /// re-render doesn't move the scroller (see `rebuildOutline`).
+    private struct Selection: Equatable {
+        let project: Int
+        let tab: Int
+    }
+    private var lastScrolledSelection: Selection?
+
+    /// False until the first `update(...)` lands, so the initial render can't be
+    /// mistaken for "unchanged" by the equality guard (an empty workspace really
+    /// does equal the initial empty state).
+    private var hasRenderedOnce = false
+
     /// Replaces the displayed data, then rebuilds the sectioned outline.
     func update(projects: [SidebarProject], activeProject: Int, activeTab: Int) {
         // Reloading mid-drag cancels the outline view's drag session (live
         // agents retitle rows every second) — freeze until the drop lands.
         guard !isReordering else { return }
+        // Identical data → nothing to do. `reloadData()` recreates every row
+        // view and dirties the whole layout tree, and this is called on every
+        // agent title/status tick.
+        if projects == self.projects, activeProject == self.activeProject,
+           activeTab == self.activeTab, hasRenderedOnce {
+            return
+        }
+        hasRenderedOnce = true
         self.projects = projects
         self.activeProject = activeProject
         self.activeTab = activeTab
@@ -591,9 +629,21 @@ final class SidebarView: NSView {
 
         if rowToSelect >= 0 {
             outlineView.selectRowIndexes(IndexSet(integer: rowToSelect), byExtendingSelection: false)
-            outlineView.scrollRowToVisible(rowToSelect)
+            // Only chase the selection when it actually MOVED. A rebuild driven
+            // by an agent retitling its tab must never touch the scroller —
+            // doing so yanked the sidebar back to the active project several
+            // times a second, which made it impossible to scroll anywhere else.
+            // Keyed on the logical selection, not the row index: rows shift when
+            // a section collapses or a project hibernates without the user's
+            // selection having moved at all.
+            let selection = Selection(project: activeProject, tab: activeTab)
+            if lastScrolledSelection != selection {
+                outlineView.scrollRowToVisible(rowToSelect)
+                lastScrolledSelection = selection
+            }
         } else {
             outlineView.deselectAll(nil)
+            lastScrolledSelection = nil
         }
     }
 

@@ -409,6 +409,37 @@ Restart the agent after installing a hook. Events correlate to panes by
 working directory, so two panes in the same directory light up together.
 Toggling off uninstalls the hook cleanly.
 
+The hook event log (`~/.zetty/agent-events.jsonl`) is trimmed to its most
+recent entries at launch, so it can't grow without bound on a long-lived
+workspace.
+
+Agent CLIs animate a spinner in their terminal title, so tab names and status
+dots update on a short coalescing interval (~0.1s) rather than on every escape
+sequence — many panes running agents at once cost the same as one. Scrolling
+the sidebar is unaffected by those updates: it only scrolls to reveal a project
+when the active project or tab actually changes.
+
+### Memory: freeing background panes
+
+Each live pane costs roughly **37 MB of GPU memory** (the terminal's render
+target and glyph atlas), so a workspace with many awake projects pays for
+surfaces nobody is looking at — about 300 MB at 5 live panes, 1.5 GB at 37.
+
+`free-background-panes-after = <duration>` (e.g. `5m`; default `off`) reclaims
+that. Once an awake project has been out of view for that long, its panes'
+GPU surfaces are released while **their shells keep running** in their
+preserved sessions; switching back re-attaches and replays the scrollback. It
+is not hibernation — nothing is killed, and agents keep working.
+
+Panes without a preserved session are never released (there would be nothing to
+re-attach to, so freeing the surface would kill the shell), which means this
+only helps when `preserve-sessions = true`. Use `hibernate-after` instead when
+you want a project's processes actually stopped.
+
+Zetty also continuously reconciles preserved sessions against the workspace, so
+closing a pane always ends its session — even one whose tab you never opened —
+and no orphaned `zmx` shells accumulate.
+
 ### Launching agents in a project
 
 Status hooks (above) *detect* agents you start yourself. To have Zetty *launch*

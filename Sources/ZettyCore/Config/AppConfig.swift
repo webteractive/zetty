@@ -66,6 +66,13 @@ public struct AppConfig: Equatable, Sendable {
     public var checkUpdates: Bool
     /// Auto-hibernate an idle, quiet project after this many seconds (0 = off).
     public var hibernateAfter: TimeInterval
+    /// Release the GPU surfaces of a non-active project's panes after this many
+    /// seconds out of view, KEEPING their preserved sessions running (0 = off).
+    ///
+    /// Distinct from `hibernateAfter`, which frees the sessions too. Only ever
+    /// applies to session-backed panes — freeing a plain shell's surface would
+    /// kill the shell, so those are never touched.
+    public var freeBackgroundPanesAfter: TimeInterval
     /// Attention sound when an agent needs attention.
     public var notifySound: Bool
     /// Dock badge showing the count of panes needing attention.
@@ -130,6 +137,7 @@ public struct AppConfig: Equatable, Sendable {
         confirmQuit: Bool = true,
         checkUpdates: Bool = true,
         hibernateAfter: TimeInterval = 0,
+        freeBackgroundPanesAfter: TimeInterval = 0,
         notifySound: Bool = true,
         notifyBadge: Bool = true,
         notifySystem: Bool = true,
@@ -149,6 +157,7 @@ public struct AppConfig: Equatable, Sendable {
         self.confirmQuit = confirmQuit
         self.checkUpdates = checkUpdates
         self.hibernateAfter = hibernateAfter
+        self.freeBackgroundPanesAfter = freeBackgroundPanesAfter
         self.notifySound = notifySound
         self.notifyBadge = notifyBadge
         self.notifySystem = notifySystem
@@ -222,6 +231,8 @@ public struct AppConfig: Equatable, Sendable {
                 config.checkUpdates = ["true", "yes", "on", "1"].contains(value.lowercased())
             case "hibernate-after":
                 config.hibernateAfter = AppConfig.parseDuration(value)
+            case "free-background-panes-after":
+                config.freeBackgroundPanesAfter = AppConfig.parseDuration(value)
             case "notify-sound":
                 config.notifySound = ["true", "yes", "on", "1"].contains(value.lowercased())
             case "notify-badge":
@@ -332,6 +343,13 @@ public struct AppConfig: Equatable, Sendable {
         # Auto-hibernate a project after it's idle and quiet (0/off = disabled,
         # e.g. 60m or 2h). Frees its sessions/processes; waking spawns fresh shells.
         hibernate-after = \(hibernateAfter == 0 ? "off" : String(Int(hibernateAfter)))
+
+        # Release a background project's GPU surfaces after it's been out of view
+        # this long, while its shells keep running in their preserved sessions
+        # (0/off = disabled, e.g. 5m). Reclaims ~37MB per pane; the pane
+        # re-attaches with its scrollback when you switch back. Only affects
+        # panes that have a preserved session — plain shells are never freed.
+        free-background-panes-after = \(freeBackgroundPanesAfter == 0 ? "off" : String(Int(freeBackgroundPanesAfter)))
 
         # Agent needs-attention alerts: sound, Dock badge (attention-pane count),
         # and macOS Notification Center (fires only while Zetty is in background).

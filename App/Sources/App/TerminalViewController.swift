@@ -103,6 +103,11 @@ final class TerminalViewController: NSViewController {
     private var foregroundBySurface: [UUID: String] = [:]
     private var foregroundPollTimer: Timer?
 
+    /// Slow re-probe of the focused pane's git state. The per-refresh probe is
+    /// gated on the directory changing, so this is what still notices a commit,
+    /// a branch switch, or a file edit made inside the pane.
+    private var gitRefreshTimer: Timer?
+
     /// Broadcast (synchronized input) is per-project and Off by default. The
     /// active project's scope is read/written through these (AppDelegate owns
     /// the persisted per-project store).
@@ -136,6 +141,52 @@ final class TerminalViewController: NSViewController {
     /// Background queue + debounce for `git` probes feeding the status bar.
     private let gitQueue = DispatchQueue(label: "co.webteractive.zetty.git", qos: .utility)
     private var gitProbeWork: DispatchWorkItem?
+
+    /// The directory the status bar's git pill currently reflects, so a status-bar
+    /// refresh that didn't change directory doesn't spawn another `git` process.
+    /// `refreshStatusBar` runs on every title tick; probing per call meant one
+    /// subprocess per tick for a branch name that almost never changes.
+    private var lastGitProbeDirectory: String?
+
+    // MARK: - Coalesced chrome refresh
+
+    /// Which parts of the chrome a coalesced refresh still owes.
+    private struct ChromeRefreshNeeds {
+        var tabBar = false
+        var sidebar = false
+        var isEmpty: Bool { !tabBar && !sidebar }
+    }
+
+    private var chromeNeeds = ChromeRefreshNeeds()
+    private var chromeRefreshScheduled = false
+
+    /// How long a title-driven refresh waits for more of its kind. Agent CLIs
+    /// animate a spinner glyph in their terminal title, so a busy workspace
+    /// emits title changes many times a second per pane; each one used to
+    /// rebuild the tab bar and reload the whole sidebar synchronously.
+    private static let chromeRefreshInterval: TimeInterval = 0.1
+
+    /// Marks the chrome dirty and refreshes ONCE on the next tick.
+    ///
+    /// High-frequency, machine-driven refreshes (terminal titles, the
+    /// foreground-process probe, agent hook events) must come through here.
+    /// User-driven changes still call `refreshTabBar()`/`refreshSidebar()`
+    /// directly so the UI reacts to input in the same run-loop turn.
+    func setNeedsChromeRefresh(tabBar: Bool = false, sidebar: Bool = false) {
+        if tabBar { chromeNeeds.tabBar = true }
+        if sidebar { chromeNeeds.sidebar = true }
+        guard !chromeNeeds.isEmpty, !chromeRefreshScheduled else { return }
+        chromeRefreshScheduled = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.chromeRefreshInterval) { [weak self] in
+            guard let self else { return }
+            self.chromeRefreshScheduled = false
+            let needs = self.chromeNeeds
+            self.chromeNeeds = ChromeRefreshNeeds()
+            // refreshTabBar refreshes the status bar too, so don't double up.
+            if needs.tabBar { self.refreshTabBar() }
+            if needs.sidebar { self.refreshSidebar() }
+        }
+    }
 
     /// The container that wraps the tab-bar + pane area (right side of the split).
     private var contentContainer: NSView?
@@ -234,15 +285,82 @@ final class TerminalViewController: NSViewController {
 
     /// Called with surface IDs removed by an explicit close (pane/tab/project),
     /// so their persistent sessions can be killed. App quit never fires this.
-    var onSurfacesClosed: (([UUID]) -> Void)? {
-        didSet {
-            let handler = onSurfacesClosed
-            registry.onSurfacesRemoved = { ids in
-                ids.forEach(PaneCwdStore.remove)   // drop each closed pane's cwd file
-                handler?(ids)
+    ///
+    /// This is the FAST path — it ends a session the moment the user closes
+    /// something. It is deliberately not the only path: see
+    /// `reconcileSessions()`, which is the actual guarantee.
+    var onSurfacesClosed: (([UUID]) -> Void)?
+
+    /// Surfaces leaving the registry means their GPU resources are freed — it
+    /// does NOT mean their sessions should die.
+    ///
+    /// These were once the same event, which was wrong in both directions: a
+    /// pane closed before it was ever viewed had no pair to prune, so its
+    /// session leaked forever (rogue process), and freeing a background
+    /// project's surfaces to reclaim memory was impossible without killing its
+    /// shells. Session lifetime now follows *model ownership* only.
+    private func installRegistryTeardownHandler() {
+        registry.onSurfacesRemoved = { _ in }
+    }
+
+    // MARK: - Session reconciliation (the no-rogue-process guarantee)
+
+    /// Kills every `zetty-*` zmx session that no surface in the workspace owns.
+    ///
+    /// Ownership is `WorkspaceModel.sessionOwnerSurfaceIDs` — ALL projects,
+    /// hibernated included — so this can never kill a session that some pane
+    /// still refers to, however dormant that pane is. It is idempotent and
+    /// cheap (one `zmx list`), which is what lets it run as a sweep rather than
+    /// relying on every close path remembering to clean up.
+    ///
+    /// Deliberately structural: the previous design needed an explicit
+    /// `onSurfacesClosed` call at each of six close sites, and the two GUI ones
+    /// (⌘W and the per-pane ×) simply didn't have it.
+    func reconcileSessions() {
+        let owned = sessionOwnerSurfaceIDs        // read on main; workspace is main-only
+        let zmx = ZmxRunner.locate()
+        DispatchQueue.global(qos: .utility).async {
+            if let zmx {
+                let existing = ZmxRunner.listZettySessions(zmxPath: zmx)
+                let orphans = SessionPersistence.orphans(existing: existing, liveSurfaceIDs: owned)
+                if !orphans.isEmpty { ZmxRunner.kill(sessions: orphans, zmxPath: zmx) }
+            }
+            // The cwd files are the same ownership question, so clear them in
+            // the same pass — a closed pane used to leave its `<uuid>.cwd`
+            // behind until the next launch wiped the directory.
+            let dir = PaneCwdStore.directory
+            guard let names = try? FileManager.default
+                .contentsOfDirectory(atPath: dir.path) else { return }
+            for name in SessionPersistence.orphanCwdFiles(existing: names, liveSurfaceIDs: owned) {
+                try? FileManager.default.removeItem(at: dir.appendingPathComponent(name))
             }
         }
     }
+
+    /// Coalesces reconciliation so a burst of structural changes (closing a tab
+    /// of five panes) costs one `zmx list`, and so it lands *after* the model
+    /// has settled rather than mid-mutation.
+    func setNeedsSessionReconcile() {
+        guard !sessionReconcileScheduled else { return }
+        sessionReconcileScheduled = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
+            guard let self else { return }
+            self.sessionReconcileScheduled = false
+            self.reconcileSessions()
+        }
+    }
+
+    private var sessionReconcileScheduled = false
+
+    /// Periodic backstop, so a session orphaned by a path nobody anticipated
+    /// lives minutes rather than until the next launch.
+    private func startSessionReconcileTimer() {
+        sessionReconcileTimer = Timer.scheduledTimer(withTimeInterval: 300, repeats: true) { [weak self] _ in
+            self?.reconcileSessions()
+        }
+    }
+
+    private var sessionReconcileTimer: Timer?
 
     /// Every surface ID that should be *attached* right now. Hibernated projects
     /// are excluded so their surfaces are pruned (torn down) and never spawn
@@ -257,6 +375,68 @@ final class TerminalViewController: NSViewController {
                 tree.layout.surfaces.map(\.id)
             }
         }
+    }
+
+    // MARK: - Freeing background panes' GPU surfaces
+
+    /// Reads the `free-background-panes-after` window (0 = off).
+    var freeBackgroundPanesAfter: (() -> TimeInterval)?
+
+    /// When this controller came up, used as the "out of view since" baseline
+    /// for a project the user has not visited at all this run.
+    private let launchedAt = Date()
+
+    /// True when re-creating this surface would re-attach to a preserved
+    /// session. Freeing a surface WITHOUT one kills its shell, so this gates
+    /// every release. Mirrors the spawn-time decision exactly by asking the
+    /// same provider.
+    private func isSessionBacked(_ surfaceID: UUID) -> Bool {
+        sessionCommandProvider?(surfaceID) != nil
+    }
+
+    /// The surfaces that should currently be attached: `allSurfaceIDs` minus any
+    /// whose project has been out of view long enough to release its pixels.
+    ///
+    /// Sessions are untouched by this — `prune` no longer ends them — so a
+    /// released pane keeps running and re-attaches (with scrollback) when the
+    /// user returns to it.
+    private var attachedSurfaceIDs: [UUID] {
+        let freeAfter = freeBackgroundPanesAfter?() ?? 0
+        guard freeAfter > 0 else { return allSurfaceIDs }
+        let now = Date()
+        let activeID = workspace.activeProject.id
+        let projects = workspace.projects.filter { !$0.isHibernated }.map { project in
+            BackgroundPanePolicy.Project(
+                isActive: project.id == activeID,
+                // A project never visited this run has no timestamp. Falling back
+                // to `now` read as "just seen", which made it permanently
+                // ineligible — the launch time is what "out of view since" means
+                // for a pane the user hasn't looked at at all.
+                idleFor: now.timeIntervalSince(lastActiveAt[project.id] ?? launchedAt),
+                panes: project.tabList.trees.flatMap { tree in
+                    tree.layout.surfaces.map {
+                        BackgroundPanePolicy.Pane(id: $0.id, isSessionBacked: isSessionBacked($0.id))
+                    }
+                }
+            )
+        }
+        let keep = BackgroundPanePolicy.surfacesToKeepAttached(projects: projects, freeAfter: freeAfter)
+        return allSurfaceIDs.filter { keep.contains($0) }
+    }
+
+    /// Re-evaluates the release window and frees any newly-eligible surfaces.
+    /// Runs on the same cadence as auto-hibernation; a released surface comes
+    /// back on its next `rebuildSurfaceNodeView`.
+    private func releaseIdleBackgroundSurfaces() {
+        guard (freeBackgroundPanesAfter?() ?? 0) > 0 else { return }
+        // The ACTIVE project is continuously "seen", exactly as auto-hibernation
+        // tracks it, so switching away starts its clock.
+        lastActiveAt[workspace.activeProject.id] = Date()
+        // No count comparison here: `keep` is drawn from every awake surface
+        // while `liveIDs` holds only spawned pairs, so the two sizes are
+        // unrelated and comparing them skipped real work whenever they happened
+        // to match. `prune` already no-ops when nothing is removed.
+        registry.prune(keeping: Set(attachedSurfaceIDs))
     }
 
     /// Called when libghostty rejected a pane's merged configuration, so the
@@ -310,16 +490,33 @@ final class TerminalViewController: NSViewController {
                 self.staleTitleSurfaces.remove(id)
             }
             self.persistTitle(for: id)
-            self.refreshTabBar()
-            self.refreshSidebar()
+            // Coalesced: an animating agent title fires this many times a second.
+            self.setNeedsChromeRefresh(tabBar: true, sidebar: true)
             // The subscription fires once when the pane's surface pair is
             // created, which makes this a reliable per-pane one-shot hook.
             self.nudgeAfterReattach(id)
             self.injectStartupCommandIfPending(id)
         }
 
+        installRegistryTeardownHandler()
         startAgentEventWatcher()
         startForegroundPolling()
+        startGitRefreshPolling()
+        startSessionReconcileTimer()
+    }
+
+    /// Re-probes the focused pane's git state on a slow cadence. Skipped while
+    /// Zetty is in the background — the pill isn't visible and the next tick
+    /// after reactivation catches up.
+    private func startGitRefreshPolling() {
+        gitRefreshTimer = Timer.scheduledTimer(withTimeInterval: 15, repeats: true) { [weak self] _ in
+            guard let self, NSApp.isActive, let statusBar = self.statusBarView, !statusBar.isHidden
+            else { return }
+            guard let directory = self.lastGitProbeDirectory else { return }
+            self.scheduleGitProbe(for: directory,
+                                  surfaceID: self.paneTree.focusedSurfaceID,
+                                  force: true)
+        }
     }
 
     /// Polls which known agent CLI is in the foreground of each preserved
@@ -363,8 +560,7 @@ final class TerminalViewController: NSViewController {
                 for (id, command) in commands where command.isEmpty && previous[id] != "" {
                     self.markTitleStale(id)
                 }
-                self.refreshTabBar()
-                self.refreshSidebar()
+                self.setNeedsChromeRefresh(tabBar: true, sidebar: true)
             }
         }
     }
@@ -889,7 +1085,14 @@ final class TerminalViewController: NSViewController {
     /// result is applied only if the SAME pane is still focused — guarding by
     /// surface identity (not directory string), so a shell that reports its cwd
     /// in a slightly different form than the pane's seed dir doesn't get dropped.
-    private func scheduleGitProbe(for directory: String, surfaceID: UUID?) {
+    private func scheduleGitProbe(for directory: String, surfaceID: UUID?, force: Bool = false) {
+        // `refreshStatusBar` runs on every chrome refresh, but the focused
+        // pane's directory almost never changes — probing per call spawned a
+        // `git` process per tick. Re-probe on a directory change, or when a
+        // caller explicitly wants fresh state (branch/dirtiness may have moved
+        // under us without the cwd changing).
+        if !force, directory == lastGitProbeDirectory { return }
+        lastGitProbeDirectory = directory
         gitProbeWork?.cancel()
         let work = DispatchWorkItem { [weak self] in
             let status = GitStatusProbe.probe(directory: directory)
@@ -933,12 +1136,27 @@ final class TerminalViewController: NSViewController {
         try? FileManager.default.createDirectory(
             at: url.deletingLastPathComponent(), withIntermediateDirectories: true
         )
+        rotateAgentEventLog(at: url)
         let watcher = AgentEventWatcher(url: url) { [weak self] events in
             self?.handleAgentEvents(events)
         }
         watcher.start()
         agentEventWatcher = watcher
         replayAgentEvents(from: url)
+    }
+
+    /// Trims the hook-event log to a bounded tail, synchronously and BEFORE the
+    /// watcher seeds its read offset — rotating under a live tail would leave
+    /// that offset past the new end of file.
+    ///
+    /// Harness hooks append concurrently, so this is deliberately a startup-only,
+    /// best-effort operation: the worst case is losing a status ping that raced
+    /// the rewrite, and the next hook event restores the dot. Written atomically
+    /// so a crash mid-rotation can't leave a truncated log behind.
+    private func rotateAgentEventLog(at url: URL) {
+        guard let data = try? Data(contentsOf: url),
+              let trimmed = AgentEventLogRotation.trimmed(data) else { return }
+        try? trimmed.write(to: url, options: .atomic)
     }
 
     /// One-shot startup replay of the existing event log, so agents that were
@@ -1148,8 +1366,7 @@ final class TerminalViewController: NSViewController {
             }
         }
         if changed {
-            refreshSidebar()
-            refreshTabBar()
+            setNeedsChromeRefresh(tabBar: true, sidebar: true)
             publishAttentionCount()
             // An episode that starts in the pane the user is already looking
             // at is read on arrival — visiting marks read, and they're there.
@@ -3173,6 +3390,13 @@ final class TerminalViewController: NSViewController {
     /// Switches to the project at `index` and focuses its active pane.
     func selectProject(at index: Int) {
         workspace.select(index: index)
+        // Stamp on activation, not just on the 60s tick: a project visited
+        // between ticks would otherwise keep no timestamp at all, and
+        // `idleFor` would read as 0 forever — so its surfaces would never
+        // become eligible for release.
+        if workspace.projects.indices.contains(index) {
+            lastActiveAt[workspace.projects[index].id] = Date()
+        }
         onActiveProjectChanged?()
         refreshTabBar()
         rebuildSurfaceNodeView()
@@ -3285,6 +3509,9 @@ final class TerminalViewController: NSViewController {
     }
 
     private func evaluateAutoHibernation() {
+        // Independent of auto-hibernation: releasing pixels keeps the session,
+        // so it applies even when `hibernate-after` is off.
+        releaseIdleBackgroundSurfaces()
         let after = autoHibernateAfter?() ?? 0
         guard after > 0, workspace.projects.count > 1 else { return }
         let now = Date()
@@ -3348,6 +3575,12 @@ final class TerminalViewController: NSViewController {
     func rebuildSurfaceNodeView() {
         guard let container = contentContainer else { return }
 
+        // Every structural change funnels through here, which makes it the one
+        // reliable place to notice that a pane (and therefore a session) is
+        // gone. Debounced, so a burst costs one `zmx list`. Wiring it here
+        // rather than at each close site is deliberate: the two GUI close paths
+        // were the ones that forgot, and left rogue shells behind.
+        setNeedsSessionReconcile()
         // Any layout/tab change invalidates an active copy-mode session (its
         // selection and viewport-relative cursor no longer mean anything).
         exitCopyModeIfActive()
@@ -3415,7 +3648,7 @@ final class TerminalViewController: NSViewController {
                 placeholder.bottomAnchor.constraint(equalTo: bottomGuide),
             ])
             placeholderView = placeholder
-            registry.prune(keeping: Set(allSurfaceIDs))   // free the frozen surfaces
+            registry.prune(keeping: Set(attachedSurfaceIDs))   // free the frozen surfaces
             onWorkspaceDidChange?()
             return
         }
@@ -3461,10 +3694,13 @@ final class TerminalViewController: NSViewController {
         ])
         rootContentView = newRoot
 
-        // Prune to the union of ALL awake projects' surfaces so background
-        // sessions survive project/tab switches — but hibernated projects'
-        // surfaces are freed (allSurfaceIDs excludes them).
-        registry.prune(keeping: Set(allSurfaceIDs))
+        // Prune to the awake projects' surfaces so background panes survive
+        // project/tab switches — hibernated projects' surfaces are freed
+        // (allSurfaceIDs excludes them), and with
+        // `free-background-panes-after` set, so are the surfaces of awake
+        // projects that have been out of view too long. Pruning no longer ends
+        // a session, so those panes keep running and re-attach on return.
+        registry.prune(keeping: Set(attachedSurfaceIDs))
 
         // Any structural change (tab add/close, split/close, project add, switch)
         // funnels through here — autosave so disk reflects the current layout.

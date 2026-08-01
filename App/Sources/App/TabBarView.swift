@@ -60,6 +60,21 @@ final class TabBarView: NSView {
 
     private var tabItems: [TabItemView] = []
 
+    /// Last rendered inputs, so `update(...)` can skip identical reloads and
+    /// re-render in place when only titles/icons/selection moved. Icons are
+    /// compared by identity — `AgentIcons` caches them, so an unchanged logo is
+    /// always the same instance.
+    private var lastTitles: [String]?
+    private var lastIcons: [NSImage?] = []
+    private var lastSelectedIndex: Int?
+    private var lastShowsClose: Bool?
+
+    /// Set once a drag has permuted `tabItems`, because a pill's `index` is baked
+    /// in at init and no longer matches its position. Until the next full
+    /// rebuild, neither the skip nor the in-place path is safe: the pills would
+    /// look right but report stale indices on click/close.
+    private var pillIndicesAreStale = false
+
     // MARK: - Init
 
     override init(frame frameRect: NSRect) {
@@ -158,20 +173,67 @@ final class TabBarView: NSView {
         // Live agents retitle their tabs every second; rebuilding the pills
         // mid-drag would destroy the one being dragged and kill the gesture.
         // Skip refreshes until the drag commits (which triggers one anyway).
-        guard !isReordering else { return }
+        //
+        // An in-progress inline rename is frozen for the same reason: the
+        // overlay is positioned over the pill's label, and a retitle resizes
+        // the pill underneath it. Both `commitRename` and `cancelRename` clear
+        // `editingIndex` before the owner refreshes, so nothing is stranded.
+        guard !isReordering, editingIndex < 0 else { return }
+
+        let showsClose = alwaysShowClose || titles.count > 1
+        let resolvedIcons = titles.indices.map { $0 < icons.count ? icons[$0] : nil }
+
+        // Nothing to do: agent title ticks land here several times a second,
+        // and re-running the rebuild below dirtied the whole Auto Layout tree
+        // for an identical result.
+        if !pillIndicesAreStale,
+           titles == lastTitles,
+           selectedIndex == lastSelectedIndex,
+           showsClose == lastShowsClose,
+           resolvedIcons.count == lastIcons.count,
+           zip(resolvedIcons, lastIcons).allSatisfy({ $0 === $1 }) {
+            return
+        }
+
+        // Re-render existing pills in place whenever the strip's *structure* is
+        // unchanged (same pill count, same close-button affordance, same
+        // icon/no-icon per pill — both are baked into a pill's constraints at
+        // init). A retitle is then a label assignment instead of a teardown and
+        // rebuild of every pill's constraints, which is what pinned the main
+        // thread in Auto Layout while agents were running.
+        let canReuse = !pillIndicesAreStale
+            && titles.count == tabItems.count
+            && showsClose == lastShowsClose
+            && zip(tabItems, resolvedIcons).allSatisfy { $0.canRepresent(icon: $1) }
+
+        lastTitles = titles
+        lastIcons = resolvedIcons
+        lastSelectedIndex = selectedIndex
+        lastShowsClose = showsClose
+
+        if canReuse {
+            for (index, item) in tabItems.enumerated() {
+                item.apply(title: titles[index],
+                           icon: resolvedIcons[index],
+                           isSelected: index == selectedIndex)
+            }
+            return
+        }
+
         cancelRename()
 
-        // Remove old items.
+        // Remove old items. Rebuilding re-bakes each pill's index from its
+        // position, which is what clears the staleness a drag introduced.
         for item in tabItems {
             stackView.removeArrangedSubview(item)
             item.removeFromSuperview()
         }
         tabItems.removeAll()
+        pillIndicesAreStale = false
 
         // Build new items.
         for (index, title) in titles.enumerated() {
-            let icon = index < icons.count ? icons[index] : nil
-            let item = TabItemView(title: title, icon: icon, index: index, isSelected: index == selectedIndex, showsClose: alwaysShowClose || titles.count > 1)
+            let item = TabItemView(title: title, icon: resolvedIcons[index], index: index, isSelected: index == selectedIndex, showsClose: showsClose)
             item.onSelect = { [weak self] idx in
                 self?.onSelect?(idx)
             }
@@ -216,6 +278,7 @@ final class TabBarView: NSView {
         stackView.insertArrangedSubview(item, at: slot)
         tabItems.remove(at: current)
         tabItems.insert(item, at: slot)
+        pillIndicesAreStale = true
     }
 
     /// Commit: tell the owner where the dragged tab ended up.
@@ -261,12 +324,16 @@ final class TabBarView: NSView {
         )
     }
 
-    /// Re-applies the active theme to the bar background and `+` button. Tab
-    /// items recolor when the caller reloads via `update(...)`.
+    /// Re-applies the active theme to the bar background, `+` button and pills.
     func applyTheme() {
         layer?.backgroundColor = ZTheme.current.bg0Color.cgColor
         styleAddButton()
         styleSidebarButton()
+        // Pills cache their rendered inputs so identical reloads are skipped,
+        // which means a scheme change has to recolor them here — the next
+        // `update(...)` is very likely a no-op and would otherwise leave the
+        // pills in the previous theme's colors.
+        for item in tabItems { item.restyle() }
     }
 
     // MARK: - Actions
@@ -506,6 +573,28 @@ private final class TabItemView: NSView {
 
     @available(*, unavailable)
     required init?(coder _: NSCoder) { fatalError("not supported") }
+
+    /// Whether this pill can render `icon` without being rebuilt. The image view
+    /// only exists when the pill was built with an icon, and its presence shapes
+    /// the pill's constraints — so a nil↔non-nil flip needs a real rebuild.
+    func canRepresent(icon: NSImage?) -> Bool {
+        (iconView == nil) == (icon == nil)
+    }
+
+    /// Re-renders in place. Every assignment is guarded: an unchanged label or
+    /// image still invalidates layout, and this runs on every agent title tick.
+    func apply(title: String, icon: NSImage?, isSelected: Bool) {
+        if titleLabel.stringValue != title { titleLabel.stringValue = title }
+        if let iconView, let icon, iconView.image !== icon { iconView.image = icon }
+        if self.isSelected != isSelected { self.isSelected = isSelected }  // didSet recolors
+    }
+
+    /// Recolors for the active theme without touching content.
+    func restyle() {
+        topBar.backgroundColor = ZTheme.current.accentColor.cgColor
+        closeButton.contentTintColor = ZTheme.current.fg3Color
+        updateAppearance()
+    }
 
     override func layout() {
         super.layout()

@@ -182,6 +182,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             self?.refreshCLIStatus()
         }
         tvc.autoHibernateAfter = { [weak self] in self?.appConfig.hibernateAfter ?? 0 }
+        tvc.freeBackgroundPanesAfter = { [weak self] in self?.appConfig.freeBackgroundPanesAfter ?? 0 }
         tvc.autoHibernateDisabled = { [weak self] project in
             self?.projectSettings.settings(for: project.settingsKey)?.autoHibernate == false
         }

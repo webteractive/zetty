@@ -362,10 +362,21 @@ public final class SurfaceRegistry {
         // Notify on title + workingDirectory changes ONLY (not every @Published
         // property on the state — bell/focus/exit-code changes shouldn't trigger a
         // tab-bar refresh). combineLatest fires once on subscribe, then on either change.
+        //
+        // `removeDuplicates` matters because combineLatest re-emits when EITHER
+        // publisher fires, so a pane that republishes an unchanged cwd (or an
+        // unchanged title) used to wake the whole chrome for nothing. It does
+        // not stop a genuinely animating title — agent CLIs spin a glyph in
+        // theirs — so the receiver still has to coalesce; see
+        // `TerminalViewController.setNeedsChromeRefresh`.
+        //
+        // The first value always passes (nothing to compare against), so this
+        // stays a reliable per-pane one-shot hook for the subscribe emission.
         if let state {
             let id = surface.id
             cancellables[id] = state.$title
                 .combineLatest(state.$workingDirectory)
+                .removeDuplicates { $0 == $1 }
                 .receive(on: DispatchQueue.main)
                 .sink { [weak self] _ in
                     self?.onTitleChange?(id)

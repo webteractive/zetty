@@ -97,4 +97,23 @@ public enum SessionPersistence {
         let owned = Set(liveSurfaceIDs.map(sessionName(for:)))
         return existing.filter { !owned.contains($0) }
     }
+
+    /// Per-pane cwd file names (`<UUID>.cwd`, see `PaneCwdStore`) that no live
+    /// surface owns — the file-side twin of `orphans(existing:liveSurfaceIDs:)`,
+    /// so one reconciliation pass can clear both kinds of leftover.
+    ///
+    /// Anything that isn't a `<uuid>.cwd` name is left strictly alone: this
+    /// drives deletion, so an unparseable name must never be treated as an
+    /// orphan.
+    public static func orphanCwdFiles(existing: [String], liveSurfaceIDs: [UUID]) -> [String] {
+        let owned = Set(liveSurfaceIDs.map { $0.uuidString.lowercased() })
+        return existing.filter { name in
+            guard name.hasSuffix(cwdFileSuffix) else { return false }
+            let stem = String(name.dropLast(cwdFileSuffix.count))
+            guard UUID(uuidString: stem) != nil else { return false }
+            return !owned.contains(stem.lowercased())
+        }
+    }
+
+    public static let cwdFileSuffix = ".cwd"
 }

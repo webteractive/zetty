@@ -519,6 +519,120 @@ pwd basename → positional.
   delete the xcodeproj* (a later build then silently reuses a stale app). Run
   `mise exec -- tuist clean` first, then generate.
 
+## Chrome refresh  ← read before touching the tab bar / sidebar / status bar
+
+Agent CLIs animate a spinner glyph **in their terminal title**, so every frame
+is a title escape sequence. Refreshing the chrome synchronously per event once
+put 59% of the main thread in Auto Layout and leaked ~550 MB of AppKit KVO
+records over two days (1.2 GB footprint, 2.8 GB peak, CPU pinned near 100%).
+Three rules keep it flat; breaking any one reintroduces the whole class of bug:
+
+1. **Machine-driven refreshes coalesce.** Terminal titles, the
+   foreground-process probe and agent hook events call
+   `TerminalViewController.setNeedsChromeRefresh(tabBar:sidebar:)`, which
+   refreshes ONCE ~0.1s later. Only user-driven changes call
+   `refreshTabBar()`/`refreshSidebar()` directly (same run-loop turn, so input
+   still feels immediate). `SurfaceRegistry`'s title subscription also
+   `removeDuplicates()` — `combineLatest` re-emits when *either* of title/cwd
+   fires, so an unchanged republish used to wake everything.
+2. **Every view-layer `update(...)` no-ops on unchanged input.**
+   `SidebarProject` is `Equatable` for exactly this (`NSImage`/`NSColor` compare
+   via `isEqual:`, and `AgentIcons` caches logos so an unchanged icon is the
+   same instance); `TabBarView` caches its last titles/icons/selection and
+   re-renders pills **in place** when only content moved, instead of
+   destroying and rebuilding every pill's constraints.
+   **Corollary — a scheme change must invalidate those caches**, because the
+   inputs are equal and only the colors differ: `StatusBarView.applyTheme`
+   calls `invalidateRenderCaches()`, `TabBarView.applyTheme` calls
+   `item.restyle()` per pill, and `SidebarView.applyTheme` calls
+   `rebuildOutline()`. Forget one and that widget freezes in the old palette.
+3. **A re-render must never move the sidebar scroller.**
+   `rebuildOutline()` calls `scrollRowToVisible` only when the *logical*
+   selection (project + tab, not the row index — rows shift when a section
+   collapses) actually changed. Unconditional scrolling made the sidebar
+   impossible to scroll while any agent was running: it snapped back to the
+   active project several times a second.
+
+Also load-bearing: `NSButton.attributedTitle` leaks an AppKit KVO dependency
+quartet **per assignment**, so any per-refresh assignment must be guarded by a
+cached token (`StatusBarView`'s pill renderers, `SidebarView.styleBellButton`).
+That leak, not view churn, was the memory growth — views and constraints were
+never leaking.
+
+The `git` pill is probed on **cwd change plus a slow 15s timer**, not per
+refresh; `refreshStatusBar` runs on every tick and used to spawn a `git`
+subprocess each time.
+
+Verify a change here empirically, not by eye: `sample <pid> 10` (main-thread
+`CA::Transaction::flush` share) and `heap <pid> | grep NSKeyValueDependency`
+twice ~10 min apart (must be flat, not merely small).
+
+### Memory profile: the floor is GPU, not the heap
+
+Measured across 5 → 37 live panes (34 projects awake), footprint is
+**~110 MB fixed + ~37 MB per LIVE pane**, and **86% of it is graphics**
+(`IOSurface` + `IOAccelerator` — libghostty's per-surface Metal render target
+and glyph atlas). 5 panes ≈ 293 MB; 37 panes ≈ 1486 MB. The Swift heap is a
+rounding error by comparison (~3.3 MB/pane).
+
+Consequences worth knowing before chasing a "memory leak" report:
+
+- **A big number is usually just awake projects.** ~1 GB ≈ 24 awake projects.
+  Confirm with `footprint -p <pid>` and count live panes before assuming a leak;
+  a real leak shows up as a *monotonic* `heap` class count, not a large total.
+- **Waking a project spawns its pane immediately** — it is not lazy, so `wake`
+  costs a full pane's GPU allocation up front.
+- **It all releases.** Re-hibernating returned `IOSurface` to exactly its prior
+  155 MB / 15 regions, so hibernation is currently the ONLY lever on this floor.
+- CPU is unaffected by pane count now: 37 live panes with agents running held
+  at 3.5%, versus 98% for 11 panes before the coalescing fix.
+
+### Session lifetime = model ownership (never registry teardown)
+
+**`registry.prune` frees GPU surfaces. It does NOT end sessions.** These were
+once the same event (`onSurfacesRemoved` was wired straight to
+`onSurfacesClosed`) and that was wrong in both directions:
+
+- A pane closed before it was ever viewed had **no pair to prune**, so
+  `onSurfacesRemoved` never fired and its zmx session leaked forever — a rogue
+  shell surviving until the next launch's reap. The CLI close path had a manual
+  workaround (`onSurfacesClosed?([id])`, "prune misses never-spawned panes");
+  the two GUI paths (⌘W and the per-pane ×) did not.
+- Freeing a background project's surfaces to reclaim memory was impossible
+  without killing its shells.
+
+The guarantee is now **`reconcileSessions()`**: it kills every `zetty-*` session
+no surface in `WorkspaceModel.sessionOwnerSurfaceIDs` owns (ALL projects,
+hibernated included — so it can never kill a session a dormant pane still
+refers to), and sweeps orphaned `<uuid>.cwd` files in the same pass. It is
+idempotent and costs one `zmx list`, so it runs debounced from
+`rebuildSurfaceNodeView` (every structural change funnels through there) plus a
+300s backstop. `onSurfacesClosed` remains only as the *fast* path. Adding a new
+close path therefore cannot leak a session — that was the point of moving it.
+
+### Freeing background panes' pixels
+
+`free-background-panes-after = <duration|off>` (default **off**) releases the
+GPU surfaces of an awake project's panes once it has been out of view that
+long, while its shells keep running in their preserved sessions. Returning to
+the project re-creates the surface, which re-attaches and replays scrollback —
+the same path a relaunch uses.
+
+Policy is pure and tested in `BackgroundPanePolicy` (ZettyCore) and returns a
+**keep-set**, never a free-set, so a pane the caller failed to describe fails
+safe. Its disqualifiers, in order of danger:
+
+1. **A pane with no preserved session is never released.** Freeing a plain
+   shell's surface *kills the process* and loses its output. Gated by
+   `isSessionBacked` → `sessionCommandProvider?(id) != nil`, which is the exact
+   same decision made at spawn time, so the two can't disagree.
+2. The active project is never released.
+3. The idle window must actually have elapsed.
+
+Wired via `attachedSurfaceIDs` (= `allSurfaceIDs` minus released), which is what
+`prune` now takes. Re-evaluated on the 60s hibernation timer — which starts
+unconditionally, so this works even with `hibernate-after = off`.
+
 ## Control CLI (`zetty`)
 
 The app hosts a Unix control socket (`~/.zetty/zetty.sock`, 0600,
