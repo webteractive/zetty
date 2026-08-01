@@ -291,17 +291,13 @@ final class TerminalViewController: NSViewController {
     /// `reconcileSessions()`, which is the actual guarantee.
     var onSurfacesClosed: (([UUID]) -> Void)?
 
-    /// Surfaces leaving the registry means their GPU resources are freed — it
-    /// does NOT mean their sessions should die.
-    ///
-    /// These were once the same event, which was wrong in both directions: a
-    /// pane closed before it was ever viewed had no pair to prune, so its
-    /// session leaked forever (rogue process), and freeing a background
-    /// project's surfaces to reclaim memory was impossible without killing its
-    /// shells. Session lifetime now follows *model ownership* only.
-    private func installRegistryTeardownHandler() {
-        registry.onSurfacesRemoved = { _ in }
-    }
+    // NOTE: `registry.onSurfacesRemoved` is deliberately left unset. Surfaces
+    // leaving the registry means their GPU resources are freed — it does NOT
+    // mean their sessions should die. Those were once the same event, which was
+    // wrong in both directions: a pane closed before it was ever viewed had no
+    // pair to prune, so its session leaked forever (a rogue shell), and freeing
+    // a background project's surfaces to reclaim memory was impossible without
+    // killing them. Session lifetime now follows *model ownership* only.
 
     // MARK: - Session reconciliation (the no-rogue-process guarantee)
 
@@ -319,20 +315,39 @@ final class TerminalViewController: NSViewController {
     func reconcileSessions() {
         let owned = sessionOwnerSurfaceIDs        // read on main; workspace is main-only
         let zmx = ZmxRunner.locate()
-        DispatchQueue.global(qos: .utility).async {
-            if let zmx {
-                let existing = ZmxRunner.listZettySessions(zmxPath: zmx)
-                let orphans = SessionPersistence.orphans(existing: existing, liveSurfaceIDs: owned)
-                if !orphans.isEmpty { ZmxRunner.kill(sessions: orphans, zmxPath: zmx) }
-            }
-            // The cwd files are the same ownership question, so clear them in
-            // the same pass — a closed pane used to leave its `<uuid>.cwd`
-            // behind until the next launch wiped the directory.
-            let dir = PaneCwdStore.directory
-            guard let names = try? FileManager.default
-                .contentsOfDirectory(atPath: dir.path) else { return }
-            for name in SessionPersistence.orphanCwdFiles(existing: names, liveSurfaceIDs: owned) {
-                try? FileManager.default.removeItem(at: dir.appendingPathComponent(name))
+        DispatchQueue.global(qos: .utility).async { [weak self] in
+            let listed = zmx.map { ZmxRunner.listZettySessions(zmxPath: $0) } ?? []
+            let candidates = SessionPersistence.orphans(existing: listed, liveSurfaceIDs: owned)
+            let names = (try? FileManager.default
+                .contentsOfDirectory(atPath: PaneCwdStore.directory.path)) ?? []
+            let staleFiles = SessionPersistence.orphanCwdFiles(existing: names, liveSurfaceIDs: owned)
+            guard !candidates.isEmpty || !staleFiles.isEmpty else { return }
+
+            // Re-check ownership on main before destroying anything. `owned` was
+            // sampled before the `zmx list` above, so a pane created in between
+            // would own a session that this pass sees as an orphan — and killing
+            // it would take out a brand-new shell, the exact failure this whole
+            // mechanism exists to prevent. The model can't change under us here.
+            DispatchQueue.main.async {
+                guard let self else { return }
+                let confirmed = Set(self.sessionOwnerSurfaceIDs.map(SessionPersistence.sessionName(for:)))
+                let ownedNow = self.sessionOwnerSurfaceIDs.map { $0.uuidString.lowercased() }
+                let killable = candidates.filter { !confirmed.contains($0) }
+                let deletable = staleFiles.filter { name in
+                    let stem = String(name.dropLast(SessionPersistence.cwdFileSuffix.count)).lowercased()
+                    return !ownedNow.contains(stem)
+                }
+                guard !killable.isEmpty || !deletable.isEmpty else { return }
+                DispatchQueue.global(qos: .utility).async {
+                    if let zmx, !killable.isEmpty { ZmxRunner.kill(sessions: killable, zmxPath: zmx) }
+                    // The cwd files are the same ownership question, so they are
+                    // cleared in the same pass — a closed pane used to leave its
+                    // `<uuid>.cwd` behind until the next launch wiped the directory.
+                    let dir = PaneCwdStore.directory
+                    for name in deletable {
+                        try? FileManager.default.removeItem(at: dir.appendingPathComponent(name))
+                    }
+                }
             }
         }
     }
@@ -498,7 +513,6 @@ final class TerminalViewController: NSViewController {
             self.injectStartupCommandIfPending(id)
         }
 
-        installRegistryTeardownHandler()
         startAgentEventWatcher()
         startForegroundPolling()
         startGitRefreshPolling()

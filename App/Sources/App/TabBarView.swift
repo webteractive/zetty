@@ -220,8 +220,6 @@ final class TabBarView: NSView {
             return
         }
 
-        cancelRename()
-
         // Remove old items. Rebuilding re-bakes each pill's index from its
         // position, which is what clears the staleness a drag introduced.
         for item in tabItems {
