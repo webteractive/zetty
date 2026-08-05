@@ -277,7 +277,7 @@ typedef struct {
 } ghostty_action_s;
 ```
 
-Key action tags for quertty (Tasks 6–7):
+Key action tags for Zetty (Tasks 6–7):
 
 | Tag | Payload type | Meaning |
 |---|---|---|

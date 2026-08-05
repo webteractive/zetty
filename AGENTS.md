@@ -49,9 +49,13 @@ A change that violates one should be corrected before merge:
 1. **Never hardcode a color.** Read from `ZTheme.current.<token>Color`; add a
    token rather than inlining hex or a system color (`.controlAccentColor`,
    `.separatorColor`, `.windowBackgroundColor`, …).
-2. **Fonts follow content:** terminal-adjacent UI (tabs, project tree, status
-   bar, kbd chips) uses `ZTheme.monoFont`; prose and standard controls use the
-   system font.
+2. **Fonts:** only the terminal and the status bar use `ZTheme.monoFont`, which
+   follows the user's configured terminal `font-family`/`font-size`. Every other
+   piece of chrome — tab bar, sidebar, command palette, dialogs, sheets, chips —
+   uses `ZTheme.chromeFont` (system font, fixed point size), so changing the
+   terminal font never reflows the app chrome. This is deliberate and the
+   opposite of what "terminal-native" suggests; don't "fix" a system-font tab
+   label back to mono.
 3. **Accent = focus/active/brand only, and it glows.** Selection/active fills use
    `bg3`, never a saturated accent block.
 4. **Respect the surface ramp:** `bg0` chrome (sidebar / tab bar / status bar) ·
@@ -771,6 +775,12 @@ id libghostty doesn't expose).
 
 - Follow existing file patterns; keep files focused. `ZettyCore` stays pure
   (no AppKit import).
+- **Don't use the `impeccable` skill or its sub-commands in this repo** (that
+  includes `clarify`, `polish`, `critique`, `audit`, and the rest). Its pipeline
+  expects a web surface and wants to generate `PRODUCT.md`, surface briefs, and
+  a detector hook that don't fit a native AppKit terminal app. The visual
+  authority here is [`DESIGN.md`](DESIGN.md) plus `ZTheme`; do UI and copy work
+  directly against those.
 - Do not commit debug `NSLog`/`print` statements.
 - Never commit or push without being asked; never add `Co-Authored-By` or a
   session link to commit messages.
