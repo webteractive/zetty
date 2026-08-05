@@ -962,10 +962,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 ? "Check for a misspelled key."
                 : "Unrecognized Zetty keys: \(unsupported.joined(separator: ", ")).")
             let alert = NSAlert()
-            alert.messageText = "Some terminal settings were ignored"
+            // "Some … were ignored" undersold it: ghostty validates
+            // all-or-nothing, so one bad line drops EVERY pasted setting. The
+            // title now matches what the body already said.
+            alert.messageText = "Your terminal settings aren't being applied"
             alert.informativeText = """
-            A directive in \(configPath) was rejected by the terminal, so your \
-            pasted ghostty settings (fonts, colors, …) are not being applied.
+            One line in \(configPath) was rejected, and the terminal accepts your \
+            settings all together or not at all — so every pasted ghostty setting \
+            (fonts, colors, …) is currently being ignored.
 
             \(cause)
 
@@ -983,13 +987,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         UserDefaults.standard.set(true, forKey: key)
         DispatchQueue.main.async {
             let alert = NSAlert()
-            alert.messageText = "preserve-sessions is on, but zmx is not installed"
+            // Leads with the consequence, not the config key, and matches the
+            // wording Settings uses for the same condition ("Session
+            // preservation requires zmx") so the two don't read as two problems.
+            alert.messageText = "Session preservation needs zmx, which isn't installed"
             alert.informativeText = """
-            Panes will use plain shells until zmx is installed.
-
-            \(ZmxRunner.installHint)
+            Your config sets preserve-sessions = true. Until zmx is installed, panes \
+            run plain shells — whatever is running in them ends when Zetty quits.
 
             Settings (⌘,) can install it for you.
+
+            \(ZmxRunner.installHint)
             """
             alert.runModal()
         }

@@ -1925,13 +1925,20 @@ final class TerminalViewController: NSViewController {
             onWorkspaceDidChange?()     // persist the added clone
         }
         if let branchError = outcome.branchError {
-            presentGitInitWarning(
-                "The clone was created, but branch setup (git switch -c \(plan.branchName)) failed:\n\(branchError)")
+            presentNotice(
+                title: "Clone created, but it's still on the source's branch",
+                detail: "git switch -c \(plan.branchName) failed:\n\(branchError)"
+                    + "\n\nThe clone is usable. Create the branch yourself to keep its"
+                    + " commits separate from the source.")
         } else if !outcome.usedCoW {
             // Spec: the fallback is labeled honestly — the user should know this
             // was a full byte copy (slow, real disk), not an instant CoW clone.
-            presentGitInitWarning(
-                "The volume doesn't support copy-on-write, so the clone is a full copy.")
+            presentNotice(
+                title: "Clone created as a full copy",
+                detail: "This volume doesn't support copy-on-write, so every file was"
+                    + " copied. The clone works the same — it just took longer and uses"
+                    + " real disk space.",
+                style: .informational)
         }
         guard let firstSurface else {
             return .failure(.noSuchPane("clone added but no pane found"))
@@ -2925,15 +2932,22 @@ final class TerminalViewController: NSViewController {
         let gitDir = (path as NSString).appendingPathComponent(".git")
         guard !FileManager.default.fileExists(atPath: gitDir) else { return }
         if let message = runGitInit(atPath: path) {
-            presentGitInitWarning("The project was added, but git init failed:\n\(message)")
+            presentNotice(title: "Project added, but git init failed",
+                          detail: "\(message)\n\nThe folder is a project either way — it"
+                              + " just isn't a git repository yet.")
         }
     }
 
-    private func presentGitInitWarning(_ text: String) {
+    /// A post-hoc notice: the operation finished, but something about it needs
+    /// saying. The title carries the outcome — callers must NOT restate it in
+    /// `detail`, and must not reuse one title for unrelated operations (this
+    /// said "Project added" for clone failures until it was caught).
+    private func presentNotice(title: String, detail: String,
+                               style: NSAlert.Style = .warning) {
         let alert = NSAlert()
-        alert.alertStyle = .informational
-        alert.messageText = "Project added"
-        alert.informativeText = text
+        alert.alertStyle = style
+        alert.messageText = title
+        alert.informativeText = detail
         alert.addButton(withTitle: "OK")
         if let window = view.window { alert.beginSheetModal(for: window, completionHandler: nil) }
         else { alert.runModal() }
@@ -3292,10 +3306,14 @@ final class TerminalViewController: NSViewController {
             return command
         }
         guard !running.isEmpty else { return true }
+        // Pluralize off the DEDUPED names actually shown, not `running` — two
+        // panes on the same command list once but counted twice, so the old
+        // `running.count` read "node. Closing kills the sessions."
+        let names = Set(running).sorted()
         let alert = NSAlert()
         alert.messageText = "Close \(what)?"
-        alert.informativeText = "Still running: \(Set(running).sorted().joined(separator: ", ")). "
-            + "Closing kills the session\(running.count > 1 ? "s" : "")."
+        alert.informativeText = "Still running: \(names.joined(separator: ", ")). "
+            + "Closing stops \(names.count == 1 ? "it" : "them") and discards the output."
         alert.addButton(withTitle: "Close")
         alert.addButton(withTitle: "Cancel")
         return alert.runModal() == .alertFirstButtonReturn
