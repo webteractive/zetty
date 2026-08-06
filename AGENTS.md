@@ -616,26 +616,19 @@ close path therefore cannot leak a session — that was the point of moving it.
 
 ### Freeing background panes' pixels
 
-`free-background-panes-after = <duration|off>` (default **off**) releases the
-GPU surfaces of an awake project's panes once it has been out of view that
-long, while its shells keep running in their preserved sessions. Returning to
-the project re-creates the surface, which re-attaches and replays scrollback —
-the same path a relaunch uses.
+`free-background-panes-after = <duration|off>` remains a reserved, parsed, and
+rendered key, but automatic background-surface release is temporarily disabled.
+Destroying a live preserved surface can block inside libghostty's synchronous
+subprocess teardown (`ghostty_surface_free` → `pthread_join`); because AppKit
+owns the surface and releases it on the main thread, that freezes the entire app.
 
-Policy is pure and tested in `BackgroundPanePolicy` (ZettyCore) and returns a
-**keep-set**, never a free-set, so a pane the caller failed to describe fails
-safe. Its disqualifiers, in order of danger:
-
-1. **A pane with no preserved session is never released.** Freeing a plain
-   shell's surface *kills the process* and loses its output. Gated by
-   `isSessionBacked` → `sessionCommandProvider?(id) != nil`, which is the exact
-   same decision made at spawn time, so the two can't disagree.
-2. The active project is never released.
-3. The idle window must actually have elapsed.
-
-Wired via `attachedSurfaceIDs` (= `allSurfaceIDs` minus released), which is what
-`prune` now takes. Re-evaluated on the 60s hibernation timer — which starts
-unconditionally, so this works even with `hibernate-after = off`.
+Until teardown can be made non-blocking safely, `rebuildSurfaceNodeView` keeps
+every live surface belonging to an awake project attached by pruning against
+`allSurfaceIDs`.
+Manual hibernation still frees a project's surfaces after ending its sessions.
+The pure `BackgroundPanePolicy` and config parsing remain for a future safe
+reintroduction; do not wire them back to `SurfaceRegistry.prune` without proving
+that preserved `zmx attach` teardown cannot block the main thread.
 
 ## Control CLI (`zetty`)
 

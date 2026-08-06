@@ -392,68 +392,6 @@ final class TerminalViewController: NSViewController {
         }
     }
 
-    // MARK: - Freeing background panes' GPU surfaces
-
-    /// Reads the `free-background-panes-after` window (0 = off).
-    var freeBackgroundPanesAfter: (() -> TimeInterval)?
-
-    /// When this controller came up, used as the "out of view since" baseline
-    /// for a project the user has not visited at all this run.
-    private let launchedAt = Date()
-
-    /// True when re-creating this surface would re-attach to a preserved
-    /// session. Freeing a surface WITHOUT one kills its shell, so this gates
-    /// every release. Mirrors the spawn-time decision exactly by asking the
-    /// same provider.
-    private func isSessionBacked(_ surfaceID: UUID) -> Bool {
-        sessionCommandProvider?(surfaceID) != nil
-    }
-
-    /// The surfaces that should currently be attached: `allSurfaceIDs` minus any
-    /// whose project has been out of view long enough to release its pixels.
-    ///
-    /// Sessions are untouched by this — `prune` no longer ends them — so a
-    /// released pane keeps running and re-attaches (with scrollback) when the
-    /// user returns to it.
-    private var attachedSurfaceIDs: [UUID] {
-        let freeAfter = freeBackgroundPanesAfter?() ?? 0
-        guard freeAfter > 0 else { return allSurfaceIDs }
-        let now = Date()
-        let activeID = workspace.activeProject.id
-        let projects = workspace.projects.filter { !$0.isHibernated }.map { project in
-            BackgroundPanePolicy.Project(
-                isActive: project.id == activeID,
-                // A project never visited this run has no timestamp. Falling back
-                // to `now` read as "just seen", which made it permanently
-                // ineligible — the launch time is what "out of view since" means
-                // for a pane the user hasn't looked at at all.
-                idleFor: now.timeIntervalSince(lastActiveAt[project.id] ?? launchedAt),
-                panes: project.tabList.trees.flatMap { tree in
-                    tree.layout.surfaces.map {
-                        BackgroundPanePolicy.Pane(id: $0.id, isSessionBacked: isSessionBacked($0.id))
-                    }
-                }
-            )
-        }
-        let keep = BackgroundPanePolicy.surfacesToKeepAttached(projects: projects, freeAfter: freeAfter)
-        return allSurfaceIDs.filter { keep.contains($0) }
-    }
-
-    /// Re-evaluates the release window and frees any newly-eligible surfaces.
-    /// Runs on the same cadence as auto-hibernation; a released surface comes
-    /// back on its next `rebuildSurfaceNodeView`.
-    private func releaseIdleBackgroundSurfaces() {
-        guard (freeBackgroundPanesAfter?() ?? 0) > 0 else { return }
-        // The ACTIVE project is continuously "seen", exactly as auto-hibernation
-        // tracks it, so switching away starts its clock.
-        lastActiveAt[workspace.activeProject.id] = Date()
-        // No count comparison here: `keep` is drawn from every awake surface
-        // while `liveIDs` holds only spawned pairs, so the two sizes are
-        // unrelated and comparing them skipped real work whenever they happened
-        // to match. `prune` already no-ops when nothing is removed.
-        registry.prune(keeping: Set(attachedSurfaceIDs))
-    }
-
     /// Called when libghostty rejected a pane's merged configuration, so the
     /// pane fell back to Zetty's own directives (see
     /// `SurfaceRegistry.onConfigurationRejected`). The argument is ghostty's own
@@ -3541,9 +3479,6 @@ final class TerminalViewController: NSViewController {
     }
 
     private func evaluateAutoHibernation() {
-        // Independent of auto-hibernation: releasing pixels keeps the session,
-        // so it applies even when `hibernate-after` is off.
-        releaseIdleBackgroundSurfaces()
         let after = autoHibernateAfter?() ?? 0
         guard after > 0, workspace.projects.count > 1 else { return }
         let now = Date()
@@ -3680,7 +3615,7 @@ final class TerminalViewController: NSViewController {
                 placeholder.bottomAnchor.constraint(equalTo: bottomGuide),
             ])
             placeholderView = placeholder
-            registry.prune(keeping: Set(attachedSurfaceIDs))   // free the frozen surfaces
+            registry.prune(keeping: Set(allSurfaceIDs)) // free the frozen surfaces
             onWorkspaceDidChange?()
             return
         }
@@ -3726,13 +3661,10 @@ final class TerminalViewController: NSViewController {
         ])
         rootContentView = newRoot
 
-        // Prune to the awake projects' surfaces so background panes survive
-        // project/tab switches — hibernated projects' surfaces are freed
-        // (allSurfaceIDs excludes them), and with
-        // `free-background-panes-after` set, so are the surfaces of awake
-        // projects that have been out of view too long. Pruning no longer ends
-        // a session, so those panes keep running and re-attach on return.
-        registry.prune(keeping: Set(attachedSurfaceIDs))
+        // Keep any live surface owned by an awake project so background sessions
+        // survive project/tab switches. Hibernated projects' surfaces are freed
+        // because allSurfaceIDs excludes them.
+        registry.prune(keeping: Set(allSurfaceIDs))
 
         // Any structural change (tab add/close, split/close, project add, switch)
         // funnels through here — autosave so disk reflects the current layout.

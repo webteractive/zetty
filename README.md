@@ -419,22 +419,18 @@ sequence — many panes running agents at once cost the same as one. Scrolling
 the sidebar is unaffected by those updates: it only scrolls to reveal a project
 when the active project or tab actually changes.
 
-### Memory: freeing background panes
+### Memory: background pane pruning temporarily disabled
 
 Each live pane costs roughly **37 MB of GPU memory** (the terminal's render
 target and glyph atlas), so a workspace with many awake projects pays for
 surfaces nobody is looking at — about 300 MB at 5 live panes, 1.5 GB at 37.
 
-`free-background-panes-after = <duration>` (e.g. `5m`; default `off`) reclaims
-that. Once an awake project has been out of view for that long, its panes'
-GPU surfaces are released while **their shells keep running** in their
-preserved sessions; switching back re-attaches and replays the scrollback. It
-is not hibernation — nothing is killed, and agents keep working.
-
-Panes without a preserved session are never released (there would be nothing to
-re-attach to, so freeing the surface would kill the shell), which means this
-only helps when `preserve-sessions = true`. Use `hibernate-after` instead when
-you want a project's processes actually stopped.
+`free-background-panes-after = <duration>` remains accepted and preserved in
+the config, but currently has no runtime effect. Releasing a live preserved
+surface can block inside libghostty's synchronous subprocess teardown and freeze
+Zetty's main thread, so live terminal surfaces belonging to awake projects stay
+attached until a safe non-blocking teardown path is available. Use
+`hibernate-after` when you want idle projects' processes and surfaces stopped.
 
 Zetty also continuously reconciles preserved sessions against the workspace, so
 closing a pane always ends its session — even one whose tab you never opened —
