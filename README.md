@@ -121,6 +121,16 @@ by the tool it's running.
   images, compiled binaries) are only revealed in Finder, never launched.
   ⌘-click detection reads the pane's preserved zmx session, so it needs
   `preserve-sessions = true`; `zetty view` works either way.
+- **Per-pane file tree** — toggle a file tree on any pane with `⇧⌘F`, from its
+  gutter button, its right-click menu, or `Ctrl+B` `e`. Hidden by default. It roots at
+  the pane's current directory and follows `cd`, remembers which folders you had
+  open so hopping around doesn't collapse it, and has a fuzzy filename filter
+  (`tvc` finds `TerminalViewController.swift`). Click a file to peek it in the
+  read-only viewer, double-click or ⌘Enter to open it in your editor; right-click
+  for Reveal in Finder, Copy Path, and Copy Relative Path. It is **read-only** —
+  no rename, delete, or move — and it shows the raw filesystem by default, so
+  set `zetty-file-tree-respect-gitignore = true` on a project where
+  `node_modules` would drown it.
 - **`ssh://` links** — Zetty registers as a macOS handler for `ssh://` URLs, so
   a handover from another app (Terminal, a browser link, `open ssh://host`)
   opens the session in a new Home tab.
@@ -258,6 +268,8 @@ Command Line** and click install — this symlinks `zetty` into
 | `⌘1`–`⌘9` | Jump to tab |
 | `⌘K` | Command palette |
 | `⌘B` | Toggle sidebar |
+| `⇧⌘F` | Toggle the focused pane's file tree |
+| `⌘↓` | Scroll the focused pane back to the live tail |
 | `⌘O` (or `⇧⌘N`) | Add project (create or pick a folder) |
 | `⌃⌘N` | New scratch terminal |
 | `⌘,` | Settings |
@@ -283,6 +295,7 @@ Press `Ctrl+B` (the prefix, configurable), then:
 | `x` | Close pane |
 | `z` | Zoom / unzoom pane |
 | `!` | Break focused pane into a new tab |
+| `e` | Toggle the focused pane's file tree |
 | `c` | New tab |
 | `n` / `p` | Next / previous tab |
 | `1`–`9` | Jump to tab |
@@ -333,14 +346,30 @@ seeds a documented starter file on first launch. Format is plain
 | `editor` | — | App used by Settings → "Open in Editor" |
 | `viewer-highlight-command` | `bat --style=plain --color=always --paging=never` | Command the file viewer pipes a file through for syntax highlighting; `off` disables it |
 | `viewer-max-bytes` | `2097152` | Largest file the viewer will render; bigger files open in their default app instead |
+| `zetty-file-tree-show-hidden` | `true` | Show dotfiles in the per-pane file tree |
+| `zetty-file-tree-respect-gitignore` | `false` | Hide anything the repo's `.gitignore` excludes |
+| `zetty-file-tree-ignore` | — | Extra names to hide, comma-separated (e.g. `node_modules, vendor`) |
+| `zetty-file-tree-width` | `220` | Width a file tree opens at, in points |
 | `prefix` / `bind` / `copy-bind` | tmux-canonical | Prefix-key layer remapping |
+
+The file tree shows the raw filesystem by default, dotfiles included. On a JS
+project `node_modules` will dominate both the tree and its filter until you turn
+on `zetty-file-tree-respect-gitignore` or list names in `zetty-file-tree-ignore`.
+Dragging a tree's divider stores that pane's own width, which then wins over
+`zetty-file-tree-width` for that pane.
+
+New Zetty keys take a **`zetty-` prefix**, which is what keeps them out of the
+Ghostty passthrough (see below). Older Zetty keys predate the convention and stay
+unprefixed.
 
 **Any other `key = value` is a Ghostty directive**, forwarded verbatim to
 libghostty — paste your existing `~/.config/ghostty/config` straight in
 (Zetty does not read Ghostty's own config file). Terminal colors from pasted
-directives override the scheme; the app chrome stays scheme-driven. Font is
-uniform: the `font-family` / `font-size` directives drive both the terminal
-and the app chrome, and are also editable in Settings → Appearance.
+directives override the scheme; the app chrome stays scheme-driven. The
+`font-family` / `font-size` directives drive the **terminal and status bar**
+(also editable in Settings → Appearance); the rest of the chrome — tab bar,
+sidebar, file tree, palette, dialogs — uses the system font at a fixed size, so
+changing your terminal font never reflows the app around it.
 
 Ghostty validates its config **all-or-nothing**: one directive it doesn't
 recognize (a typo, or a Zetty key from a newer build) makes it discard *every*

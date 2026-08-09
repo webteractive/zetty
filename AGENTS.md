@@ -95,9 +95,11 @@ in `ZettyCore` (`AppConfig` / `ConfigStore`); `AppDelegate` resolves + applies i
   directive silently drops every custom setting *including the per-surface
   `command`*, which strands preserved sessions (panes launch plain shells).
   Two guards, both regression-tested: `AppConfig.isReservedButUnsupported`
-  swallows Zetty's own keys this build lacks (the `notify-` namespace plus
-  `retiredReservedKeys` — add a retired key there, don't just delete its
-  `case`; they're recorded in `unsupportedKeys` and dropped by `rendered()`),
+  swallows Zetty's own keys this build lacks (the `zetty-` namespace — which
+  **all new keys must use** — plus the grandfathered `notify-` one and
+  `retiredReservedKeys`; add a retired key there, don't just delete its
+  `case`, since deleting it makes old configs *forward* the key rather than
+  ignore it. They're recorded in `unsupportedKeys` and dropped by `rendered()`),
   and `SurfaceRegistry.pair(for:)` retries with a Zetty-only config when
   `setTerminalConfiguration` returns false, reporting via
   `onConfigurationRejected` → one-time alert. Real cause of a
@@ -361,12 +363,89 @@ old strays lose instead of tying at the default `1.0`. Keep `/Applications`
 current (the usual rebuild-and-install step) and delete/`lsregister -u` stray
 `.app` products if an external open lands in the wrong copy.
 
+## Per-pane file tree
+
+`⇧⌘F`, `Ctrl+B e`, a gutter button, or the pane context menu toggles a file tree
+inside a terminal pane.
+
+**`⇧⌘F` is a native menu key equivalent, not a binding.** `KeyBindingEngine` has
+only a prefix table and a copy table — in `.normal` mode it tests for the prefix
+chord and passes everything else through, so there is nowhere to register a
+direct chord. Adding one would mean a third table plus a new config key; until
+that exists, native shortcuts live in the View menu. (The chord itself is safe:
+`ctrl+shift+b` normalizes to `ctrl+B` — uppercase, shift folded in — which is a
+different `KeyChord` from the `ctrl+b` prefix, so it can't arm the prefix.) Hidden by default; `Surface.fileTreeVisible` / `fileTreeWidth`
+persist it per pane (both decoded tolerantly, so older `workspace.json` files
+load unchanged).
+
+**It is an attachment to a pane, not a pane.** `SurfaceNode` stays
+`.leaf(Surface)` — no new case — so `Layout.swift`, the `.surfaces` accessor,
+session ownership, `prune`, and the control CLI are all untouched, and prefix
+focus / ⌘W / zoom / break-into-tab keep their existing meaning. Deliberate: a
+tree-as-pane would force an answer for each of those.
+
+Pure logic in `ZettyCore/FileTree/`: `FileTreeEntry`, `FileTreeSettings`,
+`FileTreeFilter` (hidden-file, denylist, and gitignore rules composing, plus
+sort order), `GitignoreMatcher`/`GitignoreStack` (globs, `**`, anchoring,
+directory-only, negation, deepest-file-wins), `FileTreeSearch` (fuzzy ranking),
+`FileTreeExpansionCache` (bounded LRU of expanded dirs per root). App layer:
+`DirectoryEnumerator` (the only filesystem reader — every function blocks and
+must run off-main), `FileTreeView`, `FileTreeWatcher`, `FileTreeWiring`.
+
+`FileTreeWiring` bundles the five leaf callbacks into one value because
+`SurfaceNodeView` → `RatioSplitView` → `SurfaceNodeView` is a recursive builder
+already threading seven parameters; add new leaf plumbing there, not as more
+positional arguments.
+
+Gotchas, all deliberate:
+
+- **The watcher is filtered to EXPANDED directories.** One FSEvents stream per
+  visible tree, debounced 250ms, and events outside open directories are
+  dropped. Watching a whole root and refreshing per event is exactly the
+  per-second churn that once put 59% of the main thread in Auto Layout — a
+  collapsed `node_modules` must absorb an `npm install` silently.
+- **`zetty-` is the reserved namespace for NEW keys**, and
+  `isReservedButUnsupported` swallows all of it, so a future `zetty-*` key is
+  safe the moment it is named — no list to remember. `notify-` is grandfathered.
+  A bare `file-tree-*` key is NOT reserved and forwards to ghostty like any
+  other directive; a test pins that. Migrating the other 19 unprefixed keys is
+  specced in `docs/superpowers/specs/2026-08-09-zetty-config-prefix-migration-design.md`.
+- **CRLF `.gitignore` files need normalising before splitting.** Swift treats
+  `\r\n` as a SINGLE `Character`, so `split(separator: "\n")` never splits a
+  CRLF file — the whole thing collapses into one nonsense pattern that silently
+  matches nothing. Regression-tested.
+- **Re-rooting on `cd` is debounced 500ms** (driven from `refreshStatusBar`,
+  which already runs on cwd-change cadence) and expansion state is keyed by
+  absolute path in `FileTreeExpansionCache`, because agents `cd` several times a
+  second and a tree that collapses on every hop is worse than no tree.
+- **Search needs the whole root enumerated**, so it can't ride the lazy expand
+  path: one bounded background walk (100k files) per root, started *after* first
+  paint, refreshed on re-root and on the context menu's Refresh — never per
+  FSEvent. `FileTreeView.indexLimit` is `nonisolated` because that walk reads it
+  off the main actor.
+- **The context menu's Open With routes through `onActivateFile`** →
+  `presentFileViewer` → `ExternalOpenPolicy`, so a compiled binary is revealed
+  rather than launched. Never reimplement that hand-off locally; the security
+  decision has one home.
+- **Chrome font, not mono** (`ZTheme.chromeFont`) — the tree is chrome, so the
+  terminal font must not reflow it. A scheme change runs through
+  `rebuildSurfaceNodeView()`, which recreates every tree, so there is no render
+  cache to invalidate — that's why `LeafContainerView` has no theme forwarder.
+- **Tree updates never call `refreshTabBar()`/`refreshSidebar()`.** They stay
+  inside the pane's own view. `rebuildSurfaceNodeView` stops every tree's
+  watcher for the same reason it calls `pathHover.reset()`.
+
+Deferred: per-row git status, content search (distinct from S1 scrollback search
+and S8 cross-pane grep, which search terminal *output*), per-project
+`zetty-file-tree-*` overrides, a `zetty tree` CLI verb (dropped — agents have
+`ls`, `find`, and `rg`), and any write path.
+
 ## tmux-style prefix keys + copy mode
 
 `Ctrl+B` (configurable) arms a one-shot prefix; the next key drives Zetty:
 `%`/`"` split · h/j/k/l or arrows focus panes directionally · `o` cycle ·
 `x` close · `z` zoom (transient, never persisted) · `c`/`n`/`p`/`1-9` tabs ·
-`,` inline tab rename · `[` copy mode · `]` paste · prefix-twice sends the
+`,` inline tab rename · `[` copy mode · `]` paste · `e` file tree · prefix-twice sends the
 literal prefix to the pty · Esc cancels. Copy mode is modal and vi-keyed
 (h/j/k/l/w/b/e/0/$/g/G, Ctrl+U/D/F/B paging, `v`/`V` select, `y`/Enter yank,
 `q`/Esc exit).
@@ -774,6 +853,37 @@ id libghostty doesn't expose).
   a detector hook that don't fit a native AppKit terminal app. The visual
   authority here is [`DESIGN.md`](DESIGN.md) plus `ZTheme`; do UI and copy work
   directly against those.
+- **Never add a keyboard shortcut without first proving the chord is free.**
+  Zetty has four independent shortcut surfaces, and a silent collision is the
+  usual failure — AppKit just lets the first responder win, so the new binding
+  "sometimes doesn't work". Before adding one, check **all four**:
+
+  ```sh
+  # 1. Native menu key equivalents (character + modifier mask must BOTH match
+  #    an existing pair to collide — ⌘B, ⌃⇧B and ⇧⌘B are three distinct chords)
+  grep -B4 'keyEquivalentModifierMask' App/Sources/App/AppDelegate.swift \
+    | grep -E 'title:|keyEquivalent'
+  # 2. Prefix layer (Ctrl+B then a key)
+  grep -n 'bind("' Sources/ZettyCore/Keybindings/BindingCommand.swift
+  # 3. Copy mode
+  grep -n 'copyBind\|defaultCopyTable' -A40 Sources/ZettyCore/Keybindings/BindingCommand.swift
+  # 4. The user's own config — `bind` / `copy-bind` lines are additive
+  grep -E '^(prefix|bind|copy-bind)' ~/.config/zetty/config
+  ```
+
+  Then state the result before writing code, and say what the chord costs.
+  Two costs are easy to miss:
+
+  - **A native equivalent is resolved in `NSApplication.sendEvent` *before* the
+    terminal surface sees the event**, so a Control-modified chord bound here
+    permanently stops that keystroke reaching the pty. Prefer ⌘-based chords for
+    menu items — Command is never sent to the shell — and leave Control chords
+    to the prefix layer.
+  - **A well-known chord spent here is spent for good.** Say what else it
+    conventionally means and let the user decide. Recorded precedent: ⇧⌘F is
+    "find in files" in VS Code and Zed, and it is deliberately spent on Toggle
+    File Tree; a future project-wide content search needs a different chord
+    rather than stealing this one back.
 - Do not commit debug `NSLog`/`print` statements.
 - Never commit or push without being asked; never add `Co-Authored-By` or a
   session link to commit messages.
