@@ -90,6 +90,8 @@ public struct AppConfig: Equatable, Sendable {
     public var viewerHighlightCommand: String
     /// Largest file the viewer will render, in bytes.
     public var viewerMaxBytes: Int
+    /// Per-pane file tree preferences (`file-tree-*` keys).
+    public var fileTree: FileTreeSettings
     public var ghostty: [GhosttyDirective]
     /// Prefix-key layer: `prefix = <chord>`, `bind = <chord> <command>`, and
     /// `copy-bind = <chord> <command>` lines applied over the tmux-canonical
@@ -121,10 +123,18 @@ public struct AppConfig: Equatable, Sendable {
     /// ENTIRE config when any key produces a diagnostic, which silently drops
     /// every custom directive — including the per-surface `command` behind
     /// session preservation — so panes launch plain shells and preserved
-    /// sessions are stranded. `notify-` is Zetty's namespace (ghostty defines
-    /// no such key), so unknown `notify-*` keys are swallowed too.
+    /// sessions are stranded.
+    ///
+    /// `zetty-` is the namespace for Zetty's own keys and the one NEW keys
+    /// should use: anything under it is ours by construction, so a key written
+    /// by a newer build is swallowed without anyone having to remember to
+    /// register it here. `notify-` is grandfathered — those keys predate the
+    /// convention and stay unprefixed for compatibility. Ghostty defines no key
+    /// in either namespace, so there is no collision.
     public static func isReservedButUnsupported(_ key: String) -> Bool {
-        retiredReservedKeys.contains(key) || key.hasPrefix("notify-")
+        retiredReservedKeys.contains(key)
+            || key.hasPrefix("notify-")
+            || key.hasPrefix("zetty-")
     }
 
     public init(
@@ -144,6 +154,7 @@ public struct AppConfig: Equatable, Sendable {
         sidebarPosition: SidebarPosition = .left,
         viewerHighlightCommand: String = AppConfig.defaultViewerHighlightCommand,
         viewerMaxBytes: Int = AppConfig.defaultViewerMaxBytes,
+        fileTree: FileTreeSettings = FileTreeSettings(),
         ghostty: [GhosttyDirective] = [],
         keybindings: KeyBindingConfiguration = KeyBindingConfiguration(),
         unsupportedKeys: [String] = []
@@ -164,6 +175,7 @@ public struct AppConfig: Equatable, Sendable {
         self.sidebarPosition = sidebarPosition
         self.viewerHighlightCommand = viewerHighlightCommand
         self.viewerMaxBytes = viewerMaxBytes
+        self.fileTree = fileTree
         self.ghostty = ghostty
         self.keybindings = keybindings
         self.unsupportedKeys = unsupportedKeys
@@ -251,6 +263,20 @@ public struct AppConfig: Equatable, Sendable {
                 config.viewerHighlightCommand = ["off", "none", "false"].contains(lowered) ? "" : value
             case "viewer-max-bytes":
                 if let bytes = Int(value), bytes > 0 { config.viewerMaxBytes = bytes }
+            // New keys take the `zetty-` prefix: `isReservedButUnsupported`
+            // swallows the whole namespace, so a future `zetty-*` key can never
+            // leak to ghostty and drop the config.
+            case "zetty-file-tree-show-hidden":
+                config.fileTree.showHidden = ["true", "yes", "on", "1"].contains(value.lowercased())
+            case "zetty-file-tree-respect-gitignore":
+                config.fileTree.respectGitignore = ["true", "yes", "on", "1"].contains(value.lowercased())
+            case "zetty-file-tree-ignore":
+                config.fileTree.extraIgnores = value
+                    .split(separator: ",")
+                    .map { $0.trimmingCharacters(in: .whitespaces) }
+                    .filter { !$0.isEmpty }
+            case "zetty-file-tree-width":
+                if let width = Double(value), width > 0 { config.fileTree.width = width }
             case "prefix":
                 config.keybindings.applyPrefix(value)
             case "bind":
@@ -367,6 +393,13 @@ public struct AppConfig: Equatable, Sendable {
 
         # Largest file the viewer will render, in bytes.
         viewer-max-bytes = \(viewerMaxBytes)
+
+        # Per-pane file tree (toggle from the pane gutter, or Ctrl+B e).
+        # Defaults show the raw filesystem; filtering is opt-in.
+        zetty-file-tree-show-hidden = \(fileTree.showHidden)
+        zetty-file-tree-respect-gitignore = \(fileTree.respectGitignore)
+        zetty-file-tree-ignore = \(fileTree.extraIgnores.joined(separator: ", "))
+        zetty-file-tree-width = \(Int(fileTree.width))
 
         """
         if let editor, !editor.isEmpty {
