@@ -15,6 +15,7 @@ public enum BindingCommand: Hashable, Sendable {
     case closePane
     case zoomPane
     case breakPane
+    case toggleFileTree
     // Prefix table — tabs
     case newTab
     case nextTab
@@ -66,6 +67,7 @@ public enum BindingCommand: Hashable, Sendable {
         .closePane: "close-pane",
         .zoomPane: "zoom-pane",
         .breakPane: "break-pane",
+        .toggleFileTree: "toggle-file-tree",
         .newTab: "new-tab",
         .nextTab: "next-tab",
         .previousTab: "previous-tab",
@@ -145,6 +147,7 @@ public enum BindingCommand: Hashable, Sendable {
         bind("x", .closePane)
         bind("z", .zoomPane)
         bind("!", .breakPane)
+        bind("e", .toggleFileTree)      // "explorer"
         bind("c", .newTab)
         bind("n", .nextTab)
         bind("p", .previousTab)
