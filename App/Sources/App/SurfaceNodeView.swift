@@ -44,7 +44,8 @@ final class SurfaceNodeView: NSView {
         onBreak: ((UUID) -> Void)? = nil,
         onSplit: ((UUID, SplitDirection) -> Void)? = nil,
         nodePath: [SplitBranch] = [],
-        onRatioChange: (([SplitBranch], Double) -> Void)? = nil
+        onRatioChange: (([SplitBranch], Double) -> Void)? = nil,
+        fileTree: FileTreeWiring? = nil
     ) {
         super.init(frame: .zero)
         translatesAutoresizingMaskIntoConstraints = false
@@ -57,8 +58,27 @@ final class SurfaceNodeView: NSView {
             onBreak: onBreak,
             onSplit: onSplit,
             nodePath: nodePath,
-            onRatioChange: onRatioChange
+            onRatioChange: onRatioChange,
+            fileTree: fileTree
         )
+    }
+
+    // MARK: - Per-pane addressing
+
+    /// Every leaf container in this subtree.
+    ///
+    /// Lets the controller reach individual panes for updates that must NOT
+    /// trigger a rebuild — re-rooting a file tree, retheming it, tearing down
+    /// its watcher — since rebuilding re-parents live terminal views and steals
+    /// first responder.
+    func leafContainers() -> [LeafContainerView] {
+        var found: [LeafContainerView] = []
+        func walk(_ view: NSView) {
+            if let leaf = view as? LeafContainerView { found.append(leaf) }
+            view.subviews.forEach(walk)
+        }
+        walk(self)
+        return found
     }
 
     @available(*, unavailable)
@@ -91,7 +111,8 @@ final class SurfaceNodeView: NSView {
         onBreak: ((UUID) -> Void)?,
         onSplit: ((UUID, SplitDirection) -> Void)?,
         nodePath: [SplitBranch],
-        onRatioChange: (([SplitBranch], Double) -> Void)?
+        onRatioChange: (([SplitBranch], Double) -> Void)?,
+        fileTree: FileTreeWiring?
     ) {
         switch node {
 
@@ -102,6 +123,10 @@ final class SurfaceNodeView: NSView {
                 terminalView: terminalView,
                 isFocused: surface.id == focusedSurfaceID,
                 showsClose: showsClose,
+                showsFileTree: surface.fileTreeVisible,
+                fileTreeWidth: surface.fileTreeWidth
+                    ?? fileTree?.settings().width ?? FileTreeSettings.defaultWidth,
+                fileTree: fileTree,
                 onClose: onClose,
                 onBreak: onBreak,
                 onSplit: onSplit
@@ -128,7 +153,8 @@ final class SurfaceNodeView: NSView {
                 onBreak: onBreak,
                 onSplit: onSplit,
                 nodePath: nodePath,
-                onRatioChange: onRatioChange
+                onRatioChange: onRatioChange,
+                fileTree: fileTree
             )
             splitView.translatesAutoresizingMaskIntoConstraints = false
             addSubview(splitView)
@@ -152,7 +178,7 @@ final class SurfaceNodeView: NSView {
 /// additionally reveals the break-into-tab and × buttons, which are no-ops on a
 /// single pane.
 @MainActor
-private final class LeafContainerView: NSView {
+final class LeafContainerView: NSView {
 
     private static let borderWidth: CGFloat = 2
     /// Top strip reserved for the chrome buttons, so they never overlap the
@@ -160,6 +186,8 @@ private final class LeafContainerView: NSView {
     private static let gutterHeight: CGFloat = 24
     /// Square edge of each gutter button.
     private static let buttonSize: CGFloat = 18
+    private static let minFileTreeWidth: CGFloat = 140
+    private static let maxFileTreeWidth: CGFloat = 520
 
     let surfaceID: UUID
     private var isFocused: Bool
@@ -168,11 +196,19 @@ private final class LeafContainerView: NSView {
     private var onSplit: ((UUID, SplitDirection) -> Void)?
     private var statusDot: NSView?
 
+    private var fileTreeWiring: FileTreeWiring?
+    private var fileTree: FileTreeView?
+    private var terminalLeadingToContainer: NSLayoutConstraint?
+    private var fileTreeWidthConstraint: NSLayoutConstraint?
+
     init(
         surfaceID: UUID,
         terminalView: NSView,
         isFocused: Bool,
         showsClose: Bool,
+        showsFileTree: Bool = false,
+        fileTreeWidth: Double = FileTreeSettings.defaultWidth,
+        fileTree: FileTreeWiring? = nil,
         onClose: ((UUID) -> Void)?,
         onBreak: ((UUID) -> Void)? = nil,
         onSplit: ((UUID, SplitDirection) -> Void)? = nil
@@ -182,6 +218,7 @@ private final class LeafContainerView: NSView {
         self.onClose = onClose
         self.onBreak = onBreak
         self.onSplit = onSplit
+        self.fileTreeWiring = fileTree
         super.init(frame: .zero)
         wantsLayer = true
         // Rounded, themed pane surface (handoff: 10pt radius panes on bg1).
@@ -192,25 +229,104 @@ private final class LeafContainerView: NSView {
         let inset = LeafContainerView.borderWidth
         terminalView.translatesAutoresizingMaskIntoConstraints = false
         addSubview(terminalView)
+        // Two leading constraints, one active at a time: pinned to the pane
+        // edge normally, or to the file tree's divider when a tree is shown.
+        // Swapping beats rebuilding the constraint set on every toggle.
+        let leadingToContainer = terminalView.leadingAnchor.constraint(
+            equalTo: leadingAnchor, constant: inset)
+        terminalLeadingToContainer = leadingToContainer
         NSLayoutConstraint.activate([
             // The gutter inset keeps the chrome buttons above the terminal
             // content instead of overlapping its first line.
             terminalView.topAnchor.constraint(equalTo: topAnchor,
                                               constant: LeafContainerView.gutterHeight),
-            terminalView.leadingAnchor.constraint(equalTo: leadingAnchor, constant: inset),
+            leadingToContainer,
             terminalView.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -inset),
             terminalView.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -inset),
         ])
 
         addStatusDot()
-        addGutterButtons(showsClose: showsClose)
-        menu = makePaneMenu(showsClose: showsClose)
+        addGutterButtons(showsClose: showsClose, showsFileTree: showsFileTree)
+        menu = makePaneMenu(showsClose: showsClose, showsFileTree: showsFileTree)
+
+        if showsFileTree, let wiring = fileTree {
+            installFileTree(width: fileTreeWidth, wiring: wiring, terminalView: terminalView)
+        }
 
         updateBorder()
     }
 
     @available(*, unavailable)
     required init?(coder _: NSCoder) { fatalError("not supported") }
+
+    // MARK: - File tree
+
+    /// Slots the file tree onto the pane's leading edge and re-pins the terminal
+    /// beside it, with a 1pt divider carrying the drag handle.
+    private func installFileTree(width: Double, wiring: FileTreeWiring, terminalView: NSView) {
+        let tree = FileTreeView(settingsProvider: wiring.settings)
+        tree.onActivateFile = wiring.onPeek
+        tree.onOpenInEditor = wiring.onOpenInEditor
+        tree.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(tree)
+        fileTree = tree
+
+        let divider = NSView()
+        divider.wantsLayer = true
+        divider.layer?.backgroundColor = ZTheme.current.borderColor.cgColor
+        divider.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(divider)
+
+        let inset = LeafContainerView.borderWidth
+        let clamped = min(max(CGFloat(width), Self.minFileTreeWidth), Self.maxFileTreeWidth)
+        let widthConstraint = tree.widthAnchor.constraint(equalToConstant: clamped)
+        fileTreeWidthConstraint = widthConstraint
+
+        terminalLeadingToContainer?.isActive = false
+        NSLayoutConstraint.activate([
+            tree.topAnchor.constraint(equalTo: topAnchor,
+                                      constant: LeafContainerView.gutterHeight),
+            tree.leadingAnchor.constraint(equalTo: leadingAnchor, constant: inset),
+            tree.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -inset),
+            widthConstraint,
+
+            divider.leadingAnchor.constraint(equalTo: tree.trailingAnchor),
+            divider.widthAnchor.constraint(equalToConstant: 1),
+            divider.topAnchor.constraint(equalTo: tree.topAnchor),
+            divider.bottomAnchor.constraint(equalTo: tree.bottomAnchor),
+
+            terminalView.leadingAnchor.constraint(equalTo: divider.trailingAnchor),
+        ])
+
+        let handle = FileTreeDragHandle { [weak self] delta in
+            guard let self, let widthConstraint = self.fileTreeWidthConstraint else { return }
+            let next = min(max(widthConstraint.constant + delta, Self.minFileTreeWidth),
+                           Self.maxFileTreeWidth)
+            widthConstraint.constant = next
+            self.fileTreeWiring?.onWidthChange(self.surfaceID, Double(next))
+        }
+        handle.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(handle)
+        NSLayoutConstraint.activate([
+            handle.centerXAnchor.constraint(equalTo: divider.centerXAnchor),
+            handle.widthAnchor.constraint(equalToConstant: 8),
+            handle.topAnchor.constraint(equalTo: divider.topAnchor),
+            handle.bottomAnchor.constraint(equalTo: divider.bottomAnchor),
+        ])
+    }
+
+    /// Points this pane's tree at `path`. No-op when the tree is hidden.
+    func setFileTreeRoot(_ path: String, expanding: Set<String>) {
+        fileTree?.setRoot(path, expanding: expanding)
+    }
+
+    var fileTreeCurrentRoot: String? { fileTree?.root }
+    var fileTreeExpandedDirectories: Set<String> { fileTree?.expandedDirectories ?? [] }
+    var hasFileTree: Bool { fileTree != nil }
+    func stopFileTreeWatching() { fileTree?.stopWatching() }
+    // No `applyTheme` forwarder: a scheme change runs through
+    // `rebuildSurfaceNodeView()`, which recreates every tree, so the theme is
+    // picked up in `FileTreeView.init`. Nothing to invalidate.
 
     /// Updates the focus state + border in place (no rebuild).
     func setFocused(_ focused: Bool) {
@@ -248,7 +364,7 @@ private final class LeafContainerView: NSView {
     /// Lays the gutter actions out right-to-left from the trailing edge:
     /// split-vertical · split-horizontal · break · close. The split pair is
     /// always available; break and × only when the pane is closable.
-    private func addGutterButtons(showsClose: Bool) {
+    private func addGutterButtons(showsClose: Bool, showsFileTree: Bool) {
         let stack = NSStackView()
         stack.orientation = .horizontal
         stack.spacing = 4
@@ -258,6 +374,14 @@ private final class LeafContainerView: NSView {
             stack.topAnchor.constraint(equalTo: topAnchor, constant: 4),
             stack.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -4),
         ])
+
+        if fileTreeWiring != nil {
+            stack.addArrangedSubview(makeGutterButton(
+                symbol: "sidebar.left", fallback: "▤",
+                toolTip: showsFileTree ? "Hide file tree" : "Show file tree",
+                action: #selector(toggleFileTreeTapped)
+            ))
+        }
 
         // "2x1" = two columns (a vertical divider), "1x2" = two rows.
         stack.addArrangedSubview(makeGutterButton(
@@ -324,11 +448,20 @@ private final class LeafContainerView: NSView {
         onSplit?(surfaceID, .horizontal)
     }
 
+    @objc private func toggleFileTreeTapped() {
+        fileTreeWiring?.onToggle(surfaceID)
+    }
+
     /// Right-click menu for the pane chrome (gutter). The terminal view fills
     /// the container below the gutter and handles its own right-click, so this
     /// menu appears only on the pane chrome — not over the terminal content.
-    private func makePaneMenu(showsClose: Bool) -> NSMenu {
+    private func makePaneMenu(showsClose: Bool, showsFileTree: Bool) -> NSMenu {
         let menu = NSMenu()
+        if fileTreeWiring != nil {
+            menu.addItem(makeMenuItem(showsFileTree ? "Hide File Tree" : "Show File Tree",
+                                      #selector(toggleFileTreeTapped)))
+            menu.addItem(.separator())
+        }
         menu.addItem(makeMenuItem("Split Vertically", #selector(splitVerticalTapped)))
         menu.addItem(makeMenuItem("Split Horizontally", #selector(splitHorizontalTapped)))
         guard showsClose else { return menu }
@@ -379,7 +512,8 @@ private final class RatioSplitView: NSSplitView, NSSplitViewDelegate {
         onBreak: ((UUID) -> Void)? = nil,
         onSplit: ((UUID, SplitDirection) -> Void)? = nil,
         nodePath: [SplitBranch] = [],
-        onRatioChange: (([SplitBranch], Double) -> Void)? = nil
+        onRatioChange: (([SplitBranch], Double) -> Void)? = nil,
+        fileTree: FileTreeWiring? = nil
     ) {
         self.ratio = ratio
         self.nodePath = nodePath
@@ -399,7 +533,8 @@ private final class RatioSplitView: NSSplitView, NSSplitViewDelegate {
             onBreak: onBreak,
             onSplit: onSplit,
             nodePath: nodePath + [.first],
-            onRatioChange: onRatioChange
+            onRatioChange: onRatioChange,
+            fileTree: fileTree
         )
         let secondView = SurfaceNodeView(
             node: second,
@@ -410,7 +545,8 @@ private final class RatioSplitView: NSSplitView, NSSplitViewDelegate {
             onBreak: onBreak,
             onSplit: onSplit,
             nodePath: nodePath + [.second],
-            onRatioChange: onRatioChange
+            onRatioChange: onRatioChange,
+            fileTree: fileTree
         )
         addArrangedSubview(firstView)
         addArrangedSubview(secondView)
@@ -455,5 +591,39 @@ private final class RatioSplitView: NSSplitView, NSSplitViewDelegate {
         guard abs(current - lastReportedRatio) > 0.001 else { return }
         lastReportedRatio = current
         onRatioChange?(nodePath, current)
+    }
+}
+
+// MARK: - FileTreeDragHandle
+
+/// Invisible 8pt strip over the file tree / terminal divider that reports
+/// horizontal drag deltas. Cursor rect only — it draws nothing.
+@MainActor
+private final class FileTreeDragHandle: NSView {
+    private let onDrag: (CGFloat) -> Void
+    private var lastX: CGFloat = 0
+
+    init(onDrag: @escaping (CGFloat) -> Void) {
+        self.onDrag = onDrag
+        super.init(frame: .zero)
+    }
+
+    @available(*, unavailable)
+    required init?(coder _: NSCoder) { fatalError("not supported") }
+
+    override func resetCursorRects() {
+        addCursorRect(bounds, cursor: .resizeLeftRight)
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        lastX = convert(event.locationInWindow, from: nil).x
+    }
+
+    override func mouseDragged(with event: NSEvent) {
+        // The handle moves with the divider as the width constraint updates, so
+        // each delta is measured from the handle's own new origin — accumulating
+        // absolute x would double-count the movement.
+        let x = convert(event.locationInWindow, from: nil).x
+        onDrag(x - lastX)
     }
 }

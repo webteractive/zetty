@@ -78,6 +78,10 @@ final class TerminalViewController: NSViewController {
     /// Supplies the viewer's config. A provider (like `agentsProvider`) so the
     /// controller never re-reads the config file itself.
     var viewerSettingsProvider: (() -> (highlightCommand: String, maxBytes: Int))?
+
+    /// The `editor` config value (app name or bundle id), or nil when unset.
+    /// Supplied by `AppDelegate`, never read from disk here.
+    var editorProvider: (() -> String?)?
     /// ⌘-hover/⌘-click path detection over the terminal surfaces.
     private let pathHover = PathHoverTracker()
     /// Bumped per peek request so a slow load (a big file, a slow highlighter)
@@ -892,6 +896,10 @@ final class TerminalViewController: NSViewController {
     /// Syncs the status bar with the CURRENTLY FOCUSED pane (works across tabs
     /// and splits — the focused leaf of the active tab's tree).
     func refreshStatusBar() {
+        // This runs on the same cadence that notices a cwd change, so it is the
+        // natural place to re-root any visible file tree. Debounced inside —
+        // agents `cd` several times a second.
+        setNeedsFileTreeRootRefresh()
         guard let statusBar = statusBarView else { return }
         let focused = paneTree.focusedSurface
         let rawCwd = focused.flatMap { PaneCwdStore.read($0.id) }
@@ -3554,6 +3562,9 @@ final class TerminalViewController: NSViewController {
         // Same reasoning for the hover underline, which is parented to a
         // surface view that's about to be torn down.
         pathHover.reset()
+        // File trees are recreated per rebuild; their FSEvents streams must not
+        // outlive the views that own them.
+        for leaf in rootContentView?.leafContainers() ?? [] { leaf.stopFileTreeWatching() }
 
         rootContentView?.removeFromSuperview()
         rootContentView = nil
@@ -3648,7 +3659,20 @@ final class TerminalViewController: NSViewController {
                 if self.paneTree.layout.setRatio(at: path, to: ratio) {
                     self.onWorkspaceDidChange?()
                 }
-            }
+            },
+            fileTree: FileTreeWiring(
+                settings: { [weak self] in
+                    self?.fileTreeSettingsProvider?() ?? FileTreeSettings()
+                },
+                onToggle: { [weak self] id in self?.toggleFileTree(for: id) },
+                onWidthChange: { [weak self] id, width in
+                    self?.setFileTreeWidth(width, for: id)
+                },
+                onPeek: { [weak self] path in
+                    _ = self?.presentFileViewer(path: path, line: nil, column: nil)
+                },
+                onOpenInEditor: { [weak self] path in self?.openInConfiguredEditor(path) }
+            )
         )
         newRoot.translatesAutoresizingMaskIntoConstraints = false
         container.addSubview(newRoot)
@@ -3666,9 +3690,119 @@ final class TerminalViewController: NSViewController {
         // because allSurfaceIDs excludes them.
         registry.prune(keeping: Set(allSurfaceIDs))
 
+        // Trees are recreated per rebuild; root them at their panes' cwds now
+        // rather than waiting for the debounce, and let the expansion cache
+        // restore whatever the user had open.
+        refreshFileTreeRoots()
+
         // Any structural change (tab add/close, split/close, project add, switch)
         // funnels through here — autosave so disk reflects the current layout.
         onWorkspaceDidChange?()
+    }
+
+    // MARK: - File tree
+
+    /// Resolved `zetty-file-tree-*` settings, supplied by `AppDelegate`.
+    var fileTreeSettingsProvider: (() -> FileTreeSettings)?
+
+    /// Expansion memory, keyed by absolute root path so `cd`-ing back into a
+    /// directory restores the shape the user had open.
+    private var fileTreeExpansion = FileTreeExpansionCache()
+    private var fileTreeRootWorkItem: DispatchWorkItem?
+
+    /// How long a pane's cwd must settle before its tree re-roots. Agents `cd`
+    /// several times a second; a tree that follows every hop is worse than no
+    /// tree at all.
+    private static let fileTreeRootDebounce: TimeInterval = 0.5
+
+    /// Menu / ⌘↓ action: jumps the focused pane back to the live tail.
+    ///
+    /// Scrolling up in a long build log and then wanting "back to now" is
+    /// otherwise a mouse gesture or a copy-mode round trip. Uses libghostty's
+    /// own `scroll_to_bottom` — the same action copy mode calls on exit — so the
+    /// viewport rejoins the tail exactly as it does there.
+    @objc func scrollToBottom(_ sender: Any?) {
+        guard let id = paneTree.focusedSurfaceID,
+              let view = registry.appTerminalView(for: id) else { return }
+        view.performBindingAction("scroll_to_bottom")
+    }
+
+    /// Menu / ⇧⌘F action: toggles the focused pane's file tree.
+    ///
+    /// A native key equivalent rather than a prefix binding because the engine
+    /// has no direct-binding table — in normal mode it only tests for the prefix
+    /// chord and passes everything else through. `Ctrl+B e` remains the
+    /// rebindable route.
+    @objc func toggleFileTree(_ sender: Any?) {
+        guard let id = paneTree.focusedSurfaceID else { return }
+        toggleFileTree(for: id)
+    }
+
+    /// Shows or hides a pane's file tree, persisting the choice.
+    ///
+    /// Routes through `rebuildSurfaceNodeView()` — the established path for a
+    /// structural change — after banking the outgoing tree's expansion state, so
+    /// toggling off and on again doesn't lose the user's place.
+    func toggleFileTree(for surfaceID: UUID) {
+        if let leaf = rootContentView?.leafContainers().first(where: { $0.surfaceID == surfaceID }),
+           let root = leaf.fileTreeCurrentRoot {
+            fileTreeExpansion.record(root: root, expanded: leaf.fileTreeExpandedDirectories)
+        }
+        guard paneTree.layout.update(surfaceID: surfaceID, { $0.fileTreeVisible.toggle() })
+        else { return }
+        rebuildSurfaceNodeView()
+    }
+
+    /// Records a dragged width. Deliberately does NOT rebuild — a resize is not a
+    /// structural change, and rebuilding mid-drag would fight the gesture.
+    func setFileTreeWidth(_ width: Double, for surfaceID: UUID) {
+        guard paneTree.layout.update(surfaceID: surfaceID, { $0.fileTreeWidth = width })
+        else { return }
+        onWorkspaceDidChange?()
+    }
+
+    /// Re-roots every visible tree at its pane's current cwd, debounced by
+    /// `fileTreeRootDebounce`.
+    func setNeedsFileTreeRootRefresh() {
+        fileTreeRootWorkItem?.cancel()
+        let work = DispatchWorkItem { [weak self] in self?.refreshFileTreeRoots() }
+        fileTreeRootWorkItem = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.fileTreeRootDebounce,
+                                      execute: work)
+    }
+
+    func refreshFileTreeRoots() {
+        for leaf in rootContentView?.leafContainers() ?? [] where leaf.hasFileTree {
+            guard let surface = paneTree.layout.surfaces.first(where: { $0.id == leaf.surfaceID })
+            else { continue }
+            let root = PaneCwdStore.read(leaf.surfaceID) ?? surface.workingDir
+            guard root != leaf.fileTreeCurrentRoot else { continue }
+            // Bank what was open under the OLD root before moving.
+            if let previous = leaf.fileTreeCurrentRoot {
+                fileTreeExpansion.record(root: previous,
+                                         expanded: leaf.fileTreeExpandedDirectories)
+            }
+            leaf.setFileTreeRoot(root, expanding: fileTreeExpansion.expanded(for: root))
+        }
+    }
+
+    /// Opens `path` in the configured editor, falling back to the system default
+    /// when no editor is configured or it has no line-addressing scheme.
+    func openInConfiguredEditor(_ path: String) {
+        let url = URL(fileURLWithPath: path)
+        let configured = editorProvider?()?.trimmingCharacters(in: .whitespaces)
+        guard let name = configured, !name.isEmpty, let editor = EditorCatalog.resolve(name) else {
+            if !NSWorkspace.shared.open(url) {
+                NSWorkspace.shared.activateFileViewerSelecting([url])
+            }
+            return
+        }
+        if let deepLink = EditorCatalog.openURL(for: editor, file: path, line: nil, column: nil) {
+            NSWorkspace.shared.open(deepLink)
+        } else {
+            NSWorkspace.shared.open([url], withApplicationAt: editor,
+                                    configuration: NSWorkspace.OpenConfiguration())
+        }
     }
 
     // MARK: - Helpers

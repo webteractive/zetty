@@ -195,6 +195,8 @@ extension TerminalViewController {
         case .closePane: closePane(nil)
         case .zoomPane: zoomPane(nil)
         case .breakPane: breakPaneIntoTab(nil)
+        case .toggleFileTree:
+            if let id = paneTree.focusedSurfaceID { toggleFileTree(for: id) }
 
         // Tabs
         case .newTab: newTab(nil)
