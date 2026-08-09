@@ -196,6 +196,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             let config = self?.appConfig ?? AppConfig()
             return (config.viewerHighlightCommand, config.viewerMaxBytes)
         }
+        tvc.fileTreeSettingsProvider = { [weak self] in
+            self?.appConfig.fileTree ?? FileTreeSettings()
+        }
+        tvc.editorProvider = { [weak self] in self?.appConfig.editor }
         tvc.layoutTemplateProvider = { [weak self] project in
             ProjectFileIO.load(projectRoot: project.rootPath)?.layoutTemplate
                 ?? self?.layoutTemplateStore.load()
@@ -1624,6 +1628,36 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         )
         toggleSidebar.keyEquivalentModifierMask = [.command]
         viewMenu.addItem(toggleSidebar)
+
+        // "Toggle File Tree"  ⇧⌘F — "F for files". Command rather than Control
+        // so the chord never reaches the pty: menu key equivalents are resolved
+        // in NSApplication.sendEvent before the terminal surface sees the
+        // event, and a Control chord bound here would permanently swallow a
+        // keystroke the shell might want. `Ctrl+B e` does the same on the
+        // prefix layer and stays rebindable.
+        //
+        // Note for whoever adds project-wide content search later: ⇧⌘F is what
+        // VS Code and Zed use for exactly that, and it is spent here. Pick
+        // another chord rather than stealing this one back.
+        let toggleFileTree = NSMenuItem(
+            title: "Toggle File Tree",
+            action: #selector(TerminalViewController.toggleFileTree(_:)),
+            keyEquivalent: "F"
+        )
+        toggleFileTree.keyEquivalentModifierMask = [.command, .shift]
+        viewMenu.addItem(toggleFileTree)
+
+        // "Scroll to Bottom"  ⌘↓ — rejoin the live tail after scrolling back
+        // through a long log. ⌥⌘↓ is Resize Pane Down; plain ⌘↓ is free, and
+        // the prefix/copy-mode `down` bindings are mode-scoped so they don't
+        // collide with a native equivalent.
+        let scrollBottom = NSMenuItem(
+            title: "Scroll to Bottom",
+            action: #selector(TerminalViewController.scrollToBottom(_:)),
+            keyEquivalent: String(UnicodeScalar(UInt16(NSDownArrowFunctionKey))!)
+        )
+        scrollBottom.keyEquivalentModifierMask = [.command]
+        viewMenu.addItem(scrollBottom)
 
         // "Cycle Broadcast"  ⇧⌘B — mirrors Cycle Appearance / Cycle Color Scheme:
         // one shortcut steps Off → Tab → Project → Agents → Workspace → Off.
