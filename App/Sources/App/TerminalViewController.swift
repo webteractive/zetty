@@ -1500,7 +1500,8 @@ final class TerminalViewController: NSViewController {
         // PDF or an image never flashes an empty panel on its way to Preview.
         FileViewerLoader.load(path: path, line: line,
                               highlightCommand: settings?.highlightCommand ?? "",
-                              maxBytes: settings?.maxBytes ?? AppConfig.defaultViewerMaxBytes) { [weak self] loaded in
+                              maxBytes: settings?.maxBytes ?? AppConfig.defaultViewerMaxBytes,
+                              isDarkScheme: ZTheme.current.isDark) { [weak self] loaded in
             guard let self, request == self.fileViewerRequest else { return }
             if let action = loaded.externalAction {
                 // Not text: hand it off. Any existing peek is left alone — this

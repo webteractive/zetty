@@ -30,17 +30,23 @@ enum FileViewerLoader {
     /// plain text rather than making the user wait on a peek.
     private static let highlightTimeout: TimeInterval = 2.0
 
+    /// `isDarkScheme` follows the ACTIVE `ZTheme`, and must be read on the main
+    /// actor by the caller — the highlighter runs off-main and the scheme can be
+    /// pinned per project, so it can't be re-derived here.
     static func load(path: String, line: Int?, highlightCommand: String, maxBytes: Int,
+                     isDarkScheme: Bool,
                      completion: @escaping (Loaded) -> Void) {
         DispatchQueue.global(qos: .userInitiated).async {
             let loaded = loadSync(path: path, line: line,
-                                  highlightCommand: highlightCommand, maxBytes: maxBytes)
+                                  highlightCommand: highlightCommand, maxBytes: maxBytes,
+                                  isDarkScheme: isDarkScheme)
             DispatchQueue.main.async { completion(loaded) }
         }
     }
 
     static func loadSync(path: String, line: Int?,
-                         highlightCommand: String, maxBytes: Int) -> Loaded {
+                         highlightCommand: String, maxBytes: Int,
+                         isDarkScheme: Bool) -> Loaded {
         func failure(_ message: String) -> Loaded {
             Loaded(path: path, line: line, runs: nil, message: message,
                    truncatedAtLine: nil, externalAction: nil)
@@ -67,7 +73,7 @@ enum FileViewerLoader {
             // Highlighting reads the file itself, so a truncated body keeps the
             // plain text — the >20k-line case isn't worth a second code path.
             let rendered = truncatedAtLine == nil
-                ? highlight(path: path, command: highlightCommand) ?? text
+                ? highlight(path: path, command: highlightCommand, isDarkScheme: isDarkScheme) ?? text
                 : text
             return Loaded(path: path, line: line, runs: ANSIText.parse(rendered),
                           message: nil, truncatedAtLine: truncatedAtLine,
@@ -77,7 +83,7 @@ enum FileViewerLoader {
 
     /// Runs the highlight command with the file as its final argument. Returns
     /// nil on any failure so the caller falls back to plain text.
-    private static func highlight(path: String, command: String) -> String? {
+    private static func highlight(path: String, command: String, isDarkScheme: Bool) -> String? {
         let parts = command.split(separator: " ").map(String.init)
         guard let tool = parts.first, !tool.isEmpty, let executable = locate(tool) else { return nil }
 
@@ -90,8 +96,16 @@ enum FileViewerLoader {
         // A highlighter must not inherit a TTY-shaped environment. The child's
         // PATH is the same list `locate` searches, so a tool that was found can
         // also find its own helpers.
-        process.environment = ["PATH": binaryDirectories.joined(separator: ":"),
-                               "TERM": "xterm-256color"]
+        //
+        // The theme entries pin the highlighter to the ACTIVE scheme's axis.
+        // Without them bat can't detect a background (no TTY), falls back to a
+        // dark theme, and emits near-white text — invisible on a light scheme's
+        // white `bg1`, which reads as an empty peek rather than a mis-coloured
+        // one. A `--theme` in the user's own command still overrides these.
+        var environment = ["PATH": binaryDirectories.joined(separator: ":"),
+                           "TERM": "xterm-256color"]
+        environment.merge(HighlightTheme.environment(isDark: isDarkScheme)) { _, new in new }
+        process.environment = environment
 
         do { try process.run() } catch { return nil }
 

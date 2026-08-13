@@ -275,14 +275,29 @@ final class FileViewerOverlay: NSView {
 
     /// Palette indexes 0–15 map onto `ZTheme` so highlighting tracks the
     /// active scheme instead of baking in xterm's defaults.
+    ///
+    /// Truecolor and 256-cube runs can't be mapped that way — they're ABSOLUTE
+    /// colours from the highlighter's own theme, picked with no knowledge of
+    /// Zetty's scheme — so they're passed through, but only if they can actually
+    /// be seen against `bg1`. `HighlightTheme` normally keeps the highlighter on
+    /// the right axis; this is the backstop for the commands it can't configure,
+    /// because a wrong hue is cosmetic while invisible text is an empty panel.
+    /// Returning nil hands the run to the caller's `fg` fallback.
     private func color(for ansi: ANSIColor?) -> NSColor? {
         let theme = ZTheme.current
         switch ansi {
         case .none:
             return nil
         case .rgb(let r, let g, let b):
-            return NSColor(srgbRed: CGFloat(r) / 255, green: CGFloat(g) / 255,
-                           blue: CGFloat(b) / 255, alpha: 1)
+            let color = NSColor(srgbRed: CGFloat(r) / 255, green: CGFloat(g) / 255,
+                                blue: CGFloat(b) / 255, alpha: 1)
+            guard let background = theme.bg1Color.usingColorSpace(.sRGB) else { return color }
+            let legible = ColorLegibility.isLegible(
+                foreground: (Double(r) / 255, Double(g) / 255, Double(b) / 255),
+                background: (Double(background.redComponent),
+                             Double(background.greenComponent),
+                             Double(background.blueComponent)))
+            return legible ? color : nil
         case .indexed(let index):
             switch index {
             case 1, 9:   return theme.redColor
