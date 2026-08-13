@@ -45,6 +45,17 @@ final class TabBarView: NSView {
     // MARK: - Private subviews
 
     private let sidebarButton: NSButton
+    /// Clips the pill strip so its width demand never escapes into the window.
+    ///
+    /// Load-bearing, not cosmetic: a pill carries a required minimum width, and
+    /// `.fillEqually` multiplies that by the tab count. Pinned directly in the
+    /// bar, the chain `sidebar → pills → +` is required all the way to the
+    /// window edge, so AppKit clamped the window's minimum content width to
+    /// roughly 80pt PER TAB — ~2900pt at 30 tabs, wider than any display, and
+    /// the window simply refused to resize. Inside a clip view the pills size
+    /// themselves against the clip's width instead, and the window's minimum is
+    /// constant no matter how many tabs are open.
+    private let tabScrollView: NSScrollView
     private let stackView: NSStackView
     private let addButton: NSButton
 
@@ -91,10 +102,25 @@ final class TabBarView: NSView {
         stackView.alignment = .centerY
         stackView.translatesAutoresizingMaskIntoConstraints = false
 
+        tabScrollView = NSScrollView()
+        tabScrollView.drawsBackground = false
+        tabScrollView.borderType = .noBorder
+        // No scrollers: the bar is 28pt tall and an overlay scroller would sit
+        // on top of the pills. Overflow is reached by trackpad scroll, and the
+        // active tab is always scrolled into view on selection.
+        tabScrollView.hasHorizontalScroller = false
+        tabScrollView.hasVerticalScroller = false
+        tabScrollView.verticalScrollElasticity = .none
+        tabScrollView.automaticallyAdjustsContentInsets = false
+        tabScrollView.documentView = stackView
+        tabScrollView.translatesAutoresizingMaskIntoConstraints = false
+
         addButton = NSButton(title: "+", target: nil, action: nil)
         addButton.bezelStyle = .inline
         addButton.isBordered = false
-        addButton.translatesAutoresizingMaskIntoConstraints = false
+        // Frame-positioned in `layout()`, deliberately outside the constraint
+        // chain — see the comment there.
+        addButton.translatesAutoresizingMaskIntoConstraints = true
 
         super.init(frame: frameRect)
 
@@ -109,16 +135,27 @@ final class TabBarView: NSView {
         addButton.action = #selector(addButtonClicked(_:))
 
         addSubview(sidebarButton)
-        addSubview(stackView)
+        addSubview(tabScrollView)
         addSubview(addButton)
+
+        // Driven from `layout()`. Safe to be required, unlike anything touching
+        // the CLIP's width: this constrains the scroll view's document view, and
+        // a document view's size is exactly what a scroll view refuses to
+        // propagate outward — so it can never reach the window's minimum size.
+        let stripWidth = stackView.widthAnchor.constraint(equalToConstant: 0)
+        stripWidthConstraint = stripWidth
 
         NSLayoutConstraint.activate([
             sidebarButton.centerYAnchor.constraint(equalTo: centerYAnchor),
             sidebarButton.widthAnchor.constraint(equalToConstant: 22),
             sidebarButton.heightAnchor.constraint(equalToConstant: 22),
-            stackView.topAnchor.constraint(equalTo: topAnchor),
-            stackView.bottomAnchor.constraint(equalTo: bottomAnchor),
-            addButton.centerYAnchor.constraint(equalTo: centerYAnchor),
+            tabScrollView.topAnchor.constraint(equalTo: topAnchor),
+            tabScrollView.bottomAnchor.constraint(equalTo: bottomAnchor),
+
+            stackView.topAnchor.constraint(equalTo: tabScrollView.contentView.topAnchor),
+            stackView.bottomAnchor.constraint(equalTo: tabScrollView.contentView.bottomAnchor),
+            stackView.leadingAnchor.constraint(equalTo: tabScrollView.contentView.leadingAnchor),
+            stripWidth,
         ])
         applyPositionalLayout()
     }
@@ -139,24 +176,108 @@ final class TabBarView: NSView {
     /// Constraints that depend on `sidebarPosition` (swapped when it changes).
     private var positionalConstraints: [NSLayoutConstraint] = []
 
+    /// Horizontal spacing shared by the constraints and by `layout()`, which
+    /// places `+` arithmetically and must agree with them.
+    private enum Metrics {
+        static let edgeInset: CGFloat = 8          // sidebar toggle ↔ bar edge
+        static let afterSidebarButton: CGFloat = 6
+        static let beforeAddButton: CGFloat = 4
+        static let addButtonInset: CGFloat = 4     // `+` ↔ bar edge
+    }
+
+    /// Drives the strip's width (see its creation in `init`).
+    private var stripWidthConstraint: NSLayoutConstraint!
+
+    /// Slot the clip leaves for `+` at its trailing edge. A CONSTANT, and that
+    /// is the whole point — see `layout()`.
+    private var addButtonSlot: CGFloat {
+        Metrics.beforeAddButton + addButton.fittingSize.width + Metrics.addButtonInset
+    }
+
+    /// Positions `+` by hand, immediately after the last tab.
+    ///
+    /// It cannot be constrained to the strip's trailing edge, and this is the
+    /// crux of the whole layout: the clip's width has to be decided by the
+    /// OUTER chain alone. Any constraint that relates it to the pills inside —
+    /// required or optional, direct or via a constant refreshed here — feeds
+    /// `fittingSize`, and AppKit derives the window's minimum size from that.
+    /// Tie the two together and the window's floor tracks the tab strip, which
+    /// is the bug this whole change exists to fix (a required constant is worse
+    /// still: the floor freezes at the current strip width, and the window
+    /// refuses to shrink at all).
+    ///
+    /// So `+` is not in the chain. The clip always fills the bar minus a fixed
+    /// `addButtonSlot`, and `+` is a sibling drawn on top of it, slid left to
+    /// meet the last pill when the tabs are narrower than the bar. Overflowing,
+    /// it lands exactly in the reserved slot.
+    override func layout() {
+        super.layout()
+
+        let clip = tabScrollView.frame
+        let stripWidth = updateStripWidth(clipWidth: clip.width)
+        // The strip grows rightward from the clip's leading edge on both sides,
+        // so `+` trails it the same way regardless of `sidebarPosition`.
+        let size = addButton.fittingSize
+        let x = clip.minX + stripWidth + Metrics.beforeAddButton
+        let frame = CGRect(x: x.rounded(), y: ((bounds.height - size.height) / 2).rounded(),
+                           width: size.width.rounded(), height: size.height.rounded())
+        if addButton.frame != frame { addButton.frame = frame }
+    }
+
+    /// Sizes the strip, and returns how much of it is on screen.
+    ///
+    /// Pills **fill the bar, then shrink, then scroll** — in that order. Without
+    /// this the strip just took its natural width (every pill at `maxWidth`), so
+    /// tabs stopped spreading out to fill an empty bar and, worse, began
+    /// scrolling as soon as `count × maxWidth` passed the clip — six tabs
+    /// overflowed a bar that could comfortably show a dozen.
+    ///
+    /// Clamping into `[count × minWidth, count × maxWidth]` is what keeps the
+    /// required per-pill bounds satisfiable: `.fillEqually` hands each pill
+    /// `width / count`, so a target outside that range would conflict with them.
+    /// Only past the lower end does the strip outgrow the clip and scroll.
+    @discardableResult
+    private func updateStripWidth(clipWidth: CGFloat) -> CGFloat {
+        let count = CGFloat(tabItems.count)
+        let target = count == 0 ? 0 : min(max(clipWidth, count * TabItemView.minWidth),
+                                          count * TabItemView.maxWidth)
+        // Guarded: assigning inside `layout()` schedules another pass, so an
+        // unconditional write would loop forever.
+        if abs(stripWidthConstraint.constant - target) > 0.5 {
+            stripWidthConstraint.constant = target
+        }
+        return min(target, clipWidth)
+    }
+
     /// Pins `[sidebar-toggle] [tabs] [+]` left-to-right, mirrored when the
     /// sidebar is on the right so the toggle stays next to the sidebar.
     private func applyPositionalLayout() {
         NSLayoutConstraint.deactivate(positionalConstraints)
+        // The chrome around the strip differs per side, so the space left for
+        // the clip does too.
+        needsLayout = true
         switch sidebarPosition {
+        // The clip always spans the bar minus a FIXED reservation for `+`. It
+        // never references the strip, so the window's minimum width is the same
+        // whether one tab is open or fifty.
         case .left:
             positionalConstraints = [
-                sidebarButton.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8),
-                stackView.leadingAnchor.constraint(equalTo: sidebarButton.trailingAnchor, constant: 6),
-                addButton.leadingAnchor.constraint(equalTo: stackView.trailingAnchor, constant: 4),
-                addButton.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -4),
+                sidebarButton.leadingAnchor.constraint(equalTo: leadingAnchor,
+                                                       constant: Metrics.edgeInset),
+                tabScrollView.leadingAnchor.constraint(equalTo: sidebarButton.trailingAnchor,
+                                                       constant: Metrics.afterSidebarButton),
+                tabScrollView.trailingAnchor.constraint(equalTo: trailingAnchor,
+                                                        constant: -addButtonSlot),
             ]
         case .right:
             positionalConstraints = [
-                stackView.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8),
-                addButton.leadingAnchor.constraint(equalTo: stackView.trailingAnchor, constant: 4),
-                addButton.trailingAnchor.constraint(lessThanOrEqualTo: sidebarButton.leadingAnchor, constant: -6),
-                sidebarButton.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
+                tabScrollView.leadingAnchor.constraint(equalTo: leadingAnchor,
+                                                       constant: Metrics.edgeInset),
+                tabScrollView.trailingAnchor.constraint(equalTo: sidebarButton.leadingAnchor,
+                                                        constant: -(Metrics.afterSidebarButton
+                                                                    + addButtonSlot)),
+                sidebarButton.trailingAnchor.constraint(equalTo: trailingAnchor,
+                                                        constant: -Metrics.edgeInset),
             ]
         }
         NSLayoutConstraint.activate(positionalConstraints)
@@ -206,6 +327,12 @@ final class TabBarView: NSView {
             && showsClose == lastShowsClose
             && zip(tabItems, resolvedIcons).allSatisfy { $0.canRepresent(icon: $1) }
 
+        // Only a real selection move may scroll the strip. Agents retitle their
+        // tabs several times a second, and scrolling on every refresh would make
+        // an overflowing tab bar impossible to scroll by hand — the same bug
+        // `rebuildOutline()` guards against in the sidebar.
+        let selectionMoved = selectedIndex != lastSelectedIndex
+
         lastTitles = titles
         lastIcons = resolvedIcons
         lastSelectedIndex = selectedIndex
@@ -217,6 +344,7 @@ final class TabBarView: NSView {
                            icon: resolvedIcons[index],
                            isSelected: index == selectedIndex)
             }
+            if selectionMoved { revealTab(at: selectedIndex) }
             return
         }
 
@@ -250,6 +378,20 @@ final class TabBarView: NSView {
             stackView.addArrangedSubview(item)
             tabItems.append(item)
         }
+        // The pill count just changed, so the strip's natural width did too.
+        needsLayout = true
+        if selectionMoved { revealTab(at: selectedIndex) }
+    }
+
+    /// Scrolls an overflowing strip so the tab at `index` is fully visible.
+    /// A no-op when every tab already fits, which is the common case.
+    private func revealTab(at index: Int) {
+        guard tabItems.indices.contains(index) else { return }
+        let item = tabItems[index]
+        // The pill's frame is only meaningful once the strip has been laid out;
+        // a freshly built pill is still at .zero when this runs.
+        layoutSubtreeIfNeeded()
+        item.scrollToVisible(item.bounds)
     }
 
     // MARK: - Drag reorder
@@ -320,6 +462,10 @@ final class TabBarView: NSView {
                 .foregroundColor: ZTheme.current.fg2Color,
             ]
         )
+        // Restyling can change the glyph's measured width, and the clip's
+        // reserved slot is derived from it. Skipped during `init`, which calls
+        // this before the subviews are installed and runs the layout itself.
+        if tabScrollView.superview != nil { applyPositionalLayout() }
     }
 
     /// Re-applies the active theme to the bar background, `+` button and pills.
@@ -433,8 +579,11 @@ private final class TabItemView: NSView {
 
     // MARK: Constants
 
-    private static let minWidth: CGFloat = 80
-    private static let maxWidth: CGFloat = 200
+    /// `fileprivate`, not `private`: `TabBarView.updateStripWidth` sizes the
+    /// strip from these, and the two must agree — a target outside
+    /// `[minWidth, maxWidth]` per pill conflicts with the constraints below.
+    fileprivate static let minWidth: CGFloat = 80
+    fileprivate static let maxWidth: CGFloat = 200
     private static let closeButtonSize: CGFloat = 16
 
     // MARK: Callbacks
