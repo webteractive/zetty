@@ -69,16 +69,42 @@ enum FileViewerLoader {
         switch FileViewerContent.classify(data, maxBytes: maxBytes) {
         case .binary, .tooLarge:
             return external(ExternalOpenPolicy.decision(path: path, header: data.prefix(8)))
+        case .empty:
+            // We read nothing. Whether that's the file's truth or a failed read
+            // is only answerable against its size on disk, and the difference
+            // matters: a file the reader couldn't materialise (an evicted cloud
+            // placeholder, say) is listed, stat-ed and opened exactly like a
+            // real one, so reporting it as "empty" hides a read failure.
+            guard let bytes = onDiskSize(of: path), bytes > 0 else {
+                return failure("This file is empty")
+            }
+            return failure("Can't read this file's contents — 0 of \(bytes) bytes")
         case .text(let text, let truncatedAtLine):
             // Highlighting reads the file itself, so a truncated body keeps the
             // plain text — the >20k-line case isn't worth a second code path.
-            let rendered = truncatedAtLine == nil
-                ? highlight(path: path, command: highlightCommand, isDarkScheme: isDarkScheme) ?? text
-                : text
-            return Loaded(path: path, line: line, runs: ANSIText.parse(rendered),
+            let highlighted = truncatedAtLine == nil
+                ? highlight(path: path, command: highlightCommand, isDarkScheme: isDarkScheme)
+                : nil
+            // A highlighter that yields no printable characters (only escape
+            // sequences, or none at all) must never replace real content with
+            // an empty panel — fall back to the plain text it was meant to
+            // decorate.
+            var runs = ANSIText.parse(highlighted ?? text)
+            if runs.isEmpty, highlighted != nil { runs = ANSIText.parse(text) }
+            guard !runs.isEmpty else { return failure("This file has no readable text") }
+            return Loaded(path: path, line: line, runs: runs,
                           message: nil, truncatedAtLine: truncatedAtLine,
                           externalAction: nil)
         }
+    }
+
+    /// The file's size as the filesystem reports it, or nil when it can't be
+    /// read — used only to tell an empty file from an unreadable one.
+    private static func onDiskSize(of path: String) -> Int? {
+        guard let attributes = try? FileManager.default.attributesOfItem(atPath: path) else {
+            return nil
+        }
+        return attributes[.size] as? Int
     }
 
     /// Runs the highlight command with the file as its final argument. Returns

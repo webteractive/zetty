@@ -122,7 +122,9 @@ by the tool it's running.
   installed and falls back to plain text when it isn't; it follows your active
   scheme's light/dark axis, and any colour the highlighter emits that would be
   unreadable against the current background is replaced with the scheme's own
-  foreground, so a peek is never blank. Because paths come from
+  foreground. A peek is never blank: when there is genuinely nothing to draw —
+  an empty file, or one whose bytes couldn't be read — it says so in the panel
+  instead of showing an empty one. Because paths come from
   untrusted output, files macOS would *install or execute* (installers, disk
   images, compiled binaries) are only revealed in Finder, never launched.
   ⌘-click detection reads the pane's preserved zmx session, so it needs

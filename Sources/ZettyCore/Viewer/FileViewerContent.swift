@@ -17,10 +17,15 @@ public enum FileViewerContent {
         case text(String, truncatedAtLine: Int?)
         case binary
         case tooLarge(bytes: Int)
+        /// No bytes to render. Its own case rather than `.text("")` because a
+        /// zero-character body draws an empty panel that is indistinguishable
+        /// from a broken viewer — the caller must say *why* there's nothing.
+        case empty
     }
 
     public static func classify(_ data: Data, maxBytes: Int) -> Classification {
         if data.count > maxBytes { return .tooLarge(bytes: data.count) }
+        if data.isEmpty { return .empty }
         if data.prefix(sniffWindow).contains(0) { return .binary }
 
         // Lossy on purpose: a stray invalid byte shouldn't block a peek.

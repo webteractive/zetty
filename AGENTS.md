@@ -493,6 +493,7 @@ Zetty routes by **content**, not extension:
 - **Launchable** (installer, disk image, compiled binary) → revealed in Finder,
   never opened. See the security note below.
 - **Unreadable** → the overlay shows the reason; there's nothing else to offer.
+- **Nothing to draw** → also a reason, never an empty panel. See below.
 
 There is **no write path**. The footer's `Open in ▾` hands the file to a real
 editor at the right line (`EditorURLScheme` builds the per-editor URL: `zed://`,
@@ -559,6 +560,35 @@ configure:
    legitimately dim comments, and forcing those up would flatten the palette
    into one colour. Only `.rgb` is checked; indexes 0–15 are already `ZTheme`
    tokens and legible by construction.
+
+### An empty body is a bug, not a state
+
+A peek whose attributed body has **zero characters** paints the panel, the
+header, the dividers and the text view's `bg1` — and no glyphs. That is
+pixel-for-pixel indistinguishable from a broken renderer, which is why it was
+reported as "the file viewer modal shows nothing" rather than as an empty file,
+and why it survived one round of fixes aimed at colour. Three guards now make it
+unreachable, and all three are needed because they close different holes:
+
+1. **`FileViewerContent` classifies a zero-byte read as `.empty`**, not
+   `.text("")`. A pure case rather than an empty string, so the caller is forced
+   to say *why* there's nothing.
+2. **The loader tells an empty file from an unread one** by comparing the bytes
+   it got against the size on disk. They are not the same event: a file whose
+   contents can't be materialised (an evicted cloud placeholder is the case that
+   motivated this) is listed, stat-ed and opened exactly like a real one, so
+   reporting it as "empty" would hide a read failure. It also **falls back to
+   the plain text when the highlighter yields no printable characters** — before,
+   a highlighter that emitted only escape sequences replaced real content with
+   an empty panel, since `highlight() ?? text` only falls back on *nil*, not on
+   output that parses to no runs.
+3. **The overlay routes an EMPTY run list to the message branch**, with a
+   `"Nothing to display"` backstop. The loader always supplies a reason; this is
+   what keeps a silent blank panel unreachable if a future path forgets to.
+
+Don't "simplify" any of these back — `.empty` folded into `.text("")`, or the
+overlay's `!runs.isEmpty` dropped, each restores the silent blank panel on its
+own.
 
 ### Gotchas, all deliberate
 

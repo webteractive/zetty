@@ -52,7 +52,21 @@ import Testing
     #expect(body.hasPrefix("ok "))
 }
 
-@Test func classifyAcceptsEmptyFile() {
-    #expect(FileViewerContent.classify(Data(), maxBytes: 1024)
-            == .text("", truncatedAtLine: nil))
+/// An empty read is its own outcome, never `.text("")`: a zero-character body
+/// paints the peek's background and nothing else, which was reported as "the
+/// file viewer shows nothing" rather than as an empty file.
+@Test func classifyReportsEmptyFileAsEmpty() {
+    #expect(FileViewerContent.classify(Data(), maxBytes: 1024) == .empty)
+}
+
+/// The size cap is checked first, so a zero-byte file can't be mistaken for one.
+@Test func classifyPrefersTooLargeOverEmpty() {
+    #expect(FileViewerContent.classify(Data(repeating: 0x41, count: 20), maxBytes: 4)
+            == .tooLarge(bytes: 20))
+}
+
+/// A file that is only a newline still has a character to draw, so it stays text.
+@Test func classifyKeepsWhitespaceOnlyFileAsText() {
+    #expect(FileViewerContent.classify(Data("\n".utf8), maxBytes: 1024)
+            == .text("\n", truncatedAtLine: nil))
 }

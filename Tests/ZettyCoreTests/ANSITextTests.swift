@@ -12,6 +12,13 @@ private let esc = "\u{1B}"
     #expect(ANSIText.parse("").isEmpty)
 }
 
+/// Output that is nothing but escape sequences carries no printable text, so it
+/// yields no runs — the state `FileViewerLoader` falls back to plain text on,
+/// rather than handing the viewer an empty body.
+@Test func parseEscapeOnlyOutputIsNoRuns() {
+    #expect(ANSIText.parse("\(esc)[0m\(esc)[38;5;238m\(esc)[0m").isEmpty)
+}
+
 @Test func parseSplitsOnColourChange() {
     let runs = ANSIText.parse("a\(esc)[31mb\(esc)[0mc")
     #expect(runs.count == 3)

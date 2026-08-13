@@ -203,7 +203,12 @@ final class FileViewerOverlay: NSView {
         nameLabel.stringValue = (loaded.path as NSString).lastPathComponent
         pathLabel.stringValue = displayPath(loaded.path, projectRoot: projectRoot)
 
-        if let runs = loaded.runs {
+        // An EMPTY run list takes the message branch, not the body branch: a
+        // zero-character body paints the panel's background and nothing else,
+        // which reads as a broken viewer rather than as "there was nothing to
+        // show". The loader always pairs that state with a reason; the `??`
+        // is the backstop that keeps a silent blank panel unreachable.
+        if let runs = loaded.runs, !runs.isEmpty {
             let body = NSMutableAttributedString()
             // Hoisted: invariant across runs, and a file can have thousands.
             let background = Self.components(of: theme.bg1Color)
@@ -222,7 +227,7 @@ final class FileViewerOverlay: NSView {
             }
         } else {
             textView.textStorage?.setAttributedString(NSAttributedString(
-                string: loaded.message ?? "",
+                string: loaded.message ?? "Nothing to display",
                 attributes: [.font: ZTheme.monoFont(size: 12),
                              .foregroundColor: theme.yellowColor]))
         }
