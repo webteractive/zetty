@@ -667,6 +667,20 @@ a forced background colour refused to draw. Four fixes chased it before the
 stack itself turned out to be the cause. Line numbers were dropped rather than
 rebuilt, which also keeps copied text clean.
 
+**The one thing the text view must configure is `autoresizingMask = [.width]`.**
+A clip view widens its document view only through that mask, and a bare
+`NSTextView()` has none. The overlay is built and filled while it is still
+detached and zero-sized, so without the mask the text view keeps that 0 width
+when the panel is finally laid out: the container is 0 wide, nothing lays out,
+and the peek paints a blank panel with the whole file sitting in its storage —
+`show:` logs real `chars`/`ink`, and `show: geometry` shows `text={{0,0},{0,H}}`
+inside a full-width `clip`. **macOS 26 widens the document view implicitly, so
+this reproduces only on macOS 15** — it shipped through 0.1.34 and was reported
+as yet another blank peek. `ProjectSettingsSheet.envTextView` is the in-repo
+reference for the correct setup; `FileCopyBackSheet.diffView` had the same
+omission and was fixed with it. `isVerticallyResizable` still needs no touching
+(it is already `true` by default) — the mask is the whole fix.
+
 Deferred: ⌘F find-in-file, Reveal in Finder for text files, back/forward history
 between peeks, a viewer pane in the split tree, magic-byte *format* detection
 (the text/binary split is still a NUL heuristic), and any form of editing.

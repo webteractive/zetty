@@ -81,6 +81,10 @@ final class FileCopyBackSheet: NSObject, NSTableViewDataSource, NSTableViewDeleg
         diffView.drawsBackground = true
         diffView.backgroundColor = ZTheme.current.bg1Color
         diffView.textContainerInset = NSSize(width: 8, height: 8)
+        // The clip view widens a document view only through its autoresizing
+        // mask; without this the diff can stay 0 wide and render blank on
+        // macOS 15 (macOS 26 widens it implicitly). Same fix as the file peek.
+        diffView.autoresizingMask = [.width]
         let diffScroll = NSScrollView()
         diffScroll.documentView = diffView
         diffScroll.hasVerticalScroller = true

@@ -119,6 +119,15 @@ final class FileViewerOverlay: NSView {
         textView.isSelectable = true
         textView.drawsBackground = true
         textView.textContainerInset = NSSize(width: 8, height: 10)
+        // LOAD-BEARING, and invisible on macOS 26: the clip view widens a
+        // document view only through its autoresizing mask, and a bare
+        // `NSTextView()` has none. The overlay is built and filled while it is
+        // still detached and zero-sized, so without this the text view keeps
+        // that 0 width when the panel is finally laid out — the container is 0
+        // wide, nothing lays out, and the peek paints a blank panel with the
+        // whole file sitting in its storage. macOS 26 widens the document view
+        // implicitly, which is why this only ever reproduces on macOS 15.
+        textView.autoresizingMask = [.width]
 
         scrollView.documentView = textView
         scrollView.hasVerticalScroller = true
