@@ -24,7 +24,10 @@ by the tool it's running.
   to create one, optionally `git init`, or pick an existing directory); every
   project owns its own tabs, each tab an arbitrarily nested tree of split
   panes. Break any pane out into its own tab. **Drag project rows** to reorder
-  them within their section (Pinned / Projects).
+  them within their section (Pinned / Projects). Tabs spread across the bar,
+  shrink as more open, and once they hit their minimum width the strip scrolls
+  instead — so a project with many tabs never forces the window wider than you
+  want it, and the active tab is always scrolled into view.
 - **Pane gutter buttons** — every pane carries a thin top strip with a focus
   dot and click targets for **split vertically** and **split horizontally**;
   panes in a multi-pane tab additionally get **break into tab** and **close**.
@@ -116,7 +119,10 @@ by the tool it's running.
   delegated: the overlay's **Open in ▾** button hands the file, *at the right
   line*, to Zed, VS Code, Cursor, Windsurf, TextMate, or any editor Zetty finds.
   Highlighting comes from [`bat`](https://github.com/sharkdp/bat) when it's
-  installed and falls back to plain text when it isn't. Because paths come from
+  installed and falls back to plain text when it isn't; it follows your active
+  scheme's light/dark axis, and any colour the highlighter emits that would be
+  unreadable against the current background is replaced with the scheme's own
+  foreground, so a peek is never blank. Because paths come from
   untrusted output, files macOS would *install or execute* (installers, disk
   images, compiled binaries) are only revealed in Finder, never launched.
   ⌘-click detection reads the pane's preserved zmx session, so it needs
@@ -344,7 +350,7 @@ seeds a documented starter file on first launch. Format is plain
 | `check-updates` | `true` | Notify when a newer Zetty release is available |
 | `notify-sound` / `notify-badge` / `notify-system` | `true` | Agent needs-attention alerts |
 | `editor` | — | App used by Settings → "Open in Editor" |
-| `viewer-highlight-command` | `bat --style=plain --color=always --paging=never` | Command the file viewer pipes a file through for syntax highlighting; `off` disables it |
+| `viewer-highlight-command` | `bat --style=plain --color=always --paging=never` | Command the file viewer pipes a file through for syntax highlighting; `off` disables it. Zetty sets `BAT_THEME` to match the active scheme's light/dark axis — pass your own `--theme` here to override |
 | `viewer-max-bytes` | `2097152` | Largest file the viewer will render; bigger files open in their default app instead |
 | `zetty-file-tree-show-hidden` | `true` | Show dotfiles in the per-pane file tree |
 | `zetty-file-tree-respect-gitignore` | `false` | Hide anything the repo's `.gitignore` excludes |

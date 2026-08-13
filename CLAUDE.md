@@ -531,6 +531,35 @@ since a compiled binary usually has no extension at all. Most of the surface is
 already closed by accident: shell scripts are *text* (so they render in the
 viewer) and `.app` bundles are *directories* (refused outright).
 
+### The highlighter is a foreign theme — treat its colours as untrusted
+
+The highlight subprocess has **no idea which scheme Zetty is showing**. `bat`
+run without a TTY can't detect a background, falls back to a dark theme, and
+emits xterm 231 — *pure white* — for ordinary body text. `ANSIText` maps
+256-cube indexes 16–255 to **absolute RGB** (only 0–15 resolve to `ZTheme`
+tokens), so that white reached the text view untouched and rendered white-on-
+white on every light scheme: the peek looked *empty*, not merely mis-coloured,
+which is why it was reported as "the file tree shows nothing" rather than as a
+theming bug. Two layers now, both regression-tested, and **both are needed** —
+the first fixes the default, the second covers the commands Zetty can't
+configure:
+
+1. **`HighlightTheme.environment(isDark:)`** (ZettyCore) pins `BAT_THEME` /
+   `BAT_THEME_DARK` / `BAT_THEME_LIGHT` to the ACTIVE scheme's axis. It is an
+   env var, not an appended `--theme`, because the command is user-configurable
+   and Zetty must not rewrite its arguments — a user's own `--theme` still
+   wins, and the vars are inert for a non-bat highlighter. `isDark` is read on
+   the main actor in `presentFileViewer` and threaded through
+   `FileViewerLoader.load`; it cannot be re-derived off-main, since the scheme
+   can be pinned per project.
+2. **`ColorLegibility`** (ZettyCore, pure) is the backstop: in
+   `FileViewerOverlay.color(for:)` the `.rgb` branch drops any colour whose
+   WCAG contrast against `bg1` falls below 1.6, handing the run to the `fg`
+   fallback. The threshold is deliberately far below WCAG's 4.5 — syntax themes
+   legitimately dim comments, and forcing those up would flatten the palette
+   into one colour. Only `.rgb` is checked; indexes 0–15 are already `ZTheme`
+   tokens and legible by construction.
+
 ### Gotchas, all deliberate
 
 - **`viewer-highlight-command` / `viewer-max-bytes` are reserved keys.** They must
@@ -635,6 +664,64 @@ Three rules keep it flat; breaking any one reintroduces the whole class of bug:
    collapses) actually changed. Unconditional scrolling made the sidebar
    impossible to scroll while any agent was running: it snapped back to the
    active project several times a second.
+
+### The tab strip must never reach the window
+
+A `TabItemView` carries a **required** minimum width, and the strip's
+`.fillEqually` distribution multiplies it by the tab count. While the stack was
+pinned straight into the bar, the chain `sidebar → pills → +` was required all
+the way out to the window edge, so AppKit clamped the window's minimum content
+width to roughly **80pt per tab** — ~2900pt at 30 tabs, wider than any display.
+The window then simply refused to resize, which is how it was reported.
+
+The pills therefore live in a **clipping `NSScrollView`** (`tabScrollView`) and
+size against the clip, not the window. The rule that makes it work, and the one
+that is easy to undo by accident:
+
+> **Nothing may constrain the clip's width to the strip inside it.** The clip is
+> sized by the OUTER chain alone — bar edge to bar edge, minus a *fixed*
+> `addButtonSlot`.
+
+Every attempt to relate the two re-broke it, and both failure modes were
+measured, not guessed:
+
+- An **optional** hug (`clip.width == strip.width` @ 750) still reaches
+  `fittingSize`, which is what AppKit derives the window's minimum from — the
+  window then *grew* with the tab count, to 3023pt at 23 tabs. Lowering the
+  priority far enough to stop that also stops it sizing the clip at all.
+- A **required constant** refreshed in `layout()` freezes the floor at the
+  current strip width, so the window refuses to shrink *at all* — the original
+  bug, worse.
+
+`+` is therefore **not in the constraint chain**: it is frame-positioned in
+`layout()` at `clip.minX + min(stripWidth, clip.width) + 4`, a sibling drawn
+over the clip. It slides left to meet the last tab while the tabs fit and lands
+in the reserved slot once they overflow. `translatesAutoresizing…` is `true` on
+it for exactly this reason.
+
+The **strip's own** width is a required constraint set in the same pass
+(`updateStripWidth`), and that one is safe precisely because it constrains the
+scroll view's *document view* — a size a scroll view never propagates outward.
+It clamps to `[count × minWidth, count × maxWidth]`, which is what keeps
+`.fillEqually`'s per-pill bounds satisfiable, and yields the intended ordering:
+
+> **fill the bar → shrink the pills → scroll.** In that order.
+
+Skip it and the strip just takes its natural width — every pill at `maxWidth` —
+so tabs stop spreading into an empty bar AND start scrolling far too early (six
+tabs overflowed a bar that comfortably showed thirteen). Measured on a 1117pt
+strip: 1–5 tabs at 200pt with `+` trailing them, 6–13 compressing 200 → 86,
+14+ pinned at the 80pt floor and scrolling.
+
+Also load-bearing: **only a real selection move may scroll the strip**
+(`revealTab(at:)` behind `selectionMoved`). Agents retitle tabs several times a
+second; scrolling on every refresh would make an overflowing bar impossible to
+scroll by hand — the same trap `rebuildOutline()` avoids in the sidebar.
+
+Verify a change here by measuring, not by eye: log `view.fittingSize.width`
+alongside the clip/strip widths and `addButton.frame.minX` while adding tabs
+(`zetty new-tab`). `fittingSize` must stay FLAT as the strip grows, and `+`
+must sit at `lastPillEnd + 4` until the strip overflows.
 
 Also load-bearing: `NSButton.attributedTitle` leaks an AppKit KVO dependency
 quartet **per assignment**, so any per-refresh assignment must be guarded by a
