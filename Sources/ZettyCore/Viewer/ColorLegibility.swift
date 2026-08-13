@@ -19,6 +19,9 @@ import Foundation
 /// Pure by design (plain RGB components, no AppKit) so it is unit-testable.
 public enum ColorLegibility {
 
+    /// sRGB components, each 0...1.
+    public typealias Components = (red: Double, green: Double, blue: Double)
+
     /// Contrast below which a run is treated as unreadable and recoloured.
     ///
     /// WCAG's text thresholds (4.5 / 3.0) are far too aggressive here: syntax
@@ -39,10 +42,7 @@ public enum ColorLegibility {
 
     /// WCAG 2.1 contrast ratio between two sRGB colours — 1.0 (identical) to
     /// 21.0 (black on white).
-    public static func contrastRatio(
-        foreground: (red: Double, green: Double, blue: Double),
-        background: (red: Double, green: Double, blue: Double)
-    ) -> Double {
+    public static func contrastRatio(foreground: Components, background: Components) -> Double {
         let a = relativeLuminance(red: foreground.red, green: foreground.green, blue: foreground.blue)
         let b = relativeLuminance(red: background.red, green: background.green, blue: background.blue)
         let lighter = max(a, b)
@@ -51,11 +51,8 @@ public enum ColorLegibility {
     }
 
     /// Whether `foreground` is readable on `background`.
-    public static func isLegible(
-        foreground: (red: Double, green: Double, blue: Double),
-        background: (red: Double, green: Double, blue: Double),
-        minimumRatio: Double = defaultMinimumRatio
-    ) -> Bool {
+    public static func isLegible(foreground: Components, background: Components,
+                                 minimumRatio: Double = defaultMinimumRatio) -> Bool {
         contrastRatio(foreground: foreground, background: background) >= minimumRatio
     }
 }

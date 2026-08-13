@@ -47,14 +47,11 @@ final class TabBarView: NSView {
     private let sidebarButton: NSButton
     /// Clips the pill strip so its width demand never escapes into the window.
     ///
-    /// Load-bearing, not cosmetic: a pill carries a required minimum width, and
-    /// `.fillEqually` multiplies that by the tab count. Pinned directly in the
-    /// bar, the chain `sidebar → pills → +` is required all the way to the
-    /// window edge, so AppKit clamped the window's minimum content width to
-    /// roughly 80pt PER TAB — ~2900pt at 30 tabs, wider than any display, and
-    /// the window simply refused to resize. Inside a clip view the pills size
-    /// themselves against the clip's width instead, and the window's minimum is
-    /// constant no matter how many tabs are open.
+    /// Load-bearing, not cosmetic: pinned directly in the bar, the pills' own
+    /// required minimum width reached the window edge and clamped its minimum
+    /// content width to roughly 80pt PER TAB — ~2900pt at 30 tabs, wider than
+    /// any display, so the window refused to resize. See `layout()` for the
+    /// rule that keeps it that way.
     private let tabScrollView: NSScrollView
     private let stackView: NSStackView
     private let addButton: NSButton
@@ -236,11 +233,11 @@ final class TabBarView: NSView {
     /// required per-pill bounds satisfiable: `.fillEqually` hands each pill
     /// `width / count`, so a target outside that range would conflict with them.
     /// Only past the lower end does the strip outgrow the clip and scroll.
-    @discardableResult
     private func updateStripWidth(clipWidth: CGFloat) -> CGFloat {
         let count = CGFloat(tabItems.count)
-        let target = count == 0 ? 0 : min(max(clipWidth, count * TabItemView.minWidth),
-                                          count * TabItemView.maxWidth)
+        // Collapses to 0 with no tabs, which the clamp already yields.
+        let target = min(max(clipWidth, count * TabItemView.minWidth),
+                         count * TabItemView.maxWidth)
         // Guarded: assigning inside `layout()` schedules another pass, so an
         // unconditional write would loop forever.
         if abs(stripWidthConstraint.constant - target) > 0.5 {

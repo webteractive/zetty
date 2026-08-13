@@ -205,9 +205,12 @@ final class FileViewerOverlay: NSView {
 
         if let runs = loaded.runs {
             let body = NSMutableAttributedString()
+            // Hoisted: invariant across runs, and a file can have thousands.
+            let background = Self.components(of: theme.bg1Color)
             for run in runs {
                 body.append(NSAttributedString(string: run.text,
-                                               attributes: attributes(for: run.style)))
+                                               attributes: attributes(for: run.style,
+                                                                      background: background)))
             }
             textView.textStorage?.setAttributedString(body)
             if let range = lineRange(in: body.string, line: loaded.line) {
@@ -255,12 +258,13 @@ final class FileViewerOverlay: NSView {
         return full.lineRange(for: NSRange(location: start, length: 0))
     }
 
-    private func attributes(for style: ANSIStyle) -> [NSAttributedString.Key: Any] {
+    private func attributes(for style: ANSIStyle,
+                            background: ColorLegibility.Components?) -> [NSAttributedString.Key: Any] {
         let theme = ZTheme.current
         let font = ZTheme.monoFont(size: 12, weight: style.bold ? .semibold : .regular)
         var attributes: [NSAttributedString.Key: Any] = [
             .font: style.italic ? italicized(font) : font,
-            .foregroundColor: color(for: style.foreground) ?? theme.fgColor,
+            .foregroundColor: color(for: style.foreground, background: background) ?? theme.fgColor,
         ]
         if style.underline {
             attributes[.underlineStyle] = NSUnderlineStyle.single.rawValue
@@ -283,7 +287,16 @@ final class FileViewerOverlay: NSView {
     /// the right axis; this is the backstop for the commands it can't configure,
     /// because a wrong hue is cosmetic while invisible text is an empty panel.
     /// Returning nil hands the run to the caller's `fg` fallback.
-    private func color(for ansi: ANSIColor?) -> NSColor? {
+    /// sRGB components of `color`, or nil when it can't be converted (a pattern
+    /// or catalog colour) — the legibility check is then skipped rather than
+    /// guessed at.
+    private static func components(of color: NSColor) -> ColorLegibility.Components? {
+        guard let srgb = color.usingColorSpace(.sRGB) else { return nil }
+        return (Double(srgb.redComponent), Double(srgb.greenComponent), Double(srgb.blueComponent))
+    }
+
+    private func color(for ansi: ANSIColor?,
+                       background: ColorLegibility.Components?) -> NSColor? {
         let theme = ZTheme.current
         switch ansi {
         case .none:
@@ -291,12 +304,10 @@ final class FileViewerOverlay: NSView {
         case .rgb(let r, let g, let b):
             let color = NSColor(srgbRed: CGFloat(r) / 255, green: CGFloat(g) / 255,
                                 blue: CGFloat(b) / 255, alpha: 1)
-            guard let background = theme.bg1Color.usingColorSpace(.sRGB) else { return color }
+            guard let background else { return color }
             let legible = ColorLegibility.isLegible(
                 foreground: (Double(r) / 255, Double(g) / 255, Double(b) / 255),
-                background: (Double(background.redComponent),
-                             Double(background.greenComponent),
-                             Double(background.blueComponent)))
+                background: background)
             return legible ? color : nil
         case .indexed(let index):
             switch index {
