@@ -590,6 +590,40 @@ Don't "simplify" any of these back — `.empty` folded into `.text("")`, or the
 overlay's `!runs.isEmpty` dropped, each restores the silent blank panel on its
 own.
 
+### The peek narrates itself (`ZettyLog.viewer`)
+
+Blank-peek reports keep arriving as a screenshot of an empty panel, which is the
+same picture for a failed read, a hostile highlighter, invisible colours, and a
+text view laid out at zero height — and none of it reproduces locally, because
+the inputs are the reporter's scheme, their `bat`, and their file. So the path
+from ⌘-click to glyphs logs each step through `ZettyLog` (App layer), and every
+line lands in **two** sinks:
+
+- **`os.Logger`** (subsystem `co.webteractive.zetty`, category `viewer`) —
+  collectable after the fact with `log show --predicate 'subsystem ==
+  "co.webteractive.zetty"'`. Never `print`/`NSLog`: free when unread, kept on
+  release builds, persisted. The no-debug-`NSLog` convention below still stands.
+- **`DiagnosticRing`** (`ZettyCore/Diagnostics/`, pure + tested, lock-guarded
+  because the file load runs off-main) — a bounded tail behind the peek footer's
+  **Copy diagnostics**. Both are needed: the log store rotates within days and
+  asking a reporter to run a `log show` incantation loses most of them, while
+  the ring is one click but dies with the process.
+
+- **Call sites pass plain `String`s; `ZettyLogger` marks them `.public` in one
+  place.** `Logger` redacts dynamic strings by default and a log of `<private>`
+  is worthless in a report. The message has to exist as text for the ring
+  anyway, so nothing is lost by building it eagerly. What's recorded is local
+  state (paths, theme, highlighter) and stays on the Mac until the user pastes
+  it.
+- **File contents are never logged** — only counts: chars, non-whitespace `ink`,
+  run count, distinct resolved foreground hexes, `illegible`/`uncoloured` tallies
+  from `ColorLegibility`. `ink` is what separates "real text rendered
+  invisible" from "there was nothing to render".
+- **Geometry is logged one run-loop turn later** (`logGeometry`), because at
+  `show()` time Auto Layout hasn't run and the panel is still zero-sized. It
+  reads `textLayoutManager`, never `layoutManager` — touching the latter
+  downgrades the view to TextKit 1.
+
 ### Gotchas, all deliberate
 
 - **`viewer-highlight-command` / `viewer-max-bytes` are reserved keys.** They must

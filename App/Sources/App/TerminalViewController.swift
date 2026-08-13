@@ -1487,22 +1487,47 @@ final class TerminalViewController: NSViewController {
     @discardableResult
     func presentFileViewer(path: String, line: Int?, column: Int?) -> String? {
         var isDirectory: ObjCBool = false
+        // Both early returns log: the CLI shows its message to the caller, but
+        // ⌘-click and the file tree discard it, so without this a peek that
+        // never opened would leave no trace at all.
         guard FileManager.default.fileExists(atPath: path, isDirectory: &isDirectory) else {
+            ZettyLog.viewer.error("peek: no such file \(path)")
             return "no such file: \(path)"
         }
-        guard !isDirectory.boolValue else { return "not a file: \(path)" }
+        guard !isDirectory.boolValue else {
+            ZettyLog.viewer.error("peek: not a file \(path)")
+            return "not a file: \(path)"
+        }
 
         let settings = viewerSettingsProvider?()
         let root = workspace.activeProject.rootPath
         fileViewerRequest += 1
         let request = fileViewerRequest
+        // A blank peek is only ever reported as a screenshot of an empty panel,
+        // so every step from here to the rendered glyphs narrates itself.
+        ZettyLog.viewer.log("""
+            peek #\(request) path=\(path) \
+            line=\(line ?? -1) \
+            scheme=\(ZTheme.scheme.rawValue) \
+            isDark=\(ZTheme.current.isDark) \
+            bg1=#\(ZTheme.current.bg1) fg=#\(ZTheme.current.fg) \
+            highlight='\(settings?.highlightCommand ?? "")' \
+            os=\(ProcessInfo.processInfo.operatingSystemVersionString)
+            """)
         // The overlay is created only once the file is known to be text, so a
         // PDF or an image never flashes an empty panel on its way to Preview.
         FileViewerLoader.load(path: path, line: line,
                               highlightCommand: settings?.highlightCommand ?? "",
                               maxBytes: settings?.maxBytes ?? AppConfig.defaultViewerMaxBytes,
                               isDarkScheme: ZTheme.current.isDark) { [weak self] loaded in
-            guard let self, request == self.fileViewerRequest else { return }
+            guard let self else { return }
+            guard request == self.fileViewerRequest else {
+                ZettyLog.viewer.log("""
+                    peek #\(request) superseded by \
+                    #\(self.fileViewerRequest) — dropped
+                    """)
+                return
+            }
             if let action = loaded.externalAction {
                 // Not text: hand it off. Any existing peek is left alone — this
                 // was a different file.
@@ -1530,6 +1555,7 @@ final class TerminalViewController: NSViewController {
     /// stacking panels.
     private func showFileViewer(_ loaded: FileViewerLoader.Loaded, projectRoot: String) {
         let overlay: FileViewerOverlay
+        let reused = fileViewerOverlay != nil
         if let existing = fileViewerOverlay {
             overlay = existing
         } else {
@@ -1543,6 +1569,11 @@ final class TerminalViewController: NSViewController {
             ])
             fileViewerOverlay = overlay
         }
+        ZettyLog.viewer.log("""
+            present: overlay=\(reused ? "reused" : "new") \
+            inWindow=\(overlay.window != nil) \
+            hostSize=\(NSStringFromSize(self.view.bounds.size))
+            """)
         overlay.show(loaded, projectRoot: projectRoot)
     }
 

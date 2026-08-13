@@ -208,6 +208,25 @@ After that, the per-folder prompts stop.
 > You do **not** need to "trust" each project — that's an App Sandbox concept,
 > and Zetty is not sandboxed. Granting folder access once is all it takes.
 
+### Collecting a diagnostic log
+
+The **file viewer** narrates every step of a peek — the file it read, the
+highlighter it ran and what that returned, how many styled runs it rendered,
+which colours it resolved them to, and the geometry the text landed in. If a
+peek ever comes up blank, that's the difference between "the modal is empty"
+and knowing which step emptied it.
+
+**Copy diagnostics** in the peek's footer puts the recent lines, plus your build
+and macOS version, on the clipboard — paste it straight into the issue. Nothing
+is sent anywhere, and the file's own contents are never recorded, only counts.
+
+The same lines also go to the macOS unified log, so they can be collected after
+the fact on any build — no debug build, no need to be watching when it happens:
+
+```sh
+log show --last 15m --predicate 'subsystem == "co.webteractive.zetty"' --style compact
+```
+
 ### Build from source
 
 #### Prerequisites

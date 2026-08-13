@@ -32,6 +32,11 @@ final class FileViewerOverlay: NSView {
     private let positionLabel = NSTextField(labelWithString: "")
     private let openPill = NSView()
     private let openButton = NSButton()
+    private let diagnosticsButton = NSButton()
+
+    /// Restores the diagnostics button's title after its "Copied" flash;
+    /// retained so a second click cancels the first one's restore.
+    private var diagnosticsReset: DispatchWorkItem?
 
     /// Absolute path currently shown — what the footer button acts on.
     /// What's on screen, retained so a scheme switch can re-render it: the body's
@@ -137,6 +142,22 @@ final class FileViewerOverlay: NSView {
         openPill.translatesAutoresizingMaskIntoConstraints = false
         openPill.addSubview(openButton)
 
+        // "Copy diagnostics" — bare `fg3` text, no pill: this is a bug-report
+        // affordance, not an action anyone needs day to day, and the one moment
+        // it matters most is when the panel above it is blank. So it has to be
+        // present and legible without competing with "Open in ▾".
+        diagnosticsButton.isBordered = false
+        diagnosticsButton.bezelStyle = .inline
+        diagnosticsButton.target = self
+        diagnosticsButton.action = #selector(copyDiagnosticsClicked)
+        diagnosticsButton.toolTip = "Copy this peek's diagnostic log for a bug report"
+        diagnosticsButton.translatesAutoresizingMaskIntoConstraints = false
+        // Give way first: the footer's required chain runs position label →
+        // this → Open pill, so on a narrow panel this has to compress rather
+        // than break a constraint.
+        diagnosticsButton.lineBreakMode = .byTruncatingTail
+        diagnosticsButton.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+
         panel.addSubview(headerStack)
         panel.addSubview(closeButton)
         panel.addSubview(headerDivider)
@@ -144,6 +165,7 @@ final class FileViewerOverlay: NSView {
         panel.addSubview(footerDivider)
         panel.addSubview(positionLabel)
         panel.addSubview(openPill)
+        panel.addSubview(diagnosticsButton)
 
         NSLayoutConstraint.activate([
             panel.centerXAnchor.constraint(equalTo: centerXAnchor),
@@ -179,6 +201,15 @@ final class FileViewerOverlay: NSView {
             positionLabel.leadingAnchor.constraint(equalTo: panel.leadingAnchor, constant: 16),
             positionLabel.bottomAnchor.constraint(equalTo: panel.bottomAnchor, constant: -12),
 
+            // Between the position label and the Open pill, and never on top of
+            // either: the position label wins the space it needs, the button
+            // truncates rather than pushing the pill off the panel.
+            diagnosticsButton.leadingAnchor.constraint(
+                greaterThanOrEqualTo: positionLabel.trailingAnchor, constant: 12),
+            diagnosticsButton.trailingAnchor.constraint(equalTo: openPill.leadingAnchor,
+                                                        constant: -12),
+            diagnosticsButton.centerYAnchor.constraint(equalTo: positionLabel.centerYAnchor),
+
             openPill.trailingAnchor.constraint(equalTo: panel.trailingAnchor, constant: -14),
             openPill.centerYAnchor.constraint(equalTo: positionLabel.centerYAnchor),
             openPill.heightAnchor.constraint(equalToConstant: 20),
@@ -212,6 +243,7 @@ final class FileViewerOverlay: NSView {
             let body = NSMutableAttributedString()
             // Hoisted: invariant across runs, and a file can have thousands.
             let background = Self.components(of: theme.bg1Color)
+            stats = RenderStats()
             for run in runs {
                 body.append(NSAttributedString(string: run.text,
                                                attributes: attributes(for: run.style,
@@ -225,11 +257,17 @@ final class FileViewerOverlay: NSView {
             } else {
                 textView.scrollRangeToVisible(NSRange(location: 0, length: 0))
             }
+            logBody(body, runs: runs, background: background)
         } else {
             textView.textStorage?.setAttributedString(NSAttributedString(
                 string: loaded.message ?? "Nothing to display",
                 attributes: [.font: ZTheme.monoFont(size: 12),
                              .foregroundColor: theme.yellowColor]))
+            ZettyLog.viewer.log("""
+                show: message branch — "\(loaded.message ?? "Nothing to display")" \
+                runs=\(loaded.runs?.count ?? -1)
+                """)
+            logGeometry()
         }
 
         var position: [String] = []
@@ -240,6 +278,10 @@ final class FileViewerOverlay: NSView {
         positionLabel.stringValue = position.joined(separator: "  ·  ")
 
         renderOpenButton()
+        // A new file means the previous "Copied ✓" no longer refers to what's
+        // on screen.
+        diagnosticsReset?.cancel()
+        renderDiagnosticsButton(copied: false)
         // Content arrives asynchronously, and a pane rebuild in the meantime
         // can have handed focus back to a terminal — reclaim it so Esc works.
         if window?.firstResponder !== textView { window?.makeFirstResponder(textView) }
@@ -263,13 +305,97 @@ final class FileViewerOverlay: NSView {
         return full.lineRange(for: NSRange(location: start, length: 0))
     }
 
+    // MARK: - Diagnostics
+    //
+    // A blank peek looks identical whether the text is missing, transparent, or
+    // laid out somewhere off screen, and it is only ever reported as a
+    // screenshot of an empty panel. These record which of those it was — what
+    // the colours resolved to, and what geometry the text view ended up with.
+
+    /// What `color(for:background:)` decided while rendering the current body.
+    private struct RenderStats {
+        /// Runs whose colour was too close to `bg1` and fell back to `fg`.
+        var illegible = 0
+        /// Runs with no SGR colour at all, drawn in `fg`.
+        var uncoloured = 0
+        /// Distinct foreground hexes actually used, capped so a rainbow file
+        /// can't flood the log.
+        var hexes: [String] = []
+
+        mutating func note(_ color: NSColor?) {
+            guard let color else { return }
+            let hex = FileViewerOverlay.hex(of: color)
+            guard !hexes.contains(hex), hexes.count < 8 else { return }
+            hexes.append(hex)
+        }
+    }
+
+    private var stats = RenderStats()
+
+    /// `nonisolated` so `RenderStats.note` — a plain struct mutation on
+    /// whichever actor is rendering — can reach it.
+    private nonisolated static func hex(of color: NSColor) -> String {
+        guard let srgb = color.usingColorSpace(.sRGB) else { return "?" }
+        return String(format: "%02x%02x%02x",
+                      Int((srgb.redComponent * 255).rounded()),
+                      Int((srgb.greenComponent * 255).rounded()),
+                      Int((srgb.blueComponent * 255).rounded()))
+    }
+
+    /// Summarises a rendered body: enough to tell real-but-invisible text from
+    /// text that was never there. The file's own characters are deliberately
+    /// NOT logged — only how many there are, and how many are visible ink.
+    private func logBody(_ body: NSAttributedString, runs: [ANSIRun],
+                         background: ColorLegibility.Components?) {
+        let ink = body.string.reduce(into: 0) { count, character in
+            if !character.isWhitespace { count += 1 }
+        }
+        ZettyLog.viewer.log("""
+            show: body branch runs=\(runs.count) \
+            chars=\(body.length) ink=\(ink) \
+            storage=\(self.textView.textStorage.map { "\($0.length)" } ?? "nil") \
+            bg1=#\(FileViewerOverlay.hex(of: ZTheme.current.bg1Color)) \
+            bgKnown=\(background != nil) \
+            illegible=\(self.stats.illegible) \
+            uncoloured=\(self.stats.uncoloured) \
+            fgs=[\(self.stats.hexes.joined(separator: " "))] \
+            font=\(ZTheme.monoFont(size: 12).fontName)@\(ZTheme.monoFont(size: 12).pointSize)
+            """)
+        logGeometry()
+    }
+
+    /// Where the text actually landed, read one run-loop turn later so Auto
+    /// Layout has run — at `show()` time the panel may still be zero-sized. A
+    /// laid-out text view with real content but an empty visible rect is a
+    /// different bug from one with no content at all.
+    private func logGeometry() {
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            // `textLayoutManager` is read, never `layoutManager` — touching the
+            // latter downgrades the view to TextKit 1.
+            ZettyLog.viewer.log("""
+                show: geometry text=\(NSStringFromRect(self.textView.frame)) \
+                clip=\(NSStringFromRect(self.scrollView.contentView.bounds)) \
+                visible=\(NSStringFromRect(self.scrollView.documentVisibleRect)) \
+                panel=\(NSStringFromRect(self.panel.frame)) \
+                overlay=\(NSStringFromRect(self.frame)) \
+                textKit2=\(self.textView.textLayoutManager != nil) \
+                hidden=\(self.textView.isHiddenOrHasHiddenAncestor) \
+                alpha=\(self.alphaValue) \
+                window=\(self.window != nil)
+                """)
+        }
+    }
+
     private func attributes(for style: ANSIStyle,
                             background: ColorLegibility.Components?) -> [NSAttributedString.Key: Any] {
         let theme = ZTheme.current
         let font = ZTheme.monoFont(size: 12, weight: style.bold ? .semibold : .regular)
+        let foreground = color(for: style.foreground, background: background) ?? theme.fgColor
+        stats.note(foreground)
         var attributes: [NSAttributedString.Key: Any] = [
             .font: style.italic ? italicized(font) : font,
-            .foregroundColor: color(for: style.foreground, background: background) ?? theme.fgColor,
+            .foregroundColor: foreground,
         ]
         if style.underline {
             attributes[.underlineStyle] = NSUnderlineStyle.single.rawValue
@@ -305,6 +431,7 @@ final class FileViewerOverlay: NSView {
         let theme = ZTheme.current
         switch ansi {
         case .none:
+            stats.uncoloured += 1
             return nil
         case .rgb(let r, let g, let b):
             let color = NSColor(srgbRed: CGFloat(r) / 255, green: CGFloat(g) / 255,
@@ -313,6 +440,7 @@ final class FileViewerOverlay: NSView {
             let legible = ColorLegibility.isLegible(
                 foreground: (Double(r) / 255, Double(g) / 255, Double(b) / 255),
                 background: background)
+            if !legible { stats.illegible += 1 }
             return legible ? color : nil
         case .indexed(let index):
             switch index {
@@ -412,6 +540,36 @@ final class FileViewerOverlay: NSView {
         onClose()
     }
 
+    /// Puts the recent diagnostics on the clipboard, so a "the peek is blank"
+    /// report is a paste rather than a `log show` incantation typed into a
+    /// terminal the reporter may not think to open.
+    @objc private func copyDiagnosticsClicked() {
+        let report = ZettyLog.report()
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(report, forType: .string)
+        ZettyLog.viewer.log("diagnostics copied (\(report.count) chars)")
+
+        diagnosticsReset?.cancel()
+        renderDiagnosticsButton(copied: true)
+        let reset = DispatchWorkItem { [weak self] in self?.renderDiagnosticsButton(copied: false) }
+        diagnosticsReset = reset
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.6, execute: reset)
+    }
+
+    /// `fg3` at rest, semantic `green` while confirming — the same "it worked"
+    /// colour the status dots use. Assignments are user-driven (click, theme,
+    /// each peek), never per-refresh, so `attributedTitle`'s per-assignment KVO
+    /// cost stays bounded.
+    private func renderDiagnosticsButton(copied: Bool) {
+        let theme = ZTheme.current
+        diagnosticsButton.attributedTitle = NSAttributedString(
+            string: copied ? "Copied ✓" : "Copy diagnostics",
+            attributes: [
+                .font: ZTheme.monoFont(size: 11),
+                .foregroundColor: copied ? theme.greenColor : theme.fg3Color,
+            ])
+    }
+
     private func renderOpenButton() {
         let theme = ZTheme.current
         openButton.attributedTitle = NSAttributedString(
@@ -443,6 +601,7 @@ final class FileViewerOverlay: NSView {
         openPill.layer?.backgroundColor = theme.bg3Color.cgColor
         openPill.layer?.borderColor = theme.borderColor.cgColor
         renderOpenButton()
+        renderDiagnosticsButton(copied: false)
         // Re-render the body so its baked-in colours follow the new scheme.
         // `show` never calls back into `applyTheme`, so this can't recurse.
         if let shownLoaded { show(shownLoaded, projectRoot: shownProjectRoot) }

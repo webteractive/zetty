@@ -59,16 +59,31 @@ enum FileViewerLoader {
 
         var isDirectory: ObjCBool = false
         guard FileManager.default.fileExists(atPath: path, isDirectory: &isDirectory) else {
+            ZettyLog.viewer.error("load: no such file path=\(path)")
             return failure("No such file")
         }
         guard !isDirectory.boolValue else { return failure("That's a directory") }
         guard let data = FileManager.default.contents(atPath: path) else {
+            ZettyLog.viewer.error("""
+                load: unreadable path=\(path) \
+                onDisk=\(onDiskSize(of: path) ?? -1)
+                """)
             return failure("Can't read this file")
         }
+        ZettyLog.viewer.log("""
+            load: read path=\(path) bytes=\(data.count) \
+            onDisk=\(onDiskSize(of: path) ?? -1) \
+            maxBytes=\(maxBytes) isDark=\(isDarkScheme)
+            """)
 
         switch FileViewerContent.classify(data, maxBytes: maxBytes) {
         case .binary, .tooLarge:
-            return external(ExternalOpenPolicy.decision(path: path, header: data.prefix(8)))
+            let decision = ExternalOpenPolicy.decision(path: path, header: data.prefix(8))
+            ZettyLog.viewer.log("""
+                load: not text — handing off \
+                decision=\(String(describing: decision))
+                """)
+            return external(decision)
         case .empty:
             // We read nothing. Whether that's the file's truth or a failed read
             // is only answerable against its size on disk, and the difference
@@ -76,8 +91,10 @@ enum FileViewerLoader {
             // placeholder, say) is listed, stat-ed and opened exactly like a
             // real one, so reporting it as "empty" hides a read failure.
             guard let bytes = onDiskSize(of: path), bytes > 0 else {
+                ZettyLog.viewer.log("load: empty file")
                 return failure("This file is empty")
             }
+            ZettyLog.viewer.error("load: read 0 of \(bytes) bytes")
             return failure("Can't read this file's contents — 0 of \(bytes) bytes")
         case .text(let text, let truncatedAtLine):
             // Highlighting reads the file itself, so a truncated body keeps the
@@ -90,8 +107,23 @@ enum FileViewerLoader {
             // an empty panel — fall back to the plain text it was meant to
             // decorate.
             var runs = ANSIText.parse(highlighted ?? text)
-            if runs.isEmpty, highlighted != nil { runs = ANSIText.parse(text) }
-            guard !runs.isEmpty else { return failure("This file has no readable text") }
+            if runs.isEmpty, highlighted != nil {
+                ZettyLog.viewer.error("load: highlighter output parsed to no runs — using plain text")
+                runs = ANSIText.parse(text)
+            }
+            guard !runs.isEmpty else {
+                ZettyLog.viewer.error("""
+                    load: no runs from \(text.count) chars of plain text
+                    """)
+                return failure("This file has no readable text")
+            }
+            ZettyLog.viewer.log("""
+                load: text runs=\(runs.count) \
+                chars=\(runs.reduce(0) { $0 + $1.text.count }) \
+                plainChars=\(text.count) \
+                highlighted=\(highlighted != nil) \
+                truncatedAtLine=\(truncatedAtLine ?? -1)
+                """)
             return Loaded(path: path, line: line, runs: runs,
                           message: nil, truncatedAtLine: truncatedAtLine,
                           externalAction: nil)
@@ -111,7 +143,16 @@ enum FileViewerLoader {
     /// nil on any failure so the caller falls back to plain text.
     private static func highlight(path: String, command: String, isDarkScheme: Bool) -> String? {
         let parts = command.split(separator: " ").map(String.init)
-        guard let tool = parts.first, !tool.isEmpty, let executable = locate(tool) else { return nil }
+        guard let tool = parts.first, !tool.isEmpty else {
+            ZettyLog.viewer.log("highlight: no command configured — plain text")
+            return nil
+        }
+        guard let executable = locate(tool) else {
+            ZettyLog.viewer.log("""
+                highlight: \(tool) not installed — plain text
+                """)
+            return nil
+        }
 
         let process = Process()
         process.executableURL = URL(fileURLWithPath: executable)
@@ -133,7 +174,15 @@ enum FileViewerLoader {
         environment.merge(HighlightTheme.environment(isDark: isDarkScheme)) { _, new in new }
         process.environment = environment
 
-        do { try process.run() } catch { return nil }
+        do {
+            try process.run()
+        } catch {
+            ZettyLog.viewer.error("""
+                highlight: \(executable) failed to launch — \
+                \(error.localizedDescription)
+                """)
+            return nil
+        }
 
         // Watchdog: kill a hung highlighter rather than block the peek.
         let deadline = DispatchWorkItem { if process.isRunning { process.terminate() } }
@@ -143,6 +192,11 @@ enum FileViewerLoader {
         process.waitUntilExit()
         deadline.cancel()
 
+        ZettyLog.viewer.log("""
+            highlight: \(executable) exit=\(process.terminationStatus) \
+            out=\(data.count) bytes \
+            theme=\(environment["BAT_THEME"] ?? "—")
+            """)
         guard process.terminationStatus == 0, !data.isEmpty else { return nil }
         return String(decoding: data, as: UTF8.self)
     }
