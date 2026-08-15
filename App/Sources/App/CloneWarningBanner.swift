@@ -1,5 +1,5 @@
 import AppKit
-import ZettyCore
+import ZettyGhostty
 
 /// A full-width caution strip shown below the tab bar whenever the active
 /// project is a clone (copy-on-write fork). It reminds the user that a clone's

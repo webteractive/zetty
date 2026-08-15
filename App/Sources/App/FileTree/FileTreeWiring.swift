@@ -1,5 +1,5 @@
 import Foundation
-import ZettyCore
+import ZettyGhostty
 
 /// Everything a pane's leaf needs in order to host a file tree.
 ///

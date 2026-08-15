@@ -1,5 +1,5 @@
 import Foundation
-import ZettyCore
+import ZettyGhostty
 
 /// Installs/uninstalls Zetty's agent hooks into each harness's config.
 ///

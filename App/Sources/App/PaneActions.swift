@@ -1,5 +1,4 @@
 import AppKit
-import ZettyCore
 import ZettyGhostty
 
 // MARK: - PaneActions

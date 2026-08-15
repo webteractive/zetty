@@ -1,5 +1,5 @@
 import AppKit
-import ZettyCore
+import ZettyGhostty
 
 /// A transient read-only file peek: scrim + centered panel with a header, the
 /// file's text (syntax-highlighted when available) with line numbers, and a

@@ -1,6 +1,5 @@
 import AppKit
-import GhosttyTerminal
-import ZettyCore
+import ZettyGhostty
 import UserNotifications
 
 /// Window that gives the app's main-menu key equivalents (⌘D / ⇧⌘D / ⌘W)

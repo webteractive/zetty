@@ -1,5 +1,5 @@
 import AppKit
-import ZettyCore
+import ZettyGhostty
 
 /// Detection + resolution of GUI editors, shared by Settings' config opener
 /// and the status bar's "open project in editor" control.

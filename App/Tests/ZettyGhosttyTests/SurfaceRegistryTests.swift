@@ -4,7 +4,6 @@
 // seam, so no real ghostty PTY/display is needed during unit tests.
 
 import XCTest
-import ZettyCore
 @testable import ZettyGhostty
 
 // MARK: - Mocks

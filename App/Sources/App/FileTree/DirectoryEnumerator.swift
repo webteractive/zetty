@@ -1,5 +1,5 @@
 import Foundation
-import ZettyCore
+import ZettyGhostty
 
 /// Filesystem reads for the per-pane file tree.
 ///

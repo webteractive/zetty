@@ -1,5 +1,5 @@
 import AppKit
-import GhosttyTerminal
+import ZettyGhostty
 
 // MARK: - Theme
 //

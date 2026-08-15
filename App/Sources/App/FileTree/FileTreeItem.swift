@@ -1,5 +1,5 @@
 import Foundation
-import ZettyCore
+import ZettyGhostty
 
 /// Identity-stable box for an outline-view row.
 ///

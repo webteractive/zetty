@@ -10,7 +10,7 @@ Success means the generated-project, test, and Release-build commands emit no wa
 
 ### 1. Fix each root cause (selected)
 
-Modernize the deprecated API, use notification delivery that respects the app's main-actor isolation, complete the bundle metadata, and make the bridge target the single owner of its static package dependencies. Adjust the supported build invocation so Xcode receives an unambiguous generic macOS destination and does not run irrelevant App Intents extraction.
+Modernize the deprecated API, use notification delivery that respects the app's main-actor isolation, complete the bundle metadata, and make the bridge target the single owner of its static package dependencies. Adjust the supported build invocation so Xcode receives an unambiguous generic macOS destination and its automatic App Intents metadata pass has the framework dependency it expects.
 
 This keeps diagnostics useful and makes future warnings visible. The dependency cleanup uses a narrow module-facade pattern rather than moving application code between targets.
 
@@ -38,7 +38,7 @@ This removes the non-`Sendable` to `@Sendable` conversion without adding uncheck
 
 Add `LSApplicationCategoryType` with `public.app-category.developer-tools` to the generated Info.plist. Zetty is a developer terminal tool, so this is the appropriate macOS category.
 
-Disable App Intents metadata extraction for the app target using the supported Xcode build setting because Zetty has no App Intents dependency or declarations.
+Declare the system `AppIntents.framework` dependency on the app and bridge targets. Xcode 17F113 schedules metadata extraction for both targets even though Zetty declares no intents; without the dependency, the extractor warns instead of completing its no-op pass. Its own `--disable` and `--quiet-warnings` modes were evaluated but still emit a warning, so the dependency is the only configuration verified to produce a clean build without globally hiding diagnostics.
 
 ### Static package ownership
 

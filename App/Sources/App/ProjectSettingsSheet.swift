@@ -1,5 +1,5 @@
 import AppKit
-import ZettyCore
+import ZettyGhostty
 
 /// The per-project settings sheet (sidebar → Project Settings…). Programmatic
 /// AppKit styled with ZTheme, following SettingsWindowController's idiom.

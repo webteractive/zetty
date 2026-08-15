@@ -1,5 +1,5 @@
 import Foundation
-import ZettyCore
+import ZettyGhostty
 
 /// A newer release available for download.
 struct AvailableUpdate: Equatable {

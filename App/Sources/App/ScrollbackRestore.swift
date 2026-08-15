@@ -1,5 +1,5 @@
 import Foundation
-import ZettyCore
+import ZettyGhostty
 
 /// Writes the scrollback-restore wrapper script (contents owned by
 /// `SessionPersistence.restoreScriptContents`) to

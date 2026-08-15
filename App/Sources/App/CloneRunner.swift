@@ -1,5 +1,5 @@
 import Foundation
-import ZettyCore
+import ZettyGhostty
 
 /// Executes clone process IO: the APFS copy-on-write duplication (with a
 /// plain-copy fallback for non-APFS volumes) and git inside the clone/source.

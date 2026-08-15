@@ -1,6 +1,4 @@
 import AppKit
-import GhosttyTerminal
-import ZettyCore
 import ZettyGhostty
 
 /// Makes file paths in terminal output clickable: ⌘-hover underlines a path

@@ -1,5 +1,5 @@
 import AppKit
-import ZettyCore
+import ZettyGhostty
 
 // MARK: - NSEvent → KeyChord
 
@@ -52,13 +52,12 @@ extension KeyChord {
 /// resets the engine; active IME composition on the terminal passes through
 /// so input methods are never broken.
 @MainActor
-final class KeyInterceptor {
+final class KeyInterceptor: NSObject {
 
     private(set) var engine: KeyBindingEngine
     private weak var viewController: TerminalViewController?
     private var monitor: Any?
     private var mouseMonitor: Any?
-    private var focusObservers: [NSObjectProtocol] = []
 
     init(configuration: KeyBindingConfiguration, viewController: TerminalViewController) {
         self.engine = KeyBindingEngine(
@@ -67,6 +66,7 @@ final class KeyInterceptor {
             copyTable: configuration.copyTable
         )
         self.viewController = viewController
+        super.init()
     }
 
     /// Replaces the binding tables (config reload). Any armed/copy state is
@@ -99,17 +99,28 @@ final class KeyInterceptor {
             return event
         }
         let center = NotificationCenter.default
-        let disarm: (Notification) -> Void = { [weak self] _ in
-            MainActor.assumeIsolated { self?.disarmPrefixIfArmed() }
-        }
-        focusObservers = [
-            center.addObserver(forName: NSWindow.didResignKeyNotification,
-                               object: nil, queue: .main, using: disarm),
-            center.addObserver(forName: NSApplication.didResignActiveNotification,
-                               object: nil, queue: .main, using: disarm),
-            center.addObserver(forName: NSMenu.didBeginTrackingNotification,
-                               object: nil, queue: .main, using: disarm),
-        ]
+        center.addObserver(
+            self,
+            selector: #selector(disarmPrefixForFocusChange(_:)),
+            name: NSWindow.didResignKeyNotification,
+            object: nil
+        )
+        center.addObserver(
+            self,
+            selector: #selector(disarmPrefixForFocusChange(_:)),
+            name: NSApplication.didResignActiveNotification,
+            object: nil
+        )
+        center.addObserver(
+            self,
+            selector: #selector(disarmPrefixForFocusChange(_:)),
+            name: NSMenu.didBeginTrackingNotification,
+            object: nil
+        )
+    }
+
+    @objc private func disarmPrefixForFocusChange(_ notification: Notification) {
+        disarmPrefixIfArmed()
     }
 
     private func disarmPrefixIfArmed() {
@@ -121,7 +132,7 @@ final class KeyInterceptor {
     deinit {
         if let monitor { NSEvent.removeMonitor(monitor) }
         if let mouseMonitor { NSEvent.removeMonitor(mouseMonitor) }
-        for observer in focusObservers { NotificationCenter.default.removeObserver(observer) }
+        NotificationCenter.default.removeObserver(self)
     }
 
     private func handle(_ event: NSEvent) -> NSEvent? {

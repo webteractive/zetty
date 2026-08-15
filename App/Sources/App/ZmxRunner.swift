@@ -1,5 +1,5 @@
 import Foundation
-import ZettyCore
+import ZettyGhostty
 
 /// Thin process wrapper around the `zmx` binary (session persistence daemon).
 ///

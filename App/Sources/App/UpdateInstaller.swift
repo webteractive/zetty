@@ -1,5 +1,5 @@
 import AppKit
-import ZettyCore
+import ZettyGhostty
 
 enum UpdateInstallProgress {
     case downloading(Double)   // 0.0–1.0

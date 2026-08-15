@@ -1,6 +1,4 @@
 import AppKit
-import GhosttyTerminal
-import ZettyCore
 import ZettyGhostty
 
 struct MenuBarTabSnapshot {

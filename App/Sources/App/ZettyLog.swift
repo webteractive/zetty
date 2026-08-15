@@ -1,5 +1,5 @@
 import Foundation
-import ZettyCore
+import ZettyGhostty
 import os
 
 /// Structured diagnostics, with two sinks behind one call.
@@ -72,4 +72,3 @@ struct ZettyLogger {
         DiagnosticRing.shared.append(category: category, message: message, isError: true)
     }
 }
-

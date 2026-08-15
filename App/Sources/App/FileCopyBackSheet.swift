@@ -1,5 +1,5 @@
 import AppKit
-import ZettyCore
+import ZettyGhostty
 
 /// Non-git clone → source file copy-back modal. Left: the changed-file list
 /// (include checkbox · status · name · Replace/Keep-Both for modified files).

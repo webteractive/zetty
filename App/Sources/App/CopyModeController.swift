@@ -1,6 +1,4 @@
 import AppKit
-import GhosttyTerminal
-import ZettyCore
 import ZettyGhostty
 
 // MARK: - CopyModeController

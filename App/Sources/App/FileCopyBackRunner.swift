@@ -1,5 +1,5 @@
 import Foundation
-import ZettyCore
+import ZettyGhostty
 
 /// App-layer IO for the non-git clone→source file copy-back: computes the diff
 /// via `git diff --no-index` (works outside any repo) and copies chosen files

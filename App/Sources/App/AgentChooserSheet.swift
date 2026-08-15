@@ -1,5 +1,5 @@
 import AppKit
-import ZettyCore
+import ZettyGhostty
 
 /// A keyboard-navigable modal sheet shown before a new tab/pane spawns in a
 /// project with agents enabled: pick an agent to launch, a standard session,

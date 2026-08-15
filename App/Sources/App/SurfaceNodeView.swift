@@ -1,5 +1,4 @@
 import AppKit
-import ZettyCore
 import ZettyGhostty
 
 /// Surface-addressed actions exposed by each pane's gutter.

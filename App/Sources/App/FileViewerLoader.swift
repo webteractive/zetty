@@ -1,5 +1,5 @@
 import AppKit
-import ZettyCore
+import ZettyGhostty
 
 /// Reads a file and, when a highlight command is configured and installed,
 /// runs it to get ANSI-coloured output. All IO happens off-main; the

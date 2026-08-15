@@ -1,5 +1,5 @@
 import AppKit
-import ZettyCore
+import ZettyGhostty
 
 /// Logos for the popular agent CLIs shown in tab pills.
 ///

@@ -11,7 +11,7 @@ cd "$(dirname "$0")/.."
 
 mise exec -- tuist generate --no-open
 xcodebuild -project zetty.xcodeproj -scheme zetty -configuration Release \
-  -destination 'platform=macOS' -derivedDataPath build build
+  -destination 'generic/platform=macOS' -derivedDataPath build build
 
 APP=build/Build/Products/Release/zetty.app
 PLIST="$APP/Contents/Info.plist"

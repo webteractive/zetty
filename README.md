@@ -254,7 +254,7 @@ tuist generate --no-open        # or: mise exec -- tuist generate --no-open
 
 # Build the app
 xcodebuild -project zetty.xcodeproj -scheme zetty \
-  -configuration Release -destination 'platform=macOS' \
+  -configuration Release -destination 'generic/platform=macOS' \
   -derivedDataPath build build
 
 # Install
@@ -633,7 +633,7 @@ anything — including the AI agents running inside it.
 
 ```sh
 tuist generate --no-open   # regenerate after adding/removing files
-xcodebuild -project zetty.xcodeproj -scheme zetty -destination 'platform=macOS' build
+xcodebuild -project zetty.xcodeproj -scheme zetty -destination 'generic/platform=macOS' build
 tuist test                 # unit tests (ZettyCore + ZettyGhostty)
 swift test                 # faster: the pure ZettyCore suite only
 

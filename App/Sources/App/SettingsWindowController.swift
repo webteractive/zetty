@@ -1,5 +1,5 @@
 import AppKit
-import ZettyCore
+import ZettyGhostty
 
 /// A small themed Settings window. Currently hosts the **Agent Status Hooks**
 /// section — a toggle per harness that installs/uninstalls Zetty's status hook.

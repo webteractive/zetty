@@ -1,5 +1,5 @@
 import AppKit
-import ZettyCore
+import ZettyGhostty
 
 /// A pane's file tree: an `NSOutlineView` over the filesystem below one root,
 /// with a fuzzy filename filter.

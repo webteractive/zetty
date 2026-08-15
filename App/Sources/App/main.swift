@@ -1,5 +1,5 @@
 import AppKit
-import ZettyCore
+import ZettyGhostty
 
 // CLI mode: the app binary doubles as the `Zetty` CLI when invoked with a
 // recognized command (Settings installs a symlink into ~/.local/bin).

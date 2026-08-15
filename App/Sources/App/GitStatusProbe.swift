@@ -1,5 +1,5 @@
 import Foundation
-import ZettyCore
+import ZettyGhostty
 
 /// Runs `git` in a directory to build a ``GitStatus``.
 ///

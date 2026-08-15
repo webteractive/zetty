@@ -13,7 +13,8 @@ public struct DarwinForegroundProcessProbe: ForegroundProcessProbe {
         var buffer = [CChar](repeating: 0, count: Self.pathMax)
         let len = proc_pidpath(pgid, &buffer, UInt32(buffer.count))
         guard len > 0 else { return nil }
-        return String(cString: buffer)
+        let bytes = buffer.prefix(Int(len)).map { UInt8(bitPattern: $0) }
+        return String(decoding: bytes, as: UTF8.self)
     }
 }
 #endif

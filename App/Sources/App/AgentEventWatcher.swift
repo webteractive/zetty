@@ -1,5 +1,5 @@
 import Foundation
-import ZettyCore
+import ZettyGhostty
 
 /// Tails the agent-event sink (`~/.zetty/agent-events.jsonl`) that harness
 /// hooks append to, parsing newly-appended lines into `AgentEvent`s.

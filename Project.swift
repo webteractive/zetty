@@ -43,6 +43,7 @@ let project = Project(
             deploymentTargets: .macOS("14.0"),
             infoPlist: .extendingDefault(with: [
                 "LSUIElement": false,
+                "LSApplicationCategoryType": "public.app-category.developer-tools",
                 "NSPrincipalClass": "NSApplication",
                 // Only one Zetty instance at a time — launching again (e.g. after
                 // an update while the old copy still runs) activates the existing
@@ -96,11 +97,11 @@ let project = Project(
                       basedOnDependencyAnalysis: false),
             ],
             dependencies: [
-                // GhosttyKit (static) is linked transitively via ZettyGhostty;
-                // linking it here too triggers a static-double-link warning.
-                .package(product: "GhosttyTerminal"),
-                .package(product: "ZettyCore"),
                 .target(name: "ZettyGhostty"),
+                // Xcode runs its App Intents metadata pass for app targets even
+                // when they define no intents. Declaring the system framework
+                // keeps that no-op pass valid instead of emitting a warning.
+                .sdk(name: "AppIntents", type: .framework),
             ]
         ),
 
@@ -123,6 +124,7 @@ let project = Project(
                 .package(product: "GhosttyKit"),
                 .package(product: "GhosttyTerminal"),
                 .package(product: "ZettyCore"),
+                .sdk(name: "AppIntents", type: .framework),
                 .sdk(name: "Carbon", type: .framework),
                 .sdk(name: "CoreVideo", type: .framework),
                 .sdk(name: "IOSurface", type: .framework),

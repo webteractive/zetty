@@ -1,5 +1,5 @@
 import AppKit
-import ZettyCore
+import ZettyGhostty
 
 /// Popover body for the clone banner's "How do I merge this back?" affordance —
 /// the feature-branch flow with this clone's real branch and paths filled in:

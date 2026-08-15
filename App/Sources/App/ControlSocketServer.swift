@@ -1,5 +1,5 @@
 import Foundation
-import ZettyCore
+import ZettyGhostty
 
 /// The app end of the `Zetty` CLI: a Unix-domain socket at
 /// `~/.zetty/zetty.sock` speaking one JSON object per line

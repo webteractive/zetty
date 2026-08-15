@@ -31,7 +31,7 @@ need nothing at all for `swift test` (SwiftPM globs them at build time).
 
 ```sh
 mise exec -- tuist generate --no-open
-xcodebuild -project zetty.xcodeproj -scheme zetty -destination 'platform=macOS' build
+xcodebuild -project zetty.xcodeproj -scheme zetty -destination 'generic/platform=macOS' build
 ```
 
 Tests: `mise exec -- tuist test` runs the app test target. The pure `ZettyCore`
