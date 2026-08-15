@@ -58,8 +58,8 @@ public struct AppConfig: Equatable, Sendable {
     /// full zmx scrollback history into the surface before attaching. Only
     /// meaningful when `preserveSessions` is on and zmx is installed.
     public var restoreScrollback: Bool
-    /// When true (default), quitting asks for confirmation first; when false
-    /// the app quits immediately.
+    /// When true (default), closing the main window asks for confirmation first.
+    /// The explicit App menu Quit action always exits immediately.
     public var confirmQuit: Bool
     /// Poll GitHub for newer releases and show an update pill (default true).
     /// Only gates automatic checks; the manual menu item always runs.
@@ -360,7 +360,8 @@ public struct AppConfig: Equatable, Sendable {
         # them (only meaningful with preserve-sessions = true).
         restore-scrollback = \(restoreScrollback)
 
-        # Ask for confirmation before quitting (false quits immediately).
+        # Ask for confirmation before closing the main window.
+        # The App menu Quit action always exits immediately.
         confirm-quit = \(confirmQuit)
 
         # Check GitHub for newer Zetty releases and show an update pill.
@@ -460,7 +461,8 @@ public struct AppConfig: Equatable, Sendable {
     # them (only meaningful with preserve-sessions = true).
     restore-scrollback = true
 
-    # Ask for confirmation before quitting (false quits immediately).
+    # Ask for confirmation before closing the main window.
+    # The App menu Quit action always exits immediately.
     confirm-quit = true
 
     # Agent needs-attention alerts: sound, Dock badge (attention-pane count),

@@ -367,7 +367,7 @@ seeds a documented starter file on first launch. Format is plain
 | `sidebar-position` | `left` | Window side for the project sidebar |
 | `preserve-sessions` | `false` | Keep panes alive across quit/relaunch (requires zmx) |
 | `restore-scrollback` | `true` | Replay preserved panes' scrollback history on relaunch (with `preserve-sessions`) |
-| `confirm-quit` | `true` | Ask before quitting |
+| `confirm-quit` | `true` | Ask before closing the main window; App menu Quit is immediate |
 | `check-updates` | `true` | Notify when a newer Zetty release is available |
 | `notify-sound` / `notify-badge` / `notify-system` | `true` | Agent needs-attention alerts |
 | `editor` | — | App used by Settings → "Open in Editor" |

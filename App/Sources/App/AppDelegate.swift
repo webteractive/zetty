@@ -1068,14 +1068,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
     }
 
-    /// Set by a CLI `quit` (explicit intent — no dialog on top of it).
+    /// Set once an explicit exit action has supplied all confirmation it needs.
+    /// The red window close path leaves this false until its own prompt succeeds.
     private var skipQuitConfirmation = false
 
     // (UNUserNotificationCenterDelegate conformance in the extension below.)
 
-    /// Quit confirmation (config `confirm-quit`, Settings toggle). The message
-    /// reflects what quitting actually does: preserved sessions keep running,
-    /// plain shells are terminated.
+    /// Confirmation used by the main window's close button and direct system
+    /// termination requests. The explicit Quit menu action bypasses it.
     private func confirmQuit() -> Bool {
         let alert = NSAlert()
         alert.messageText = "Quit Zetty?"
@@ -1085,6 +1085,45 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         alert.addButton(withTitle: "Quit")
         alert.addButton(withTitle: "Cancel")
         return alert.runModal() == .alertFirstButtonReturn
+    }
+
+    /// App menu Quit / ⌘Q: explicit intent to close the app while leaving
+    /// preserved zmx sessions available for the next launch.
+    @objc private func quitApplication(_ sender: Any?) {
+        requestApplicationTermination(killingSessions: false)
+    }
+
+    /// App menu full shutdown. Unlike Quit, this always confirms because every
+    /// Zetty-owned preserved session and its running processes will be ended.
+    @objc private func shutDownApplication(_ sender: Any?) {
+        let alert = NSAlert()
+        alert.messageText = "Shut Down Zetty?"
+        alert.informativeText = "All running processes and preserved terminal sessions will be ended. This cannot be undone."
+        alert.addButton(withTitle: "Shut Down")
+        alert.addButton(withTitle: "Cancel")
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+
+        requestApplicationTermination(killingSessions: true)
+    }
+
+    /// Shared exit primitive for App menu actions and the control CLI. Session
+    /// cleanup is blocking process IO, so it completes off-main before AppKit is
+    /// asked to terminate. `applicationWillTerminate` then saves the workspace
+    /// and stops the control socket.
+    private func requestApplicationTermination(killingSessions: Bool) {
+        precondition(Thread.isMainThread)
+        skipQuitConfirmation = true
+
+        guard killingSessions, let zmx = ZmxRunner.locate() else {
+            NSApp.terminate(nil)
+            return
+        }
+
+        DispatchQueue.global(qos: .userInitiated).async {
+            let sessions = ZmxRunner.listZettySessions(zmxPath: zmx)
+            ZmxRunner.killAndWait(sessions: sessions, zmxPath: zmx)
+            DispatchQueue.main.async { NSApp.terminate(nil) }
+        }
     }
 
     /// The main window's close button (red x). Confirmation must happen HERE,
@@ -1106,7 +1145,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         return true
     }
 
-    /// ⌘Q / app menu quit (the window still exists here, so a dialog is safe).
+    /// Fallback for direct AppKit/system termination requests. App menu Quit and
+    /// Shut Down authorize themselves before reaching this delegate callback.
     func applicationShouldTerminate(_: NSApplication) -> NSApplication.TerminateReply {
         guard appConfig.confirmQuit, !skipQuitConfirmation else { return .terminateNow }
         return confirmQuit() ? .terminateNow : .terminateCancel
@@ -1153,14 +1193,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                     return .text(tail.joined(separator: "\n"))
                 }
             case .quit(let killSessions):
-                // Respond first; the kill-wait runs off-main, then terminate.
-                DispatchQueue.main.sync { self.skipQuitConfirmation = true }
-                DispatchQueue.global(qos: .userInitiated).async {
-                    if killSessions, let zmx = ZmxRunner.locate() {
-                        let sessions = ZmxRunner.listZettySessions(zmxPath: zmx)
-                        ZmxRunner.killAndWait(sessions: sessions, zmxPath: zmx)
-                    }
-                    DispatchQueue.main.async { NSApp.terminate(nil) }
+                // Respond first; the shared helper performs any kill-wait
+                // off-main, then terminates without displaying a GUI prompt.
+                DispatchQueue.main.async {
+                    self.requestApplicationTermination(killingSessions: killSessions)
                 }
                 return .ok
             case .cloneProject(let project, let name, let focus):
@@ -1470,13 +1506,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         reloadConfig.target = self
         appMenu.addItem(reloadConfig)
         appMenu.addItem(.separator())
-        appMenu.addItem(
-            NSMenuItem(
-                title: "Quit Zetty",
-                action: #selector(NSApplication.terminate(_:)),
-                keyEquivalent: "q"
-            )
+        let shutDownItem = NSMenuItem(
+            title: "Shut Down Zetty\u{2026}",
+            action: #selector(shutDownApplication(_:)),
+            keyEquivalent: ""
         )
+        shutDownItem.target = self
+        appMenu.addItem(shutDownItem)
+
+        let quitItem = NSMenuItem(
+            title: "Quit Zetty",
+            action: #selector(quitApplication(_:)),
+            keyEquivalent: "q"
+        )
+        quitItem.keyEquivalentModifierMask = [.command]
+        quitItem.target = self
+        appMenu.addItem(quitItem)
 
         // ── Shell menu ────────────────────────────────────────────────────────
         let shellMenuItem = NSMenuItem()

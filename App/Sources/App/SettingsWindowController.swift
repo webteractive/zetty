@@ -207,7 +207,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         stack.addArrangedSubview(sectionHeader("Behavior"))
         confirmQuitSwitch.target = self
         confirmQuitSwitch.action = #selector(confirmQuitToggled(_:))
-        addFullWidth(switchRow("Confirm before quitting", control: confirmQuitSwitch), to: stack)
+        addFullWidth(switchRow("Confirm before closing the main window", control: confirmQuitSwitch), to: stack)
 
         stack.addArrangedSubview(spacer())
         stack.addArrangedSubview(sectionHeader("Command Line"))
