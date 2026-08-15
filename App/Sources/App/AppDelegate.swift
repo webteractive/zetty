@@ -1078,6 +1078,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
 
     // (UNUserNotificationCenterDelegate conformance in the extension below.)
 
+    /// App menu Close / ⌘H: use the exact retained-window handoff owned by
+    /// `windowShouldClose`, matching the main window's red close button.
+    @objc private func closeApplication(_ sender: Any?) {
+        window?.performClose(sender)
+    }
+
     /// App menu Quit / ⌘Q: explicit intent to close the app while leaving
     /// preserved zmx sessions available for the next launch.
     @objc private func quitApplication(_ sender: Any?) {
@@ -1623,13 +1629,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         reloadConfig.target = self
         appMenu.addItem(reloadConfig)
         appMenu.addItem(.separator())
-        let shutDownItem = NSMenuItem(
-            title: "Shut Down Zetty\u{2026}",
-            action: #selector(shutDownApplication(_:)),
-            keyEquivalent: ""
+
+        let closeItem = NSMenuItem(
+            title: "Close Zetty",
+            action: #selector(closeApplication(_:)),
+            keyEquivalent: "h"
         )
-        shutDownItem.target = self
-        appMenu.addItem(shutDownItem)
+        closeItem.keyEquivalentModifierMask = [.command]
+        closeItem.target = self
+        appMenu.addItem(closeItem)
 
         let quitItem = NSMenuItem(
             title: "Quit Zetty",
@@ -1639,6 +1647,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         quitItem.keyEquivalentModifierMask = [.command]
         quitItem.target = self
         appMenu.addItem(quitItem)
+
+        let shutDownItem = NSMenuItem(
+            title: "Shutdown Zetty",
+            action: #selector(shutDownApplication(_:)),
+            keyEquivalent: ""
+        )
+        shutDownItem.target = self
+        appMenu.addItem(shutDownItem)
 
         // ── Shell menu ────────────────────────────────────────────────────────
         let shellMenuItem = NSMenuItem()

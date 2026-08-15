@@ -300,6 +300,7 @@ Command Line** and click install — this symlinks `zetty` into
 | `⌘↓` | Scroll the focused pane back to the live tail |
 | `⌘O` (or `⇧⌘N`) | Add project (create or pick a folder) |
 | `⌃⌘N` | New scratch terminal |
+| `⌘H` | Close Zetty to the menu bar (same as the red window button) |
 | `⌘,` | Settings |
 | `⌥⌘,` | Project Settings (active project) |
 | `⇧⌘,` | Reload configuration |
@@ -314,8 +315,9 @@ Closing the main window keeps Zetty and its terminals running behind a **Z**
 in the macOS menu bar and hides its Dock icon until the window is restored. The
 status menu lists every awake project, with nested tab choices for projects that
 have multiple tabs. Agent status dots mirror the sidebar: green means running,
-yellow needs attention, and dim gray is idle. **Quit Zetty** and **Shut Down
-Zetty…** remain available from the regular Zetty application menu.
+yellow needs attention, and dim gray is idle. **Close Zetty**, **Quit Zetty**,
+and **Shutdown Zetty** are available in that order from the regular Zetty
+application menu.
 
 ### Keybindings (prefix layer)
 
