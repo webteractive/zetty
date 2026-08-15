@@ -9,7 +9,7 @@ identity mark.
 ## Status item
 
 The status item remains square and appears only while the main window is hidden.
-Its button uses a centered, semibold uppercase `Z` instead of the
+Its button uses a centered, bold uppercase `Z` instead of the
 `terminal.fill` SF Symbol. Native menu-bar text automatically follows the current
 macOS appearance. The tooltip and accessibility description remain `Zetty`.
 
