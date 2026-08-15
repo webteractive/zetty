@@ -6,6 +6,7 @@ import ZettyGhostty
 struct MenuBarTabSnapshot {
     let index: Int
     let title: String
+    let status: AgentStatus?
     let isActive: Bool
 }
 
@@ -13,6 +14,7 @@ struct MenuBarProjectSnapshot {
     let id: UUID
     let title: String
     let tabs: [MenuBarTabSnapshot]
+    let status: AgentStatus?
     let isActive: Bool
 }
 
@@ -2664,20 +2666,28 @@ final class TerminalViewController: NSViewController {
     /// demand because the control CLI can change projects and tabs while the
     /// main window is hidden.
     func menuBarSnapshot() -> [MenuBarProjectSnapshot] {
-        workspace.projects.enumerated().compactMap { projectIndex, project in
+        workspace.projects.enumerated().compactMap { projectIndex, project -> MenuBarProjectSnapshot? in
             guard !project.isHibernated else { return nil }
             let isActiveProject = projectIndex == workspace.activeIndex
             let tabs = project.tabList.trees.enumerated().map { tabIndex, tree in
-                MenuBarTabSnapshot(
+                let status = tree.focusedSurface.flatMap {
+                    agentDetector.state(for: $0.id).status
+                }
+                return MenuBarTabSnapshot(
                     index: tabIndex,
                     title: tabDisplayTitle(for: tree, at: tabIndex),
+                    status: status,
                     isActive: isActiveProject && tabIndex == project.tabList.activeIndex
                 )
+            }
+            let status = tabs.compactMap(\.status).max {
+                Self.severity($0) < Self.severity($1)
             }
             return MenuBarProjectSnapshot(
                 id: project.id,
                 title: project.name,
                 tabs: tabs,
+                status: status,
                 isActive: isActiveProject
             )
         }

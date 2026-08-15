@@ -1123,6 +1123,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     func windowShouldClose(_ sender: NSWindow) -> Bool {
         sender.orderOut(nil)
         installStatusItem()
+        _ = NSApp.setActivationPolicy(.accessory)
         DispatchQueue.main.async { NSApp.hide(nil) }
         return false
     }
@@ -1460,11 +1461,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     private func installStatusItem() {
         guard statusItem == nil else { return }
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
-        if let image = NSImage(systemSymbolName: "terminal.fill", accessibilityDescription: "Zetty") {
-            image.isTemplate = true
-            item.button?.image = image
+        if let button = item.button {
+            button.title = "Z"
+            button.font = NSFont.systemFont(ofSize: NSFont.systemFontSize, weight: .bold)
+            button.toolTip = "Zetty"
+            button.setAccessibilityLabel("Zetty")
         }
-        item.button?.toolTip = "Zetty"
         let menu = NSMenu()
         menu.delegate = self
         item.menu = menu
@@ -1478,6 +1480,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     }
 
     private func showMainWindow() {
+        _ = NSApp.setActivationPolicy(.regular)
         NSApp.unhide(nil)
         window?.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
@@ -1508,7 +1511,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
                     let item = statusMenuItem(
                         title: project.title,
                         projectID: project.id,
-                        tabIndex: tab.index
+                        tabIndex: tab.index,
+                        status: tab.status
                     )
                     item.state = project.isActive ? .on : .off
                     menu.addItem(item)
@@ -1516,13 +1520,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
                 }
 
                 let projectItem = NSMenuItem(title: project.title, action: nil, keyEquivalent: "")
+                applyStatus(project.status, title: project.title, to: projectItem)
                 projectItem.state = project.isActive ? .on : .off
                 let submenu = NSMenu(title: project.title)
                 for tab in project.tabs {
                     let item = statusMenuItem(
                         title: tab.title,
                         projectID: project.id,
-                        tabIndex: tab.index
+                        tabIndex: tab.index,
+                        status: tab.status
                     )
                     item.state = tab.isActive ? .on : .off
                     submenu.addItem(item)
@@ -1531,29 +1537,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
                 menu.addItem(projectItem)
             }
         }
-
-        menu.addItem(.separator())
-        let quitItem = NSMenuItem(
-            title: "Quit Zetty",
-            action: #selector(quitApplication(_:)),
-            keyEquivalent: ""
-        )
-        quitItem.target = self
-        menu.addItem(quitItem)
-
-        let shutDownItem = NSMenuItem(
-            title: "Shut Down Zetty\u{2026}",
-            action: #selector(shutDownApplication(_:)),
-            keyEquivalent: ""
-        )
-        shutDownItem.target = self
-        menu.addItem(shutDownItem)
     }
 
     private func statusMenuItem(
         title: String,
         projectID: UUID,
-        tabIndex: Int?
+        tabIndex: Int?,
+        status: AgentStatus?
     ) -> NSMenuItem {
         let item = NSMenuItem(
             title: title,
@@ -1562,7 +1552,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         )
         item.target = self
         item.representedObject = StatusMenuDestination(projectID: projectID, tabIndex: tabIndex)
+        applyStatus(status, title: title, to: item)
         return item
+    }
+
+    private func applyStatus(_ status: AgentStatus?, title: String, to item: NSMenuItem) {
+        guard let status, let color = agentStatusColor(status) else { return }
+        let attributedTitle = NSMutableAttributedString(
+            string: "● ",
+            attributes: [.foregroundColor: color]
+        )
+        attributedTitle.append(NSAttributedString(string: title))
+        item.attributedTitle = attributedTitle
+
+        let accessibleTitle = "\(title), \(status.statusMenuDescription)"
+        item.toolTip = accessibleTitle
+        item.setAccessibilityLabel(accessibleTitle)
     }
 
     @objc private func showZettyFromStatusMenu(_ sender: Any?) {
@@ -1938,6 +1943,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         }
 
         NSApp.mainMenu = mainMenu
+    }
+}
+
+private extension AgentStatus {
+    var statusMenuDescription: String {
+        switch self {
+        case .running: return "running"
+        case .needsAttention: return "needs attention"
+        case .idle: return "idle"
+        }
     }
 }
 

@@ -310,11 +310,12 @@ Command Line** and click install — this symlinks `zetty` into
 Everything above is also reachable from the menu bar and the command
 palette (`⌘K`).
 
-Closing the main window keeps Zetty and its terminals running in the macOS
-menu bar. The status menu lists every awake project, with nested tab choices
-for projects that have multiple tabs. **Quit Zetty** exits while preserving
-eligible sessions; **Shut Down Zetty…** confirms before ending all services
-and sessions.
+Closing the main window keeps Zetty and its terminals running behind a **Z**
+in the macOS menu bar and hides its Dock icon until the window is restored. The
+status menu lists every awake project, with nested tab choices for projects that
+have multiple tabs. Agent status dots mirror the sidebar: green means running,
+yellow needs attention, and dim gray is idle. **Quit Zetty** and **Shut Down
+Zetty…** remain available from the regular Zetty application menu.
 
 ### Keybindings (prefix layer)
 
