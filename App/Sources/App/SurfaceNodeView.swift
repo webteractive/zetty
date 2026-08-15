@@ -2,6 +2,18 @@ import AppKit
 import ZettyCore
 import ZettyGhostty
 
+/// Surface-addressed actions exposed by each pane's gutter.
+///
+/// Bundled into one value so the recursive `SurfaceNodeView` → `RatioSplitView`
+/// builder does not gain another positional callback for every new action.
+@MainActor
+struct PaneActionWiring {
+    let onClose: (UUID) -> Void
+    let onBreak: (UUID) -> Void
+    let onSplit: (UUID, SplitDirection) -> Void
+    let onScrollToBottom: (UUID) -> Void
+}
+
 // MARK: - SurfaceNodeView
 
 /// Recursively renders a `SurfaceNode` tree as nested `NSSplitView`s.
@@ -40,9 +52,7 @@ final class SurfaceNodeView: NSView {
         registry: SurfaceRegistry,
         focusedSurfaceID: UUID?,
         showsClose: Bool = false,
-        onClose: ((UUID) -> Void)? = nil,
-        onBreak: ((UUID) -> Void)? = nil,
-        onSplit: ((UUID, SplitDirection) -> Void)? = nil,
+        paneActions: PaneActionWiring? = nil,
         nodePath: [SplitBranch] = [],
         onRatioChange: (([SplitBranch], Double) -> Void)? = nil,
         fileTree: FileTreeWiring? = nil
@@ -54,9 +64,7 @@ final class SurfaceNodeView: NSView {
             registry: registry,
             focusedSurfaceID: focusedSurfaceID,
             showsClose: showsClose,
-            onClose: onClose,
-            onBreak: onBreak,
-            onSplit: onSplit,
+            paneActions: paneActions,
             nodePath: nodePath,
             onRatioChange: onRatioChange,
             fileTree: fileTree
@@ -107,9 +115,7 @@ final class SurfaceNodeView: NSView {
         registry: SurfaceRegistry,
         focusedSurfaceID: UUID?,
         showsClose: Bool,
-        onClose: ((UUID) -> Void)?,
-        onBreak: ((UUID) -> Void)?,
-        onSplit: ((UUID, SplitDirection) -> Void)?,
+        paneActions: PaneActionWiring?,
         nodePath: [SplitBranch],
         onRatioChange: (([SplitBranch], Double) -> Void)?,
         fileTree: FileTreeWiring?
@@ -127,9 +133,7 @@ final class SurfaceNodeView: NSView {
                 fileTreeWidth: surface.fileTreeWidth
                     ?? fileTree?.settings().width ?? FileTreeSettings.defaultWidth,
                 fileTree: fileTree,
-                onClose: onClose,
-                onBreak: onBreak,
-                onSplit: onSplit
+                paneActions: paneActions
             )
             container.translatesAutoresizingMaskIntoConstraints = false
             addSubview(container)
@@ -149,9 +153,7 @@ final class SurfaceNodeView: NSView {
                 registry: registry,
                 focusedSurfaceID: focusedSurfaceID,
                 showsClose: showsClose,
-                onClose: onClose,
-                onBreak: onBreak,
-                onSplit: onSplit,
+                paneActions: paneActions,
                 nodePath: nodePath,
                 onRatioChange: onRatioChange,
                 fileTree: fileTree
@@ -191,9 +193,7 @@ final class LeafContainerView: NSView {
 
     let surfaceID: UUID
     private var isFocused: Bool
-    private var onClose: ((UUID) -> Void)?
-    private var onBreak: ((UUID) -> Void)?
-    private var onSplit: ((UUID, SplitDirection) -> Void)?
+    private var paneActions: PaneActionWiring?
     private var statusDot: NSView?
 
     private var fileTreeWiring: FileTreeWiring?
@@ -209,15 +209,11 @@ final class LeafContainerView: NSView {
         showsFileTree: Bool = false,
         fileTreeWidth: Double = FileTreeSettings.defaultWidth,
         fileTree: FileTreeWiring? = nil,
-        onClose: ((UUID) -> Void)?,
-        onBreak: ((UUID) -> Void)? = nil,
-        onSplit: ((UUID, SplitDirection) -> Void)? = nil
+        paneActions: PaneActionWiring? = nil
     ) {
         self.surfaceID = surfaceID
         self.isFocused = isFocused
-        self.onClose = onClose
-        self.onBreak = onBreak
-        self.onSplit = onSplit
+        self.paneActions = paneActions
         self.fileTreeWiring = fileTree
         super.init(frame: .zero)
         wantsLayer = true
@@ -362,8 +358,9 @@ final class LeafContainerView: NSView {
     }
 
     /// Lays the gutter actions out right-to-left from the trailing edge:
-    /// split-vertical · split-horizontal · break · close. The split pair is
-    /// always available; break and × only when the pane is closable.
+    /// scroll-to-bottom · split-vertical · split-horizontal · break · close.
+    /// Scroll and the split pair are always available; break and × only when
+    /// the pane is closable.
     private func addGutterButtons(showsClose: Bool, showsFileTree: Bool) {
         let stack = NSStackView()
         stack.orientation = .horizontal
@@ -382,6 +379,11 @@ final class LeafContainerView: NSView {
                 action: #selector(toggleFileTreeTapped)
             ))
         }
+
+        stack.addArrangedSubview(makeGutterButton(
+            symbol: "arrow.down.to.line", fallback: "↓",
+            toolTip: "Scroll to bottom", action: #selector(scrollToBottomTapped)
+        ))
 
         // "2x1" = two columns (a vertical divider), "1x2" = two rows.
         stack.addArrangedSubview(makeGutterButton(
@@ -433,19 +435,23 @@ final class LeafContainerView: NSView {
     }
 
     @objc private func closeButtonTapped() {
-        onClose?(surfaceID)
+        paneActions?.onClose(surfaceID)
     }
 
     @objc private func breakButtonTapped() {
-        onBreak?(surfaceID)
+        paneActions?.onBreak(surfaceID)
     }
 
     @objc private func splitVerticalTapped() {
-        onSplit?(surfaceID, .vertical)
+        paneActions?.onSplit(surfaceID, .vertical)
     }
 
     @objc private func splitHorizontalTapped() {
-        onSplit?(surfaceID, .horizontal)
+        paneActions?.onSplit(surfaceID, .horizontal)
+    }
+
+    @objc private func scrollToBottomTapped() {
+        paneActions?.onScrollToBottom(surfaceID)
     }
 
     @objc private func toggleFileTreeTapped() {
@@ -462,6 +468,8 @@ final class LeafContainerView: NSView {
                                       #selector(toggleFileTreeTapped)))
             menu.addItem(.separator())
         }
+        menu.addItem(makeMenuItem("Scroll to Bottom", #selector(scrollToBottomTapped)))
+        menu.addItem(.separator())
         menu.addItem(makeMenuItem("Split Vertically", #selector(splitVerticalTapped)))
         menu.addItem(makeMenuItem("Split Horizontally", #selector(splitHorizontalTapped)))
         guard showsClose else { return menu }
@@ -508,9 +516,7 @@ private final class RatioSplitView: NSSplitView, NSSplitViewDelegate {
         registry: SurfaceRegistry,
         focusedSurfaceID: UUID?,
         showsClose: Bool = false,
-        onClose: ((UUID) -> Void)? = nil,
-        onBreak: ((UUID) -> Void)? = nil,
-        onSplit: ((UUID, SplitDirection) -> Void)? = nil,
+        paneActions: PaneActionWiring? = nil,
         nodePath: [SplitBranch] = [],
         onRatioChange: (([SplitBranch], Double) -> Void)? = nil,
         fileTree: FileTreeWiring? = nil
@@ -529,9 +535,7 @@ private final class RatioSplitView: NSSplitView, NSSplitViewDelegate {
             registry: registry,
             focusedSurfaceID: focusedSurfaceID,
             showsClose: showsClose,
-            onClose: onClose,
-            onBreak: onBreak,
-            onSplit: onSplit,
+            paneActions: paneActions,
             nodePath: nodePath + [.first],
             onRatioChange: onRatioChange,
             fileTree: fileTree
@@ -541,9 +545,7 @@ private final class RatioSplitView: NSSplitView, NSSplitViewDelegate {
             registry: registry,
             focusedSurfaceID: focusedSurfaceID,
             showsClose: showsClose,
-            onClose: onClose,
-            onBreak: onBreak,
-            onSplit: onSplit,
+            paneActions: paneActions,
             nodePath: nodePath + [.second],
             onRatioChange: onRatioChange,
             fileTree: fileTree

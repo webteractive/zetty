@@ -3679,11 +3679,14 @@ final class TerminalViewController: NSViewController {
             registry: registry,
             focusedSurfaceID: paneTree.focusedSurfaceID,
             showsClose: showsClose,
-            onClose: { [weak self] id in self?.closePane(surfaceID: id) },
-            onBreak: { [weak self] id in self?.breakPane(surfaceID: id) },
-            onSplit: { [weak self] id, direction in
-                self?.splitPane(surfaceID: id, direction: direction)
-            },
+            paneActions: PaneActionWiring(
+                onClose: { [weak self] id in self?.closePane(surfaceID: id) },
+                onBreak: { [weak self] id in self?.breakPane(surfaceID: id) },
+                onSplit: { [weak self] id, direction in
+                    self?.splitPane(surfaceID: id, direction: direction)
+                },
+                onScrollToBottom: { [weak self] id in self?.scrollToBottom(surfaceID: id) }
+            ),
             onRatioChange: { [weak self] path, ratio in
                 // Write the dragged divider position back to the model (no
                 // rebuild — the view already shows it) and autosave.
@@ -3754,8 +3757,15 @@ final class TerminalViewController: NSViewController {
     /// own `scroll_to_bottom` — the same action copy mode calls on exit — so the
     /// viewport rejoins the tail exactly as it does there.
     @objc func scrollToBottom(_ sender: Any?) {
-        guard let id = paneTree.focusedSurfaceID,
-              let view = registry.appTerminalView(for: id) else { return }
+        guard let id = paneTree.focusedSurfaceID else { return }
+        scrollToBottom(surfaceID: id)
+    }
+
+    /// Surface-addressed variant used by a pane's gutter. Deliberately avoids
+    /// changing the first responder, so scrolling an unfocused pane does not
+    /// move keyboard focus away from the pane where the user is typing.
+    private func scrollToBottom(surfaceID: UUID) {
+        guard let view = registry.appTerminalView(for: surfaceID) else { return }
         view.performBindingAction("scroll_to_bottom")
     }
 

@@ -29,9 +29,10 @@ by the tool it's running.
   instead — so a project with many tabs never forces the window wider than you
   want it, and the active tab is always scrolled into view.
 - **Pane gutter buttons** — every pane carries a thin top strip with a focus
-  dot and click targets for **split vertically** and **split horizontally**;
-  panes in a multi-pane tab additionally get **break into tab** and **close**.
-  Right-clicking the strip opens the same actions as a menu.
+  dot and click targets for **scroll to bottom**, **split vertically**, and
+  **split horizontally**; panes in a multi-pane tab additionally get **break
+  into tab** and **close**. Right-clicking the strip opens the same actions as
+  a menu.
 - **Project clones** — right-click a project → **Clone Project…** (or the
   command palette / `zetty clone`) to fork it into an instant APFS
   copy-on-write copy under `~/.zetty/clones/<project>-<name>` — every

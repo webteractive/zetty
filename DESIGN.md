@@ -178,10 +178,11 @@ are authoritative.
   place** when only content changed — see the chrome-refresh rules in CLAUDE.md.
 - **Pane** — `bg1`, 8pt radius, **borderless**. Focus is shown by an accent
   status dot in the 24pt top gutter strip (dim `fg3` when unfocused), which
-  also carries click targets for split vertically / split horizontally and, in a
-  multi-pane tab, break-into-tab and close. Right-clicking the strip opens the
-  same actions as a menu. *(A pane header with name/subtitle and a `RUNNING`
-  badge appeared in the original handoff and is still unbuilt.)*
+  also carries click targets for scroll to bottom / split vertically / split
+  horizontally and, in a multi-pane tab, break-into-tab and close.
+  Right-clicking the strip opens the same actions as a menu. *(A pane header
+  with name/subtitle and a `RUNNING` badge appeared in the original handoff and
+  is still unbuilt.)*
 - **Clone warning banner** (26pt) — a persistent yellow-accent caution strip
   below the tab bar whenever the active project is a clone, reminding that the
   copy is disposable. It becomes the content's top guide, so it sits above both
