@@ -17,8 +17,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     private let editorPopup = NSPopUpButton()
     private var editorApps: [URL] = []
 
-    // Behavior section controls.
-    private let confirmQuitSwitch = NSSwitch()
+    // Notification controls.
     private let notifySoundSwitch = NSSwitch()
     private let notifyBadgeSwitch = NSSwitch()
     private let notifySystemSwitch = NSSwitch()
@@ -178,7 +177,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
 
     // MARK: Tabs
 
-    /// General: config file + editor, quit behavior, CLI install.
+    /// General: config file + editor and CLI install.
     private func buildGeneralTab() -> NSView {
         let stack = sectionStack()
 
@@ -202,12 +201,6 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         editorRow.spacing = 8
         stack.addArrangedSubview(editorRow)
         populateEditorPopup()
-
-        stack.addArrangedSubview(spacer())
-        stack.addArrangedSubview(sectionHeader("Behavior"))
-        confirmQuitSwitch.target = self
-        confirmQuitSwitch.action = #selector(confirmQuitToggled(_:))
-        addFullWidth(switchRow("Confirm before closing the main window", control: confirmQuitSwitch), to: stack)
 
         stack.addArrangedSubview(spacer())
         stack.addArrangedSubview(sectionHeader("Command Line"))
@@ -645,7 +638,6 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     private func refreshSessions() {
         let config = ConfigStore(fileURL: configURL).load()
         preserveSwitch.state = config.preserveSessions ? .on : .off
-        confirmQuitSwitch.state = config.confirmQuit ? .on : .off
         notifySoundSwitch.state = config.notifySound ? .on : .off
         notifyBadgeSwitch.state = config.notifyBadge ? .on : .off
         notifySystemSwitch.state = config.notifySystem ? .on : .off
@@ -747,15 +739,6 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     @objc private func installCLI(_ sender: Any?) {
         CLILink.install()
         refreshCLI()
-    }
-
-    // MARK: - Behavior
-
-    @objc private func confirmQuitToggled(_ sender: NSSwitch) {
-        let store = ConfigStore(fileURL: configURL)
-        var config = store.load()
-        config.confirmQuit = sender.state == .on
-        store.save(config)
     }
 
     @objc private func notifySoundToggled(_ sender: NSSwitch) {

@@ -3,6 +3,19 @@ import GhosttyTerminal
 import ZettyCore
 import ZettyGhostty
 
+struct MenuBarTabSnapshot {
+    let index: Int
+    let title: String
+    let isActive: Bool
+}
+
+struct MenuBarProjectSnapshot {
+    let id: UUID
+    let title: String
+    let tabs: [MenuBarTabSnapshot]
+    let isActive: Bool
+}
+
 // MARK: - TerminalViewController
 
 /// Hosts a recursive split-pane terminal layout driven by a `PaneTree`,
@@ -671,18 +684,7 @@ final class TerminalViewController: NSViewController {
         sidebar.onShowBellMenu = { [weak self] anchor in self?.showAttentionMenu(from: anchor) }
         sidebar.onOpenSettings = { [weak self] in self?.onOpenSettings?() }
         sidebar.onSelectTab = { [weak self] projectIndex, tabIndex in
-            guard let self, self.workspace.projects.indices.contains(projectIndex) else { return }
-            self.workspace.select(index: projectIndex)
-            // Same activation hook as selectProject(at:) — a tab click can
-            // switch projects too (per-project theme must follow).
-            self.onActiveProjectChanged?()
-            self.workspace.activeTabList.select(index: tabIndex)
-            self.refreshTabBar()
-            self.rebuildSurfaceNodeView()
-            self.refreshSidebar()
-            if let focused = self.focusedTerminalView() {
-                self.view.window?.makeFirstResponder(focused)
-            }
+            self?.selectProject(at: projectIndex, tabIndex: tabIndex)
         }
 
         sidebar.onMoveTab = { [weak self] projectIndex, from, to in
@@ -2643,6 +2645,44 @@ final class TerminalViewController: NSViewController {
         onWorkspaceDidChange?()
     }
 
+    /// Title shared by the tab bar, sidebar tab rows, and hidden-window menu.
+    private func tabDisplayTitle(for tree: PaneTree, at index: Int) -> String {
+        let focusedSurface = tree.focusedSurface
+        let workingDir = focusedSurface.flatMap { registry.workingDirectory(for: $0) }
+            ?? focusedSurface?.workingDir
+        let icon = agentIcon(for: focusedSurface)
+        return TabTitle.display(
+            manualTitle: tree.manualTitle,
+            agentName: icon == nil ? agentDisplayName(for: focusedSurface) : nil,
+            focusedSurfaceTitle: displayTitle(for: focusedSurface),
+            workingDir: workingDir,
+            index: index
+        )
+    }
+
+    /// Current awake workspace destinations for the menu-bar handoff. Built on
+    /// demand because the control CLI can change projects and tabs while the
+    /// main window is hidden.
+    func menuBarSnapshot() -> [MenuBarProjectSnapshot] {
+        workspace.projects.enumerated().compactMap { projectIndex, project in
+            guard !project.isHibernated else { return nil }
+            let isActiveProject = projectIndex == workspace.activeIndex
+            let tabs = project.tabList.trees.enumerated().map { tabIndex, tree in
+                MenuBarTabSnapshot(
+                    index: tabIndex,
+                    title: tabDisplayTitle(for: tree, at: tabIndex),
+                    isActive: isActiveProject && tabIndex == project.tabList.activeIndex
+                )
+            }
+            return MenuBarProjectSnapshot(
+                id: project.id,
+                title: project.name,
+                tabs: tabs,
+                isActive: isActiveProject
+            )
+        }
+    }
+
     /// Syncs the tab bar UI state with the active project's TabList.
     ///
     /// For each tab, computes its display title via `TabTitle.display` using:
@@ -2656,22 +2696,8 @@ final class TerminalViewController: NSViewController {
         var icons: [NSImage?] = []
         let titles: [String] = tabList.trees.indices.map { idx in
             let tree = tabList.trees[idx]
-            let focusedSurface = tree.focusedSurface
-            let surfaceTitle = displayTitle(for: focusedSurface)
-            let workingDir = focusedSurface.flatMap { registry.workingDirectory(for: $0) }
-                ?? focusedSurface?.workingDir
-            // A bundled logo replaces the name prefix; otherwise the name is
-            // woven into the text ("claude code: <emitted title>").
-            let icon = agentIcon(for: focusedSurface)
-            icons.append(icon)
-            let agentName = icon == nil ? agentDisplayName(for: focusedSurface) : nil
-            return TabTitle.display(
-                manualTitle: tree.manualTitle,
-                agentName: agentName,
-                focusedSurfaceTitle: surfaceTitle,
-                workingDir: workingDir,
-                index: idx
-            )
+            icons.append(agentIcon(for: tree.focusedSurface))
+            return tabDisplayTitle(for: tree, at: idx)
         }
         // Scratch terminals are disposable: every tab is closable (closing the
         // last one closes the scratch project), so always show the × there.
@@ -2698,21 +2724,10 @@ final class TerminalViewController: NSViewController {
             if trees.count >= 2 {
                 tabTitles = trees.indices.map { idx in
                     let tree = trees[idx]
-                    let focusedSurface = tree.focusedSurface
-                    let surfaceTitle = displayTitle(for: focusedSurface)
-                    let workingDir = focusedSurface.flatMap { registry.workingDirectory(for: $0) }
-                        ?? focusedSurface?.workingDir
                     // Same rule as the tab bar: a logo replaces the name prefix.
-                    let icon = agentIcon(for: focusedSurface)
+                    let icon = agentIcon(for: tree.focusedSurface)
                     tabIcons.append(icon)
-                    let agentName = icon == nil ? agentDisplayName(for: focusedSurface) : nil
-                    return TabTitle.display(
-                        manualTitle: tree.manualTitle,
-                        agentName: agentName,
-                        focusedSurfaceTitle: surfaceTitle,
-                        workingDir: workingDir,
-                        index: idx
-                    )
+                    return tabDisplayTitle(for: tree, at: idx)
                 }
                 tabStatuses = statuses
             } else {
@@ -3397,9 +3412,17 @@ final class TerminalViewController: NSViewController {
         registry.reapplyTerminalConfiguration(config)
     }
 
-    /// Switches to the project at `index` and focuses its active pane.
-    func selectProject(at index: Int) {
+    /// Switches to the project at `index`, optionally selects one of its tabs,
+    /// and focuses the resulting active pane.
+    @discardableResult
+    func selectProject(at index: Int, tabIndex: Int? = nil) -> Bool {
+        guard workspace.projects.indices.contains(index) else { return false }
+        if let tabIndex,
+           !workspace.projects[index].tabList.trees.indices.contains(tabIndex) {
+            return false
+        }
         workspace.select(index: index)
+        if let tabIndex { workspace.activeTabList.select(index: tabIndex) }
         // Stamp on activation, not just on the 60s tick: a project visited
         // between ticks would otherwise keep no timestamp at all, and
         // `idleFor` would read as 0 forever — so its surfaces would never
@@ -3414,6 +3437,16 @@ final class TerminalViewController: NSViewController {
         if let focused = focusedTerminalView() {
             view.window?.makeFirstResponder(focused)
         }
+        return true
+    }
+
+    /// Resolves a menu destination by stable project identity. If a CLI action
+    /// hibernated or removed it while the menu was open, the click is ignored.
+    @discardableResult
+    func selectAwakeProject(id: UUID, tabIndex: Int?) -> Bool {
+        guard let index = workspace.projects.firstIndex(where: { $0.id == id }),
+              !workspace.projects[index].isHibernated else { return false }
+        return selectProject(at: index, tabIndex: tabIndex)
     }
 
     // MARK: - Hibernation

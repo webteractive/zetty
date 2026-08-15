@@ -58,9 +58,6 @@ public struct AppConfig: Equatable, Sendable {
     /// full zmx scrollback history into the surface before attaching. Only
     /// meaningful when `preserveSessions` is on and zmx is installed.
     public var restoreScrollback: Bool
-    /// When true (default), closing the main window asks for confirmation first.
-    /// The explicit App menu Quit action always exits immediately.
-    public var confirmQuit: Bool
     /// Poll GitHub for newer releases and show an update pill (default true).
     /// Only gates automatic checks; the manual menu item always runs.
     public var checkUpdates: Bool
@@ -113,7 +110,8 @@ public struct AppConfig: Equatable, Sendable {
     /// still never reach ghostty. Add retired keys here rather than deleting
     /// their `case` outright.
     public static let retiredReservedKeys: Set<String> = [
-        "notify-poke",      // agent coordination board (feature branch)
+        "confirm-quit",   // red close now hands the app off to the menu bar
+        "notify-poke",    // agent coordination board (feature branch)
     ]
 
     /// True when `key` belongs to Zetty rather than ghostty, even though this
@@ -144,7 +142,6 @@ public struct AppConfig: Equatable, Sendable {
         editor: String? = nil,
         preserveSessions: Bool = false,
         restoreScrollback: Bool = true,
-        confirmQuit: Bool = true,
         checkUpdates: Bool = true,
         hibernateAfter: TimeInterval = 0,
         freeBackgroundPanesAfter: TimeInterval = 0,
@@ -165,7 +162,6 @@ public struct AppConfig: Equatable, Sendable {
         self.editor = editor
         self.preserveSessions = preserveSessions
         self.restoreScrollback = restoreScrollback
-        self.confirmQuit = confirmQuit
         self.checkUpdates = checkUpdates
         self.hibernateAfter = hibernateAfter
         self.freeBackgroundPanesAfter = freeBackgroundPanesAfter
@@ -237,8 +233,6 @@ public struct AppConfig: Equatable, Sendable {
                 config.preserveSessions = ["true", "yes", "on", "1"].contains(value.lowercased())
             case "restore-scrollback":
                 config.restoreScrollback = ["true", "yes", "on", "1"].contains(value.lowercased())
-            case "confirm-quit":
-                config.confirmQuit = ["true", "yes", "on", "1"].contains(value.lowercased())
             case "check-updates":
                 config.checkUpdates = ["true", "yes", "on", "1"].contains(value.lowercased())
             case "hibernate-after":
@@ -360,10 +354,6 @@ public struct AppConfig: Equatable, Sendable {
         # them (only meaningful with preserve-sessions = true).
         restore-scrollback = \(restoreScrollback)
 
-        # Ask for confirmation before closing the main window.
-        # The App menu Quit action always exits immediately.
-        confirm-quit = \(confirmQuit)
-
         # Check GitHub for newer Zetty releases and show an update pill.
         check-updates = \(checkUpdates)
 
@@ -460,10 +450,6 @@ public struct AppConfig: Equatable, Sendable {
     # Replay preserved panes' scrollback history when relaunch reattaches
     # them (only meaningful with preserve-sessions = true).
     restore-scrollback = true
-
-    # Ask for confirmation before closing the main window.
-    # The App menu Quit action always exits immediately.
-    confirm-quit = true
 
     # Agent needs-attention alerts: sound, Dock badge (attention-pane count),
     # and macOS Notification Center (fires only while Zetty is in background).

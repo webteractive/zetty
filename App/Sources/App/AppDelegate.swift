@@ -15,15 +15,27 @@ final class ZettyWindow: NSWindow {
     }
 }
 
+private final class StatusMenuDestination: NSObject {
+    let projectID: UUID
+    let tabIndex: Int?
+
+    init(projectID: UUID, tabIndex: Int?) {
+        self.projectID = projectID
+        self.tabIndex = tabIndex
+    }
+}
+
 // NOTE: no `@main` here. Tuist's default macOS Info.plist sets
 // NSMainStoryboardFile = "Main", and `@main` on an NSApplicationDelegate routes
 // through NSApplicationMain, which eagerly loads that (nonexistent) storyboard
 // and crashes before the delegate runs. We bootstrap NSApplication manually in
 // main.swift instead, which never consults the storyboard key.
-final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDelegate {
     private let defaultContentSize = NSSize(width: 1280, height: 800)
     private let minimumContentSize = NSSize(width: 600, height: 320)
     private var window: NSWindow?
+    /// Exists only while the retained main window is hidden.
+    private var statusItem: NSStatusItem?
 
     /// Strong reference to the terminal view controller so it survives until
     /// `applicationWillTerminate` (the window — and thus its contentViewController —
@@ -105,10 +117,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         // and make every pane's shell tree immune to SIGTERM.
         signal(SIGTERM) { _ in }
         let sigterm = DispatchSource.makeSignalSource(signal: SIGTERM, queue: .main)
-        sigterm.setEventHandler { [weak self] in
-            self?.skipQuitConfirmation = true
-            NSApp.terminate(nil)
-        }
+        sigterm.setEventHandler { NSApp.terminate(nil) }
         sigterm.resume()
         sigtermSource = sigterm
 
@@ -247,7 +256,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         window.titlebarAppearsTransparent = true
         window.contentMinSize = minimumContentSize
         window.contentViewController = tvc
-        window.delegate = self   // windowShouldClose: confirm-quit on the red x
+        window.delegate = self   // red x hands the retained window to the status item
         // We hold a strong reference in self.window; the AppKit default (true)
         // would over-release the window if it ever closes while the app lives.
         window.isReleasedWhenClosed = false
@@ -319,7 +328,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             return
         }
         terminalViewController?.openSSHSession(command: command)
-        NSApp.activate(ignoringOtherApps: true)
+        showMainWindow()
     }
 
     /// Drains ssh:// URLs that arrived before the workspace was ready.
@@ -1068,24 +1077,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
     }
 
-    /// Set once an explicit exit action has supplied all confirmation it needs.
-    /// The red window close path leaves this false until its own prompt succeeds.
-    private var skipQuitConfirmation = false
-
     // (UNUserNotificationCenterDelegate conformance in the extension below.)
-
-    /// Confirmation used by the main window's close button and direct system
-    /// termination requests. The explicit Quit menu action bypasses it.
-    private func confirmQuit() -> Bool {
-        let alert = NSAlert()
-        alert.messageText = "Quit Zetty?"
-        alert.informativeText = appConfig.preserveSessions
-            ? "Preserved sessions keep running and reattach on next launch."
-            : "Running processes in panes will be terminated."
-        alert.addButton(withTitle: "Quit")
-        alert.addButton(withTitle: "Cancel")
-        return alert.runModal() == .alertFirstButtonReturn
-    }
 
     /// App menu Quit / ⌘Q: explicit intent to close the app while leaving
     /// preserved zmx sessions available for the next launch.
@@ -1112,7 +1104,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     /// and stops the control socket.
     private func requestApplicationTermination(killingSessions: Bool) {
         precondition(Thread.isMainThread)
-        skipQuitConfirmation = true
 
         guard killingSessions, let zmx = ZmxRunner.locate() else {
             NSApp.terminate(nil)
@@ -1126,30 +1117,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
     }
 
-    /// The main window's close button (red x). Confirmation must happen HERE,
-    /// while the window still exists: a dialog shown at terminate stage is too
-    /// late — Cancel would leave a running app with no window, and the alert
-    /// panel's own close re-fires last-window-closed, prompting again.
-    ///
-    /// Closing the main window always quits, explicitly — relying on
-    /// `applicationShouldTerminateAfterLastWindowClosed` strands the app
-    /// windowless whenever another window (Settings) is open, with no way to
-    /// bring the terminal back. The explicit terminate also keeps
-    /// `skipQuitConfirmation` from sticking across a close that never quit.
+    /// The main window's close button (red x) hides the retained window while
+    /// leaving every surface, service, and session alive. The status item is the
+    /// handoff back into the running workspace.
     func windowShouldClose(_ sender: NSWindow) -> Bool {
-        if appConfig.confirmQuit, !skipQuitConfirmation {
-            guard confirmQuit() else { return false }
-            skipQuitConfirmation = true   // don't re-prompt in applicationShouldTerminate
-        }
-        DispatchQueue.main.async { NSApp.terminate(nil) }
-        return true
+        sender.orderOut(nil)
+        installStatusItem()
+        DispatchQueue.main.async { NSApp.hide(nil) }
+        return false
     }
 
-    /// Fallback for direct AppKit/system termination requests. App menu Quit and
-    /// Shut Down authorize themselves before reaching this delegate callback.
-    func applicationShouldTerminate(_: NSApplication) -> NSApplication.TerminateReply {
-        guard appConfig.confirmQuit, !skipQuitConfirmation else { return .terminateNow }
-        return confirmQuit() ? .terminateNow : .terminateCancel
+    func windowDidBecomeKey(_ notification: Notification) {
+        guard let mainWindow = window,
+              notification.object as? NSWindow === mainWindow else { return }
+        removeStatusItem()
+    }
+
+    func applicationShouldHandleReopen(
+        _: NSApplication,
+        hasVisibleWindows _: Bool
+    ) -> Bool {
+        showMainWindow()
+        return true
     }
 
     func applicationWillTerminate(_: Notification) {
@@ -1452,7 +1441,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_: NSApplication) -> Bool {
-        true
+        false
     }
 
     private func repairRestoredWindowSizeIfNeeded(_ window: NSWindow) {
@@ -1466,7 +1455,131 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
     }
 
-    // MARK: - Menu bar
+    // MARK: - Hidden-window status menu
+
+    private func installStatusItem() {
+        guard statusItem == nil else { return }
+        let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
+        if let image = NSImage(systemSymbolName: "terminal.fill", accessibilityDescription: "Zetty") {
+            image.isTemplate = true
+            item.button?.image = image
+        }
+        item.button?.toolTip = "Zetty"
+        let menu = NSMenu()
+        menu.delegate = self
+        item.menu = menu
+        statusItem = item
+    }
+
+    private func removeStatusItem() {
+        guard let item = statusItem else { return }
+        NSStatusBar.system.removeStatusItem(item)
+        statusItem = nil
+    }
+
+    private func showMainWindow() {
+        NSApp.unhide(nil)
+        window?.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
+        removeStatusItem()
+    }
+
+    func menuNeedsUpdate(_ menu: NSMenu) {
+        guard let statusMenu = statusItem?.menu, menu === statusMenu else { return }
+        rebuildStatusMenu(menu)
+    }
+
+    private func rebuildStatusMenu(_ menu: NSMenu) {
+        menu.removeAllItems()
+
+        let showItem = NSMenuItem(
+            title: "Show Zetty",
+            action: #selector(showZettyFromStatusMenu(_:)),
+            keyEquivalent: ""
+        )
+        showItem.target = self
+        menu.addItem(showItem)
+
+        let projects = terminalViewController?.menuBarSnapshot() ?? []
+        if !projects.isEmpty {
+            menu.addItem(.separator())
+            for project in projects {
+                if project.tabs.count == 1, let tab = project.tabs.first {
+                    let item = statusMenuItem(
+                        title: project.title,
+                        projectID: project.id,
+                        tabIndex: tab.index
+                    )
+                    item.state = project.isActive ? .on : .off
+                    menu.addItem(item)
+                    continue
+                }
+
+                let projectItem = NSMenuItem(title: project.title, action: nil, keyEquivalent: "")
+                projectItem.state = project.isActive ? .on : .off
+                let submenu = NSMenu(title: project.title)
+                for tab in project.tabs {
+                    let item = statusMenuItem(
+                        title: tab.title,
+                        projectID: project.id,
+                        tabIndex: tab.index
+                    )
+                    item.state = tab.isActive ? .on : .off
+                    submenu.addItem(item)
+                }
+                projectItem.submenu = submenu
+                menu.addItem(projectItem)
+            }
+        }
+
+        menu.addItem(.separator())
+        let quitItem = NSMenuItem(
+            title: "Quit Zetty",
+            action: #selector(quitApplication(_:)),
+            keyEquivalent: ""
+        )
+        quitItem.target = self
+        menu.addItem(quitItem)
+
+        let shutDownItem = NSMenuItem(
+            title: "Shut Down Zetty\u{2026}",
+            action: #selector(shutDownApplication(_:)),
+            keyEquivalent: ""
+        )
+        shutDownItem.target = self
+        menu.addItem(shutDownItem)
+    }
+
+    private func statusMenuItem(
+        title: String,
+        projectID: UUID,
+        tabIndex: Int?
+    ) -> NSMenuItem {
+        let item = NSMenuItem(
+            title: title,
+            action: #selector(selectStatusMenuDestination(_:)),
+            keyEquivalent: ""
+        )
+        item.target = self
+        item.representedObject = StatusMenuDestination(projectID: projectID, tabIndex: tabIndex)
+        return item
+    }
+
+    @objc private func showZettyFromStatusMenu(_ sender: Any?) {
+        showMainWindow()
+    }
+
+    @objc private func selectStatusMenuDestination(_ sender: NSMenuItem) {
+        if let destination = sender.representedObject as? StatusMenuDestination {
+            _ = terminalViewController?.selectAwakeProject(
+                id: destination.projectID,
+                tabIndex: destination.tabIndex
+            )
+        }
+        showMainWindow()
+    }
+
+    // MARK: - Application menu bar
 
     /// Builds the full menu bar programmatically.
     ///
@@ -1839,7 +1952,7 @@ extension AppDelegate: UNUserNotificationCenterDelegate {
     ) {
         if let pane = response.notification.request.content.userInfo["pane"] as? String {
             DispatchQueue.main.async { [weak self] in
-                NSApp.activate(ignoringOtherApps: true)
+                self?.showMainWindow()
                 _ = self?.terminalViewController?.focusPane(target: .pane(pane))
             }
         }

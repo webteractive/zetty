@@ -310,6 +310,12 @@ Command Line** and click install — this symlinks `zetty` into
 Everything above is also reachable from the menu bar and the command
 palette (`⌘K`).
 
+Closing the main window keeps Zetty and its terminals running in the macOS
+menu bar. The status menu lists every awake project, with nested tab choices
+for projects that have multiple tabs. **Quit Zetty** exits while preserving
+eligible sessions; **Shut Down Zetty…** confirms before ending all services
+and sessions.
+
 ### Keybindings (prefix layer)
 
 Press `Ctrl+B` (the prefix, configurable), then:
@@ -368,7 +374,6 @@ seeds a documented starter file on first launch. Format is plain
 | `sidebar-position` | `left` | Window side for the project sidebar |
 | `preserve-sessions` | `false` | Keep panes alive across quit/relaunch (requires zmx) |
 | `restore-scrollback` | `true` | Replay preserved panes' scrollback history on relaunch (with `preserve-sessions`) |
-| `confirm-quit` | `true` | Ask before closing the main window; App menu Quit is immediate |
 | `check-updates` | `true` | Notify when a newer Zetty release is available |
 | `notify-sound` / `notify-badge` / `notify-system` | `true` | Agent needs-attention alerts |
 | `editor` | — | App used by Settings → "Open in Editor" |

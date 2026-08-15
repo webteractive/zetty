@@ -92,17 +92,6 @@ private let idB = UUID(uuidString: "11111111-2222-3333-4444-555555555555")!
     #expect(orphans == ["zetty-deadbeef"])
 }
 
-@Test func configParsesConfirmQuit() {
-    #expect(AppConfig.parse("confirm-quit = false").confirmQuit == false)
-    #expect(AppConfig.parse("confirm-quit = true").confirmQuit == true)
-    #expect(AppConfig.parse("").confirmQuit == true)   // default on
-    // Reserved: must not leak into the ghostty passthrough.
-    #expect(AppConfig.parse("confirm-quit = false").ghostty.isEmpty)
-    // Round-trips through rendered().
-    let config = AppConfig(confirmQuit: false)
-    #expect(AppConfig.parse(config.rendered()) == config)
-}
-
 @Test func configParsesNotificationKeys() {
     #expect(AppConfig.parse("notify-sound = false").notifySound == false)
     #expect(AppConfig.parse("notify-badge = false").notifyBadge == false)

@@ -40,6 +40,13 @@ import Foundation
     }
 }
 
+@Test func confirmQuitIsRetiredAndDroppedOnRender() {
+    let config = AppConfig.parse("confirm-quit = false\nfont-size = 14")
+    #expect(config.ghostty.count == 1)
+    #expect(config.unsupportedKeys == ["confirm-quit"])
+    #expect(!config.rendered().contains("confirm-quit"))
+}
+
 /// Genuine ghostty directives must still pass through untouched — the whole
 /// point of the passthrough is pasting an existing ghostty config.
 @Test func realGhosttyDirectivesStillPassThrough() {
