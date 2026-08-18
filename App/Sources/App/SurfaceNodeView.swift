@@ -357,9 +357,11 @@ final class LeafContainerView: NSView {
     }
 
     /// Lays the gutter actions out right-to-left from the trailing edge:
-    /// scroll-to-bottom · split-vertical · split-horizontal · break · close.
-    /// Scroll and the split pair are always available; break and × only when
-    /// the pane is closable.
+    /// split-vertical · split-horizontal · break · close.
+    /// The split pair is always available; break and × only when the pane is
+    /// closable. Scroll-to-bottom is deliberately NOT here — its button did
+    /// nothing in panes running an agent CLI and the cause is unfound, so the
+    /// action stays on the pane's right-click menu and ⌘↓ until it's diagnosed.
     private func addGutterButtons(showsClose: Bool, showsFileTree: Bool) {
         let stack = NSStackView()
         stack.orientation = .horizontal
@@ -378,11 +380,6 @@ final class LeafContainerView: NSView {
                 action: #selector(toggleFileTreeTapped)
             ))
         }
-
-        stack.addArrangedSubview(makeGutterButton(
-            symbol: "arrow.down.to.line", fallback: "↓",
-            toolTip: "Scroll to bottom", action: #selector(scrollToBottomTapped)
-        ))
 
         // "2x1" = two columns (a vertical divider), "1x2" = two rows.
         stack.addArrangedSubview(makeGutterButton(
