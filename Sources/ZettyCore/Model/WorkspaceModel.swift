@@ -50,8 +50,11 @@ public final class WorkspaceModel {
     public private(set) var projects: [ProjectRuntime]
     public private(set) var activeIndex: Int
 
-    public init() {
-        projects = [WorkspaceModel.makeHome()]
+    /// Seeds a fresh workspace with just the Home project, rooted at
+    /// `homeRoot` (the resolved `zetty-home-path`, or the account's home
+    /// directory when unset).
+    public init(homeRoot: String = NSHomeDirectory()) {
+        projects = [WorkspaceModel.makeHome(rootPath: homeRoot)]
         activeIndex = 0
     }
 
@@ -62,9 +65,10 @@ public final class WorkspaceModel {
         regroup()
     }
 
-    /// The default Home project (rooted at the user's home directory).
-    public static func makeHome() -> ProjectRuntime {
-        ProjectRuntime(name: "Home", rootPath: NSHomeDirectory(), isHome: true)
+    /// The Home project, rooted at `rootPath` (the user's home directory unless
+    /// `zetty-home-path` moves it).
+    public static func makeHome(rootPath: String = NSHomeDirectory()) -> ProjectRuntime {
+        ProjectRuntime(name: "Home", rootPath: rootPath, isHome: true)
     }
 
     /// Builds a restored workspace, guaranteeing a Home project exists. When the
@@ -72,14 +76,37 @@ public final class WorkspaceModel {
     /// is prepended and `activeIndex` is remapped past it; their old home-rooted
     /// project stays as an ordinary, now-removable project. Never returns nil for
     /// a non-empty input.
-    public static func restored(from persisted: [ProjectRuntime], activeIndex: Int = 0) -> WorkspaceModel? {
+    ///
+    /// A restored Home is re-rooted at `homeRoot`, so the config — not the
+    /// `rootPath` saved in `workspace.json` — decides where Home lives. That's
+    /// what makes a changed `zetty-home-path` take effect on the next launch,
+    /// and what lets dropping the key move Home back to the real home directory.
+    public static func restored(from persisted: [ProjectRuntime], activeIndex: Int = 0,
+                               homeRoot: String = NSHomeDirectory()) -> WorkspaceModel? {
         var list = persisted
         var active = activeIndex
         if !list.contains(where: \.isHome) {
-            list.insert(makeHome(), at: 0)
+            list.insert(makeHome(rootPath: homeRoot), at: 0)
             active += 1
         }
-        return WorkspaceModel(restoring: list, activeIndex: active)
+        let model = WorkspaceModel(restoring: list, activeIndex: active)
+        model?.setHomeRoot(homeRoot)
+        return model
+    }
+
+    /// Re-roots the Home project at `path`: new tabs and panes open there.
+    /// Existing panes keep their working directories — a live shell owns its cwd,
+    /// and a preserved zmx session captured it when it was created.
+    ///
+    /// Called on launch and whenever ⇧⌘, reloads a changed `zetty-home-path`.
+    /// Returns true when the root actually moved, so a caller can refresh chrome
+    /// and persist only on a real change.
+    @discardableResult
+    public func setHomeRoot(_ path: String) -> Bool {
+        guard let home = projects.first(where: \.isHome), home.rootPath != path else { return false }
+        home.rootPath = path
+        home.tabList.setDefaultWorkingDir(path)
+        return true
     }
 
     public var activeProject: ProjectRuntime { projects[activeIndex] }

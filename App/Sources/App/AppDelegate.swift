@@ -683,6 +683,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         terminalViewController?.reloadGhosttyConfiguration(makeTerminalConfiguration())  // terminal overrides
         if let tvc = terminalViewController {
             applySessionPreservation(to: tvc)                                 // affects new panes only
+            applyHomeRoot(to: tvc)                                            // new Home tabs/panes only
             tvc.publishAttentionCount()                                       // re-apply Dock badge gating
             tvc.sidebarPosition = appConfig.sidebarPosition                   // re-pins only on change
             tvc.applyKeyBindings(appConfig.keybindings)                       // prefix/bind/copy-bind lines
@@ -847,10 +848,35 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
                 try? ProjectFileIO.save(file, projectRoot: project.rootPath)
             },
             on: window,
-            initialTab: initialTab
+            initialTab: initialTab,
+            // Unique to Home: every other project is rooted where it was added.
+            homeDirectory: project.isHome ? project.rootPath : nil,
+            onSaveHomeDirectory: project.isHome ? { [weak self] path in
+                self?.setHomeDirectory(path)
+            } : nil
         ) { [weak self] edited in
             self?.updateProjectSettings(edited, for: project)
         }
+    }
+
+    /// Applies a Home working directory picked in Project Settings: persisted as
+    /// the global `zetty-home-path` key (tilde-abbreviated, and cleared outright
+    /// when it IS the home directory) so the config stays the one source of
+    /// truth, then re-rooted live. New tabs and panes only — a running shell
+    /// owns its cwd, and a preserved session captured it at creation.
+    private func setHomeDirectory(_ path: String) {
+        appConfig.homePath = AppConfig.homePathValue(for: path, defaultHome: NSHomeDirectory())
+        saveConfig()
+        if let tvc = terminalViewController { applyHomeRoot(to: tvc) }
+    }
+
+    /// Re-roots Home from the current config. A moved root is persisted state
+    /// and shows in the sidebar row, so a real move saves and re-renders; an
+    /// unchanged one does nothing.
+    private func applyHomeRoot(to tvc: TerminalViewController) {
+        guard tvc.workspace.setHomeRoot(resolvedHomeRoot) else { return }
+        tvc.refreshSidebar()
+        scheduleSave()
     }
 
     /// "Rename…" prompt: an NSAlert sheet with a text field (the established
@@ -1383,6 +1409,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
 
     // MARK: - Persistence helpers
 
+    /// Directory the Home project is rooted at: the resolved `zetty-home-path`
+    /// when it still names an existing directory, else the account's home
+    /// directory.
+    ///
+    /// A bad path degrades to `~` with a log line rather than an alert: Home is
+    /// the guaranteed floor of the sidebar and must always open somewhere, and
+    /// the same config is re-read on every ⇧⌘, — an alert per reload while a
+    /// volume is unmounted would be worse than a quiet, discoverable fallback
+    /// (`log show --predicate 'subsystem == "co.webteractive.zetty"'`).
+    private var resolvedHomeRoot: String {
+        let home = NSHomeDirectory()
+        // Standardized like `addProject` does, so `zetty add-project` still
+        // recognises this directory as already taken by Home.
+        let path = URL(fileURLWithPath: appConfig.resolvedHomePath(defaultHome: home))
+            .standardizedFileURL.path
+        guard path != home else { return home }
+        var isDirectory: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: path, isDirectory: &isDirectory),
+              isDirectory.boolValue else {
+            ZettyLog.config.error("zetty-home-path: \(path) is not an existing directory — Home stays at \(home)")
+            return home
+        }
+        return path
+    }
+
     /// Load the saved workspace and seed the terminal view controller with it.
     ///
     /// Restoration is unconditional — even if `preserveSessions` is false in the
@@ -1397,6 +1448,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     /// merely missing/corrupt layout file.
     @discardableResult
     private func restoreWorkspace(into tvc: TerminalViewController) -> Bool {
+        // Home follows the config, not the rootPath saved in workspace.json —
+        // that's what lets `zetty-home-path` move it (and lets dropping the key
+        // move it back). Applied to the fallback model too, since a missing or
+        // corrupt layout file must not strand Home at ~.
+        let homeRoot = resolvedHomeRoot
+        tvc.workspace.setHomeRoot(homeRoot)
         do {
             let workspace = try workspaceStore.load()
             tvc.restoreSidebar(collapsed: workspace.sidebarCollapsed, width: workspace.sidebarWidth)
@@ -1406,7 +1463,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             guard !runtimes.isEmpty else { return false }
             // `restored(from:)` guarantees a Home exists (injecting one for
             // pre-Home saved files) and never returns nil for non-empty input.
-            if let model = WorkspaceModel.restored(from: runtimes, activeIndex: workspace.activeProjectIndex) {
+            if let model = WorkspaceModel.restored(from: runtimes,
+                                                   activeIndex: workspace.activeProjectIndex,
+                                                   homeRoot: homeRoot) {
                 tvc.restore(workspace: model)
                 return true
             }

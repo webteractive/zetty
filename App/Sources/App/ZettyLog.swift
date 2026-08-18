@@ -32,6 +32,10 @@ enum ZettyLog {
     /// The read-only file viewer: path resolution, load, highlight, render.
     static let viewer = ZettyLogger(category: "viewer")
 
+    /// Config resolution: values that had to be reinterpreted or ignored, e.g. a
+    /// `zetty-home-path` that no longer names a directory.
+    static let config = ZettyLogger(category: "config")
+
     /// Recent lines, newest last, under a header identifying the build — the
     /// text "Copy diagnostics" puts on the clipboard.
     @MainActor

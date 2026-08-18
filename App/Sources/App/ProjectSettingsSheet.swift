@@ -32,6 +32,14 @@ final class ProjectSettingsSheet: NSObject {
     private static let broadcastLabels = ["Off", "Tab", "Project", "Agents", "Workspace"]
     private let envTextView = NSTextView()
 
+    /// Home's working directory, unique to Home: every other project is rooted
+    /// where it was added. nil hides the row entirely.
+    private var homeDirectory: String?
+    /// What the row opened with, so an untouched Save doesn't rewrite the config.
+    private let initialHomeDirectory: String?
+    private let homeDirectoryLabel = NSTextField(labelWithString: "")
+    private let onSaveHomeDirectory: ((String) -> Void)?
+
     // Master switch: show the new-pane agent chooser at all.
     private let agentPromptCheck = NSButton(
         checkboxWithTitle: "Ask which agent to launch on new tabs and splits",
@@ -51,13 +59,16 @@ final class ProjectSettingsSheet: NSObject {
         onClearLayout: @escaping () -> Void,
         on window: NSWindow,
         initialTab: String? = nil,
+        homeDirectory: String? = nil,
+        onSaveHomeDirectory: ((String) -> Void)? = nil,
         onSave: @escaping (ProjectSettings) -> Void
     ) {
         let sheet = ProjectSettingsSheet(
             projectName: projectName, current: current, fallbackName: fallbackName,
             layoutStatus: layoutStatus, onSaveLayout: onSaveLayout,
             onApplyLayout: onApplyLayout, onClearLayout: onClearLayout,
-            window: window, initialTab: initialTab, onSave: onSave)
+            window: window, initialTab: initialTab, homeDirectory: homeDirectory,
+            onSaveHomeDirectory: onSaveHomeDirectory, onSave: onSave)
         active = sheet
         window.beginSheet(sheet.panel)
     }
@@ -79,9 +90,14 @@ final class ProjectSettingsSheet: NSObject {
         onClearLayout: @escaping () -> Void,
         window: NSWindow,
         initialTab: String?,
+        homeDirectory: String?,
+        onSaveHomeDirectory: ((String) -> Void)?,
         onSave: @escaping (ProjectSettings) -> Void
     ) {
         self.hostWindow = window
+        self.homeDirectory = homeDirectory
+        self.initialHomeDirectory = homeDirectory
+        self.onSaveHomeDirectory = onSaveHomeDirectory
         self.layoutStatus = layoutStatus
         self.onSaveLayout = onSaveLayout
         self.onApplyLayout = onApplyLayout
@@ -305,8 +321,26 @@ final class ProjectSettingsSheet: NSObject {
         layoutControls.orientation = .horizontal
         layoutControls.spacing = 6
 
+        // Working directory: Home ONLY. Every other project is rooted where it
+        // was added, so the row is absent rather than disabled — it edits the
+        // global `zetty-home-path` key, not this project's settings file.
+        homeDirectoryLabel.font = ZTheme.chromeFont(size: 11)
+        homeDirectoryLabel.textColor = ZTheme.current.fg3Color
+        homeDirectoryLabel.lineBreakMode = .byTruncatingHead
+        homeDirectoryLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        refreshHomeDirectoryLabel()
+        let chooseHomeButton = NSButton(
+            title: "Choose…", target: self, action: #selector(chooseHomeDirectoryClicked))
+        let defaultHomeButton = NSButton(
+            title: "Use Default", target: self, action: #selector(useDefaultHomeDirectoryClicked))
+        let homeDirectoryControls = NSStackView(views: [
+            homeDirectoryLabel, NSView(), chooseHomeButton, defaultHomeButton,
+        ])
+        homeDirectoryControls.orientation = .horizontal
+        homeDirectoryControls.spacing = 6
+
         // General tab: identity + theme + layout + tri-state overrides.
-        let general = NSStackView(views: [
+        var generalRows: [NSView] = [
             row("Name", nameField),
             row("Color", colorRow),
             row("Icon", iconPicker),
@@ -318,7 +352,11 @@ final class ProjectSettingsSheet: NSObject {
             row("Auto-hibernate", autoHibernateControl),
             row("Notifications", notifyControl),
             row("Broadcast Input", broadcastPopup),
-        ])
+        ]
+        if homeDirectory != nil {
+            generalRows.insert(row("Working Directory", homeDirectoryControls), at: 1)
+        }
+        let general = NSStackView(views: generalRows)
         general.orientation = .vertical
         general.spacing = 12
         general.alignment = .leading
@@ -468,7 +506,42 @@ final class ProjectSettingsSheet: NSObject {
         edited.promptAgentOnNewPane = agentPromptCheck.state == .on ? nil : false
         hostWindow.endSheet(panel)
         Self.active = nil
+        // Home's working directory rides a second channel: it's a global config
+        // key, not part of this project's settings file. Only on a real change —
+        // persisting it re-renders the whole config file, which an untouched
+        // Save has no business doing.
+        if let homeDirectory, homeDirectory != initialHomeDirectory {
+            onSaveHomeDirectory?(homeDirectory)
+        }
         onSave(edited)
+    }
+
+    /// Shows the chosen directory tilde-abbreviated — the same form the config
+    /// stores, so the row reads like the file it writes.
+    private func refreshHomeDirectoryLabel() {
+        guard let homeDirectory else { return }
+        homeDirectoryLabel.stringValue = (homeDirectory as NSString).abbreviatingWithTildeInPath
+    }
+
+    @objc private func chooseHomeDirectoryClicked() {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = false
+        panel.canChooseDirectories = true
+        panel.canCreateDirectories = true   // "New Folder", as in the add-project picker
+        panel.allowsMultipleSelection = false
+        panel.prompt = "Choose"
+        panel.message = "Choose or create the directory new Home tabs and panes open in"
+        if let homeDirectory { panel.directoryURL = URL(fileURLWithPath: homeDirectory) }
+        panel.beginSheetModal(for: self.panel) { [weak self] response in
+            guard response == .OK, let path = panel.url?.path else { return }
+            self?.homeDirectory = path
+            self?.refreshHomeDirectoryLabel()
+        }
+    }
+
+    @objc private func useDefaultHomeDirectoryClicked() {
+        homeDirectory = NSHomeDirectory()
+        refreshHomeDirectoryLabel()
     }
 
     @objc private func cancelClicked() {

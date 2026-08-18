@@ -17,7 +17,11 @@ public final class TabList {
     public private(set) var activeIndex: Int
 
     /// Working directory new tabs/panes spawn in (e.g. the owning project's root).
-    private let defaultWorkingDir: String
+    ///
+    /// Settable because the Home project can be re-rooted at runtime (⇧⌘, on a
+    /// changed `zetty-home-path`); existing panes keep the cwd they were spawned
+    /// with. See `WorkspaceModel.setHomeRoot`.
+    public private(set) var defaultWorkingDir: String
 
     /// Creates a list seeded with one fresh single-pane tab whose terminal opens
     /// in `defaultWorkingDir` (defaults to the user's home directory).
@@ -50,6 +54,12 @@ public final class TabList {
     public var activeTree: PaneTree {
         get { trees[activeIndex] }
         set { trees[activeIndex] = newValue }
+    }
+
+    /// Points new tabs/panes at `path`. Existing panes are untouched: a live
+    /// shell owns its cwd, and a preserved session captured it at creation.
+    public func setDefaultWorkingDir(_ path: String) {
+        defaultWorkingDir = path
     }
 
     /// Replaces the whole tab set with another list's (layout-template

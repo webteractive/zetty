@@ -79,6 +79,10 @@ public struct AppConfig: Equatable, Sendable {
     public var notifySystem: Bool
     /// Which side of the window the project sidebar sits on.
     public var sidebarPosition: SidebarPosition
+    /// Directory the permanent Home project is rooted at, as written in the
+    /// config (a leading `~` is still unexpanded). `nil` — the default — roots
+    /// Home at the account's home directory. Resolve with `resolvedHomePath`.
+    public var homePath: String?
     /// Raw ghostty directives (from `ghostty.<key> = <value>` lines), forwarded
     /// to the terminal unchanged.
     /// Command the read-only file viewer pipes a file through for syntax
@@ -149,6 +153,7 @@ public struct AppConfig: Equatable, Sendable {
         notifyBadge: Bool = true,
         notifySystem: Bool = true,
         sidebarPosition: SidebarPosition = .left,
+        homePath: String? = nil,
         viewerHighlightCommand: String = AppConfig.defaultViewerHighlightCommand,
         viewerMaxBytes: Int = AppConfig.defaultViewerMaxBytes,
         fileTree: FileTreeSettings = FileTreeSettings(),
@@ -169,6 +174,7 @@ public struct AppConfig: Equatable, Sendable {
         self.notifyBadge = notifyBadge
         self.notifySystem = notifySystem
         self.sidebarPosition = sidebarPosition
+        self.homePath = homePath
         self.viewerHighlightCommand = viewerHighlightCommand
         self.viewerMaxBytes = viewerMaxBytes
         self.fileTree = fileTree
@@ -260,6 +266,13 @@ public struct AppConfig: Equatable, Sendable {
             // New keys take the `zetty-` prefix: `isReservedButUnsupported`
             // swallows the whole namespace, so a future `zetty-*` key can never
             // leak to ghostty and drop the config.
+            case "zetty-home-path":
+                // `off`/`none`/`default`/`~` all mean the account's home
+                // directory, i.e. no override. An empty VALUE can't reach here
+                // (the parser skips empty values), so these are the documented
+                // way back to the default.
+                let lowered = value.lowercased()
+                config.homePath = ["off", "none", "default", "~"].contains(lowered) ? nil : value
             case "zetty-file-tree-show-hidden":
                 config.fileTree.showHidden = ["true", "yes", "on", "1"].contains(value.lowercased())
             case "zetty-file-tree-respect-gitignore":
@@ -290,6 +303,47 @@ public struct AppConfig: Equatable, Sendable {
             }
         }
         return config
+    }
+
+    // MARK: Home path
+
+    /// The directory the Home project should be rooted at: `homePath` with a
+    /// leading `~` expanded against `defaultHome` and a trailing slash trimmed,
+    /// or `defaultHome` itself when there is no override.
+    ///
+    /// Pure — ZettyCore never touches the filesystem, so the caller is the one
+    /// that checks the directory exists (and falls back to `defaultHome` when it
+    /// doesn't; Home must always open somewhere).
+    ///
+    /// `~` is expanded by hand rather than through `expandingTildeInPath`, which
+    /// also rewrites `~someone` into another account's home — a directory
+    /// literally named `~backup` is a real path, not a home reference.
+    public func resolvedHomePath(defaultHome: String) -> String {
+        guard let raw = homePath?.trimmingCharacters(in: .whitespaces), !raw.isEmpty else {
+            return defaultHome
+        }
+        var path = raw
+        if path == "~" {
+            path = defaultHome
+        } else if path.hasPrefix("~/") {
+            path = defaultHome + String(path.dropFirst(1))
+        }
+        while path.count > 1 && path.hasSuffix("/") { path.removeLast() }
+        return path
+    }
+
+    /// The value to WRITE for `zetty-home-path` when the user picks `path`:
+    /// tilde-abbreviated so the config stays readable and portable between
+    /// machines, or `nil` when the pick is the home directory itself (which is
+    /// the default, so the key is dropped rather than pinned).
+    ///
+    /// The inverse of `resolvedHomePath(defaultHome:)`.
+    public static func homePathValue(for path: String, defaultHome: String) -> String? {
+        var trimmed = path.trimmingCharacters(in: .whitespaces)
+        while trimmed.count > 1 && trimmed.hasSuffix("/") { trimmed.removeLast() }
+        guard !trimmed.isEmpty, trimmed != defaultHome else { return nil }
+        guard trimmed.hasPrefix(defaultHome + "/") else { return trimmed }
+        return "~" + trimmed.dropFirst(defaultHome.count)
     }
 
     // MARK: Ghostty directive helpers
@@ -377,6 +431,10 @@ public struct AppConfig: Equatable, Sendable {
         # Which side of the window the project sidebar sits on: left | right
         sidebar-position = \(sidebarPosition.rawValue)
 
+        # Directory the permanent Home project is rooted at (new tabs and panes
+        # open here). Defaults to your home directory; `off` or `~` restores it.
+        \(homePath.map { "zetty-home-path = \($0)" } ?? "# zetty-home-path = ~/Projects")
+
         # Syntax highlighting for the read-only file viewer: the file is piped
         # through this command and its ANSI colors are rendered. `off` disables
         # it. A missing or failing command falls back to plain text.
@@ -459,6 +517,10 @@ public struct AppConfig: Equatable, Sendable {
 
     # Which side of the window the project sidebar sits on: left | right
     sidebar-position = left
+
+    # Directory the permanent Home project is rooted at — its new tabs and panes
+    # open here. Defaults to your home directory; `off` or `~` restores that.
+    # zetty-home-path = ~/Projects
 
     # tmux-style prefix key layer. Ctrl+B then a key: % " split · h/j/k/l or
     # arrows focus panes · o cycle · x close · z zoom · c new tab · n/p/1-9

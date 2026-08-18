@@ -17,8 +17,9 @@ by the tool it's running.
 - **Home** — a permanent terminal that's always there as a single row at the top
   of the sidebar (its own house icon, no pin, and — though it supports tabs —
   they aren't listed in the sidebar). Seeded on first launch (rooted at your home
-  directory), it can't be removed but *can* be hibernated/woken like any project,
-  and carries its own project settings (color, icon, theme, env,
+  directory, or wherever its **Working Directory** setting points), it can't be
+  removed but *can* be hibernated/woken like any project, and carries its own
+  project settings (working directory, color, icon, theme, env,
   preserve-sessions, notifications).
 - **Projects → tabs → splits** — add a project from one picker (**New Folder**
   to create one, optionally `git init`, or pick an existing directory); every
@@ -382,11 +383,23 @@ seeds a documented starter file on first launch. Format is plain
 | `editor` | — | App used by Settings → "Open in Editor" |
 | `viewer-highlight-command` | `bat --style=plain --color=always --paging=never` | Command the file viewer pipes a file through for syntax highlighting; `off` disables it. Zetty sets `BAT_THEME` to match the active scheme's light/dark axis — pass your own `--theme` here to override |
 | `viewer-max-bytes` | `2097152` | Largest file the viewer will render; bigger files open in their default app instead |
+| `zetty-home-path` | — | Directory the **Home** project is rooted at (`~` allowed); unset — or `off`/`~` — keeps it at your home directory |
 | `zetty-file-tree-show-hidden` | `true` | Show dotfiles in the per-pane file tree |
 | `zetty-file-tree-respect-gitignore` | `false` | Hide anything the repo's `.gitignore` excludes |
 | `zetty-file-tree-ignore` | — | Extra names to hide, comma-separated (e.g. `node_modules, vendor`) |
 | `zetty-file-tree-width` | `220` | Width a file tree opens at, in points |
 | `prefix` / `bind` / `copy-bind` | tmux-canonical | Prefix-key layer remapping |
+
+`zetty-home-path` moves Home somewhere more useful than `~` — e.g.
+`zetty-home-path = ~/Projects`. You can also set it without touching the file:
+right-click **Home** → **Project Settings…** has a **Working Directory** row
+(Choose… / Use Default) that writes this same key. The row is unique to Home —
+every other project is rooted where it was added. The config wins over the path
+saved in the workspace, so a change lands on the next launch or ⇧⌘, reload, and removing the
+key moves Home back to your home directory. It affects **new** tabs and panes:
+shells already running keep their own working directories, and a preserved zmx
+session captured its cwd when it was created. A path that isn't an existing
+directory is ignored (Home stays at `~`).
 
 The file tree shows the raw filesystem by default, dotfiles included. On a JS
 project `node_modules` will dominate both the tree and its filter until you turn
