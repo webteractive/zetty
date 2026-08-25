@@ -709,6 +709,11 @@ final class TerminalViewController: NSViewController {
             self.onWorkspaceDidChange?()
         }
 
+        sidebar.onToggleSpaceCollapsed = { [weak self] id in
+            guard let self, let space = self.workspace.spaces.first(where: { $0.id == id }) else { return }
+            self.setSpaceCollapsed(id, !space.isCollapsed)
+        }
+
         sidebar.onAddProject = { [weak self] in
             self?.presentAddProjectPanel()
         }
@@ -2779,7 +2784,8 @@ final class TerminalViewController: NSViewController {
                 cloneSourceIndex: project.cloneSource.flatMap { src in
                     workspace.projects.firstIndex { $0.rootPath == src && $0.cloneSource == nil }
                 },
-                isPendingClone: false
+                isPendingClone: false,
+                spaceID: project.spaceID
             )
         }
         // Splice in "Cloning…" placeholder rows: each nests under its source via
@@ -2794,11 +2800,25 @@ final class TerminalViewController: NSViewController {
                 isPinned: false, tabTitles: [], tabStatuses: [], tabIcons: [],
                 icon: nil, status: nil, projectColor: nil, customGlyph: nil,
                 isHibernated: false, isScratch: false, isHome: false,
-                isClone: true, cloneSourceIndex: sourceIndex, isPendingClone: true
+                isClone: true, cloneSourceIndex: sourceIndex, isPendingClone: true,
+                spaceID: nil
             ))
+        }
+        let sidebarSpaces: [SidebarSpace] = workspace.spaces.map { space in
+            let members = workspace.projects(inSpace: space.id)
+            return SidebarSpace(
+                id: space.id,
+                name: space.name,
+                color: ZTheme.projectColor(id: space.colorID),
+                glyph: space.glyph,
+                isCollapsed: space.isCollapsed,
+                awakeCount: members.filter { !$0.isHibernated }.count,
+                hibernatedCount: members.filter(\.isHibernated).count
+            )
         }
         sidebarView?.update(
             projects: sidebarProjects,
+            spaces: sidebarSpaces,
             activeProject: workspace.activeIndex,
             activeTab: workspace.activeTabList.activeIndex
         )

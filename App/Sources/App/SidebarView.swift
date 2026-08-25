@@ -27,6 +27,20 @@ struct SidebarProject: Equatable {
     let isClone: Bool                    // renders attached under its source with a fork glyph
     let cloneSourceIndex: Int?           // index of the source project (nil → orphan)
     let isPendingClone: Bool             // transient "Cloning…" placeholder: spinner glyph, non-interactive
+    let spaceID: UUID?                   // the Space this row renders under, nil for Pinned/Projects
+}
+
+/// Plain data for one Space header row. Equatable for the same reason
+/// `SidebarProject` is: machine-driven refreshes arrive several times a second
+/// and must no-op on unchanged input.
+struct SidebarSpace: Equatable {
+    let id: UUID
+    let name: String
+    let color: NSColor?          // resolved from ZTheme.projectPalette (nil = default)
+    let glyph: String?           // SF Symbol overriding the default header glyph
+    let isCollapsed: Bool
+    let awakeCount: Int
+    let hibernatedCount: Int
 }
 
 /// Maps an agent status to its status-dot color, or nil for "no agent".
@@ -48,14 +62,17 @@ private enum SidebarSection: Hashable {
     case projects
     case scratch
     case hibernated
+    case space(UUID)
 
-    var title: String {
+    func title(spaces: [SidebarSpace]) -> String {
         switch self {
         case .home:       return "Home"
         case .pinned:     return "Pinned"
         case .projects:   return "Projects"
         case .scratch:    return "Scratch"
         case .hibernated: return "Hibernating"
+        case .space(let id):
+            return spaces.first { $0.id == id }?.name ?? "Space"
         }
     }
 }
@@ -119,6 +136,16 @@ final class SidebarView: NSView {
     /// Called with the project index when the user clicks the pin button.
     var onTogglePin: ((Int) -> Void)?
 
+    /// Called when a Space header's disclosure is clicked. Collapse state is
+    /// persisted, so the controller writes it to the model and refreshes.
+    var onToggleSpaceCollapsed: ((UUID) -> Void)?
+
+    /// Called when a Space header is drag-reordered: (fromSpaceIndex, toSpaceIndex).
+    var onMoveSpace: ((Int, Int) -> Void)?
+
+    /// Called to move a project into a Space (nil = out of every Space).
+    var onAssignProjectToSpace: ((Int, UUID?) -> Void)?
+
     /// Called with the project index when the user picks "Remove Project…"
     /// from a project row's context menu.
     var onRemoveProject: ((Int) -> Void)?
@@ -140,6 +167,7 @@ final class SidebarView: NSView {
 
     /// The full (unfiltered) project list as last received, pinned-first sorted.
     private var projects: [SidebarProject] = []
+    private var spaces: [SidebarSpace] = []
     private var activeProject: Int = -1
     private var activeTab: Int = -1
 
@@ -495,19 +523,21 @@ final class SidebarView: NSView {
     private var hasRenderedOnce = false
 
     /// Replaces the displayed data, then rebuilds the sectioned outline.
-    func update(projects: [SidebarProject], activeProject: Int, activeTab: Int) {
+    func update(projects: [SidebarProject], spaces: [SidebarSpace],
+                activeProject: Int, activeTab: Int) {
         // Reloading mid-drag cancels the outline view's drag session (live
         // agents retitle rows every second) — freeze until the drop lands.
         guard !isReordering else { return }
         // Identical data → nothing to do. `reloadData()` recreates every row
         // view and dirties the whole layout tree, and this is called on every
         // agent title/status tick.
-        if projects == self.projects, activeProject == self.activeProject,
+        if projects == self.projects, spaces == self.spaces, activeProject == self.activeProject,
            activeTab == self.activeTab, hasRenderedOnce {
             return
         }
         hasRenderedOnce = true
         self.projects = projects
+        self.spaces = spaces
         self.activeProject = activeProject
         self.activeTab = activeTab
         rebuildOutline()
@@ -530,20 +560,21 @@ final class SidebarView: NSView {
         let visible = projects.enumerated().filter { _, p in
             query.isEmpty || p.name.lowercased().contains(query)
         }
-        // Sections: Home · Pinned · Projects · Scratch · Hibernating. Home always
-        // sits first in its own section (even when hibernated — it dims in place
-        // rather than moving to Hibernating). Scratch terminals (project-less,
-        // ephemeral) get their own group; other hibernated projects sit at the
-        // bottom regardless of pin state.
+        // Sections: Home · Pinned · Spaces · Projects · Scratch · Hibernating.
+        // Home always sits first in its own section (even when hibernated — it
+        // dims in place rather than moving to Hibernating). Scratch terminals
+        // (project-less, ephemeral) get their own group; other hibernated
+        // projects sit at the bottom regardless of pin state.
         let home = visible.filter { $0.element.isHome }
         let rest = visible.filter { !$0.element.isHome }
-        let awake = rest.filter { !$0.element.isHibernated }
-        // Hibernated projects are dormant — sorted by name (display order only;
-        // real indices are preserved, so no model mutation).
-        let hibernated = rest.filter { $0.element.isHibernated }
+        // A member of a Space stays in its Space when hibernated — dimmed in
+        // place, following the Home precedent. Only SPACELESS hibernated
+        // projects fall to the Hibernating section.
+        let hibernated = rest.filter { $0.element.isHibernated && $0.element.spaceID == nil }
             .sorted { $0.element.name.localizedCaseInsensitiveCompare($1.element.name) == .orderedAscending }
-        let scratch = awake.filter { $0.element.isScratch }
-        let regular = awake.filter { !$0.element.isScratch }
+        let placed = rest.filter { !$0.element.isHibernated || $0.element.spaceID != nil }
+        let scratch = placed.filter { $0.element.isScratch }
+        let regular = placed.filter { !$0.element.isScratch }
         // A clone with a visible, awake source renders attached — spliced in right
         // after its source row, not counted in section headers. Orphans (source
         // removed) and clones of hidden/hibernated sources fall back to ordinary rows.
@@ -554,8 +585,11 @@ final class SidebarView: NSView {
         }
         let attachedOffsets = Set(attachedClones.map(\.offset))
         let standalone = regular.filter { !attachedOffsets.contains($0.offset) }
-        let pinned = standalone.filter { $0.element.isPinned }
-        let unpinned = standalone.filter { !$0.element.isPinned }
+        let pinned = standalone.filter { $0.element.isPinned && $0.element.spaceID == nil }
+        let unpinned = standalone.filter { !$0.element.isPinned && $0.element.spaceID == nil }
+        func members(of spaceID: UUID) -> [(offset: Int, element: SidebarProject)] {
+            standalone.filter { $0.element.spaceID == spaceID }
+        }
         homeCount = home.count
         pinnedCount = pinned.count
         projectsCount = unpinned.count
@@ -578,6 +612,15 @@ final class SidebarView: NSView {
             rows.append(.header(.pinned))
             rows += withClones(pinned)
         }
+        // Spaces sit between Pinned and Projects, in their own order. A Space
+        // header is shown even with no members, so a freshly created Space is
+        // visible and can be dropped onto.
+        for space in spaces {
+            rows.append(.header(.space(space.id)))
+            if !space.isCollapsed {
+                rows += withClones(members(of: space.id))
+            }
+        }
         if !unpinned.isEmpty {
             rows.append(.header(.projects))
             rows += withClones(unpinned)
@@ -593,6 +636,15 @@ final class SidebarView: NSView {
             }
         }
         topLevel = rows
+
+        // A collapsed Space still renders its active member — an invisible
+        // selection would be worse than an extra row.
+        if activeProject >= 0, projects.indices.contains(activeProject),
+           let spaceID = projects[activeProject].spaceID,
+           spaces.first(where: { $0.id == spaceID })?.isCollapsed == true,
+           let headerIndex = topLevel.firstIndex(of: .header(.space(spaceID))) {
+            topLevel.insert(.project(activeProject), at: headerIndex + 1)
+        }
 
         // Evict stale cache entries.
         itemCache = itemCache.filter { kind, _ in
@@ -943,6 +995,9 @@ extension SidebarView: NSOutlineViewDataSource {
         guard projects.indices.contains(index) else { return .projects }
         let p = projects[index]
         if p.isHome { return .home }
+        // A Space member's section follows it even when hibernated (dimmed in
+        // place), matching how rebuildOutline() places its row.
+        if let spaceID = p.spaceID { return .space(spaceID) }
         if p.isHibernated { return .hibernated }
         if p.isScratch { return .scratch }
         return p.isPinned ? .pinned : .projects
@@ -985,21 +1040,43 @@ extension SidebarView: NSOutlineViewDelegate {
                 cellView.identifier = identifier
             }
             let count: Int
+            var dormant = 0
+            var collapsible = false
+            var collapsed = false
+            var accent: NSColor?
+            var symbol: String?
+            var onToggle: (() -> Void)?
             switch section {
             case .home:       count = homeCount
             case .pinned:     count = pinnedCount
             case .projects:   count = projectsCount
             case .scratch:    count = scratchCount
-            case .hibernated: count = hibernatedCount
+            case .hibernated:
+                count = hibernatedCount
+                collapsible = true
+                collapsed = hibernatedCollapsed
+                onToggle = { [weak self] in self?.toggleHibernatedCollapsed() }
+            case .space(let id):
+                let space = spaces.first { $0.id == id }
+                count = space?.awakeCount ?? 0
+                dormant = space?.hibernatedCount ?? 0
+                collapsible = true
+                collapsed = space?.isCollapsed ?? false
+                accent = space?.color
+                // A color dot by default; a custom glyph overrides it. Other
+                // sections leave `symbol` nil, which hides the slot entirely.
+                symbol = space?.glyph ?? "circle.fill"
+                onToggle = { [weak self] in self?.onToggleSpaceCollapsed?(id) }
             }
-            // Only the Hibernating section collapses (dormant rows tuck away).
-            let collapsible = section == .hibernated
             cellView.configure(
-                title: section.title,
+                title: section.title(spaces: spaces),
                 count: count,
+                dormant: dormant,
                 collapsible: collapsible,
-                collapsed: collapsible && hibernatedCollapsed,
-                onToggle: collapsible ? { [weak self] in self?.toggleHibernatedCollapsed() } : nil
+                collapsed: collapsed,
+                accent: accent,
+                symbol: symbol,
+                onToggle: onToggle
             )
             return cellView
 
@@ -1100,6 +1177,9 @@ private final class HeaderCellView: NSTableCellView {
 
     /// Leading disclosure chevron, shown only for collapsible sections.
     private let chevronView = NSImageView()
+    /// Space identity glyph — a plain color dot by default, an SF Symbol when
+    /// the Space has a custom one. Hidden for every other section.
+    private let glyphView = NSImageView()
     private let titleLabel = NSTextField(labelWithString: "")
     private let countLabel = NSTextField(labelWithString: "")
     /// Full-bleed transparent button that toggles a collapsible section — a
@@ -1108,6 +1188,8 @@ private final class HeaderCellView: NSTableCellView {
     private let toggleButton = NSButton()
     private var chevronWidth: NSLayoutConstraint!
     private var chevronGap: NSLayoutConstraint!
+    private var glyphWidth: NSLayoutConstraint!
+    private var glyphGap: NSLayoutConstraint!
     private var onToggle: (() -> Void)?
 
     override init(frame frameRect: NSRect) {
@@ -1117,6 +1199,10 @@ private final class HeaderCellView: NSTableCellView {
         chevronView.contentTintColor = ZTheme.current.fg3Color
         chevronView.translatesAutoresizingMaskIntoConstraints = false
         addSubview(chevronView)
+
+        glyphView.imageScaling = .scaleProportionallyDown
+        glyphView.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(glyphView)
 
         titleLabel.font = ZTheme.chromeFont(size: 10.5, weight: .bold)
         titleLabel.textColor = ZTheme.current.fg3Color
@@ -1139,12 +1225,18 @@ private final class HeaderCellView: NSTableCellView {
         addSubview(toggleButton)   // topmost — captures clicks, draws nothing
 
         chevronWidth = chevronView.widthAnchor.constraint(equalToConstant: 0)
-        chevronGap = titleLabel.leadingAnchor.constraint(equalTo: chevronView.trailingAnchor, constant: 0)
+        chevronGap = glyphView.leadingAnchor.constraint(equalTo: chevronView.trailingAnchor, constant: 0)
+        glyphWidth = glyphView.widthAnchor.constraint(equalToConstant: 0)
+        glyphGap = titleLabel.leadingAnchor.constraint(equalTo: glyphView.trailingAnchor, constant: 0)
         NSLayoutConstraint.activate([
             chevronView.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 4),
             chevronView.centerYAnchor.constraint(equalTo: titleLabel.centerYAnchor),
             chevronWidth,
             chevronGap,
+            glyphView.centerYAnchor.constraint(equalTo: titleLabel.centerYAnchor),
+            glyphView.heightAnchor.constraint(equalToConstant: 9),
+            glyphWidth,
+            glyphGap,
             titleLabel.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -3),
             countLabel.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
             countLabel.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -3),
@@ -1161,8 +1253,11 @@ private final class HeaderCellView: NSTableCellView {
     @objc private func toggleClicked() { onToggle?() }
 
     func configure(title: String, count: Int,
+                   dormant: Int = 0,
                    collapsible: Bool = false,
                    collapsed: Bool = false,
+                   accent: NSColor? = nil,
+                   symbol: String? = nil,
                    onToggle: (() -> Void)? = nil) {
         self.onToggle = onToggle
         toggleButton.isHidden = !collapsible
@@ -1170,12 +1265,23 @@ private final class HeaderCellView: NSTableCellView {
         chevronWidth.constant = collapsible ? 9 : 0
         chevronGap.constant = collapsible ? 3 : 0
         if collapsible {
-            let symbol = collapsed ? "chevron.right" : "chevron.down"
-            chevronView.image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)?
+            let chevronSymbol = collapsed ? "chevron.right" : "chevron.down"
+            chevronView.image = NSImage(systemSymbolName: chevronSymbol, accessibilityDescription: nil)?
                 .withSymbolConfiguration(NSImage.SymbolConfiguration(pointSize: 8, weight: .semibold))
             chevronView.contentTintColor = ZTheme.current.fg3Color
         } else {
             chevronView.image = nil
+        }
+
+        let hasGlyph = symbol != nil
+        glyphWidth.constant = hasGlyph ? 11 : 0
+        glyphGap.constant = hasGlyph ? 4 : 0
+        if let symbol {
+            glyphView.image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)?
+                .withSymbolConfiguration(NSImage.SymbolConfiguration(pointSize: 9, weight: .semibold))
+            glyphView.contentTintColor = accent ?? ZTheme.current.fg3Color
+        } else {
+            glyphView.image = nil
         }
 
         // Uppercase with light letter-spacing (handoff section headers).
@@ -1187,7 +1293,8 @@ private final class HeaderCellView: NSTableCellView {
                 .kern: 1.2,
             ]
         )
-        countLabel.stringValue = "\(count)"
+        // "3" normally, "3 · 1☾" when the section also has dormant members.
+        countLabel.stringValue = dormant > 0 ? "\(count) · \(dormant)☾" : "\(count)"
         countLabel.textColor = ZTheme.current.fg3Color
     }
 }
