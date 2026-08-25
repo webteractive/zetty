@@ -30,10 +30,12 @@ public enum ControlCLI {
                                               project by default); --focus switches
                                               to it. Prints the new pane's id
 
-      zetty add-project <path> [--name <name>] [--focus]
+      zetty add-project <path> [--name <name>] [--space <name>] [--focus]
                                               add a directory as a project in the
                                               background (--focus switches to it);
-                                              prints its first pane's id on stdout
+                                              --space files it into an existing
+                                              Space; prints its first pane's id
+                                              on stdout
       zetty new-project <path> [--name <name>] [--git] [--focus]
                                               create a new directory and add it
                                               as a project in the background
@@ -57,11 +59,20 @@ public enum ControlCLI {
                                               branch in the original repo first,
                                               --discard deletes without fetching; a
                                               clone with unsaved work requires one
-      zetty hibernate <name>                free a project's sessions/processes/
-                                              panes (keeps its layout)
-      zetty wake <name>                     wake a hibernated project (fresh shells).
-                                              Rarely needed by hand — send/new-tab/
-                                              split/break/focus wake as required
+      zetty hibernate (<name> | --space <name>)
+                                              free a project's (or every project in
+                                              a Space's) sessions/processes/panes
+                                              (keeps its layout)
+      zetty wake (<name> | --space <name>)  wake a hibernated project or Space
+                                              (fresh shells). Rarely needed by
+                                              hand — send/new-tab/split/break/
+                                              focus wake as required
+      zetty new-space <name> [--color <id>] [--icon <symbol>]
+                          create a Space (a named sidebar section)
+      zetty rename-space <old> <new>  rename a Space
+      zetty remove-space <name>       delete a Space (its projects are kept, ungrouped)
+      zetty move-to-space <project> (<space> | --none)
+                          move a project into a Space, or out of every Space
       zetty split [--pane <id> | --cwd <path>] [--horizontal] [--focus]
                                               split a pane in the background,
                                               vertical by default (focus stays put);
@@ -118,6 +129,7 @@ public enum ControlCLI {
         return ["status", "ls", "send", "capture", "view", "new-tab", "add-project", "new-project", "clone", "update-clone",
                 "remove-project", "hibernate", "wake", "split", "break", "focus", "close", "reload",
                 "scratch", "scratch-clear", "quit",
+                "new-space", "rename-space", "remove-space", "move-to-space",
                 "help", "--help", "-h"].contains(first)
     }
 
@@ -154,9 +166,21 @@ public enum ControlCLI {
         case "remove-project":
             return runRemoveProject(arguments)
         case "hibernate":
-            return runProjectByName(arguments, verb: "hibernate") { .hibernateProject(name: $0) }
+            return runProjectByName(arguments, verb: "hibernate",
+                                    { .hibernateProject(name: $0) },
+                                    space: { .hibernateSpace(name: $0) })
         case "wake":
-            return runProjectByName(arguments, verb: "wake") { .wakeProject(name: $0) }
+            return runProjectByName(arguments, verb: "wake",
+                                    { .wakeProject(name: $0) },
+                                    space: { .wakeSpace(name: $0) })
+        case "new-space":
+            return runNewSpace(arguments)
+        case "rename-space":
+            return runRenameSpace(arguments)
+        case "remove-space":
+            return runRemoveSpace(arguments)
+        case "move-to-space":
+            return runMoveToSpace(arguments)
         case "split":
             return runSplit(arguments)
         case "break":
@@ -332,6 +356,7 @@ public enum ControlCLI {
 
     private static func runAddProject(_ arguments: [String]) -> Int32 {
         var name: String?
+        var space: String?
         var focus = false
         var pathParts: [String] = []
         var index = 0
@@ -341,6 +366,10 @@ public enum ControlCLI {
                 index += 1
                 guard index < arguments.count else { return failure("--name needs a value") }
                 name = arguments[index]
+            case "--space":
+                index += 1
+                guard index < arguments.count else { return failure("--space needs a value") }
+                space = arguments[index]
             case "--focus":
                 focus = true
             case "--help", "-h":
@@ -359,7 +388,85 @@ public enum ControlCLI {
         // Resolve here: relative paths are relative to the CLI's cwd, not the app's.
         let expanded = (raw as NSString).expandingTildeInPath
         let absolute = URL(fileURLWithPath: expanded).standardizedFileURL.path
-        return expectPane(.addProject(path: absolute, name: name, space: nil, focus: focus))
+        return expectPane(.addProject(path: absolute, name: name, space: space, focus: focus))
+    }
+
+    private static func runNewSpace(_ arguments: [String]) -> Int32 {
+        var colorID: String?
+        var glyph: String?
+        var nameParts: [String] = []
+        var index = 0
+        while index < arguments.count {
+            switch arguments[index] {
+            case "--color":
+                index += 1
+                guard index < arguments.count else { return failure("--color needs a value") }
+                colorID = arguments[index]
+            case "--icon":
+                index += 1
+                guard index < arguments.count else { return failure("--icon needs a value") }
+                glyph = arguments[index]
+            case "--help", "-h":
+                print(usage)
+                return 0
+            default:
+                nameParts.append(arguments[index])
+            }
+            index += 1
+        }
+        let name = nameParts.joined(separator: " ").trimmingCharacters(in: .whitespaces)
+        guard !name.isEmpty else { return failure("new-space needs a name") }
+        return expectOK(.newSpace(name: name, colorID: colorID, glyph: glyph), success: nil)
+    }
+
+    private static func runRenameSpace(_ arguments: [String]) -> Int32 {
+        let positional = arguments.filter { !$0.hasPrefix("--") }
+        if arguments.contains("--help") || arguments.contains("-h") {
+            print(usage)
+            return 0
+        }
+        guard positional.count == 2 else {
+            return failure("rename-space needs the current name and the new name")
+        }
+        return expectOK(.renameSpace(name: positional[0], newName: positional[1]), success: nil)
+    }
+
+    private static func runRemoveSpace(_ arguments: [String]) -> Int32 {
+        if arguments.contains("--help") || arguments.contains("-h") {
+            print(usage)
+            return 0
+        }
+        let name = arguments.joined(separator: " ").trimmingCharacters(in: .whitespaces)
+        guard !name.isEmpty else { return failure("remove-space needs a Space name") }
+        return expectOK(.removeSpace(name: name), success: nil)
+    }
+
+    private static func runMoveToSpace(_ arguments: [String]) -> Int32 {
+        var none = false
+        var positional: [String] = []
+        for argument in arguments {
+            switch argument {
+            case "--none":
+                none = true
+            case "--help", "-h":
+                print(usage)
+                return 0
+            default:
+                positional.append(argument)
+            }
+        }
+        guard let project = positional.first else {
+            return failure("move-to-space needs a project name")
+        }
+        let space = positional.dropFirst().joined(separator: " ").trimmingCharacters(in: .whitespaces)
+        if none {
+            guard space.isEmpty else { return failure("pass a Space name or --none, not both") }
+            return expectOK(.moveToSpace(project: project, space: nil), success: nil)
+        }
+        guard !space.isEmpty else {
+            return failure("move-to-space needs a Space name (or --none to ungroup)")
+        }
+        return expectOK(.moveToSpace(project: project, space: space), success: nil)
     }
 
     private static func runNewProject(_ arguments: [String]) -> Int32 {
@@ -470,15 +577,26 @@ public enum ControlCLI {
     }
 
     /// Shared handler for name-targeted project commands (hibernate/wake).
+    /// `--space <name>` targets every project in a Space instead of one project.
     private static func runProjectByName(_ arguments: [String], verb: String,
-                                         _ make: (String) -> ControlRequest) -> Int32 {
+                                         _ make: (String) -> ControlRequest,
+                                         space makeSpace: ((String) -> ControlRequest)? = nil) -> Int32 {
         if arguments.contains("--help") || arguments.contains("-h") {
             print(usage)
             return 0
         }
-        let name = arguments.joined(separator: " ").trimmingCharacters(in: .whitespaces)
+        var wantsSpace = false
+        var parts: [String] = []
+        for argument in arguments {
+            if argument == "--space" { wantsSpace = true } else { parts.append(argument) }
+        }
+        let name = parts.joined(separator: " ").trimmingCharacters(in: .whitespaces)
         guard !name.isEmpty else {
-            return failure("\(verb) needs a project name")
+            return failure("\(verb) needs a \(wantsSpace ? "Space" : "project") name")
+        }
+        if wantsSpace {
+            guard let makeSpace else { return failure("\(verb) does not take --space") }
+            return expectOK(makeSpace(name), success: nil)
         }
         return expectOK(make(name), success: nil)
     }
@@ -702,9 +820,28 @@ public enum ControlCLI {
     /// A hibernated project reads `☾ name (hibernated)` and each of its panes is
     /// marked `-` (no live terminal). The dot glyphs stay reserved for the
     /// active/inactive distinction, so dormancy can't be confused with focus.
+    ///
+    /// Projects arrive in sidebar order, so a Space's members are contiguous:
+    /// walking the list and emitting `NAME  [space]` the first time each Space
+    /// is entered yields exactly one header per Space, immediately above its
+    /// first member. After the walk, every Space in `snapshot.spaces` that no
+    /// project claimed gets a trailing `NAME  [space, empty]` line, so a Space
+    /// just created by `new-space` is visible before anything is filed into it.
     public static func statusLines(_ snapshot: StatusSnapshot) -> [String] {
         var lines: [String] = []
+        // Doubly-optional: the OUTER layer tracks "which Space are we in",
+        // the inner one distinguishes "in no Space" from "in Space X". Seeded
+        // as "in no Space" so a leading spaceless project emits no header.
+        var currentSpace: String?? = .some(nil)
         for project in snapshot.projects {
+            // Projects arrive in sidebar order, so a Space's members are
+            // contiguous: emit one header the first time each Space is entered.
+            if currentSpace != .some(project.space) {
+                if let space = project.space {
+                    lines.append("\(space)  [space]")
+                }
+                currentSpace = .some(project.space)
+            }
             let glyph = project.hibernated ? "☾" : (project.isActive ? "●" : "○")
             lines.append("\(glyph) \(project.name)\(project.hibernated ? "  (hibernated)" : "")")
             for tab in project.tabs {
@@ -720,6 +857,12 @@ public enum ControlCLI {
                     lines.append("      \(fields.joined(separator: "  "))")
                 }
             }
+        }
+        // A Space with no members is still real — `new-space` must be visible
+        // before anything is filed into it.
+        let claimed = Set(snapshot.projects.compactMap(\.space))
+        for space in snapshot.spaces where !claimed.contains(space.name) {
+            lines.append("\(space.name)  [space, empty]")
         }
         return lines
     }
