@@ -60,6 +60,21 @@ by the tool it's running.
   is closable — closing the last returns you to your first pinned project.
   Clear them all at once with **Close All Scratch Terminals** (`zetty
   scratch-clear`).
+- **Spaces** — right-click a project → **Move to Space ▸** to file it into a
+  named, colorable, collapsible sidebar section (or create one with **New
+  Space…**); Spaces render between **Pinned** and **Projects**, each with a
+  color dot, optional glyph (SF Symbol or emoji), and an awake/dormant member
+  count in its header. A project belongs to at most one Space, and pinning
+  still works inside one — a pinned member floats to the top of its own
+  Space rather than leaving it. Hibernating a member **dims it in place**
+  instead of dropping it to the Hibernating section, so a Space stays a
+  complete picture of related work; the header's **Hibernate All** / **Wake
+  All** act on every member at once. Deleting a Space (its header's
+  **Delete Space…**) never removes a project — members just fall back to
+  Pinned/Projects. Drag a project onto a Space header to file it in, drag it
+  out to ungroup it, or drag a Space header itself to reorder the whole
+  section. Home, scratch terminals, and clones are never members — a clone
+  always follows its source's Space.
 - **Hibernating projects** — right-click a project → **Hibernate Project** (or
   `zetty hibernate`) to free its sessions/processes while keeping its layout.
   Hibernated projects collect at the bottom of the sidebar in a **Hibernating**
@@ -599,6 +614,7 @@ zetty split --pane 1a2b3c4d --horizontal # background split; prints the new pane
 zetty split --pane 1a2b3c4d --focus      # ...or bring the new pane to front
 zetty break --pane 1a2b3c4d              # move a pane into its own (background) tab
 zetty add-project ~/work/api             # add an existing directory as a project
+zetty add-project ~/work/api --space "Client Acme"  # ...and file it into an existing Space
 zetty new-project ~/work/new --git       # create a folder + add it (optional git init)
 zetty clone --project api --name fork-1  # instant CoW clone, own branch zetty/fork-1
 zetty update-clone fork-1                # merge the source's latest into the clone, leaving conflicts in place
@@ -606,6 +622,15 @@ zetty remove-project api                 # close a project's tabs (no confirmati
 zetty remove-project api/fork-1 --fetch  # clone: land its branch in the source repo, then delete
 zetty hibernate api                      # free a project's sessions/processes (keeps layout)
 zetty wake api                           # wake a hibernated project (fresh shells)
+zetty hibernate --space "Client Acme"    # free every project in a Space
+zetty wake --space "Client Acme"         # wake every hibernated project in a Space
+zetty new-space "Client Acme" --color sky --icon briefcase
+                                          # create a Space (a named sidebar section)
+zetty rename-space "Client Acme" --to "Acme Corp"
+                                          # rename a Space (--to separates two unquoted multi-word names)
+zetty move-to-space api "Client Acme"    # move a project into a Space
+zetty move-to-space api --none           # ...or out of every Space
+zetty remove-space "Client Acme"         # delete a Space (its projects are kept, ungrouped)
 zetty scratch                            # background scratch terminal; prints its pane id
 zetty scratch-clear                      # close and clear all scratch terminals
 zetty focus --cwd ~/work/api
@@ -617,6 +642,15 @@ zetty quit --kill-sessions               # full shutdown, ends preserved session
 The **Home** project is targetable by name (`zetty new-tab --project Home`,
 `zetty hibernate Home`), but `zetty remove-project Home` is rejected — Home
 can't be removed.
+
+**`add-project --space` errors on an unknown Space name** rather than creating
+one — a typo shouldn't silently produce a second near-identical Space. Space
+names are matched case-insensitively, so quote a name with spaces (or, for
+`rename-space`, separate two unquoted multi-word names with `--to`: `zetty
+rename-space Client Acme --to Acme Corp` would otherwise be ambiguous about
+where the old name ends). Home, scratch terminals, and clones can never join a
+Space — `move-to-space` and the `Move to Space ▸` menu both refuse them; a
+clone always renders in whatever Space its source is in.
 
 `new-tab`, `split`, `break`, and `scratch` never change the active project or
 keyboard focus by default — an agent can reshape your workspace while you keep
