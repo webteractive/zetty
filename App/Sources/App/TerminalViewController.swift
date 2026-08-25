@@ -708,6 +708,15 @@ final class TerminalViewController: NSViewController {
         sidebar.onMoveSpace = { [weak self] from, to in
             self?.moveSpace(from: from, to: to)
         }
+        sidebar.onNewSpace = { [weak self] projectIndex in
+            self?.promptNewSpace(assigning: projectIndex)
+        }
+        sidebar.onEditSpace = { [weak self] id in self?.promptEditSpace(id) }
+        sidebar.onDeleteSpace = { [weak self] id in self?.confirmDeleteSpace(id) }
+        sidebar.onHibernateSpace = { [weak self] id, hibernate in
+            guard let self, let space = self.workspace.spaces.first(where: { $0.id == id }) else { return }
+            _ = hibernate ? self.hibernateSpaceNamed(space.name) : self.wakeSpaceNamed(space.name)
+        }
 
         sidebar.onTogglePin = { [weak self] index in
             guard let self else { return }
@@ -3731,6 +3740,77 @@ final class TerminalViewController: NSViewController {
         workspace.setSpaceCollapsed(id: id, collapsed)
         refreshSidebar()
         onWorkspaceDidChange?()
+    }
+
+    /// "New Space…" from a project row's "Move to Space ▸" submenu — presents
+    /// `SpaceSheet` with an empty name, creates the Space on save, and when
+    /// `projectIndex` was passed (always true for this menu path) files that
+    /// project into the new Space in the same step. A duplicate/blank name
+    /// surfaces an alert rather than failing silently.
+    func promptNewSpace(assigning projectIndex: Int?) {
+        guard let window = view.window else { return }
+        SpaceSheet.present(over: window, name: "", colorID: nil, glyph: nil) { [weak self] name, colorID, glyph in
+            guard let self else { return }
+            if let error = self.createSpaceNamed(name, colorID: colorID, glyph: glyph) {
+                self.presentSpaceError(error, title: "Couldn\u{2019}t create Space")
+                return
+            }
+            if let projectIndex, self.workspace.projects.indices.contains(projectIndex),
+               let space = self.workspace.space(named: name) {
+                self.assignProject(at: projectIndex, to: space.id)
+            }
+        }
+    }
+
+    /// "Rename…" and "Edit Space…" both land here — the sheet's name field
+    /// covers renaming, so there is only one editor. A duplicate/blank name
+    /// surfaces an alert and leaves the Space untouched (including its color
+    /// and glyph, so a rejected rename never silently applies the rest).
+    func promptEditSpace(_ id: UUID) {
+        guard let window = view.window,
+              let space = workspace.spaces.first(where: { $0.id == id }) else { return }
+        SpaceSheet.present(over: window, name: space.name, colorID: space.colorID, glyph: space.glyph) {
+            [weak self] name, colorID, glyph in
+            guard let self else { return }
+            if name != space.name, let error = self.renameSpaceNamed(space.name, to: name) {
+                self.presentSpaceError(error, title: "Couldn\u{2019}t rename Space")
+                return
+            }
+            self.workspace.updateSpace(id: id, colorID: colorID, glyph: glyph)
+            self.refreshSidebar()
+            self.onWorkspaceDidChange?()
+        }
+    }
+
+    /// "Delete Space…" — confirms first, stating plainly that member projects
+    /// are KEPT and only the grouping is removed (the model's actual
+    /// behavior, per `WorkspaceModel.removeSpace`).
+    func confirmDeleteSpace(_ id: UUID) {
+        guard let window = view.window,
+              let space = workspace.spaces.first(where: { $0.id == id }) else { return }
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = "Delete Space \u{201c}\(space.name)\u{201d}?"
+        alert.informativeText = "Its projects are kept — only the Space grouping is removed;"
+            + " they fall back to Pinned/Projects."
+        alert.addButton(withTitle: "Delete").hasDestructiveAction = true
+        alert.addButton(withTitle: "Cancel")
+        let spaceName = space.name
+        let confirm: (NSApplication.ModalResponse) -> Void = { [weak self] response in
+            guard response == .alertFirstButtonReturn else { return }
+            _ = self?.removeSpaceNamed(spaceName)
+        }
+        alert.beginSheetModal(for: window, completionHandler: confirm)
+    }
+
+    private func presentSpaceError(_ text: String, title: String) {
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = title
+        alert.informativeText = text
+        alert.addButton(withTitle: "OK")
+        if let window = view.window { alert.beginSheetModal(for: window, completionHandler: nil) }
+        else { alert.runModal() }
     }
 
     // MARK: - First-responder observation

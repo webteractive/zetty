@@ -149,6 +149,23 @@ final class SidebarView: NSView {
     /// Called to move a project into a Space (nil = out of every Space).
     var onAssignProjectToSpace: ((Int, UUID?) -> Void)?
 
+    /// Called from a project row's "Move to Space ▸ New Space…" with the
+    /// project index to file into the new Space once created, or nil when
+    /// invoked from a Space header instead.
+    var onNewSpace: ((Int?) -> Void)?
+
+    /// Called with a Space's id for its header context menu's "Rename…" and
+    /// "Edit Space…" (both open the same sheet — the sheet's name field
+    /// covers renaming).
+    var onEditSpace: ((UUID) -> Void)?
+
+    /// Called with a Space's id for its header context menu's "Delete Space…".
+    var onDeleteSpace: ((UUID) -> Void)?
+
+    /// Called with a Space's id for its header context menu's "Hibernate All"
+    /// (true) / "Wake All" (false).
+    var onHibernateSpace: ((UUID, Bool) -> Void)?
+
     /// Called with the project index when the user picks "Remove Project…"
     /// from a project row's context menu.
     var onRemoveProject: ((Int) -> Void)?
@@ -766,6 +783,39 @@ final class SidebarView: NSView {
         guard projects.indices.contains(projectIndex) else { return }
         onOpenProjectSettings?(projectIndex)
     }
+
+    @objc private func assignSpaceMenuClicked(_ sender: NSMenuItem) {
+        onAssignProjectToSpace?(sender.tag, sender.representedObject as? UUID)
+    }
+
+    @objc private func newSpaceMenuClicked(_ sender: NSMenuItem) {
+        onNewSpace?(sender.tag)
+    }
+
+    @objc private func renameSpaceMenuClicked(_ sender: NSMenuItem) {
+        guard let id = sender.representedObject as? UUID else { return }
+        onEditSpace?(id)
+    }
+
+    @objc private func editSpaceMenuClicked(_ sender: NSMenuItem) {
+        guard let id = sender.representedObject as? UUID else { return }
+        onEditSpace?(id)
+    }
+
+    @objc private func hibernateSpaceMenuClicked(_ sender: NSMenuItem) {
+        guard let id = sender.representedObject as? UUID else { return }
+        onHibernateSpace?(id, true)
+    }
+
+    @objc private func wakeSpaceMenuClicked(_ sender: NSMenuItem) {
+        guard let id = sender.representedObject as? UUID else { return }
+        onHibernateSpace?(id, false)
+    }
+
+    @objc private func deleteSpaceMenuClicked(_ sender: NSMenuItem) {
+        guard let id = sender.representedObject as? UUID else { return }
+        onDeleteSpace?(id)
+    }
 }
 
 // MARK: - NSMenuDelegate (project row context menu)
@@ -774,10 +824,48 @@ extension SidebarView: NSMenuDelegate {
     func menuNeedsUpdate(_ menu: NSMenu) {
         menu.removeAllItems()
         let row = outlineView.clickedRow
-        guard row >= 0,
-              let obj = outlineView.item(atRow: row) as? OutlineItem,
-              case .project(let p) = obj.kind,
-              projects.indices.contains(p) else { return }
+        guard row >= 0, let obj = outlineView.item(atRow: row) as? OutlineItem else { return }
+
+        if case .header(.space(let id)) = obj.kind, spaces.contains(where: { $0.id == id }) {
+            for (title, selector) in [("Rename\u{2026}", #selector(renameSpaceMenuClicked(_:))),
+                                      ("Edit Space\u{2026}", #selector(editSpaceMenuClicked(_:)))] {
+                let item = NSMenuItem(title: title, action: selector, keyEquivalent: "")
+                item.target = self
+                item.representedObject = id
+                menu.addItem(item)
+            }
+            menu.addItem(.separator())
+            // Counts come from `spaceCounts` (the filtered member list), never
+            // from `SidebarSpace` — see its doc comment for why.
+            let awake = spaceCounts[id]?.awake ?? 0
+            let hibernated = spaceCounts[id]?.hibernated ?? 0
+
+            let hibernate = NSMenuItem(title: "Hibernate All",
+                                       action: #selector(hibernateSpaceMenuClicked(_:)),
+                                       keyEquivalent: "")
+            hibernate.target = self
+            hibernate.representedObject = id
+            hibernate.isEnabled = awake > 0
+            menu.addItem(hibernate)
+
+            let wake = NSMenuItem(title: "Wake All", action: #selector(wakeSpaceMenuClicked(_:)),
+                                  keyEquivalent: "")
+            wake.target = self
+            wake.representedObject = id
+            wake.isEnabled = hibernated > 0
+            menu.addItem(wake)
+
+            menu.addItem(.separator())
+            let delete = NSMenuItem(title: "Delete Space\u{2026}",
+                                    action: #selector(deleteSpaceMenuClicked(_:)),
+                                    keyEquivalent: "")
+            delete.target = self
+            delete.representedObject = id
+            menu.addItem(delete)
+            return
+        }
+
+        guard case .project(let p) = obj.kind, projects.indices.contains(p) else { return }
         // A "Cloning…" placeholder has no actions until the copy lands.
         guard !projects[p].isPendingClone else { return }
 
@@ -803,6 +891,45 @@ extension SidebarView: NSMenuDelegate {
                 settings.target = self
                 settings.tag = p
                 menu.addItem(settings)
+            }
+
+            // Home, scratch terminals, and clones are never Space members —
+            // hide the item entirely rather than offering a move the model
+            // will refuse (a clone follows its source's Space).
+            if !isHome && !projects[p].isClone {
+                let moveItem = NSMenuItem(title: "Move to Space", action: nil, keyEquivalent: "")
+                let submenu = NSMenu()
+
+                let none = NSMenuItem(title: "None", action: #selector(assignSpaceMenuClicked(_:)),
+                                      keyEquivalent: "")
+                none.target = self
+                none.tag = p
+                none.representedObject = nil as UUID?
+                none.state = projects[p].spaceID == nil ? .on : .off
+                submenu.addItem(none)
+
+                if !spaces.isEmpty { submenu.addItem(.separator()) }
+                for space in spaces {
+                    let item = NSMenuItem(title: space.name,
+                                          action: #selector(assignSpaceMenuClicked(_:)),
+                                          keyEquivalent: "")
+                    item.target = self
+                    item.tag = p
+                    item.representedObject = space.id
+                    item.state = projects[p].spaceID == space.id ? .on : .off
+                    submenu.addItem(item)
+                }
+
+                submenu.addItem(.separator())
+                let newSpace = NSMenuItem(title: "New Space\u{2026}",
+                                          action: #selector(newSpaceMenuClicked(_:)),
+                                          keyEquivalent: "")
+                newSpace.target = self
+                newSpace.tag = p
+                submenu.addItem(newSpace)
+
+                moveItem.submenu = submenu
+                menu.addItem(moveItem)
             }
 
             let hibernate = NSMenuItem(
@@ -1467,7 +1594,13 @@ private final class HeaderCellView: NSTableCellView {
         let hasGlyph = symbol != nil
         glyphWidth.constant = hasGlyph ? 11 : 0
         glyphGap.constant = hasGlyph ? 4 : 0
-        if let symbol {
+        if let symbol, ProjectIcon.isEmoji(symbol) {
+            // A Space's glyph is edited through the same IconPicker a
+            // project's is (SpaceSheet), which also offers emoji — draw as-is,
+            // no template tint, matching ProjectRowView's own emoji branch.
+            glyphView.image = ProjectIcon.emojiImage(symbol, pointSize: 9)
+            glyphView.contentTintColor = nil
+        } else if let symbol {
             glyphView.image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)?
                 .withSymbolConfiguration(NSImage.SymbolConfiguration(pointSize: 9, weight: .semibold))
             glyphView.contentTintColor = accent ?? ZTheme.current.fg3Color

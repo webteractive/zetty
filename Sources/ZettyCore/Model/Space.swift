@@ -17,7 +17,8 @@ public struct Space: Codable, Sendable, Equatable, Identifiable {
     public var name: String
     /// A `ZTheme.projectPalette` id, or nil for the default header styling.
     public var colorID: String?
-    /// An SF Symbol name overriding the default header glyph, or nil.
+    /// An SF Symbol name or emoji overriding the default header glyph
+    /// (`HeaderCellView` renders whichever it is), or nil.
     public var glyph: String?
     /// Whether the section is folded to its header row. Persisted, unlike the
     /// Hibernating section's view-local collapse state.
