@@ -3,6 +3,9 @@ import Foundation
 public struct Workspace: Codable, Sendable, Equatable {
     public var schemaVersion: Int
     public var projects: [Project]
+    /// User-defined sidebar sections, in sidebar order. Missing in
+    /// pre-Spaces files → empty (grouping simply isn't there).
+    public var spaces: [Space]
     /// Index of the project that was active when the workspace was saved,
     /// restored on launch. Missing in pre-existing files → 0.
     public var activeProjectIndex: Int
@@ -17,12 +20,14 @@ public struct Workspace: Codable, Sendable, Equatable {
     public init(
         schemaVersion: Int = 1,
         projects: [Project] = [],
+        spaces: [Space] = [],
         activeProjectIndex: Int = 0,
         sidebarCollapsed: Bool = false,
         sidebarWidth: Double = SidebarMetrics.defaultWidth
     ) {
         self.schemaVersion = schemaVersion
         self.projects = projects
+        self.spaces = spaces
         self.activeProjectIndex = activeProjectIndex
         self.sidebarCollapsed = sidebarCollapsed
         self.sidebarWidth = sidebarWidth
@@ -32,6 +37,7 @@ public struct Workspace: Codable, Sendable, Equatable {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         schemaVersion = try container.decode(Int.self, forKey: .schemaVersion)
         projects = try container.decode([Project].self, forKey: .projects)
+        spaces = try container.decodeIfPresent([Space].self, forKey: .spaces) ?? []
         activeProjectIndex = try container.decodeIfPresent(Int.self, forKey: .activeProjectIndex) ?? 0
         sidebarCollapsed = try container.decodeIfPresent(Bool.self, forKey: .sidebarCollapsed) ?? false
         sidebarWidth = SidebarMetrics.clampWidth(
