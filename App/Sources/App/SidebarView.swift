@@ -30,17 +30,20 @@ struct SidebarProject: Equatable {
     let spaceID: UUID?                   // the Space this row renders under, nil for Pinned/Projects
 }
 
-/// Plain data for one Space header row. Equatable for the same reason
-/// `SidebarProject` is: machine-driven refreshes arrive several times a second
-/// and must no-op on unchanged input.
+/// Plain data for one Space header row: identity and appearance only. Counts
+/// are NOT carried here — they must reflect the current filter, so
+/// `rebuildOutline()` derives them from its own filtered member lists (the
+/// same path every other section's count already takes). A second count
+/// source on this struct is exactly what let a Space header show stale
+/// pre-filter numbers. Equatable for the same reason `SidebarProject` is:
+/// machine-driven refreshes arrive several times a second and must no-op on
+/// unchanged input.
 struct SidebarSpace: Equatable {
     let id: UUID
     let name: String
     let color: NSColor?          // resolved from ZTheme.projectPalette (nil = default)
     let glyph: String?           // SF Symbol overriding the default header glyph
     let isCollapsed: Bool
-    let awakeCount: Int
-    let hibernatedCount: Int
 }
 
 /// Maps an agent status to its status-dot color, or nil for "no agent".
@@ -185,6 +188,10 @@ final class SidebarView: NSView {
     private var projectsCount = 0
     private var scratchCount = 0
     private var hibernatedCount = 0
+    /// Per-Space (awake, hibernated) member counts, computed from the same
+    /// FILTERED member lists used to build that Space's rows — never from
+    /// `SidebarSpace` (which carries no counts) or the unfiltered model.
+    private var spaceCounts: [UUID: (awake: Int, hibernated: Int)] = [:]
 
     /// Whether the Hibernating section is collapsed (its dormant project rows
     /// hidden). Transient — resets to expanded on relaunch, like zoom.
@@ -615,10 +622,18 @@ final class SidebarView: NSView {
         // Spaces sit between Pinned and Projects, in their own order. A Space
         // header is shown even with no members, so a freshly created Space is
         // visible and can be dropped onto.
+        spaceCounts.removeAll(keepingCapacity: true)
         for space in spaces {
+            let spaceMembers = members(of: space.id)
+            // Counted from the same FILTERED list its rows come from, so the
+            // header's number always matches what's actually shown under it.
+            spaceCounts[space.id] = (
+                awake: spaceMembers.filter { !$0.element.isHibernated }.count,
+                hibernated: spaceMembers.filter { $0.element.isHibernated }.count
+            )
             rows.append(.header(.space(space.id)))
             if !space.isCollapsed {
-                rows += withClones(members(of: space.id))
+                rows += withClones(spaceMembers)
             }
         }
         if !unpinned.isEmpty {
@@ -638,8 +653,12 @@ final class SidebarView: NSView {
         topLevel = rows
 
         // A collapsed Space still renders its active member — an invisible
-        // selection would be worse than an extra row.
+        // selection would be worse than an extra row. Gated on the active
+        // project actually passing the filter (matching every other section,
+        // which derives visibility from `visible`) — otherwise a filter that
+        // hides it would still force its row to appear.
         if activeProject >= 0, projects.indices.contains(activeProject),
+           visible.contains(where: { $0.offset == activeProject }),
            let spaceID = projects[activeProject].spaceID,
            spaces.first(where: { $0.id == spaceID })?.isCollapsed == true,
            let headerIndex = topLevel.firstIndex(of: .header(.space(spaceID))) {
@@ -1058,8 +1077,12 @@ extension SidebarView: NSOutlineViewDelegate {
                 onToggle = { [weak self] in self?.toggleHibernatedCollapsed() }
             case .space(let id):
                 let space = spaces.first { $0.id == id }
-                count = space?.awakeCount ?? 0
-                dormant = space?.hibernatedCount ?? 0
+                // Counts come from `spaceCounts` (computed in rebuildOutline
+                // from the FILTERED member list), never from `space` itself —
+                // `SidebarSpace` carries no counts precisely so there is only
+                // one source of truth for this number.
+                count = spaceCounts[id]?.awake ?? 0
+                dormant = spaceCounts[id]?.hibernated ?? 0
                 collapsible = true
                 collapsed = space?.isCollapsed ?? false
                 accent = space?.color

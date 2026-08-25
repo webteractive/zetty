@@ -2804,16 +2804,18 @@ final class TerminalViewController: NSViewController {
                 spaceID: nil
             ))
         }
+        // Identity + appearance only — counts are NOT computed here. They must
+        // reflect the sidebar's own (possibly filtered) view of the member
+        // list, which only SidebarView.rebuildOutline() has; carrying a second,
+        // unfiltered count on SidebarSpace is what let a Space header show
+        // stale numbers under a filter.
         let sidebarSpaces: [SidebarSpace] = workspace.spaces.map { space in
-            let members = workspace.projects(inSpace: space.id)
-            return SidebarSpace(
+            SidebarSpace(
                 id: space.id,
                 name: space.name,
                 color: ZTheme.projectColor(id: space.colorID),
                 glyph: space.glyph,
-                isCollapsed: space.isCollapsed,
-                awakeCount: members.filter { !$0.isHibernated }.count,
-                hibernatedCount: members.filter(\.isHibernated).count
+                isCollapsed: space.isCollapsed
             )
         }
         sidebarView?.update(
