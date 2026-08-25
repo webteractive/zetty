@@ -895,6 +895,7 @@ extension SidebarView: NSOutlineViewDataSource {
 
     static let tabDragType = NSPasteboard.PasteboardType("co.webteractive.zetty.sidebar-tab")
     static let projectDragType = NSPasteboard.PasteboardType("co.webteractive.zetty.sidebar-project")
+    static let spaceDragType = NSPasteboard.PasteboardType("co.webteractive.zetty.sidebar-space")
 
     func outlineView(_ outlineView: NSOutlineView, pasteboardWriterForItem item: Any) -> NSPasteboardWriting? {
         guard let obj = item as? OutlineItem else { return nil }
@@ -912,6 +913,14 @@ extension SidebarView: NSOutlineViewDataSource {
                   !projects[p].isPendingClone else { return nil }
             let pb = NSPasteboardItem()
             pb.setString("\(p)", forType: SidebarView.projectDragType)
+            return pb
+        case .header(.space(let id)):
+            // Same filter guard as a project drag: visible rows (incl. header
+            // positions) are a subset while filtering, so offsets don't map.
+            guard filterText.trimmingCharacters(in: .whitespaces).isEmpty,
+                  let index = spaces.firstIndex(where: { $0.id == id }) else { return nil }
+            let pb = NSPasteboardItem()
+            pb.setString("\(index)", forType: SidebarView.spaceDragType)
             return pb
         case .header:
             return nil
@@ -936,6 +945,12 @@ extension SidebarView: NSOutlineViewDataSource {
         _ outlineView: NSOutlineView, validateDrop info: NSDraggingInfo,
         proposedItem item: Any?, proposedChildIndex index: Int
     ) -> NSDragOperation {
+        // Space header: reorder within the Spaces band only.
+        if let from = draggedSpace(from: info) {
+            guard spaces.indices.contains(from) else { return [] }
+            return validateSpaceDrop(from, item: item, index: index, outlineView: outlineView)
+        }
+
         // Tab child: only between the SAME project's tab children (never onto a row).
         if let source = draggedTab(from: info) {
             guard index >= 0,
@@ -945,11 +960,37 @@ extension SidebarView: NSOutlineViewDataSource {
             return .move
         }
 
-        // Project row: only top-level gaps, snapped to stay inside its section.
-        guard let from = draggedProject(from: info),
-              projects.indices.contains(from),
-              let range = projectRowRange(for: section(forProjectAt: from))
-        else { return [] }
+        // Project row: within its own section, OR onto a Space header / into a
+        // different section's row range — Space assignment, the only
+        // cross-section drop Zetty allows (the pinned-first invariant depends
+        // on every other cross-section drop staying refused).
+        guard let from = draggedProject(from: info), projects.indices.contains(from) else { return [] }
+
+        // Drop ONTO a Space header → assign to that Space. Only when the model
+        // would actually accept it — `WorkspaceModel.assign(projectAt:to:)`
+        // refuses Home, Scratch, and clones, and a drop that looks accepted
+        // but silently does nothing is worse than one with no drop target.
+        if let obj = item as? OutlineItem, case .header(.space) = obj.kind, isSpaceAssignable(from) {
+            return .move
+        }
+
+        let current = section(forProjectAt: from)
+        guard let range = projectRowRange(for: current) else { return [] }
+
+        // Drop into a GAP (item == nil) that belongs to a different, eligible
+        // section → assignment/ungroup. Leave the indicator where it is; the
+        // gap is already a valid position in the target section.
+        if item == nil, isSpaceAssignable(from),
+           let gapSection = section(forTopLevelGap: index), gapSection != current {
+            switch gapSection {
+            case .space, .pinned, .projects:
+                return .move
+            default:
+                break
+            }
+        }
+
+        // Otherwise: clamp/snap to stay inside the dragged row's own section.
         let clamped = clampProjectDrop(index, into: range)
         if item != nil || index != clamped {
             outlineView.setDropItem(nil, dropChildIndex: clamped)
@@ -961,6 +1002,16 @@ extension SidebarView: NSOutlineViewDataSource {
         _ outlineView: NSOutlineView, acceptDrop info: NSDraggingInfo,
         item: Any?, childIndex index: Int
     ) -> Bool {
+        // Space header move.
+        if let from = draggedSpace(from: info) {
+            guard spaces.indices.contains(from) else { return false }
+            let to = spaceIndexForGap(index < 0 ? topLevel.count : index)
+            guard to != from else { return false }
+            isReordering = false
+            onMoveSpace?(from, to)
+            return true
+        }
+
         // Tab child move within a project.
         if let source = draggedTab(from: info) {
             guard index >= 0,
@@ -975,10 +1026,37 @@ extension SidebarView: NSOutlineViewDataSource {
             return true
         }
 
+        // Project row: assignment (Space header / cross-section gap) first,
+        // then the existing within-section reorder.
+        guard let from = draggedProject(from: info), projects.indices.contains(from) else { return false }
+        let current = section(forProjectAt: from)
+
+        let target: SidebarSection?
+        if let obj = item as? OutlineItem, case .header(let section) = obj.kind {
+            target = section
+        } else {
+            target = section(forTopLevelGap: index < 0 ? topLevel.count : index)
+        }
+        if let target, target != current, isSpaceAssignable(from) {
+            switch target {
+            case .space(let id):
+                isReordering = false
+                onAssignProjectToSpace?(from, id)
+                return true
+            case .pinned, .projects:
+                // Dropping out of a Space ungroups; pin state is untouched.
+                if case .space = current {
+                    isReordering = false
+                    onAssignProjectToSpace?(from, nil)
+                    return true
+                }
+            default:
+                return false
+            }
+        }
+
         // Project row move within a section.
-        guard let from = draggedProject(from: info),
-              projects.indices.contains(from),
-              let range = projectRowRange(for: section(forProjectAt: from)) else { return false }
+        guard let range = projectRowRange(for: current) else { return false }
         let sectionOffsets = topLevel[range].compactMap { kind -> Int? in
             if case .project(let o) = kind { return o } else { return nil }
         }
@@ -1006,6 +1084,21 @@ extension SidebarView: NSOutlineViewDataSource {
     /// Decodes the dragged project's offset from its pasteboard payload.
     private func draggedProject(from info: NSDraggingInfo) -> Int? {
         info.draggingPasteboard.string(forType: SidebarView.projectDragType).flatMap(Int.init)
+    }
+
+    /// Decodes the dragged Space's index (into `spaces`) from its pasteboard payload.
+    private func draggedSpace(from info: NSDraggingInfo) -> Int? {
+        info.draggingPasteboard.string(forType: SidebarView.spaceDragType).flatMap(Int.init)
+    }
+
+    /// Mirrors `WorkspaceModel.assign(projectAt:to:)`'s refusals: Home, Scratch,
+    /// and clones can never join or leave a Space. The drag layer must not
+    /// offer a drop the model will reject — a drop that looks accepted but
+    /// silently does nothing is worse than no drop target at all.
+    private func isSpaceAssignable(_ index: Int) -> Bool {
+        guard projects.indices.contains(index) else { return false }
+        let p = projects[index]
+        return !p.isHome && !p.isScratch && !p.isClone
     }
 
     /// Which sidebar section a project row belongs to (drives drag-reorder
@@ -1036,6 +1129,73 @@ extension SidebarView: NSOutlineViewDataSource {
     private func clampProjectDrop(_ index: Int, into range: Range<Int>) -> Int {
         let proposed = index < 0 ? range.upperBound : index
         return min(max(proposed, range.lowerBound), range.upperBound)
+    }
+
+    /// The section whose row range contains `gap`, or nil when the gap sits at
+    /// a boundary owned by no section (e.g. before the very first row).
+    private func section(forTopLevelGap gap: Int) -> SidebarSection? {
+        for kind in topLevel.prefix(gap).reversed() {
+            if case .header(let section) = kind { return section }
+            if case .project(let offset) = kind, projects.indices.contains(offset) {
+                return section(forProjectAt: offset)
+            }
+        }
+        return nil
+    }
+
+    /// The half-open `topLevel` range spanning the Spaces band — every Space
+    /// header plus its member rows, from the first Space header through the
+    /// last Space's last row — or nil when no Spaces are shown. This is the
+    /// only place a dragged Space header may be dropped.
+    private var spacesBandRange: Range<Int>? {
+        guard let first = topLevel.firstIndex(where: {
+            if case .header(.space) = $0 { return true }
+            return false
+        }) else { return nil }
+        var end = first
+        for kind in topLevel[first...] {
+            switch kind {
+            case .header(.space), .project:
+                end += 1
+            default:
+                // `topLevel` only ever holds `.header`/`.project` kinds; a
+                // non-space header ends the band. `.tab` can't appear here.
+                return first..<end
+            }
+        }
+        return first..<end
+    }
+
+    /// Maps a `topLevel` drop gap to a target index in the `spaces` array, by
+    /// counting the Space headers that precede it. Only meaningful within
+    /// `spacesBandRange`.
+    private func spaceIndexForGap(_ gap: Int) -> Int {
+        topLevel.prefix(gap).reduce(into: 0) { count, kind in
+            if case .header(.space) = kind { count += 1 }
+        }
+    }
+
+    /// Validates (and visually snaps) a dragged Space header's drop: only
+    /// inside the Spaces band, and only at a Space-header boundary — dropping
+    /// in the middle of another Space's member rows still reorders headers,
+    /// it just snaps to the nearest one rather than pointing into a member list.
+    private func validateSpaceDrop(
+        _ from: Int, item: Any?, index: Int, outlineView: NSOutlineView
+    ) -> NSDragOperation {
+        guard filterText.trimmingCharacters(in: .whitespaces).isEmpty,
+              let band = spacesBandRange, !band.isEmpty else { return [] }
+        let headerIndices = topLevel[band].indices.filter {
+            if case .header(.space) = topLevel[$0] { return true }
+            return false
+        }
+        let snapPoints = headerIndices + [band.upperBound]
+        let proposed = index < 0 ? band.upperBound : index
+        let clamped = min(max(proposed, band.lowerBound), band.upperBound)
+        let nearest = snapPoints.min(by: { abs($0 - clamped) < abs($1 - clamped) }) ?? band.lowerBound
+        if item != nil || index != nearest {
+            outlineView.setDropItem(nil, dropChildIndex: nearest)
+        }
+        return .move
     }
 }
 

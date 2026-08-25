@@ -702,6 +702,13 @@ final class TerminalViewController: NSViewController {
             self.onWorkspaceDidChange?()
         }
 
+        sidebar.onAssignProjectToSpace = { [weak self] index, spaceID in
+            self?.assignProject(at: index, to: spaceID)
+        }
+        sidebar.onMoveSpace = { [weak self] from, to in
+            self?.moveSpace(from: from, to: to)
+        }
+
         sidebar.onTogglePin = { [weak self] index in
             guard let self else { return }
             self.workspace.togglePin(at: index)
