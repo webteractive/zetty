@@ -1005,8 +1005,11 @@ extension SidebarView: NSOutlineViewDataSource {
         // Space header move.
         if let from = draggedSpace(from: info) {
             guard spaces.indices.contains(from) else { return false }
-            let to = spaceIndexForGap(index < 0 ? topLevel.count : index)
-            guard to != from else { return false }
+            // The drop gap counts the dragged row's own old slot when moving
+            // down, exactly as in the project- and tab-move branches below.
+            let gap = spaceIndexForGap(index < 0 ? topLevel.count : index)
+            let to = gap > from ? gap - 1 : gap
+            guard to != from, spaces.indices.contains(to) else { return false }
             isReordering = false
             onMoveSpace?(from, to)
             return true
@@ -1157,9 +1160,14 @@ extension SidebarView: NSOutlineViewDataSource {
             switch kind {
             case .header(.space), .project:
                 end += 1
-            default:
-                // `topLevel` only ever holds `.header`/`.project` kinds; a
-                // non-space header ends the band. `.tab` can't appear here.
+            case .tab:
+                // `topLevel` only ever holds `.header`/`.project` kinds — a
+                // `.tab` can't appear here. Listed explicitly (rather than
+                // folded into `default`) so a future `Kind` case fails to
+                // compile here instead of silently matching this arm.
+                return first..<end
+            case .header:
+                // A non-space header ends the band.
                 return first..<end
             }
         }
