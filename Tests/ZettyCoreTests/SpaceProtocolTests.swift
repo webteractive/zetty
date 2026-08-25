@@ -48,3 +48,42 @@ private func roundTrip(_ request: ControlRequest) throws -> ControlRequest {
                                            from: try JSONEncoder().encode(snapshot))
     #expect(decoded == snapshot)
 }
+
+@Test func spaceRequestsEncodeTheirExactWireCommands() throws {
+    // Pins the literals themselves. A round-trip test can't: mistyping a
+    // command on both the encode and decode side still round-trips green,
+    // while the CLI and app — which match on these strings — break at runtime.
+    let expected: [(ControlRequest, String)] = [
+        (.newSpace(name: "S", colorID: nil, glyph: nil), "new-space"),
+        (.renameSpace(name: "A", newName: "B"), "rename-space"),
+        (.removeSpace(name: "S"), "remove-space"),
+        (.moveToSpace(project: "p", space: nil), "move-to-space"),
+        (.hibernateSpace(name: "S"), "hibernate-space"),
+        (.wakeSpace(name: "S"), "wake-space"),
+        (.addProject(path: "/tmp/x", name: nil, space: nil, focus: false), "add-project"),
+    ]
+    for (request, command) in expected {
+        let object = try JSONSerialization.jsonObject(
+            with: try JSONEncoder().encode(request)) as? [String: Any]
+        #expect(object?["command"] as? String == command)
+    }
+}
+
+@Test func spaceRequestFieldsUseTheirDocumentedWireKeys() throws {
+    // Same reasoning one level down: the CODING KEY names are part of the
+    // wire contract, and encode/decode symmetry hides a renamed key.
+    let created = try JSONSerialization.jsonObject(with: try JSONEncoder().encode(
+        ControlRequest.newSpace(name: "S", colorID: "teal", glyph: "briefcase.fill"))) as? [String: Any]
+    #expect(created?["name"] as? String == "S")
+    #expect(created?["color"] as? String == "teal")
+    #expect(created?["icon"] as? String == "briefcase.fill")
+
+    let moved = try JSONSerialization.jsonObject(with: try JSONEncoder().encode(
+        ControlRequest.moveToSpace(project: "p", space: "S"))) as? [String: Any]
+    #expect(moved?["project"] as? String == "p")
+    #expect(moved?["space"] as? String == "S")
+
+    let renamed = try JSONSerialization.jsonObject(with: try JSONEncoder().encode(
+        ControlRequest.renameSpace(name: "A", newName: "B"))) as? [String: Any]
+    #expect(renamed?["newName"] as? String == "B")
+}
