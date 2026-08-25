@@ -65,3 +65,36 @@ private func project(_ name: String, space: String? = nil,
     #expect(usage.contains("--none"))
     #expect(usage.contains("--space"))
 }
+
+@Test func spaceVerbsReachTheirRunners() {
+    // `recognizes(_:)` only proves the verb string is listed. These calls prove
+    // the dispatch switch routes each verb to a runner: every one of them fails
+    // (or prints usage) BEFORE any socket is opened, so they need no live app.
+    #expect(ControlCLI.run(["new-space"]) == 1)                                   // empty name
+    #expect(ControlCLI.run(["rename-space", "one"]) == 1)                         // needs both names
+    #expect(ControlCLI.run(["remove-space"]) == 1)                                // needs a name
+    #expect(ControlCLI.run(["move-to-space"]) == 1)                               // needs a project
+    for verb in ["new-space", "rename-space", "remove-space", "move-to-space"] {
+        #expect(ControlCLI.run([verb, "--help"]) == 0)
+    }
+}
+
+@Test func moveToSpaceRejectsANameAndNoneTogether() {
+    // The "not both" contract: never a silent precedence between them.
+    #expect(ControlCLI.run(["move-to-space", "proj", "Work", "--none"]) == 1)
+}
+
+@Test func renameSpaceAcceptsUnquotedMultiWordNamesViaTo() {
+    // Regression for the bug this round fixes: `--to` joins a multi-word name
+    // on either side of the marker without quoting. Each case here leaves the
+    // OTHER side empty on purpose, so the empty-name guard fires and the
+    // runner fails before `expectOK` would open the control socket — this
+    // machine has a real Zetty app running, and a genuine two-sided call
+    // would send it a live renameSpace request its socket handler doesn't
+    // implement yet (Task 6 is still pending). That still exercises the
+    // exact array-slice-and-join logic this fix touches on both sides.
+    #expect(ControlCLI.run(["rename-space", "Client", "Acme", "--to"]) == 1)       // multi-word OLD joins; NEW left blank
+    #expect(ControlCLI.run(["rename-space", "--to", "Acme", "Corp"]) == 1)         // multi-word NEW joins; OLD left blank
+    // No `--to` marker at all: still rejected as an ambiguous 4-positional call.
+    #expect(ControlCLI.run(["rename-space", "Client", "Acme", "New", "Name"]) == 1)
+}

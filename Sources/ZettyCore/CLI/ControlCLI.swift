@@ -69,7 +69,9 @@ public enum ControlCLI {
                                               focus wake as required
       zetty new-space <name> [--color <id>] [--icon <symbol>]
                           create a Space (a named sidebar section)
-      zetty rename-space <old> <new>  rename a Space
+      zetty rename-space <old> <new> | rename-space <old> --to <new>
+                          rename a Space (quote either name if it has spaces,
+                          or use --to to separate two unquoted multi-word names)
       zetty remove-space <name>       delete a Space (its projects are kept, ungrouped)
       zetty move-to-space <project> (<space> | --none)
                           move a project into a Space, or out of every Space
@@ -420,15 +422,32 @@ public enum ControlCLI {
     }
 
     private static func runRenameSpace(_ arguments: [String]) -> Int32 {
-        let positional = arguments.filter { !$0.hasPrefix("--") }
         if arguments.contains("--help") || arguments.contains("-h") {
             print(usage)
             return 0
         }
-        guard positional.count == 2 else {
-            return failure("rename-space needs the current name and the new name")
+        // Two free-form names can't be split by position alone once either
+        // contains a space ("Client Acme"), so `--to` is the separator. The
+        // quoted two-token form still works, which is what the usage line shows.
+        let old: String
+        let new: String
+        if let marker = arguments.firstIndex(of: "--to") {
+            old = arguments[..<marker].joined(separator: " ").trimmingCharacters(in: .whitespaces)
+            new = arguments[(marker + 1)...].joined(separator: " ").trimmingCharacters(in: .whitespaces)
+        } else {
+            let positional = arguments.filter { !$0.hasPrefix("--") }
+            guard positional.count == 2 else {
+                return failure("rename-space needs the current name and the new name "
+                    + "— quote names containing spaces, or use: rename-space <old> --to <new>")
+            }
+            old = positional[0]
+            new = positional[1]
         }
-        return expectOK(.renameSpace(name: positional[0], newName: positional[1]), success: nil)
+        guard !old.isEmpty, !new.isEmpty else {
+            return failure("rename-space needs the current name and the new name "
+                + "— quote names containing spaces, or use: rename-space <old> --to <new>")
+        }
+        return expectOK(.renameSpace(name: old, newName: new), success: nil)
     }
 
     private static func runRemoveSpace(_ arguments: [String]) -> Int32 {
