@@ -1464,6 +1464,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             // `restored(from:)` guarantees a Home exists (injecting one for
             // pre-Home saved files) and never returns nil for non-empty input.
             if let model = WorkspaceModel.restored(from: runtimes,
+                                                   spaces: workspace.spaces,
                                                    activeIndex: workspace.activeProjectIndex,
                                                    homeRoot: homeRoot) {
                 tvc.restore(workspace: model)

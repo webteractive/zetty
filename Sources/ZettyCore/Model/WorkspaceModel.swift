@@ -89,15 +89,19 @@ public final class WorkspaceModel {
     /// `rootPath` saved in `workspace.json` — decides where Home lives. That's
     /// what makes a changed `zetty-home-path` take effect on the next launch,
     /// and what lets dropping the key move Home back to the real home directory.
-    public static func restored(from persisted: [ProjectRuntime], activeIndex: Int = 0,
-                               homeRoot: String = NSHomeDirectory()) -> WorkspaceModel? {
+    ///
+    /// Spaces restore alongside projects, and `regroup()` clears any
+    /// membership whose Space is gone.
+    public static func restored(from persisted: [ProjectRuntime], spaces: [Space] = [],
+                                activeIndex: Int = 0,
+                                homeRoot: String = NSHomeDirectory()) -> WorkspaceModel? {
         var list = persisted
         var active = activeIndex
         if !list.contains(where: \.isHome) {
             list.insert(makeHome(rootPath: homeRoot), at: 0)
             active += 1
         }
-        let model = WorkspaceModel(restoring: list, activeIndex: active)
+        let model = WorkspaceModel(restoring: list, spaces: spaces, activeIndex: active)
         model?.setHomeRoot(homeRoot)
         return model
     }

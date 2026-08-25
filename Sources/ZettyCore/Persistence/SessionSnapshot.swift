@@ -78,6 +78,7 @@ public enum SessionSnapshot {
                 isHibernated: runtime.isHibernated,
                 isHome: runtime.isHome,
                 cloneSource: runtime.cloneSource,
+                spaceID: runtime.spaceID,
                 sessions: [Session(title: "main", tabs: tabs, activeTabIndex: runtime.tabList.activeIndex)]
             )
         }
@@ -86,7 +87,7 @@ public enum SessionSnapshot {
         let activeIndex = persistable.firstIndex { $0.offset == model.activeIndex }.map {
             persistable.distance(from: persistable.startIndex, to: $0)
         } ?? 0
-        return Workspace(projects: projects, activeProjectIndex: activeIndex)
+        return Workspace(projects: projects, spaces: model.spaces, activeProjectIndex: activeIndex)
     }
 
     // MARK: - Workspace → [ProjectRuntime]
@@ -114,6 +115,7 @@ public enum SessionSnapshot {
                 isHibernated: project.isHibernated,
                 isHome: project.isHome,
                 cloneSource: project.cloneSource,
+                spaceID: project.spaceID,
                 tabList: tabList
             )
         }
