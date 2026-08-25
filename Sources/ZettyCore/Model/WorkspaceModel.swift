@@ -351,6 +351,18 @@ public final class WorkspaceModel {
         projects.filter { $0.spaceID == id }
     }
 
+    /// The Space a project RENDERS under, which for a clone is its source's:
+    /// a clone's own `spaceID` is always nil (`assign` refuses clones) and it
+    /// rides into its source's Space through `regroup()`'s gluing pass. Callers
+    /// that report or render a project's Space must use this rather than
+    /// `spaceID`, or a clone reads as a gap in the middle of its Space.
+    /// An orphaned clone (source removed) correctly resolves to nil.
+    public func effectiveSpaceID(of project: ProjectRuntime) -> UUID? {
+        if let spaceID = project.spaceID { return spaceID }
+        guard let sourcePath = project.cloneSource else { return nil }
+        return projects.first { $0.cloneSource == nil && $0.rootPath == sourcePath }?.spaceID
+    }
+
     /// Enforces the ordering invariants: Home first, then spaceless pinned
     /// projects, then each Space in `spaces` order (pinned members first within
     /// each Space), then spaceless unpinned projects (Scratch terminals among

@@ -48,14 +48,15 @@ private func project(_ name: String, space: String? = nil,
 }
 
 @Test func statusLinesEmitOneHeaderWhenACloneIsGluedInsideASpace() {
-    // Regression for I2: a clone's spaceID is nil by construction (assign
-    // refuses clones), so statusSnapshot() must resolve its reported `space`
-    // from its SOURCE project — the same rule the sidebar uses — before this
-    // ever reaches statusLines. Here the clone row already carries its
-    // source's Space name (as statusSnapshot() now guarantees), sitting
-    // between its source and the Space's remaining member, exactly where
-    // regroup()'s gluing pass places it. statusLines itself is clone-agnostic
-    // and must still emit exactly one header for the Space.
+    // NOT the I2 regression test — that's WorkspaceModel's effectiveSpaceID
+    // tests in SpaceWorkspaceTests.swift, which drive a real WorkspaceModel
+    // through the actual spaceID-resolution rule. This test only proves that
+    // ControlCLI.statusLines, GIVEN a snapshot whose clone row already carries
+    // its source's Space name (as statusSnapshot() guarantees via
+    // effectiveSpaceID), renders exactly one header rather than treating the
+    // clone as a spurious gap between its source and the Space's remaining
+    // member — the position regroup()'s gluing pass puts it in. statusLines
+    // itself is clone-agnostic and never resolves the Space on its own.
     let snapshot = StatusSnapshot(
         projects: [project("acme-api", space: "Client Acme"),
                    project("acme-api/fix", space: "Client Acme"),

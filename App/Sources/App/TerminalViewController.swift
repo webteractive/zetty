@@ -1686,19 +1686,12 @@ final class TerminalViewController: NSViewController {
 
     /// Snapshot of the whole workspace for `Zetty status` / target resolution.
     func statusSnapshot() -> StatusSnapshot {
+        // Space.id is a UUID minted at creation and never user-editable, so
+        // `workspace.spaces` can't hold two entries sharing one — safe to build
+        // with the trapping initializer. (A clone's own spaceID resolution,
+        // which DOES need to tolerate a hand-edited/duplicated rootPath, lives
+        // in `WorkspaceModel.effectiveSpaceID(of:)` below.)
         let spaceNames = Dictionary(uniqueKeysWithValues: workspace.spaces.map { ($0.id, $0.name) })
-        // A clone's own spaceID is always nil (assign refuses clones); it rides
-        // into its source's Space via regroup()'s gluing pass instead. Resolve
-        // that here — the same rule the sidebar uses (cloneSourceIndex) — so a
-        // clone reports its source's Space rather than none. Without this,
-        // ControlCLI.statusLines (which is clone-agnostic and just watches for
-        // `space` transitions) would see the clone as a spurious gap between
-        // its source and the rest of the Space and print the header twice.
-        let sourceSpaceID: [String: UUID] = Dictionary(
-            uniqueKeysWithValues: workspace.projects
-                .filter { $0.cloneSource == nil }
-                .compactMap { p in p.spaceID.map { (p.rootPath, $0) } }
-        )
         let projects = workspace.projects.enumerated().map { pIdx, project -> StatusSnapshot.Project in
             let isActiveProject = pIdx == workspace.activeIndex
             let tabs = project.tabList.trees.enumerated().map { tIdx, tree -> StatusSnapshot.Tab in
@@ -1723,7 +1716,7 @@ final class TerminalViewController: NSViewController {
                 )
                 return StatusSnapshot.Tab(title: title, isActive: isActiveTab, panes: panes)
             }
-            let effectiveSpaceID = project.spaceID ?? project.cloneSource.flatMap { sourceSpaceID[$0] }
+            let effectiveSpaceID = workspace.effectiveSpaceID(of: project)
             return StatusSnapshot.Project(name: project.name, isActive: isActiveProject,
                                          hibernated: project.isHibernated,
                                          space: effectiveSpaceID.flatMap { spaceNames[$0] }, tabs: tabs)

@@ -140,3 +140,52 @@ private func index(of name: String, in model: WorkspaceModel) -> Int {
     model.projects[i].isHibernated = true
     #expect(model.projects(inSpace: space.id).map(\.name) == ["a"])
 }
+
+// MARK: - effectiveSpaceID
+//
+// Regression coverage for I2: a clone's own `spaceID` is always nil (`assign`
+// refuses clones), so it must resolve through its SOURCE to report/render the
+// Space it's actually glued inside. These drive a real WorkspaceModel end to
+// end, unlike SpaceCLITests' clone case, which hand-builds a StatusSnapshot
+// whose clone row already carries its source's Space name and so never
+// exercised this resolution rule at all.
+
+@Test func effectiveSpaceIDResolvesACloneToItsSourcesSpace() {
+    let model = model(["src"])
+    let space = model.createSpace(name: "Work")!
+    model.assign(projectAt: index(of: "src", in: model), to: space.id)
+    model.addCloneProject(name: "src/fork", rootPath: "/tmp/fork", cloneSource: "/tmp/src")
+    let clone = model.projects.first { $0.name == "src/fork" }!
+    #expect(model.effectiveSpaceID(of: clone) == space.id)
+}
+
+@Test func effectiveSpaceIDResolvesNilForAnOrphanedClone() {
+    let model = model(["src"])
+    let space = model.createSpace(name: "Work")!
+    model.assign(projectAt: index(of: "src", in: model), to: space.id)
+    model.addCloneProject(name: "src/fork", rootPath: "/tmp/fork", cloneSource: "/tmp/src")
+    model.removeProject(at: index(of: "src", in: model))   // source is gone; clone is now orphaned
+    let clone = model.projects.first { $0.name == "src/fork" }!
+    #expect(model.effectiveSpaceID(of: clone) == nil)
+}
+
+@Test func effectiveSpaceIDResolvesAnOrdinaryProjectsOwnSpace() {
+    let model = model(["a"])
+    let space = model.createSpace(name: "Work")!
+    model.assign(projectAt: index(of: "a", in: model), to: space.id)
+    let a = model.projects.first { $0.name == "a" }!
+    #expect(model.effectiveSpaceID(of: a) == space.id)
+}
+
+@Test func effectiveSpaceIDResolvesNilForASpacelessOrdinaryProject() {
+    let model = model(["a"])
+    let a = model.projects.first { $0.name == "a" }!
+    #expect(model.effectiveSpaceID(of: a) == nil)
+}
+
+@Test func effectiveSpaceIDResolvesNilForACloneWhoseSourceIsSpaceless() {
+    let model = model(["src"])
+    model.addCloneProject(name: "src/fork", rootPath: "/tmp/fork", cloneSource: "/tmp/src")
+    let clone = model.projects.first { $0.name == "src/fork" }!
+    #expect(model.effectiveSpaceID(of: clone) == nil)
+}
