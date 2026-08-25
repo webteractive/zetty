@@ -25,9 +25,12 @@ public enum ControlRequest: Equatable, Sendable {
     /// Add the directory at `path` (absolute — the CLI resolves relative paths
     /// against its own cwd) as a new project named `name` (nil → the
     /// directory's last path component). Added in the background by default;
-    /// `focus` switches to it and spawns its pane. The response is `.pane` with
-    /// its first pane's short id.
-    case addProject(path: String, name: String?, focus: Bool)
+    /// `focus` switches to it and spawns its pane. `space` files the project
+    /// into an EXISTING Space; an unknown name is an error rather than an
+    /// implicit create, so a typo cannot silently produce a second
+    /// near-identical Space. The response is `.pane` with its first pane's
+    /// short id.
+    case addProject(path: String, name: String?, space: String?, focus: Bool)
     /// Clone the named project (nil → the active project) into an isolated
     /// APFS copy-on-write copy under ~/.zetty/clones, on its own git branch.
     /// `name` is the clone name (nil → next free "fork-N"). Background by
@@ -56,6 +59,23 @@ public enum ControlRequest: Equatable, Sendable {
     case hibernateProject(name: String)
     /// Wake the named hibernated project — fresh shells, layout intact. `.ok`.
     case wakeProject(name: String)
+    /// Create a Space (a user-defined sidebar section). `colorID` is a curated
+    /// palette id and `glyph` an SF Symbol; both optional. Errors when the name
+    /// is blank or already taken (case-insensitively). Response `.ok`.
+    case newSpace(name: String, colorID: String?, glyph: String?)
+    /// Rename a Space (case-insensitive lookup). `.ok`, or an error on a
+    /// collision.
+    case renameSpace(name: String, newName: String)
+    /// Delete a Space. Its projects are KEPT — they fall back to
+    /// Pinned/Projects. `.ok`.
+    case removeSpace(name: String)
+    /// Move a project into a Space, or out of every Space when `space` is nil
+    /// (`--none`). Errors for Home, Scratch, and clones. `.ok`.
+    case moveToSpace(project: String, space: String?)
+    /// Hibernate every project in the named Space (`hibernate --space`). `.ok`.
+    case hibernateSpace(name: String)
+    /// Wake every hibernated project in the named Space (`wake --space`). `.ok`.
+    case wakeSpace(name: String)
     /// Close the targeted pane (its tab when it's the last pane), or the
     /// whole tab containing it when `wholeTab` is set.
     case close(target: PaneSelector, wholeTab: Bool)
@@ -86,7 +106,7 @@ public enum ControlRequest: Equatable, Sendable {
 
 extension ControlRequest: Codable {
     private enum CodingKeys: String, CodingKey {
-        case command, target, text, enter, keys, project, wholeTab, killSessions, vertical, lines, path, name, gitInit, focus, fetch, discard, line, column
+        case command, target, text, enter, keys, project, wholeTab, killSessions, vertical, lines, path, name, gitInit, focus, fetch, discard, line, column, space, newName, color, icon
     }
 
     public init(from decoder: Decoder) throws {
@@ -112,8 +132,31 @@ extension ControlRequest: Codable {
             self = .addProject(
                 path: try container.decode(String.self, forKey: .path),
                 name: try container.decodeIfPresent(String.self, forKey: .name),
+                space: try container.decodeIfPresent(String.self, forKey: .space),
                 focus: try container.decodeIfPresent(Bool.self, forKey: .focus) ?? false
             )
+        case "new-space":
+            self = .newSpace(
+                name: try container.decode(String.self, forKey: .name),
+                colorID: try container.decodeIfPresent(String.self, forKey: .color),
+                glyph: try container.decodeIfPresent(String.self, forKey: .icon)
+            )
+        case "rename-space":
+            self = .renameSpace(
+                name: try container.decode(String.self, forKey: .name),
+                newName: try container.decode(String.self, forKey: .newName)
+            )
+        case "remove-space":
+            self = .removeSpace(name: try container.decode(String.self, forKey: .name))
+        case "move-to-space":
+            self = .moveToSpace(
+                project: try container.decode(String.self, forKey: .project),
+                space: try container.decodeIfPresent(String.self, forKey: .space)
+            )
+        case "hibernate-space":
+            self = .hibernateSpace(name: try container.decode(String.self, forKey: .name))
+        case "wake-space":
+            self = .wakeSpace(name: try container.decode(String.self, forKey: .name))
         case "clone":
             self = .cloneProject(
                 project: try container.decodeIfPresent(String.self, forKey: .project),
@@ -197,11 +240,34 @@ extension ControlRequest: Codable {
             try container.encode("new-tab", forKey: .command)
             try container.encodeIfPresent(project, forKey: .project)
             try container.encode(focus, forKey: .focus)
-        case .addProject(let path, let name, let focus):
+        case .addProject(let path, let name, let space, let focus):
             try container.encode("add-project", forKey: .command)
             try container.encode(path, forKey: .path)
             try container.encodeIfPresent(name, forKey: .name)
+            try container.encodeIfPresent(space, forKey: .space)
             try container.encode(focus, forKey: .focus)
+        case .newSpace(let name, let colorID, let glyph):
+            try container.encode("new-space", forKey: .command)
+            try container.encode(name, forKey: .name)
+            try container.encodeIfPresent(colorID, forKey: .color)
+            try container.encodeIfPresent(glyph, forKey: .icon)
+        case .renameSpace(let name, let newName):
+            try container.encode("rename-space", forKey: .command)
+            try container.encode(name, forKey: .name)
+            try container.encode(newName, forKey: .newName)
+        case .removeSpace(let name):
+            try container.encode("remove-space", forKey: .command)
+            try container.encode(name, forKey: .name)
+        case .moveToSpace(let project, let space):
+            try container.encode("move-to-space", forKey: .command)
+            try container.encode(project, forKey: .project)
+            try container.encodeIfPresent(space, forKey: .space)
+        case .hibernateSpace(let name):
+            try container.encode("hibernate-space", forKey: .command)
+            try container.encode(name, forKey: .name)
+        case .wakeSpace(let name):
+            try container.encode("wake-space", forKey: .command)
+            try container.encode(name, forKey: .name)
         case .cloneProject(let project, let name, let focus):
             try container.encode("clone", forKey: .command)
             try container.encodeIfPresent(project, forKey: .project)
@@ -359,6 +425,28 @@ public struct StatusSnapshot: Codable, Equatable, Sendable {
         }
     }
 
+    /// A user-defined sidebar section. Rendered as a header by
+    /// `ControlCLI.statusLines`, including when it holds no projects.
+    public struct Space: Codable, Equatable, Sendable {
+        public let name: String
+        public let collapsed: Bool
+
+        public init(name: String, collapsed: Bool) {
+            self.name = name
+            self.collapsed = collapsed
+        }
+
+        private enum CodingKeys: String, CodingKey { case name, collapsed }
+
+        /// Hand-written for the same reason as `Pane.init(from:)`: an older
+        /// payload must default rather than throw.
+        public init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            name = try c.decode(String.self, forKey: .name)
+            collapsed = try c.decodeIfPresent(Bool.self, forKey: .collapsed) ?? false
+        }
+    }
+
     public struct Tab: Codable, Equatable, Sendable {
         public let title: String
         public let isActive: Bool
@@ -380,17 +468,20 @@ public struct StatusSnapshot: Codable, Equatable, Sendable {
         /// this is diagnostic rather than an obstacle; `zetty wake <name>` makes
         /// it explicit.
         public let hibernated: Bool
+        /// The Space this project renders under, or nil for Pinned/Projects.
+        public let space: String?
         public let tabs: [Tab]
 
-        public init(name: String, isActive: Bool, hibernated: Bool, tabs: [Tab]) {
+        public init(name: String, isActive: Bool, hibernated: Bool, space: String? = nil, tabs: [Tab]) {
             self.name = name
             self.isActive = isActive
             self.hibernated = hibernated
+            self.space = space
             self.tabs = tabs
         }
 
         private enum CodingKeys: String, CodingKey {
-            case name, isActive, hibernated, tabs
+            case name, isActive, hibernated, space, tabs
         }
 
         /// Hand-written for the same reason as `Pane.init(from:)`: `hibernated`
@@ -400,14 +491,28 @@ public struct StatusSnapshot: Codable, Equatable, Sendable {
             name = try c.decode(String.self, forKey: .name)
             isActive = try c.decodeIfPresent(Bool.self, forKey: .isActive) ?? false
             hibernated = try c.decodeIfPresent(Bool.self, forKey: .hibernated) ?? false
+            space = try c.decodeIfPresent(String.self, forKey: .space)
             tabs = try c.decodeIfPresent([Tab].self, forKey: .tabs) ?? []
         }
     }
 
     public let projects: [Project]
+    /// Every Space in sidebar order, including empty ones.
+    public let spaces: [Space]
 
-    public init(projects: [Project]) {
+    public init(projects: [Project], spaces: [Space] = []) {
         self.projects = projects
+        self.spaces = spaces
+    }
+
+    private enum CodingKeys: String, CodingKey { case projects, spaces }
+
+    /// Hand-written so `spaces` defaults instead of throwing when an older app
+    /// omits it.
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        projects = try c.decode([Project].self, forKey: .projects)
+        spaces = try c.decodeIfPresent([Space].self, forKey: .spaces) ?? []
     }
 
     /// Every pane across all projects/tabs, in display order.

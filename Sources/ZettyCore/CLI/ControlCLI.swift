@@ -359,7 +359,7 @@ public enum ControlCLI {
         // Resolve here: relative paths are relative to the CLI's cwd, not the app's.
         let expanded = (raw as NSString).expandingTildeInPath
         let absolute = URL(fileURLWithPath: expanded).standardizedFileURL.path
-        return expectPane(.addProject(path: absolute, name: name, focus: focus))
+        return expectPane(.addProject(path: absolute, name: name, space: nil, focus: focus))
     }
 
     private static func runNewProject(_ arguments: [String]) -> Int32 {
