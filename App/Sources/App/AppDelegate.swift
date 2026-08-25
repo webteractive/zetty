@@ -1365,11 +1365,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             case .success(let pane): return .pane(pane)
             case .failure(let error): return .error(error.localizedDescription)
             }
-        case .addProject(let path, let name, let focus):
-            switch tvc.addProject(path: path, name: name, focus: focus) {
+        case .addProject(let path, let name, let space, let focus):
+            switch tvc.addProject(path: path, name: name, space: space, focus: focus) {
             case .success(let pane): return .pane(pane)
             case .failure(let error): return .error(error.localizedDescription)
             }
+        case .newSpace(let name, let colorID, let glyph):
+            if let message = tvc.createSpaceNamed(name, colorID: colorID, glyph: glyph) {
+                return .error(message)
+            }
+            return .ok
+        case .renameSpace(let name, let newName):
+            if let message = tvc.renameSpaceNamed(name, to: newName) { return .error(message) }
+            return .ok
+        case .removeSpace(let name):
+            if let message = tvc.removeSpaceNamed(name) { return .error(message) }
+            return .ok
+        case .moveToSpace(let project, let space):
+            if let message = tvc.moveProjectNamed(project, toSpace: space) { return .error(message) }
+            return .ok
+        case .hibernateSpace(let name):
+            if let message = tvc.hibernateSpaceNamed(name) { return .error(message) }
+            return .ok
+        case .wakeSpace(let name):
+            if let message = tvc.wakeSpaceNamed(name) { return .error(message) }
+            return .ok
         case .hibernateProject(let name):
             if let message = tvc.hibernateProjectNamed(name) { return .error(message) }
             return .ok

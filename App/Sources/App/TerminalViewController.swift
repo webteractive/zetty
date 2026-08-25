@@ -1657,6 +1657,7 @@ final class TerminalViewController: NSViewController {
 
     /// Snapshot of the whole workspace for `Zetty status` / target resolution.
     func statusSnapshot() -> StatusSnapshot {
+        let spaceNames = Dictionary(uniqueKeysWithValues: workspace.spaces.map { ($0.id, $0.name) })
         let projects = workspace.projects.enumerated().map { pIdx, project -> StatusSnapshot.Project in
             let isActiveProject = pIdx == workspace.activeIndex
             let tabs = project.tabList.trees.enumerated().map { tIdx, tree -> StatusSnapshot.Tab in
@@ -1682,9 +1683,11 @@ final class TerminalViewController: NSViewController {
                 return StatusSnapshot.Tab(title: title, isActive: isActiveTab, panes: panes)
             }
             return StatusSnapshot.Project(name: project.name, isActive: isActiveProject,
-                                         hibernated: project.isHibernated, tabs: tabs)
+                                         hibernated: project.isHibernated,
+                                         space: project.spaceID.flatMap { spaceNames[$0] }, tabs: tabs)
         }
-        return StatusSnapshot(projects: projects)
+        return StatusSnapshot(projects: projects,
+                               spaces: workspace.spaces.map { .init(name: $0.name, collapsed: $0.isCollapsed) })
     }
 
     /// Injects text/keys into the targeted pane (CLI `send`). Returns an error
@@ -1801,7 +1804,7 @@ final class TerminalViewController: NSViewController {
     /// Adds the directory at `path` as a new project (CLI `add-project`),
     /// makes it active so its first pane spawns, and returns that pane's
     /// short id — or an error message.
-    func addProject(path: String, name: String?, focus: Bool = false) -> Result<String, ControlError> {
+    func addProject(path: String, name: String?, space: String?, focus: Bool = false) -> Result<String, ControlError> {
         let root = URL(fileURLWithPath: (path as NSString).expandingTildeInPath).standardizedFileURL.path
         var isDirectory: ObjCBool = false
         guard FileManager.default.fileExists(atPath: root, isDirectory: &isDirectory),
@@ -1811,9 +1814,19 @@ final class TerminalViewController: NSViewController {
         if let existing = workspace.projects.first(where: { $0.rootPath == root }) {
             return .failure(.protocolError("project \"\(existing.name)\" already uses \(root)"))
         }
+        var spaceID: UUID?
+        if let space {
+            guard let found = workspace.space(named: space) else {
+                return .failure(.protocolError("no Space named \"\(space)\""))
+            }
+            spaceID = found.id
+        }
         let trimmed = name?.trimmingCharacters(in: .whitespaces)
         let project = addProjectFromURL(
             URL(fileURLWithPath: root), name: (trimmed?.isEmpty ?? true) ? nil : trimmed, activate: focus)
+        if let spaceID, let index = workspace.projects.firstIndex(where: { $0.id == project.id }) {
+            _ = workspace.assign(projectAt: index, to: spaceID)
+        }
         guard let surface = project.tabList.activeTree.focusedSurface
                 ?? project.tabList.activeTree.layout.surfaces.first else {
             return .failure(.noSuchPane("project added but no pane found"))
@@ -2091,7 +2104,7 @@ final class TerminalViewController: NSViewController {
         case .failure(let error):
             return .failure(error)
         case .success:
-            return addProject(path: path, name: name, focus: focus)
+            return addProject(path: path, name: name, space: nil, focus: focus)
         }
     }
 
@@ -3578,6 +3591,111 @@ final class TerminalViewController: NSViewController {
                 hibernateProject(project, confirmIfBusy: false)
             }
         }
+    }
+
+    // MARK: - Spaces
+
+    /// Creates a Space. Returns an error message, or nil on success.
+    func createSpaceNamed(_ name: String, colorID: String?, glyph: String?) -> String? {
+        guard workspace.createSpace(name: name, colorID: colorID, glyph: glyph) != nil else {
+            return "a Space named \"\(name)\" already exists (or the name is blank)"
+        }
+        refreshSidebar()
+        onWorkspaceDidChange?()
+        return nil
+    }
+
+    func renameSpaceNamed(_ name: String, to newName: String) -> String? {
+        guard let space = workspace.space(named: name) else {
+            return "no Space named \"\(name)\""
+        }
+        guard workspace.renameSpace(id: space.id, to: newName) else {
+            return "a Space named \"\(newName)\" already exists (or the name is blank)"
+        }
+        refreshSidebar()
+        onWorkspaceDidChange?()
+        return nil
+    }
+
+    func removeSpaceNamed(_ name: String) -> String? {
+        guard let space = workspace.space(named: name) else {
+            return "no Space named \"\(name)\""
+        }
+        workspace.removeSpace(id: space.id)
+        rebuildSurfaceNodeView()
+        refreshSidebar()
+        onWorkspaceDidChange?()
+        return nil
+    }
+
+    /// Moves a project into a Space, or out of every Space when `space` is nil.
+    func moveProjectNamed(_ project: String, toSpace space: String?) -> String? {
+        guard let index = workspace.projects.firstIndex(where: {
+            $0.name.localizedCaseInsensitiveCompare(project) == .orderedSame
+        }) else { return "no project named \"\(project)\"" }
+        var spaceID: UUID?
+        if let space {
+            guard let found = workspace.space(named: space) else {
+                return "no Space named \"\(space)\""
+            }
+            spaceID = found.id
+        }
+        guard workspace.assign(projectAt: index, to: spaceID) else {
+            return "\"\(project)\" can't belong to a Space (Home, scratch terminals, "
+                + "and clones are never members — a clone follows its source)"
+        }
+        rebuildSurfaceNodeView()
+        refreshSidebar()
+        onWorkspaceDidChange?()
+        return nil
+    }
+
+    /// Hibernate every awake project in a Space (CLI `hibernate-space`). Reuses
+    /// the existing per-project hibernate entry point, so session teardown and
+    /// `reconcileSessions()` keep their usual behavior.
+    func hibernateSpaceNamed(_ name: String) -> String? {
+        guard let space = workspace.space(named: name) else {
+            return "no Space named \"\(name)\""
+        }
+        for project in workspace.projects(inSpace: space.id) where !project.isHibernated {
+            hibernateProject(project, confirmIfBusy: false)
+        }
+        return nil
+    }
+
+    /// Wake every hibernated project in a Space (CLI `wake-space`).
+    func wakeSpaceNamed(_ name: String) -> String? {
+        guard let space = workspace.space(named: name) else {
+            return "no Space named \"\(name)\""
+        }
+        for project in workspace.projects(inSpace: space.id) where project.isHibernated {
+            wakeProject(project)
+        }
+        return nil
+    }
+
+    /// Sidebar drag/menu path: assign a project to a Space (nil = ungroup).
+    func assignProject(at index: Int, to spaceID: UUID?) {
+        guard workspace.assign(projectAt: index, to: spaceID) else { return }
+        rebuildSurfaceNodeView()
+        refreshSidebar()
+        onWorkspaceDidChange?()
+    }
+
+    /// Sidebar header drag: reorder the Spaces themselves.
+    func moveSpace(from: Int, to: Int) {
+        workspace.moveSpace(from: from, to: to)
+        rebuildSurfaceNodeView()
+        refreshSidebar()
+        onWorkspaceDidChange?()
+    }
+
+    /// Fold/unfold a Space. Persisted, so it goes through the model rather than
+    /// living in the view like the Hibernating section's collapse state.
+    func setSpaceCollapsed(_ id: UUID, _ collapsed: Bool) {
+        workspace.setSpaceCollapsed(id: id, collapsed)
+        refreshSidebar()
+        onWorkspaceDidChange?()
     }
 
     // MARK: - First-responder observation
