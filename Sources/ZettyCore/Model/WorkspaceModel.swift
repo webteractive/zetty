@@ -19,11 +19,16 @@ public final class ProjectRuntime {
     /// a normal project. A clone lives in a zetty-owned directory under
     /// ~/.zetty/clones and renders glued to its source in the sidebar.
     public let cloneSource: String?
+    /// The Space this project belongs to, or nil. Mutable — reassignment is the
+    /// whole point — unlike `isHome`/`isScratch`/`cloneSource`, which are fixed
+    /// at creation.
+    public var spaceID: UUID?
     public let tabList: TabList
 
     public init(id: UUID = UUID(), name: String, rootPath: String,
                 isPinned: Bool = false, isHibernated: Bool = false,
                 isScratch: Bool = false, isHome: Bool = false, cloneSource: String? = nil,
+                spaceID: UUID? = nil,
                 tabList: TabList? = nil) {
         self.id = id
         self.name = name
@@ -33,6 +38,7 @@ public final class ProjectRuntime {
         self.isScratch = isScratch
         self.isHome = isHome
         self.cloneSource = cloneSource
+        self.spaceID = spaceID
         // Default the project's tab list to open terminals in the project root.
         self.tabList = tabList ?? TabList(defaultWorkingDir: rootPath)
     }
@@ -49,6 +55,7 @@ public final class ProjectRuntime {
 public final class WorkspaceModel {
     public private(set) var projects: [ProjectRuntime]
     public private(set) var activeIndex: Int
+    public private(set) var spaces: [Space] = []
 
     /// Seeds a fresh workspace with just the Home project, rooted at
     /// `homeRoot` (the resolved `zetty-home-path`, or the account's home
@@ -58,9 +65,10 @@ public final class WorkspaceModel {
         activeIndex = 0
     }
 
-    public init?(restoring restored: [ProjectRuntime], activeIndex: Int = 0) {
+    public init?(restoring restored: [ProjectRuntime], spaces: [Space] = [], activeIndex: Int = 0) {
         guard !restored.isEmpty else { return nil }
         projects = restored
+        self.spaces = spaces
         self.activeIndex = min(max(activeIndex, 0), restored.count - 1)
         regroup()
     }
@@ -200,12 +208,18 @@ public final class WorkspaceModel {
 
     /// Moves a project from one position to another within the same section.
     /// The active project is preserved by identity. Callers must keep the move
-    /// within one pin-group (Pinned ↔ Pinned, unpinned ↔ unpinned); a cross-group
-    /// move is rejected so the pinned-first invariant can't be broken.
+    /// within one pin-group (Pinned ↔ Pinned, unpinned ↔ unpinned) AND one Space;
+    /// a cross-group or cross-Space move is rejected so the pinned-first
+    /// invariant can't be broken and `assign`'s refusals can't be bypassed.
+    /// Reassignment to a different Space goes through `assign(projectAt:to:)`.
     public func moveProject(from: Int, to: Int) {
+        // Both endpoints must share pin state AND Space: a reorder may never
+        // move a project across a Space boundary, which would bypass `assign`'s
+        // refusals. Reassignment goes through `assign(projectAt:to:)`.
         guard projects.indices.contains(from), projects.indices.contains(to),
               from != to,
-              projects[from].isPinned == projects[to].isPinned else { return }
+              projects[from].isPinned == projects[to].isPinned,
+              projects[from].spaceID == projects[to].spaceID else { return }
         let activeID = projects[activeIndex].id
         let moved = projects.remove(at: from)
         projects.insert(moved, at: to)
@@ -249,18 +263,116 @@ public final class WorkspaceModel {
         projects[index].name = newName
     }
 
-    /// Enforces the ordering invariants: pinned projects come before unpinned
-    /// ones, and each clone sits immediately after its source project (so the
-    /// sidebar renders it attached). Within each group the existing relative
-    /// order is preserved (`filter` is stable). Orphaned clones (source removed)
-    /// stay where the base grouping puts them, as ordinary rows. The active
-    /// project is preserved by identity.
+    // MARK: - Spaces
+
+    /// Creates a Space and appends it to the end of the sidebar order. Returns
+    /// nil for a blank name or one that collides case-insensitively with an
+    /// existing Space — names are the CLI's handle, so they must be unique.
+    @discardableResult
+    public func createSpace(name: String, colorID: String? = nil, glyph: String? = nil) -> Space? {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, space(named: trimmed) == nil else { return nil }
+        let created = Space(name: trimmed, colorID: colorID, glyph: glyph)
+        spaces.append(created)
+        return created
+    }
+
+    /// Renames a Space. False (and no change) for a blank name or a
+    /// case-insensitive collision with a DIFFERENT Space.
+    @discardableResult
+    public func renameSpace(id: UUID, to newName: String) -> Bool {
+        let trimmed = newName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty,
+              let index = spaces.firstIndex(where: { $0.id == id }),
+              !spaces.contains(where: {
+                  $0.id != id && $0.name.localizedCaseInsensitiveCompare(trimmed) == .orderedSame
+              })
+        else { return false }
+        spaces[index].name = trimmed
+        return true
+    }
+
+    /// Appearance only — never reorders or reassigns.
+    public func updateSpace(id: UUID, colorID: String?, glyph: String?) {
+        guard let index = spaces.firstIndex(where: { $0.id == id }) else { return }
+        spaces[index].colorID = colorID
+        spaces[index].glyph = glyph
+    }
+
+    public func setSpaceCollapsed(id: UUID, _ collapsed: Bool) {
+        guard let index = spaces.firstIndex(where: { $0.id == id }) else { return }
+        spaces[index].isCollapsed = collapsed
+    }
+
+    /// Deletes a Space. Its members are KEPT — their `spaceID` is cleared and
+    /// they fall back to Pinned/Projects.
+    public func removeSpace(id: UUID) {
+        guard spaces.contains(where: { $0.id == id }) else { return }
+        spaces.removeAll { $0.id == id }
+        for project in projects where project.spaceID == id { project.spaceID = nil }
+        regroup()
+    }
+
+    /// Reorders the Spaces themselves; members follow via `regroup()`.
+    public func moveSpace(from: Int, to: Int) {
+        guard spaces.indices.contains(from), spaces.indices.contains(to), from != to else { return }
+        let moved = spaces.remove(at: from)
+        spaces.insert(moved, at: to)
+        regroup()
+    }
+
+    /// Assigns a project to a Space (nil = ungroup). Refuses Home, Scratch, and
+    /// clones — Home owns the top row, Scratch is ephemeral, and a clone renders
+    /// glued beneath its source, so its Space is its source's by construction.
+    /// Also refuses an unknown `spaceID` so a stale id can't strand a project.
+    @discardableResult
+    public func assign(projectAt index: Int, to spaceID: UUID?) -> Bool {
+        guard projects.indices.contains(index) else { return false }
+        let project = projects[index]
+        guard !project.isHome, !project.isScratch, project.cloneSource == nil else { return false }
+        if let spaceID, !spaces.contains(where: { $0.id == spaceID }) { return false }
+        project.spaceID = spaceID
+        regroup()
+        return true
+    }
+
+    /// Case-insensitive lookup — the control CLI addresses Spaces by name.
+    public func space(named name: String) -> Space? {
+        let needle = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        return spaces.first { $0.name.localizedCaseInsensitiveCompare(needle) == .orderedSame }
+    }
+
+    /// A Space's members in sidebar order, hibernated ones included.
+    public func projects(inSpace id: UUID) -> [ProjectRuntime] {
+        projects.filter { $0.spaceID == id }
+    }
+
+    /// Enforces the ordering invariants: Home first, then spaceless pinned
+    /// projects, then each Space in `spaces` order (pinned members first within
+    /// each Space), then spaceless unpinned projects (Scratch terminals among
+    /// them) last — and within all of that, each clone sits immediately after
+    /// its source project (so the sidebar renders it attached). Within each
+    /// group the existing relative order is preserved (`filter` is stable, never
+    /// sorted). Orphaned clones (source removed) stay where the base grouping
+    /// puts them, as ordinary rows. The active project is preserved by identity.
     private func regroup() {
         guard !projects.isEmpty else { return }
         let activeID = projects[activeIndex].id
-        let base = projects.filter(\.isHome)
-            + projects.filter { !$0.isHome && $0.isPinned }
-            + projects.filter { !$0.isHome && !$0.isPinned }
+        // Drop memberships pointing at a Space that no longer exists, so a
+        // hand-edited or partially-restored workspace can't hide a project.
+        let known = Set(spaces.map(\.id))
+        for project in projects where project.spaceID.map({ !known.contains($0) }) == true {
+            project.spaceID = nil
+        }
+        let rest = projects.filter { !$0.isHome }
+        var base = projects.filter(\.isHome)
+            + rest.filter { $0.spaceID == nil && $0.isPinned }
+        for space in spaces {
+            let members = rest.filter { $0.spaceID == space.id }
+            base += members.filter(\.isPinned) + members.filter { !$0.isPinned }
+        }
+        // Spaceless unpinned projects (Scratch terminals among them) come last.
+        base += rest.filter { $0.spaceID == nil && !$0.isPinned }
         let sourcePaths = Set(base.filter { $0.cloneSource == nil }.map(\.rootPath))
         let attached = base.filter { p in p.cloneSource.map(sourcePaths.contains) == true }
         var result: [ProjectRuntime] = []
