@@ -709,7 +709,15 @@ final class TerminalViewController: NSViewController {
             self?.moveSpace(from: from, to: to)
         }
         sidebar.onNewSpace = { [weak self] projectIndex in
-            self?.promptNewSpace(assigning: projectIndex)
+            guard let self else { return }
+            // Resolve the index to the actual project AT CLICK TIME, same
+            // idiom as onRenameProject/onOpenProjectSettings below — the sheet
+            // is async and the workspace can be restructured while it's open
+            // (a background clone landing, a CLI remove-project, a re-pin),
+            // so an index re-read inside the completion handler could name a
+            // different project by then.
+            let project = projectIndex.flatMap { self.workspace.projects.indices.contains($0) ? self.workspace.projects[$0] : nil }
+            self.promptNewSpace(assigning: project)
         }
         sidebar.onEditSpace = { [weak self] id in self?.promptEditSpace(id) }
         sidebar.onDeleteSpace = { [weak self] id in self?.confirmDeleteSpace(id) }
@@ -1679,6 +1687,18 @@ final class TerminalViewController: NSViewController {
     /// Snapshot of the whole workspace for `Zetty status` / target resolution.
     func statusSnapshot() -> StatusSnapshot {
         let spaceNames = Dictionary(uniqueKeysWithValues: workspace.spaces.map { ($0.id, $0.name) })
+        // A clone's own spaceID is always nil (assign refuses clones); it rides
+        // into its source's Space via regroup()'s gluing pass instead. Resolve
+        // that here — the same rule the sidebar uses (cloneSourceIndex) — so a
+        // clone reports its source's Space rather than none. Without this,
+        // ControlCLI.statusLines (which is clone-agnostic and just watches for
+        // `space` transitions) would see the clone as a spurious gap between
+        // its source and the rest of the Space and print the header twice.
+        let sourceSpaceID: [String: UUID] = Dictionary(
+            uniqueKeysWithValues: workspace.projects
+                .filter { $0.cloneSource == nil }
+                .compactMap { p in p.spaceID.map { (p.rootPath, $0) } }
+        )
         let projects = workspace.projects.enumerated().map { pIdx, project -> StatusSnapshot.Project in
             let isActiveProject = pIdx == workspace.activeIndex
             let tabs = project.tabList.trees.enumerated().map { tIdx, tree -> StatusSnapshot.Tab in
@@ -1703,9 +1723,10 @@ final class TerminalViewController: NSViewController {
                 )
                 return StatusSnapshot.Tab(title: title, isActive: isActiveTab, panes: panes)
             }
+            let effectiveSpaceID = project.spaceID ?? project.cloneSource.flatMap { sourceSpaceID[$0] }
             return StatusSnapshot.Project(name: project.name, isActive: isActiveProject,
                                          hibernated: project.isHibernated,
-                                         space: project.spaceID.flatMap { spaceNames[$0] }, tabs: tabs)
+                                         space: effectiveSpaceID.flatMap { spaceNames[$0] }, tabs: tabs)
         }
         return StatusSnapshot(projects: projects,
                                spaces: workspace.spaces.map { .init(name: $0.name, collapsed: $0.isCollapsed) })
@@ -3744,10 +3765,17 @@ final class TerminalViewController: NSViewController {
 
     /// "New Space…" from a project row's "Move to Space ▸" submenu — presents
     /// `SpaceSheet` with an empty name, creates the Space on save, and when
-    /// `projectIndex` was passed (always true for this menu path) files that
+    /// `project` was passed (always true for this menu path) files that
     /// project into the new Space in the same step. A duplicate/blank name
     /// surfaces an alert rather than failing silently.
-    func promptNewSpace(assigning projectIndex: Int?) {
+    ///
+    /// Takes the `ProjectRuntime` itself rather than an index: the sheet is
+    /// async, and control-socket handlers run on main and aren't blocked by a
+    /// sheet-modal, so the workspace can be restructured while it's open (a
+    /// background clone landing, `zetty remove-project`, a re-pin). An index
+    /// captured before the sheet opened could silently name a different
+    /// project by the time the completion handler runs; identity can't.
+    func promptNewSpace(assigning project: ProjectRuntime?) {
         guard let window = view.window else { return }
         SpaceSheet.present(over: window, name: "", colorID: nil, glyph: nil) { [weak self] name, colorID, glyph in
             guard let self else { return }
@@ -3755,7 +3783,10 @@ final class TerminalViewController: NSViewController {
                 self.presentSpaceError(error, title: "Couldn\u{2019}t create Space")
                 return
             }
-            if let projectIndex, self.workspace.projects.indices.contains(projectIndex),
+            // Re-resolve the project's CURRENT index by identity — it may have
+            // moved (or vanished) while the sheet was open. If it's gone,
+            // still create the Space; just skip filing the wrong project.
+            if let project, let projectIndex = self.workspace.projects.firstIndex(where: { $0 === project }),
                let space = self.workspace.space(named: name) {
                 self.assignProject(at: projectIndex, to: space.id)
             }

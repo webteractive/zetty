@@ -674,12 +674,24 @@ final class SidebarView: NSView {
         // project actually passing the filter (matching every other section,
         // which derives visibility from `visible`) — otherwise a filter that
         // hides it would still force its row to appear.
+        //
+        // The active row's EFFECTIVE Space is its own spaceID, or — when it's
+        // a clone (always spaceID == nil, since assign refuses clones) — its
+        // clone source's spaceID, the same rule `withClones` uses to glue a
+        // clone under its source's header. Skipping this falls back to the
+        // clone's own nil spaceID, so a Space collapsed while a clone inside
+        // it is active would insert nothing and leave the sidebar with no
+        // selected row at all.
         if activeProject >= 0, projects.indices.contains(activeProject),
-           visible.contains(where: { $0.offset == activeProject }),
-           let spaceID = projects[activeProject].spaceID,
-           spaces.first(where: { $0.id == spaceID })?.isCollapsed == true,
-           let headerIndex = topLevel.firstIndex(of: .header(.space(spaceID))) {
-            topLevel.insert(.project(activeProject), at: headerIndex + 1)
+           visible.contains(where: { $0.offset == activeProject }) {
+            let active = projects[activeProject]
+            let effectiveSpaceID = active.spaceID
+                ?? active.cloneSourceIndex.flatMap { projects.indices.contains($0) ? projects[$0].spaceID : nil }
+            if let spaceID = effectiveSpaceID,
+               spaces.first(where: { $0.id == spaceID })?.isCollapsed == true,
+               let headerIndex = topLevel.firstIndex(of: .header(.space(spaceID))) {
+                topLevel.insert(.project(activeProject), at: headerIndex + 1)
+            }
         }
 
         // Evict stale cache entries.
@@ -1106,12 +1118,19 @@ extension SidebarView: NSOutlineViewDataSource {
 
         // Drop into a GAP (item == nil) that belongs to a different, eligible
         // section → assignment/ungroup. Leave the indicator where it is; the
-        // gap is already a valid position in the target section.
+        // gap is already a valid position in the target section. Mirrors
+        // acceptDrop exactly: a .space gap always assigns, but a .pinned/
+        // .projects gap only ungroups — it does nothing when the dragged row
+        // is already spaceless, so the indicator must not claim otherwise.
         if item == nil, isSpaceAssignable(from),
            let gapSection = section(forTopLevelGap: index), gapSection != current {
             switch gapSection {
-            case .space, .pinned, .projects:
+            case .space:
                 return .move
+            case .pinned, .projects:
+                if case .space = current {
+                    return .move
+                }
             default:
                 break
             }

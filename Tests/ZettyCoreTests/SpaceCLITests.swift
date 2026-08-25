@@ -47,6 +47,28 @@ private func project(_ name: String, space: String? = nil,
     #expect(lines.filter { $0.contains("[space") }.count == 1)
 }
 
+@Test func statusLinesEmitOneHeaderWhenACloneIsGluedInsideASpace() {
+    // Regression for I2: a clone's spaceID is nil by construction (assign
+    // refuses clones), so statusSnapshot() must resolve its reported `space`
+    // from its SOURCE project — the same rule the sidebar uses — before this
+    // ever reaches statusLines. Here the clone row already carries its
+    // source's Space name (as statusSnapshot() now guarantees), sitting
+    // between its source and the Space's remaining member, exactly where
+    // regroup()'s gluing pass places it. statusLines itself is clone-agnostic
+    // and must still emit exactly one header for the Space.
+    let snapshot = StatusSnapshot(
+        projects: [project("acme-api", space: "Client Acme"),
+                   project("acme-api/fix", space: "Client Acme"),
+                   project("acme-web", space: "Client Acme")],
+        spaces: [.init(name: "Client Acme", collapsed: false)]
+    )
+    let lines = ControlCLI.statusLines(snapshot)
+    #expect(lines.filter { $0.contains("[space]") }.count == 1)
+    let headerIndex = lines.firstIndex { $0.contains("[space]") }!
+    let apiIndex = lines.firstIndex { $0.contains("acme-api") }!
+    #expect(headerIndex < apiIndex)
+}
+
 @Test func statusLinesOmitSpaceMarkupWhenThereAreNoSpaces() {
     let snapshot = StatusSnapshot(projects: [project("solo")])
     #expect(ControlCLI.statusLines(snapshot).allSatisfy { !$0.contains("[space") })
