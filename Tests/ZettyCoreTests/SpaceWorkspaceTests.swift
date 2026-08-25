@@ -26,24 +26,44 @@ private func index(of name: String, in model: WorkspaceModel) -> Int {
 }
 
 @Test func spacesRenderBetweenPinnedAndUnpinnedProjects() {
-    let model = model(["alpha", "beta", "gamma", "delta"])
+    // `delta` is added BEFORE the Space members so the Space tier has to pull
+    // them past it. Under the old pin-only ordering this reads
+    // ["Home", "alpha", "delta", "beta", "gamma"], so the assertion below
+    // fails if `regroup()` stops consulting `spaceID`.
+    let model = model(["alpha", "delta", "beta", "gamma"])
     model.togglePin(at: index(of: "alpha", in: model))
     let space = model.createSpace(name: "Work")!
-    // Assign order decides member order — `regroup()` filters stably, it does
-    // not sort, so "beta then gamma" is what puts beta first.
     model.assign(projectAt: index(of: "beta", in: model), to: space.id)
     model.assign(projectAt: index(of: "gamma", in: model), to: space.id)
     #expect(names(model) == ["Home", "alpha", "beta", "gamma", "delta"])
 }
 
-@Test func pinnedMemberFloatsToTopOfItsOwnSpace() {
-    let model = model(["one", "two", "three"])
-    let space = model.createSpace(name: "Work")!
-    for name in ["one", "two", "three"] {
-        model.assign(projectAt: index(of: name, in: model), to: space.id)
+@Test func pinnedMemberFloatsToTopOfItsOwnSpaceNotTheWorkspace() {
+    // Two Spaces, and the pin lands in the SECOND one. Old behavior floats a
+    // pinned project to the global top — ["Home", "b2", "a1", "a2", "b1"] —
+    // so this asserts the pin stays inside its own Space.
+    let model = model(["a1", "a2", "b1", "b2"])
+    let first = model.createSpace(name: "First")!
+    let second = model.createSpace(name: "Second")!
+    for name in ["a1", "a2"] {
+        model.assign(projectAt: index(of: name, in: model), to: first.id)
     }
-    model.togglePin(at: index(of: "three", in: model))
-    #expect(names(model) == ["Home", "three", "one", "two"])
+    for name in ["b1", "b2"] {
+        model.assign(projectAt: index(of: name, in: model), to: second.id)
+    }
+    model.togglePin(at: index(of: "b2", in: model))
+    #expect(names(model) == ["Home", "a1", "a2", "b2", "b1"])
+}
+
+@Test func updateSpaceAndCollapseMutateInPlace() {
+    let model = model([])
+    let space = model.createSpace(name: "Work")!
+    model.updateSpace(id: space.id, colorID: "moss", glyph: "hammer.fill")
+    model.setSpaceCollapsed(id: space.id, true)
+    #expect(model.spaces[0].colorID == "moss")
+    #expect(model.spaces[0].glyph == "hammer.fill")
+    #expect(model.spaces[0].isCollapsed == true)
+    #expect(model.spaces[0].name == "Work")   // appearance edits never rename
 }
 
 @Test func spacesRenderInSpacesArrayOrder() {
