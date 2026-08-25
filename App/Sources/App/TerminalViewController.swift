@@ -1825,6 +1825,9 @@ final class TerminalViewController: NSViewController {
         let project = addProjectFromURL(
             URL(fileURLWithPath: root), name: (trimmed?.isEmpty ?? true) ? nil : trimmed, activate: focus)
         if let spaceID, let index = workspace.projects.firstIndex(where: { $0.id == project.id }) {
+            // Discard is safe: `space` was already resolved to a real Space above,
+            // and `project` was just created as an ordinary project (never Home,
+            // scratch, or a clone), so `assign` cannot refuse it here.
             _ = workspace.assign(projectAt: index, to: spaceID)
         }
         guard let surface = project.tabList.activeTree.focusedSurface
@@ -3630,9 +3633,12 @@ final class TerminalViewController: NSViewController {
 
     /// Moves a project into a Space, or out of every Space when `space` is nil.
     func moveProjectNamed(_ project: String, toSpace space: String?) -> String? {
-        guard let index = workspace.projects.firstIndex(where: {
-            $0.name.localizedCaseInsensitiveCompare(project) == .orderedSame
-        }) else { return "no project named \"\(project)\"" }
+        let matches = workspace.projects.filter { $0.name.lowercased() == project.lowercased() }
+        guard let match = matches.first else { return "no project named \"\(project)\"" }
+        guard matches.count == 1 else { return "\(matches.count) projects named \"\(project)\" — use the sidebar" }
+        guard let index = workspace.projects.firstIndex(where: { $0 === match }) else {
+            return "no project named \"\(project)\""
+        }
         var spaceID: UUID?
         if let space {
             guard let found = workspace.space(named: space) else {
