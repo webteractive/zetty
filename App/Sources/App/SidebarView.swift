@@ -1687,8 +1687,10 @@ private final class HeaderCellView: NSTableCellView {
                 .kern: 1.2,
             ]
         )
-        // "3" normally, "3 · 1☾" when the section also has dormant members.
-        countLabel.stringValue = dormant > 0 ? "\(count) · \(dormant)☾" : "\(count)"
+        // "3" normally, "3/1" when the section also has dormant members —
+        // awake/dormant. Plain digits: a moon glyph next to a number read as
+        // decoration rather than a count.
+        countLabel.stringValue = dormant > 0 ? "\(count)/\(dormant)" : "\(count)"
         countLabel.textColor = ZTheme.current.fg3Color
     }
 }
