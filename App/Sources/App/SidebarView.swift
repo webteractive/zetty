@@ -636,7 +636,11 @@ final class SidebarView: NSView {
             rows.append(.header(.pinned))
             rows += withClones(pinned)
         }
-        // Spaces sit between Pinned and Projects, in their own order. A Space
+        if !unpinned.isEmpty {
+            rows.append(.header(.projects))
+            rows += withClones(unpinned)
+        }
+        // Spaces sit below Projects, in their own order. A Space
         // header is shown even with no members, so a freshly created Space is
         // visible and can be dropped onto.
         spaceCounts.removeAll(keepingCapacity: true)
@@ -652,10 +656,6 @@ final class SidebarView: NSView {
             if !space.isCollapsed {
                 rows += withClones(spaceMembers)
             }
-        }
-        if !unpinned.isEmpty {
-            rows.append(.header(.projects))
-            rows += withClones(unpinned)
         }
         if !scratch.isEmpty {
             rows.append(.header(.scratch))

@@ -336,6 +336,14 @@ public final class WorkspaceModel {
         guard !project.isHome, !project.isScratch, project.cloneSource == nil else { return false }
         if let spaceID, !spaces.contains(where: { $0.id == spaceID }) { return false }
         project.spaceID = spaceID
+        // Re-append so the project lands LAST among its destination's members.
+        // `regroup()` filters stably, so member order is array order — and since
+        // the Spaces block sits after Projects, leaving the project in place
+        // would order members by where they happened to sit in the array, which
+        // reverses assign order. Members can't be drag-sorted, so "the one you
+        // just filed appears last" is the only order a user can predict.
+        projects.remove(at: index)
+        projects.append(project)
         regroup()
         return true
     }
@@ -344,6 +352,18 @@ public final class WorkspaceModel {
     public func space(named name: String) -> Space? {
         let needle = name.trimmingCharacters(in: .whitespacesAndNewlines)
         return spaces.first { $0.name.localizedCaseInsensitiveCompare(needle) == .orderedSame }
+    }
+
+    /// Re-applies the ordering invariants after a caller mutates a project
+    /// field `WorkspaceModel` does not own the write to — today that means
+    /// `isHibernated`, which the app layer sets directly on the runtime.
+    ///
+    /// Needed because a Space orders its members awake-before-dormant, so
+    /// hibernating a member has to re-sort its Space; without this the new
+    /// order would not appear until some unrelated change happened to trigger
+    /// `regroup()`.
+    public func reapplyOrdering() {
+        regroup()
     }
 
     /// A Space's members in sidebar order, hibernated ones included.
@@ -363,14 +383,22 @@ public final class WorkspaceModel {
         return projects.first { $0.cloneSource == nil && $0.rootPath == sourcePath }?.spaceID
     }
 
-    /// Enforces the ordering invariants: Home first, then spaceless pinned
-    /// projects, then each Space in `spaces` order (pinned members first within
-    /// each Space), then spaceless unpinned projects (Scratch terminals among
-    /// them) last — and within all of that, each clone sits immediately after
-    /// its source project (so the sidebar renders it attached). Within each
-    /// group the existing relative order is preserved (`filter` is stable, never
-    /// sorted). Orphaned clones (source removed) stay where the base grouping
-    /// puts them, as ordinary rows. The active project is preserved by identity.
+    /// Enforces the ordering invariants, mirroring the sidebar's sections:
+    /// Home · spaceless pinned · spaceless unpinned · each Space in `spaces`
+    /// order · Scratch terminals last. Inside a Space, hibernation outranks
+    /// pinning — awake-pinned, awake-unpinned, hibernated-pinned,
+    /// hibernated-unpinned — so dormant members sink to the bottom of their own
+    /// Space instead of scattering among the live ones.
+    ///
+    /// Within all of that, each clone sits immediately after its source project
+    /// (so the sidebar renders it attached). Gluing wins over the awake/dormant
+    /// split, so a hibernated clone of an awake source stays beside its source
+    /// rather than sinking — the attachment is the load-bearing invariant.
+    ///
+    /// Within each group the existing relative order is preserved (`filter` is
+    /// stable, never sorted). Orphaned clones (source removed) stay where the
+    /// base grouping puts them, as ordinary rows. The active project is
+    /// preserved by identity.
     private func regroup() {
         guard !projects.isEmpty else { return }
         let activeID = projects[activeIndex].id
@@ -381,14 +409,29 @@ public final class WorkspaceModel {
             project.spaceID = nil
         }
         let rest = projects.filter { !$0.isHome }
+        // Scratch terminals are held back and appended after the Spaces block so
+        // model order matches the sidebar's (Home · Pinned · Projects · Spaces ·
+        // Scratch · Hibernating) — `zetty status` renders model order, so the two
+        // surfaces would otherwise disagree about where a scratch terminal sits.
+        let spaceless = rest.filter { $0.spaceID == nil && !$0.isScratch }
         var base = projects.filter(\.isHome)
-            + rest.filter { $0.spaceID == nil && $0.isPinned }
+            + spaceless.filter(\.isPinned)
+            + spaceless.filter { !$0.isPinned }
         for space in spaces {
+            // Inside a Space, hibernation outranks pinning: dormant members sink
+            // to the bottom of their own Space rather than scattering among the
+            // live ones. Pinning still orders within each half.
             let members = rest.filter { $0.spaceID == space.id }
-            base += members.filter(\.isPinned) + members.filter { !$0.isPinned }
+            let awake = members.filter { !$0.isHibernated }
+            let dormant = members.filter(\.isHibernated)
+            // Built in steps rather than one `+` chain: four concatenated
+            // filters push Swift's type-checker past its budget here.
+            base += awake.filter(\.isPinned)
+            base += awake.filter { !$0.isPinned }
+            base += dormant.filter(\.isPinned)
+            base += dormant.filter { !$0.isPinned }
         }
-        // Spaceless unpinned projects (Scratch terminals among them) come last.
-        base += rest.filter { $0.spaceID == nil && !$0.isPinned }
+        base += rest.filter { $0.spaceID == nil && $0.isScratch }
         let sourcePaths = Set(base.filter { $0.cloneSource == nil }.map(\.rootPath))
         let attached = base.filter { p in p.cloneSource.map(sourcePaths.contains) == true }
         var result: [ProjectRuntime] = []

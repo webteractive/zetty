@@ -3553,6 +3553,9 @@ final class TerminalViewController: NSViewController {
             }
         }
         project.isHibernated = true
+        // A Space orders its members awake-before-dormant, so hibernating one
+        // has to re-sort its Space. WorkspaceModel doesn't own this write.
+        workspace.reapplyOrdering()
         onSurfacesClosed?(surfaceIDs)          // kill zmx sessions
         onActiveProjectChanged?()
         refreshTabBar()
@@ -3567,8 +3570,11 @@ final class TerminalViewController: NSViewController {
         guard project.isHibernated,
               let index = workspace.projects.firstIndex(where: { $0.id == project.id }) else { return }
         project.isHibernated = false
+        workspace.reapplyOrdering()   // waking lifts it back above its Space's dormant members
         lastActiveAt[project.id] = Date()
-        workspace.select(index: index)
+        // Re-resolve: reapplyOrdering() moved the project, so the index captured
+        // in the guard above is stale and would select a different row.
+        workspace.select(index: workspace.projects.firstIndex { $0.id == project.id } ?? index)
         onActiveProjectChanged?()
         refreshTabBar()
         refreshSidebar()

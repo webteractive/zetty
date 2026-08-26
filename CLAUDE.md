@@ -256,7 +256,7 @@ v2/v3 additions (same design doc):
 ### Spaces
 
 A **Space** is a named, colorable, collapsible sidebar section holding
-related projects, rendered between Pinned and Projects. Pure model in
+related projects, rendered below Projects. Pure model in
 `Sources/ZettyCore/Model/Space.swift` (`Space`: id/name/colorID/glyph/
 isCollapsed, tolerant-decoded like `isHome`/`cloneSource`) plus
 `WorkspaceModel.spaces: [Space]` and `Project.spaceID: UUID?`. **A Space is a
@@ -266,11 +266,33 @@ regardless of whether anything is filed into it. Array order in `spaces` IS
 sidebar order; there is deliberately no second ordering field to disagree
 with it.
 
-`regroup()` gains one tier: Home → spaceless pinned → each Space in `spaces`
-order (pinned members first, otherwise stable) → spaceless unpinned. The
-existing clone-gluing pass runs **unchanged** after that, which is what
+`regroup()` mirrors the sidebar's sections: Home → spaceless pinned →
+spaceless unpinned → each Space in `spaces` order → Scratch terminals last.
+**Inside a Space, hibernation outranks pinning** — awake-pinned,
+awake-unpinned, hibernated-pinned, hibernated-unpinned — so dormant members
+sink to the bottom of their own Space instead of scattering among the live
+ones. Scratch is held back explicitly so model order matches the sidebar;
+`zetty status` renders model order, so otherwise the two surfaces would
+disagree about where a scratch terminal sits.
+
+The existing clone-gluing pass runs **unchanged** after that, which is what
 carries a clone into its source's Space without storing anything on the
-clone itself. `moveProject(from:to:)`'s guard — "both endpoints must share
+clone itself — and gluing WINS over the awake/dormant split, so a hibernated
+clone of an awake source stays beside its source rather than sinking.
+
+**`assign` re-appends the project to `projects` before regrouping**, so it
+lands last among its destination's members. Because the Spaces block now sits
+after Projects, leaving it in place would order members by wherever they
+happened to sit in the array — which reverses assign order. Members cannot be
+drag-sorted, so "the one you just filed appears last" is the only order a user
+can predict.
+
+**Hibernating or waking a project must call `WorkspaceModel.reapplyOrdering()`**
+(`TerminalViewController.hibernateProject`/`wakeProject` do). The app layer owns
+that write, `regroup()` is private, and without the call a member's Space would
+not re-sort until some unrelated change happened to trigger a regroup. Note
+`wakeProject` re-resolves its project index AFTER that call — the index captured
+before it is stale. `moveProject(from:to:)`'s guard — "both endpoints must share
 `isPinned`" — extends to **`isPinned` AND `spaceID`**: a drag-reorder may
 never cross a Space boundary, or it would relocate a project between Spaces
 without going through `assign`'s refusals. Reassignment is the separate

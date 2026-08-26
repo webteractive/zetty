@@ -20,7 +20,8 @@ import Foundation
                                            activeIndex: saved.activeProjectIndex,
                                            homeRoot: "/Users/test")!
     #expect(restored.spaces.map(\.name) == ["Client Acme"])
-    #expect(restored.projects.map(\.name) == ["Home", "acme-api", "loose"])
+    // Spaces sit BELOW Projects, so spaceless `loose` precedes the member.
+    #expect(restored.projects.map(\.name) == ["Home", "loose", "acme-api"])
     #expect(restored.projects(inSpace: restored.spaces[0].id).map(\.name) == ["acme-api"])
 }
 

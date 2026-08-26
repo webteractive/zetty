@@ -25,7 +25,7 @@ private func index(of name: String, in model: WorkspaceModel) -> Int {
     #expect(model.spaces.count == 1)
 }
 
-@Test func spacesRenderBetweenPinnedAndUnpinnedProjects() {
+@Test func spacesRenderBelowPinnedAndUnpinnedProjects() {
     // `delta` is added BEFORE the Space members so the Space tier has to pull
     // them past it. Under the old pin-only ordering this reads
     // ["Home", "alpha", "delta", "beta", "gamma"], so the assertion below
@@ -35,7 +35,8 @@ private func index(of name: String, in model: WorkspaceModel) -> Int {
     let space = model.createSpace(name: "Work")!
     model.assign(projectAt: index(of: "beta", in: model), to: space.id)
     model.assign(projectAt: index(of: "gamma", in: model), to: space.id)
-    #expect(names(model) == ["Home", "alpha", "beta", "gamma", "delta"])
+    // Spaces sit BELOW Projects, so spaceless `delta` precedes the members.
+    #expect(names(model) == ["Home", "alpha", "delta", "beta", "gamma"])
 }
 
 @Test func pinnedMemberFloatsToTopOfItsOwnSpaceNotTheWorkspace() {
@@ -100,7 +101,9 @@ private func index(of name: String, in model: WorkspaceModel) -> Int {
     let space = model.createSpace(name: "Work")!
     model.assign(projectAt: index(of: "src", in: model), to: space.id)
     model.addCloneProject(name: "src/fork", rootPath: "/tmp/fork", cloneSource: "/tmp/src")
-    #expect(names(model) == ["Home", "src", "src/fork", "other"])
+    // `other` is spaceless so it now precedes the Space block; the clone is
+    // still glued directly beneath its source inside the Space.
+    #expect(names(model) == ["Home", "other", "src", "src/fork"])
 }
 
 @Test func removingASpaceKeepsEveryProject() {
@@ -188,4 +191,35 @@ private func index(of name: String, in model: WorkspaceModel) -> Int {
     model.addCloneProject(name: "src/fork", rootPath: "/tmp/fork", cloneSource: "/tmp/src")
     let clone = model.projects.first { $0.name == "src/fork" }!
     #expect(model.effectiveSpaceID(of: clone) == nil)
+}
+
+@Test func hibernatedMembersSinkToTheBottomOfTheirSpace() {
+    // Hibernation outranks pinning INSIDE a Space: awake-pinned, awake-unpinned,
+    // hibernated-pinned, hibernated-unpinned. Fails if the tiers are dropped —
+    // plain assign order here would be one, two, three, four.
+    let model = model(["one", "two", "three", "four"])
+    let space = model.createSpace(name: "Work")!
+    for name in ["one", "two", "three", "four"] {
+        model.assign(projectAt: index(of: name, in: model), to: space.id)
+    }
+    model.togglePin(at: index(of: "four", in: model))   // awake + pinned → very top
+    model.togglePin(at: index(of: "two", in: model))    // will be dormant + pinned
+    model.projects[index(of: "two", in: model)].isHibernated = true
+    model.projects[index(of: "one", in: model)].isHibernated = true
+    model.reapplyOrdering()
+    #expect(names(model) == ["Home", "four", "three", "two", "one"])
+}
+
+@Test func aHibernatedCloneStaysGluedToItsAwakeSource() {
+    // Gluing wins over the awake/dormant split — the attachment is the
+    // load-bearing invariant, so a dormant clone does NOT sink past its source.
+    let model = model(["src", "mate"])
+    let space = model.createSpace(name: "Work")!
+    model.assign(projectAt: index(of: "src", in: model), to: space.id)
+    model.assign(projectAt: index(of: "mate", in: model), to: space.id)
+    let clone = model.addCloneProject(name: "src/fork", rootPath: "/tmp/fork",
+                                      cloneSource: "/tmp/src")
+    clone.isHibernated = true
+    model.reapplyOrdering()
+    #expect(names(model) == ["Home", "src", "src/fork", "mate"])
 }
