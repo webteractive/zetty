@@ -1658,14 +1658,13 @@ private final class SidebarRowView: NSTableRowView {
         guard isSelected else { return }
         let theme = ZTheme.current
 
+        // A `bg3` rounded fill and nothing else. The row previously also drew a
+        // leading accent bar; it read as a stray sliver against the fill's
+        // rounded edge, and the accent already marks focus elsewhere (the status
+        // dot, the active tab's top bar), so the fill alone carries selection.
         let fillRect = bounds.insetBy(dx: 4, dy: 1)
         theme.bg3Color.setFill()
         NSBezierPath(roundedRect: fillRect, xRadius: 6, yRadius: 6).fill()
-
-        let barHeight: CGFloat = 16
-        let barRect = NSRect(x: 4, y: bounds.midY - barHeight / 2, width: 2.5, height: barHeight)
-        theme.accentColor.setFill()
-        NSBezierPath(roundedRect: barRect, xRadius: 1.25, yRadius: 1.25).fill()
     }
 }
 
