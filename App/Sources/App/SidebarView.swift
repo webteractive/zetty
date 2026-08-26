@@ -313,7 +313,8 @@ final class SidebarView: NSView {
         outlineView.delegate = self
         outlineView.translatesAutoresizingMaskIntoConstraints = false
         // Tab child rows can be drag-reordered within their project.
-        outlineView.registerForDraggedTypes([SidebarView.tabDragType, SidebarView.projectDragType])
+        outlineView.registerForDraggedTypes(
+            [SidebarView.tabDragType, SidebarView.projectDragType, SidebarView.spaceDragType])
         outlineView.setDraggingSourceOperationMask(.move, forLocal: true)
 
         // Context menu — populated per-row in `menuNeedsUpdate`.
@@ -804,6 +805,11 @@ final class SidebarView: NSView {
         onNewSpace?(sender.tag)
     }
 
+    @objc private func collapseSpaceMenuClicked(_ sender: NSMenuItem) {
+        guard let id = sender.representedObject as? UUID else { return }
+        onToggleSpaceCollapsed?(id)
+    }
+
     @objc private func renameSpaceMenuClicked(_ sender: NSMenuItem) {
         guard let id = sender.representedObject as? UUID else { return }
         onEditSpace?(id)
@@ -839,6 +845,18 @@ extension SidebarView: NSMenuDelegate {
         guard row >= 0, let obj = outlineView.item(atRow: row) as? OutlineItem else { return }
 
         if case .header(.space(let id)) = obj.kind, spaces.contains(where: { $0.id == id }) {
+            // Collapse lives here as well as on the chevron: a Space header is
+            // draggable, so its click target is the chevron alone rather than
+            // the whole row, and that is a small thing to hit.
+            let isCollapsed = spaces.first { $0.id == id }?.isCollapsed ?? false
+            let collapse = NSMenuItem(title: isCollapsed ? "Expand" : "Collapse",
+                                      action: #selector(collapseSpaceMenuClicked(_:)),
+                                      keyEquivalent: "")
+            collapse.target = self
+            collapse.representedObject = id
+            menu.addItem(collapse)
+            menu.addItem(.separator())
+
             for (title, selector) in [("Rename\u{2026}", #selector(renameSpaceMenuClicked(_:))),
                                       ("Edit Space\u{2026}", #selector(editSpaceMenuClicked(_:)))] {
                 let item = NSMenuItem(title: title, action: selector, keyEquivalent: "")
@@ -1378,6 +1396,7 @@ extension SidebarView: NSOutlineViewDelegate {
             var collapsed = false
             var accent: NSColor?
             var symbol: String?
+            var draggable = false
             var onToggle: (() -> Void)?
             switch section {
             case .home:       count = homeCount
@@ -1403,6 +1422,9 @@ extension SidebarView: NSOutlineViewDelegate {
                 // A color dot by default; a custom glyph overrides it. Other
                 // sections leave `symbol` nil, which hides the slot entirely.
                 symbol = space?.glyph ?? "circle.fill"
+                // Only Space headers can be dragged (to reorder Spaces), so
+                // only they give up the full-bleed click target.
+                draggable = true
                 onToggle = { [weak self] in self?.onToggleSpaceCollapsed?(id) }
             }
             cellView.configure(
@@ -1413,6 +1435,7 @@ extension SidebarView: NSOutlineViewDelegate {
                 collapsed: collapsed,
                 accent: accent,
                 symbol: symbol,
+                draggable: draggable,
                 onToggle: onToggle
             )
             return cellView
@@ -1523,6 +1546,8 @@ private final class HeaderCellView: NSTableCellView {
     /// button (not a gesture recognizer) so clicks land reliably inside the
     /// outline view, mirroring the project row's pin button.
     private let toggleButton = NSButton()
+    private var toggleFullWidth: NSLayoutConstraint!
+    private var toggleChevronWidth: NSLayoutConstraint!
     private var chevronWidth: NSLayoutConstraint!
     private var chevronGap: NSLayoutConstraint!
     private var glyphWidth: NSLayoutConstraint!
@@ -1577,11 +1602,18 @@ private final class HeaderCellView: NSTableCellView {
             titleLabel.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -3),
             countLabel.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
             countLabel.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -3),
-            toggleButton.leadingAnchor.constraint(equalTo: leadingAnchor),
-            toggleButton.trailingAnchor.constraint(equalTo: trailingAnchor),
             toggleButton.topAnchor.constraint(equalTo: topAnchor),
             toggleButton.bottomAnchor.constraint(equalTo: bottomAnchor),
+            toggleButton.leadingAnchor.constraint(equalTo: leadingAnchor),
         ])
+        // Full-bleed by default (the whole header toggles). A DRAGGABLE header
+        // narrows it to the chevron instead: `NSButton.mouseDown` runs its own
+        // tracking loop to mouse-up, so a full-bleed button never lets the
+        // outline view see the press and the row cannot start a drag at all.
+        toggleFullWidth = toggleButton.trailingAnchor.constraint(equalTo: trailingAnchor)
+        toggleChevronWidth = toggleButton.trailingAnchor.constraint(
+            equalTo: chevronView.trailingAnchor, constant: 4)
+        toggleFullWidth.isActive = true
     }
 
     @available(*, unavailable)
@@ -1595,8 +1627,13 @@ private final class HeaderCellView: NSTableCellView {
                    collapsed: Bool = false,
                    accent: NSColor? = nil,
                    symbol: String? = nil,
+                   draggable: Bool = false,
                    onToggle: (() -> Void)? = nil) {
         self.onToggle = onToggle
+        // A draggable header keeps its click target on the chevron so the rest
+        // of the row reaches the outline view and can begin a drag.
+        toggleFullWidth.isActive = !draggable
+        toggleChevronWidth.isActive = draggable
         toggleButton.isHidden = !collapsible
         chevronView.isHidden = !collapsible
         chevronWidth.constant = collapsible ? 9 : 0
