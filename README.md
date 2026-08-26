@@ -62,15 +62,15 @@ by the tool it's running.
   scratch-clear`).
 - **Spaces** — right-click a project → **Move to Space ▸** to file it into a
   named, colorable, collapsible sidebar section (or create one with **New
-  Space…**); Spaces render below **Projects**, each with a
-  color dot, optional glyph (SF Symbol or emoji), and an awake/dormant member
-  count in its header. A project belongs to at most one Space, and pinning
-  still works inside one — a pinned member floats to the top of its own
-  Space rather than leaving it. Hibernating a member **keeps it in its Space**
-  instead of dropping it to the Hibernating section — it dims and sinks below
-  the Space's awake members — so a Space stays a complete picture of related
-  work; the header's **Hibernate All** / **Wake All** act on every member at
-  once. Deleting a Space (its header's
+  Space…**); Spaces render below **Projects**, each with a color dot, optional
+  glyph (SF Symbol or emoji), and an awake/dormant member count in its header.
+  A project belongs to at most one Space, and **joining one clears its pin** —
+  a project lives in exactly one section, so members show no star. Hibernating
+  a member moves it to the **Hibernating** section like any other project,
+  tagged with its Space's name; waking it returns it to that Space. A Space
+  with no awake members hides entirely (its dormant projects are still listed
+  under Hibernating, and it stays reachable from **Move to Space ▸**). The
+  header's **Hibernate All** / **Wake All** act on every member at once. Deleting a Space (its header's
   **Delete Space…**) never removes a project — members just fall back to
   Pinned/Projects. Drag a project onto a Space header to file it in, drag it
   out to ungroup it, or drag a Space header itself to reorder the whole

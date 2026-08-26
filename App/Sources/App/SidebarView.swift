@@ -28,6 +28,7 @@ struct SidebarProject: Equatable {
     let cloneSourceIndex: Int?           // index of the source project (nil → orphan)
     let isPendingClone: Bool             // transient "Cloning…" placeholder: spinner glyph, non-interactive
     let spaceID: UUID?                   // the Space this row renders under, nil for Pinned/Projects
+    let spaceName: String?               // that Space's name — tags a hibernated row with where it will return
 }
 
 /// Plain data for one Space header row: identity and appearance only. Counts
@@ -593,11 +594,13 @@ final class SidebarView: NSView {
         let home = visible.filter { $0.element.isHome }
         let rest = visible.filter { !$0.element.isHome }
         // A member of a Space stays in its Space when hibernated — dimmed in
-        // place, following the Home precedent. Only SPACELESS hibernated
-        // projects fall to the Hibernating section.
-        let hibernated = rest.filter { $0.element.isHibernated && $0.element.spaceID == nil }
+        // place, EVERY hibernated project collects in the Hibernating section,
+        // Space members included. Membership is kept (`spaceID` is untouched),
+        // so waking one returns it to its Space — or to Projects when it has
+        // none. Sorted by name: display order only, real indices preserved.
+        let hibernated = rest.filter { $0.element.isHibernated }
             .sorted { $0.element.name.localizedCaseInsensitiveCompare($1.element.name) == .orderedAscending }
-        let placed = rest.filter { !$0.element.isHibernated || $0.element.spaceID != nil }
+        let placed = rest.filter { !$0.element.isHibernated }
         let scratch = placed.filter { $0.element.isScratch }
         let regular = placed.filter { !$0.element.isScratch }
         // A clone with a visible, awake source renders attached — spliced in right
@@ -649,10 +652,19 @@ final class SidebarView: NSView {
             let spaceMembers = members(of: space.id)
             // Counted from the same FILTERED list its rows come from, so the
             // header's number always matches what's actually shown under it.
+            // Awake count comes from the rows actually rendered; the dormant
+            // count from the filtered hibernated list, since those rows now live
+            // under Hibernating. Both derive from `visible`, so a search filter
+            // still narrows them together.
             spaceCounts[space.id] = (
-                awake: spaceMembers.filter { !$0.element.isHibernated }.count,
-                hibernated: spaceMembers.filter { $0.element.isHibernated }.count
+                awake: spaceMembers.count,
+                hibernated: hibernated.filter { $0.element.spaceID == space.id }.count
             )
+            // A Space with no AWAKE members renders nothing — its dormant
+            // projects are listed under Hibernating (tagged with its name), and
+            // an empty section header is just noise. It stays reachable from
+            // `Move to Space ▸`, which lists Spaces from the model.
+            guard !spaceMembers.isEmpty else { continue }
             rows.append(.header(.space(space.id)))
             if !space.isCollapsed {
                 rows += withClones(spaceMembers)
@@ -1464,6 +1476,8 @@ extension SidebarView: NSOutlineViewDelegate {
                 isScratch: project.isScratch,
                 isClone: project.isClone,
                 isHome: project.isHome,
+                inSpace: project.spaceID != nil,
+                spaceName: project.spaceName,
                 isPendingClone: project.isPendingClone,
                 projectIndex: p,
                 target: self,
@@ -1790,6 +1804,8 @@ private final class ProjectCellView: NSTableCellView {
                    customGlyph: String? = nil, isHibernated: Bool = false, isScratch: Bool = false,
                    isClone: Bool = false,
                    isHome: Bool = false,
+                   inSpace: Bool = false,
+                   spaceName: String? = nil,
                    isPendingClone: Bool = false,
                    projectIndex: Int, target: AnyObject, action: Selector) {
         glyphLeading.constant = isClone ? 18 : 4
@@ -1810,7 +1826,23 @@ private final class ProjectCellView: NSTableCellView {
         // Recycled cells may have been a spinner row — stop it.
         spinner.stopAnimation(nil)
 
-        nameLabel.stringValue = name
+        if isHibernated, let spaceName, !spaceName.isEmpty {
+            // Hibernated rows all collect under Hibernating, so the row itself
+            // has to say which Space it will return to when woken. Attributed
+            // text rather than another subview — this cell is recycled on every
+            // refresh, and a conditional subview means conditional constraints.
+            let text = NSMutableAttributedString(
+                string: name,
+                attributes: [.foregroundColor: nameLabel.textColor ?? ZTheme.current.fgColor,
+                             .font: nameLabel.font ?? ZTheme.chromeFont(size: 12)])
+            text.append(NSAttributedString(
+                string: "  \(spaceName)",
+                attributes: [.foregroundColor: ZTheme.current.fg3Color,
+                             .font: ZTheme.chromeFont(size: 10)]))
+            nameLabel.attributedStringValue = text
+        } else {
+            nameLabel.stringValue = name
+        }
         // Hibernated rows read as dormant: dim text regardless of active state.
         nameLabel.textColor = isHibernated ? ZTheme.current.fg3Color
             : (isActive ? ZTheme.current.fgColor : ZTheme.current.fg2Color)
@@ -1845,7 +1877,9 @@ private final class ProjectCellView: NSTableCellView {
         }
 
         // Scratch terminals and Home can't be pinned — hide the star entirely.
-        pinButton.isHidden = isScratch || isHome
+        // A Space member lives in its Space, not in Pinned, so it has no star —
+        // same reasoning as Scratch and Home, which own their own sections.
+        pinButton.isHidden = isScratch || isHome || inSpace
 
         // Pinned rows use a filled accent star; unpinned rows show a dim hollow star.
         let symbolName = isPinned ? "star.fill" : "star"

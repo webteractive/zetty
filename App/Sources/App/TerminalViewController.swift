@@ -2815,7 +2815,10 @@ final class TerminalViewController: NSViewController {
                     workspace.projects.firstIndex { $0.rootPath == src && $0.cloneSource == nil }
                 },
                 isPendingClone: false,
-                spaceID: project.spaceID
+                spaceID: project.spaceID,
+                spaceName: project.spaceID.flatMap { id in
+                    workspace.spaces.first { $0.id == id }?.name
+                }
             )
         }
         // Splice in "Cloning…" placeholder rows: each nests under its source via
@@ -2831,7 +2834,7 @@ final class TerminalViewController: NSViewController {
                 icon: nil, status: nil, projectColor: nil, customGlyph: nil,
                 isHibernated: false, isScratch: false, isHome: false,
                 isClone: true, cloneSourceIndex: sourceIndex, isPendingClone: true,
-                spaceID: nil
+                spaceID: nil, spaceName: nil
             ))
         }
         // Identity + appearance only — counts are NOT computed here. They must

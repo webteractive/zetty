@@ -268,10 +268,23 @@ with it.
 
 `regroup()` mirrors the sidebar's sections: Home → spaceless pinned →
 spaceless unpinned → each Space in `spaces` order → Scratch terminals last.
-**Inside a Space, hibernation outranks pinning** — awake-pinned,
-awake-unpinned, hibernated-pinned, hibernated-unpinned — so dormant members
-sink to the bottom of their own Space instead of scattering among the live
-ones. Scratch is held back explicitly so model order matches the sidebar;
+**Inside a Space, awake members come before dormant ones**, and members are
+never pinned — `assign` clears the pin on the way in and `regroup()`
+normalises any that slipped through (self-healing for a `workspace.json`
+written before that rule). Scratch is held back explicitly so model order
+matches the sidebar;
+
+**The sidebar routes EVERY hibernated project to the Hibernating section**,
+Space members included — `spaceID` is kept, so waking returns the project to
+its Space (or to Projects when it has none). A hibernated row belonging to a
+Space is tagged with that Space's name in `nameLabel`'s attributed text
+(a subview would mean conditional constraints in a cell recycled on every
+refresh). Because members render nowhere else, a Space's *dormant* count comes
+from the filtered `hibernated` list rather than from its rendered rows — both
+still derive from `visible`, so a search filter narrows them together. **A
+Space with no awake members renders no header at all**; it stays reachable
+from `Move to Space ▸`, which lists Spaces from the model, but it cannot be
+drag-dropped onto while hidden.
 `zetty status` renders model order, so otherwise the two surfaces would
 disagree about where a scratch terminal sits.
 

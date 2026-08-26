@@ -205,7 +205,10 @@ public final class WorkspaceModel {
     }
 
     public func togglePin(at index: Int) {
-        guard projects.indices.contains(index) else { return }
+        // Pinning means "lives in the Pinned section", and a Space member lives
+        // in its Space — one project, one section. The sidebar hides the star
+        // for members, so this guard is the model-side half of that rule.
+        guard projects.indices.contains(index), projects[index].spaceID == nil else { return }
         projects[index].isPinned.toggle()
         regroup()   // pinning drops the project at the bottom of its new group
     }
@@ -336,6 +339,8 @@ public final class WorkspaceModel {
         guard !project.isHome, !project.isScratch, project.cloneSource == nil else { return false }
         if let spaceID, !spaces.contains(where: { $0.id == spaceID }) { return false }
         project.spaceID = spaceID
+        // Joining a Space leaves the Pinned section, so the pin goes with it.
+        if spaceID != nil { project.isPinned = false }
         // Re-append so the project lands LAST among its destination's members.
         // `regroup()` filters stably, so member order is array order — and since
         // the Spaces block sits after Projects, leaving the project in place
@@ -385,10 +390,11 @@ public final class WorkspaceModel {
 
     /// Enforces the ordering invariants, mirroring the sidebar's sections:
     /// Home · spaceless pinned · spaceless unpinned · each Space in `spaces`
-    /// order · Scratch terminals last. Inside a Space, hibernation outranks
-    /// pinning — awake-pinned, awake-unpinned, hibernated-pinned,
-    /// hibernated-unpinned — so dormant members sink to the bottom of their own
-    /// Space instead of scattering among the live ones.
+    /// order · Scratch terminals last. Inside a Space, awake members come
+    /// before dormant ones, so hibernating a member sinks it to the bottom of
+    /// its own Space instead of scattering it among the live ones. Members are
+    /// never pinned — joining a Space clears the pin, and this normalises any
+    /// that slipped through.
     ///
     /// Within all of that, each clone sits immediately after its source project
     /// (so the sidebar renders it attached). Gluing wins over the awake/dormant
@@ -408,6 +414,12 @@ public final class WorkspaceModel {
         for project in projects where project.spaceID.map({ !known.contains($0) }) == true {
             project.spaceID = nil
         }
+        // A Space member is never pinned — self-healing, so a workspace.json
+        // written before this rule (or hand-edited) converges on load instead
+        // of leaving a starred row inside a Space.
+        for project in projects where project.spaceID != nil && project.isPinned {
+            project.isPinned = false
+        }
         let rest = projects.filter { !$0.isHome }
         // Scratch terminals are held back and appended after the Spaces block so
         // model order matches the sidebar's (Home · Pinned · Projects · Spaces ·
@@ -418,18 +430,13 @@ public final class WorkspaceModel {
             + spaceless.filter(\.isPinned)
             + spaceless.filter { !$0.isPinned }
         for space in spaces {
-            // Inside a Space, hibernation outranks pinning: dormant members sink
-            // to the bottom of their own Space rather than scattering among the
-            // live ones. Pinning still orders within each half.
+            // Members are never pinned (normalised above), so the only split
+            // inside a Space is awake before dormant. Order within each half is
+            // assign order — `assign` re-appends, so re-picking the same Space
+            // from the menu moves a member to the bottom.
             let members = rest.filter { $0.spaceID == space.id }
-            let awake = members.filter { !$0.isHibernated }
-            let dormant = members.filter(\.isHibernated)
-            // Built in steps rather than one `+` chain: four concatenated
-            // filters push Swift's type-checker past its budget here.
-            base += awake.filter(\.isPinned)
-            base += awake.filter { !$0.isPinned }
-            base += dormant.filter(\.isPinned)
-            base += dormant.filter { !$0.isPinned }
+            base += members.filter { !$0.isHibernated }
+            base += members.filter(\.isHibernated)
         }
         base += rest.filter { $0.spaceID == nil && $0.isScratch }
         let sourcePaths = Set(base.filter { $0.cloneSource == nil }.map(\.rootPath))
