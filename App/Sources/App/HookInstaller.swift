@@ -34,6 +34,112 @@ final class HookInstaller {
         }
     }
 
+    // MARK: - Per-account Claude hooks
+
+    /// Claude reads `settings.json` from whatever `CLAUDE_CONFIG_DIR` points at,
+    /// so an account's hooks live in ITS directory, not in `~/.claude`.
+    ///
+    /// Without this an account's panes would report no agent status at all — no
+    /// dots, no needs-attention notification, no Dock badge — because the hooks
+    /// Zetty installed sit in a file that account never reads. This is why an
+    /// account's `settings.json` is copied rather than symlinked: it needs to be
+    /// a real file with its own hooks.
+    private func claudeSettingsURL(inConfigDirectory directory: String) -> URL {
+        URL(fileURLWithPath: directory).appendingPathComponent("settings.json")
+    }
+
+    func isClaudeInstalled(inConfigDirectory directory: String) -> Bool {
+        let url = claudeSettingsURL(inConfigDirectory: directory)
+        guard let dict = jsonObject(from: url) else { return false }
+        return ClaudeHookConfig.isInstalled(in: dict, scriptPath: scriptURL.path)
+    }
+
+    @discardableResult
+    func installClaudeHooks(inConfigDirectory directory: String) -> Outcome {
+        do {
+            try ensureScript()
+            let url = claudeSettingsURL(inConfigDirectory: directory)
+            try FileManager.default.createDirectory(
+                at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+            // Additive, like the default-directory install: an account's own
+            // settings (plugins, prefs) are preserved.
+            let dict = ClaudeHookConfig.install(into: jsonObject(from: url) ?? [:],
+                                                scriptPath: scriptURL.path)
+            try writeJSON(dict, to: url)
+            return .installed
+        } catch {
+            return .failed(error.localizedDescription)
+        }
+    }
+
+    /// Codex's status hook is the `notify` key in `config.toml`, which lives in
+    /// its config dir — so an account needs the hook written into ITS copy, for
+    /// the same reason Claude accounts need it in their own `settings.json`.
+    /// Without it an account's panes report no agent status at all.
+    ///
+    /// The account's original `notify` (if any) is backed up beside its config
+    /// so uninstall can restore it, mirroring the default directory's backup.
+    @discardableResult
+    func installCodexHooks(inConfigDirectory directory: String) -> Outcome {
+        do {
+            try ensureScript()
+            let url = codexConfigURL(inConfigDirectory: directory)
+            try FileManager.default.createDirectory(
+                at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+            let text = (try? String(contentsOf: url, encoding: .utf8)) ?? ""
+            switch CodexHookConfig.install(configText: text, scriptPath: scriptURL.path) {
+            case .alreadyInstalled:
+                return .alreadyInstalled
+            case let .updated(newText, backup):
+                try newText.write(to: url, atomically: true, encoding: .utf8)
+                try backup.write(to: codexBackupURL(inConfigDirectory: directory),
+                                 atomically: true, encoding: .utf8)
+                return .installed
+            }
+        } catch {
+            return .failed(error.localizedDescription)
+        }
+    }
+
+    @discardableResult
+    func uninstallCodexHooks(inConfigDirectory directory: String) -> Outcome {
+        let url = codexConfigURL(inConfigDirectory: directory)
+        guard FileManager.default.fileExists(atPath: url.path) else { return .uninstalled }
+        do {
+            let text = try String(contentsOf: url, encoding: .utf8)
+            let backupURL = codexBackupURL(inConfigDirectory: directory)
+            let backup = (try? String(contentsOf: backupURL, encoding: .utf8)) ?? ""
+            let restored = CodexHookConfig.uninstall(
+                configText: text, backup: backup, scriptPath: scriptURL.path)
+            try restored.write(to: url, atomically: true, encoding: .utf8)
+            try? FileManager.default.removeItem(at: backupURL)
+            return .uninstalled
+        } catch {
+            return .failed(error.localizedDescription)
+        }
+    }
+
+    private func codexConfigURL(inConfigDirectory directory: String) -> URL {
+        URL(fileURLWithPath: directory).appendingPathComponent("config.toml")
+    }
+
+    private func codexBackupURL(inConfigDirectory directory: String) -> URL {
+        URL(fileURLWithPath: directory).appendingPathComponent(".zetty-codex-notify-backup")
+    }
+
+    @discardableResult
+    func uninstallClaudeHooks(inConfigDirectory directory: String) -> Outcome {
+        let url = claudeSettingsURL(inConfigDirectory: directory)
+        guard FileManager.default.fileExists(atPath: url.path) else { return .uninstalled }
+        do {
+            guard let dict = jsonObject(from: url) else { return .uninstalled }
+            try writeJSON(ClaudeHookConfig.uninstall(from: dict, scriptPath: scriptURL.path), to: url)
+            return .uninstalled
+        } catch {
+            return .failed(error.localizedDescription)
+        }
+    }
+
     // MARK: - Status
 
     func isInstalled(_ harness: Harness) -> Bool {

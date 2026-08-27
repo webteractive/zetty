@@ -72,6 +72,35 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     /// (owner applies + persists).
     var onSetFontSize: ((Float?) -> Void)?
 
+    // MARK: Accounts
+
+    /// Every configured agent account, newest state (owner holds the store).
+    var accountsProvider: (() -> [AgentAccount])?
+
+    /// Create an account: make its directory and seed it, opening a sign-in
+    /// pane only when the sheet's "Create & Sign In" was used.
+    var onAddAccount: ((AgentAccount, Set<String>, _ signIn: Bool) -> Void)?
+
+    /// Forget an account. The directory is deliberately left on disk.
+    var onRemoveAccount: ((AgentAccount) -> Void)?
+
+    /// Open a sign-in pane for an existing account.
+    var onSignInAccount: ((AgentAccount) -> Void)?
+
+    /// Re-probe every account's identity, then call back on the main thread.
+    var onCheckAccounts: ((@escaping () -> Void) -> Void)?
+
+    /// The Claude status-hook toggle changed; mirror it into every account.
+    var onHooksChanged: (() -> Void)?
+
+    private let accountsTable = NSTableView()
+    private var accountRows: [AgentAccount] = []
+    private let accountsStatusLabel = NSTextField(labelWithString: "")
+    private let addAccountButton = NSButton(title: "Add Account…", target: nil, action: nil)
+    private let signInAccountButton = NSButton(title: "Sign In", target: nil, action: nil)
+    private let checkAccountsButton = NSButton(title: "Check", target: nil, action: nil)
+    private let removeAccountButton = NSButton(title: "Remove…", target: nil, action: nil)
+
     init(installer: HookInstaller, liveSurfaceIDs: @escaping () -> [UUID] = { [] }) {
         self.installer = installer
         self.liveSurfaceIDs = liveSurfaceIDs
@@ -104,6 +133,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         refreshAppearance()
         refreshCLI()
         refreshSessions()
+        refreshAccounts()
     }
 
     // MARK: - Content
@@ -134,6 +164,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         tabs.addTabViewItem(tabItem("Appearance", buildAppearanceTab()))
         tabs.addTabViewItem(tabItem("Sessions", buildSessionsTab()))
         tabs.addTabViewItem(tabItem("Agents", buildAgentsTab()))
+        tabs.addTabViewItem(tabItem("Accounts", buildAccountsTab()))
         root.addSubview(tabs)
         NSLayoutConstraint.activate([
             tabs.topAnchor.constraint(equalTo: root.topAnchor, constant: 12),
@@ -358,6 +389,154 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         }
         stack.addArrangedSubview(caption("Restart the agent after enabling for the hook to take effect."))
         return stack
+    }
+
+    // MARK: Accounts tab
+
+    private func buildAccountsTab() -> NSView {
+        let stack = sectionStack()
+        stack.addArrangedSubview(sectionHeader("Agent Accounts"))
+        stack.addArrangedSubview(caption(
+            "Run more than one login side by side — a work account in one tab, a "
+            + "personal one in the next. Each account keeps its own credentials, "
+            + "settings and history in its own directory; your existing login is "
+            + "the Default account and is never touched."
+        ))
+
+        accountsTable.headerView = nil
+        accountsTable.rowHeight = 34
+        accountsTable.backgroundColor = ZTheme.current.bg2Color
+        accountsTable.gridStyleMask = []
+        accountsTable.selectionHighlightStyle = .regular
+        accountsTable.dataSource = self
+        accountsTable.delegate = self
+        accountsTable.target = self
+        if accountsTable.tableColumns.isEmpty {
+            let column = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("account"))
+            column.resizingMask = .autoresizingMask
+            accountsTable.addTableColumn(column)
+        }
+
+        let scroll = NSScrollView()
+        scroll.documentView = accountsTable
+        scroll.hasVerticalScroller = true
+        scroll.drawsBackground = true
+        scroll.backgroundColor = ZTheme.current.bg2Color
+        scroll.borderType = .noBorder
+        scroll.wantsLayer = true
+        scroll.layer?.cornerRadius = 6
+        scroll.layer?.borderWidth = 1
+        scroll.layer?.borderColor = ZTheme.current.borderColor.cgColor
+        scroll.translatesAutoresizingMaskIntoConstraints = false
+        scroll.heightAnchor.constraint(equalToConstant: 150).isActive = true
+        addFullWidth(scroll, to: stack)
+
+        for (button, action) in [
+            (addAccountButton, #selector(addAccountClicked)),
+            (signInAccountButton, #selector(signInAccountClicked)),
+            (checkAccountsButton, #selector(checkAccountsClicked)),
+            (removeAccountButton, #selector(removeAccountClicked)),
+        ] {
+            button.target = self
+            button.action = action
+            button.font = ZTheme.chromeFont(size: 12)
+        }
+        checkAccountsButton.toolTip =
+            "Ask each account who it is signed in as. Run on demand only — it starts one process per account."
+
+        let buttons = NSStackView(views: [
+            addAccountButton, signInAccountButton, checkAccountsButton, NSView(), removeAccountButton,
+        ])
+        buttons.orientation = .horizontal
+        buttons.spacing = 8
+        addFullWidth(buttons, to: stack)
+
+        accountsStatusLabel.font = ZTheme.chromeFont(size: 11)
+        accountsStatusLabel.textColor = ZTheme.current.fg3Color
+        stack.addArrangedSubview(accountsStatusLabel)
+
+        stack.addArrangedSubview(caption(
+            "Set a project's account in Project Settings, or pick one per pane when "
+            + "you open a tab. An account applies to NEW panes — an open pane keeps "
+            + "the one it started with."
+        ))
+        return stack
+    }
+
+    /// Jumps to a tab by label — used by the status-bar account chip, which is
+    /// the discoverable route into account management.
+    func selectTab(named label: String) {
+        guard let tabView,
+              let index = (0..<tabView.numberOfTabViewItems).first(where: {
+                  tabView.tabViewItem(at: $0).label == label
+              })
+        else { return }
+        tabView.selectTabViewItem(at: index)
+    }
+
+    private func refreshAccounts() {
+        accountRows = accountsProvider?() ?? []
+        accountsTable.reloadData()
+        updateAccountButtons()
+        accountsStatusLabel.stringValue = accountRows.isEmpty
+            ? "No accounts yet — the Default login is in use everywhere."
+            : "\(accountRows.count) account\(accountRows.count == 1 ? "" : "s"), plus the Default login."
+    }
+
+    private func updateAccountButtons() {
+        let selected = accountsTable.selectedRow
+        let hasSelection = accountRows.indices.contains(selected)
+        signInAccountButton.isEnabled = hasSelection
+        removeAccountButton.isEnabled = hasSelection
+        checkAccountsButton.isEnabled = !accountRows.isEmpty
+    }
+
+    private var selectedAccount: AgentAccount? {
+        accountRows.indices.contains(accountsTable.selectedRow)
+            ? accountRows[accountsTable.selectedRow] : nil
+    }
+
+    @objc private func addAccountClicked() {
+        guard let window else { return }
+        AddAccountSheet.present(
+            existing: accountRows,
+            agentID: AgentAccountSupport.defaultAgentID,
+            on: window
+        ) { [weak self] account, selections, signIn in
+            self?.onAddAccount?(account, selections, signIn)
+            self?.refreshAccounts()
+        }
+    }
+
+    @objc private func signInAccountClicked() {
+        guard let account = selectedAccount else { return }
+        onSignInAccount?(account)
+    }
+
+    @objc private func checkAccountsClicked() {
+        checkAccountsButton.isEnabled = false
+        accountsStatusLabel.stringValue = "Checking…"
+        onCheckAccounts? { [weak self] in
+            self?.refreshAccounts()
+        }
+    }
+
+    @objc private func removeAccountClicked() {
+        guard let account = selectedAccount else { return }
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = "Remove the account \u{201C}\(account.name)\u{201D}?"
+        // Never offer to delete the directory: it holds a live login. Say so, or
+        // people will believe removing the account signed them out.
+        alert.informativeText =
+            "Zetty forgets the account. Its directory — \(account.directory) — is left on "
+            + "disk, so you stay signed in there and can add it back.\n\nPanes and projects "
+            + "using it fall back to the Default login."
+        alert.addButton(withTitle: "Remove")
+        alert.addButton(withTitle: "Cancel")
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        onRemoveAccount?(account)
+        refreshAccounts()
     }
 
     /// A justified label + switch row (same anatomy as the harness rows).
@@ -837,6 +1016,12 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         let outcome = sender.state == .on ? installer.install(harness) : installer.uninstall(harness)
         switch outcome {
         case .installed, .uninstalled, .alreadyInstalled:
+            // Claude reads settings.json from its config dir, so every account
+            // needs the same change written into its own copy — otherwise this
+            // toggle would only ever cover the Default login.
+            // Each harness keeps hooks inside its config dir, so accounts need
+            // the same change written into their own copies.
+            if harness == .claude || harness == .codex { onHooksChanged?() }
             break   // the switch already reflects the new state
         case let .conflict(snippet):
             sender.state = .off
@@ -867,4 +1052,86 @@ extension SettingsWindowController: NSTextFieldDelegate {
         guard let control = notification.object as? NSControl, control === fontSizeField else { return }
         commitFontSize(fontSizeField.stringValue)
     }
+}
+
+// MARK: - Accounts table
+
+extension SettingsWindowController: NSTableViewDataSource, NSTableViewDelegate {
+
+    func numberOfRows(in tableView: NSTableView) -> Int {
+        tableView === accountsTable ? accountRows.count : 0
+    }
+
+    func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
+        guard tableView === accountsTable, accountRows.indices.contains(row) else { return nil }
+        return AccountRowView(account: accountRows[row])
+    }
+
+    func tableViewSelectionDidChange(_ notification: Notification) {
+        guard (notification.object as? NSTableView) === accountsTable else { return }
+        updateAccountButtons()
+    }
+}
+
+/// One row of the Accounts table: identity dot, name, who it's signed in as,
+/// and where it lives.
+private final class AccountRowView: NSView {
+
+    init(account: AgentAccount) {
+        super.init(frame: .zero)
+        let theme = ZTheme.current
+
+        let dot = NSView()
+        dot.wantsLayer = true
+        dot.layer?.cornerRadius = 4
+        // Palette-driven, so accounts and projects read as one colour system.
+        dot.layer?.backgroundColor = (ZTheme.projectColor(id: account.colorID) ?? theme.fg3Color).cgColor
+        dot.translatesAutoresizingMaskIntoConstraints = false
+
+        // Named in the detail line below rather than shown as a logo.
+        let agent = SpawnableAgent.byID(account.agentID)
+
+        let name = NSTextField(labelWithString: account.name)
+        name.font = ZTheme.chromeFont(size: 13, weight: .medium)
+        name.textColor = theme.fgColor
+        name.translatesAutoresizingMaskIntoConstraints = false
+
+        // Whatever the last sign-in or Check reported. Never probed on render —
+        // that would put a subprocess on the chrome's refresh path.
+        // "Claude - warda@more.dev - More.dev": the harness, then who it is
+        // signed in as. The directory rides the tooltip instead of the row —
+        // it matters when something is wrong, not at a glance.
+        var parts = [agent?.shortName].compactMap { $0 }
+        if let email = account.lastKnownEmail {
+            parts.append(email)
+            if let org = account.lastKnownOrg { parts.append(org) }
+        } else {
+            parts.append("not signed in yet")
+        }
+        let detail = NSTextField(labelWithString: parts.joined(separator: " - "))
+        detail.toolTip = account.directory
+        detail.font = ZTheme.chromeFont(size: 11)
+        detail.textColor = theme.fg3Color
+        detail.lineBreakMode = .byTruncatingMiddle
+        detail.translatesAutoresizingMaskIntoConstraints = false
+
+        addSubview(dot)
+        addSubview(name)
+        addSubview(detail)
+        NSLayoutConstraint.activate([
+            dot.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 10),
+            dot.centerYAnchor.constraint(equalTo: centerYAnchor),
+            dot.widthAnchor.constraint(equalToConstant: 8),
+            dot.heightAnchor.constraint(equalToConstant: 8),
+            name.leadingAnchor.constraint(equalTo: dot.trailingAnchor, constant: 8),
+            name.topAnchor.constraint(equalTo: topAnchor, constant: 4),
+            name.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -10),
+            detail.leadingAnchor.constraint(equalTo: name.leadingAnchor),
+            detail.topAnchor.constraint(equalTo: name.bottomAnchor, constant: 1),
+            detail.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -10),
+        ])
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError("not supported") }
 }

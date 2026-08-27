@@ -94,8 +94,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     /// wins when it carries its own).
     private lazy var layoutTemplateStore = LayoutTemplateStore(directory: appSupportDirectory)
 
+    /// Named agent logins (Claude accounts), each with its own config directory.
+    private lazy var agentAccountStore = AgentAccountStore(directory: appSupportDirectory)
+
     /// In-memory project settings; loaded at launch, saved on every edit.
     private(set) var projectSettings = ProjectSettingsFile()
+
+    /// In-memory agent accounts; loaded at launch, saved on every edit.
+    private(set) var agentAccounts = AgentAccountsFile()
 
     func applicationDidFinishLaunching(_: Notification) {
         // TerminalController internally calls ghostty_init(0, nil) exactly once
@@ -133,6 +139,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         let restoredFromDisk = restoreWorkspace(into: tvc)
         terminalViewController = tvc
         projectSettings = projectSettingsStore.load()
+        agentAccounts = agentAccountStore.load()
+        // Drop stamps naming an account that no longer exists, so workspace.json
+        // stays honest about which login each pane actually got.
+        if tvc.workspace.healAccountIDs(known: Set(agentAccounts.accounts.map(\.id))) {
+            scheduleSave()
+        }
         applyProjectNameOverrides(to: tvc)
         applyThemeForActiveProject()   // initial active project's theme override
         // Autosave on every structural change (debounced), so the on-disk
@@ -183,6 +195,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         }
         tvc.onRenameProject = { [weak self] project in self?.promptRenameProject(project) }
         tvc.onOpenProjectSettings = { [weak self] project in self?.presentProjectSettings(project) }
+        tvc.accountsProvider = { [weak self] in self?.agentAccounts.accounts ?? [] }
+        tvc.onOpenAccountSettings = { [weak self] in
+            self?.openSettings(nil)
+            self?.settingsWindowController?.selectTab(named: "Accounts")
+        }
+        // Routed through resolvedSettings so a clone inherits its source's
+        // account along with the rest of its settings.
+        tvc.projectAccountProvider = { [weak self] project in
+            guard let self, !project.isScratch else { return nil }
+            return self.resolvedSettings(for: project).accountID
+        }
         tvc.onOpenAgentSettings = { [weak self] project in self?.presentProjectSettings(project, initialTab: "agents") }
         tvc.onUpdatePillClicked = { [weak self] in self?.versionPillClicked() }
         tvc.onCLIReinstallClicked = { [weak self] in
@@ -212,14 +235,38 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             ProjectFileIO.load(projectRoot: project.rootPath)?.layoutTemplate
                 ?? self?.layoutTemplateStore.load()
         }
-        tvc.surfaceEnvironmentProvider = { [weak self, weak tvc] id in
+        tvc.surfaceEnvironmentProvider = { [weak self, weak tvc] surface in
             var env: [String: String] = [:]
-            if let self, let project = tvc?.workspace.project(containing: id) {
-                env = self.resolvedSettings(for: project).env
+            if let self, let tvc {
+                var projectAccountID: String?
+                if let project = tvc.workspace.project(containing: surface.id) {
+                    // A scratch terminal is rooted at home, so without this guard
+                    // it would silently adopt the settings — and the account — of
+                    // whatever project sits at that path. `sessionCommandProvider`
+                    // already draws the same line.
+                    if !project.isScratch {
+                        let resolved = self.resolvedSettings(for: project)
+                        env = resolved.env
+                        // Inherited by clones along with the rest of the source's
+                        // settings, which is what we want: a clone of a work
+                        // project is still work.
+                        projectAccountID = resolved.accountID
+                    }
+                }
+                // Merged LAST so the account wins any collision. A
+                // `CLAUDE_CONFIG_DIR` left behind in Project Settings →
+                // Environment must not quietly point the pane at a different
+                // login than the one the chip names.
+                let resolution = AgentAccountResolver.resolve(
+                    paneAccountID: surface.accountID,
+                    projectAccountID: projectAccountID,
+                    accounts: self.agentAccounts.accounts,
+                    home: NSHomeDirectory())
+                env.merge(resolution.env) { _, account in account }
             }
             // The bundled zsh integration writes $PWD here on every cd so the
             // status bar can show the focused pane's live working directory.
-            env["ZETTY_CWD_FILE"] = PaneCwdStore.path(for: id)
+            env["ZETTY_CWD_FILE"] = PaneCwdStore.path(for: surface.id)
             return env
         }
         tvc.onAttentionCountChanged = { [weak self] count in
@@ -770,6 +817,194 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             global: appConfig)
     }
 
+    // MARK: - Agent accounts
+
+    /// Outcome of resolving a `--account` argument.
+    enum AccountArgument {
+        case success(String?)
+        case failure(String)
+    }
+
+    /// Turns a `--account <name>` argument into an account id.
+    ///
+    /// An unknown name is an ERROR, never a fallback to the default login. This
+    /// is the one place in the control protocol where tolerance would be wrong:
+    /// silently landing an agent's pane on the wrong account is exactly the
+    /// mistake accounts exist to prevent, and a stale `/Applications` copy makes
+    /// version skew a real possibility.
+    func resolveAccountArgument(_ name: String?) -> AccountArgument {
+        guard let name, !name.isEmpty else { return .success(nil) }
+        let lowered = name.lowercased()
+        if lowered == "default" || lowered == AgentAccountSupport.defaultID {
+            return .success(AgentAccountSupport.defaultID)
+        }
+        guard let account = agentAccounts.account(named: name) else {
+            let known = agentAccounts.accounts.map(\.name).joined(separator: ", ")
+            return .failure(known.isEmpty
+                ? "no account named \"\(name)\" — no accounts are configured"
+                : "no account named \"\(name)\" — known accounts: \(known)")
+        }
+        return .success(account.id)
+    }
+
+    /// A plain informational alert. Account work is mostly best-effort, so most
+    /// failures are reported rather than thrown.
+    private func presentNotice(title: String, detail: String) {
+        let alert = NSAlert()
+        alert.messageText = title
+        alert.informativeText = detail
+        alert.addButton(withTitle: "OK")
+        alert.runModal()
+    }
+
+    /// Creates an account: makes its directory, seeds it, and records it.
+    ///
+    /// `signIn` opens a pane running the agent's login command. When false the
+    /// account is created unauthenticated — equally real, just reported as "Not
+    /// signed in yet" until **Sign In** is used from the Accounts list. A pane
+    /// on such an account still gets its config directory; the agent running
+    /// there is simply logged out.
+    func addAgentAccount(_ account: AgentAccount, seeding selections: Set<String>,
+                         signIn: Bool = true) {
+        // Filesystem work off-main; the model write and the pane back on it.
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            let outcome: Result<[AccountSeeder.Result], Error>
+            do {
+                outcome = .success(try AccountSeeder.prepare(account: account, selections: selections))
+            } catch {
+                outcome = .failure(error)
+            }
+            DispatchQueue.main.async {
+                guard let self else { return }
+                switch outcome {
+                case .failure(let error):
+                    self.presentNotice(
+                        title: "Couldn't create that account's directory",
+                        detail: error.localizedDescription)
+                case .success(let results):
+                    self.agentAccounts.upsert(account)
+                    try? self.agentAccountStore.save(self.agentAccounts)
+                    // A new account's settings.json needs Zetty's status hooks
+                    // written into it, or its panes would show no agent dots.
+                    self.installHooksForAccounts()
+                    self.settingsWindowController?.refresh()
+                    self.reportSeedProblems(results, for: account)
+                    if signIn { self.signInToAccount(account) }
+                }
+            }
+        }
+    }
+
+    /// Mirrors the Claude status hooks into every account's own config
+    /// directory, so an account's panes report agent status like any other.
+    ///
+    /// Claude reads `settings.json` from `CLAUDE_CONFIG_DIR`, so hooks written
+    /// only into `~/.claude` are invisible to an account — its panes would show
+    /// no status dots at all. Follows the DEFAULT directory's state, so the
+    /// Settings toggle stays the single switch for the whole feature.
+    func installHooksForAccounts() {
+        // Each harness stores hooks in its own config file inside its config
+        // dir, so every account needs its own copy. Follows the DEFAULT
+        // directory's state, so the Settings toggle stays one switch.
+        let work: [(Harness, [AgentAccount], Bool)] = [
+            (.claude, agentAccounts.accounts(forAgent: "claude"), hookInstaller.isInstalled(.claude)),
+            (.codex, agentAccounts.accounts(forAgent: "codex"), hookInstaller.isInstalled(.codex)),
+        ].filter { !$0.1.isEmpty }
+        guard !work.isEmpty else { return }
+
+        let home = NSHomeDirectory()
+        DispatchQueue.global(qos: .utility).async { [hookInstaller] in
+            for (harness, accounts, wanted) in work {
+                for account in accounts {
+                    let directory = AgentAccountSupport.canonical(account.directory, home: home)
+                    switch (harness, wanted) {
+                    case (.claude, true):  hookInstaller.installClaudeHooks(inConfigDirectory: directory)
+                    case (.claude, false): hookInstaller.uninstallClaudeHooks(inConfigDirectory: directory)
+                    case (.codex, true):   hookInstaller.installCodexHooks(inConfigDirectory: directory)
+                    case (.codex, false):  hookInstaller.uninstallCodexHooks(inConfigDirectory: directory)
+                    default: break
+                    }
+                }
+            }
+        }
+    }
+
+    /// Forgets an account. The directory is deliberately left on disk — it holds
+    /// a live login, and removing a row from a list must never destroy credentials.
+    func removeAgentAccount(_ account: AgentAccount) {
+        agentAccounts.remove(id: account.id)
+        try? agentAccountStore.save(agentAccounts)
+        // Clear stamps naming it, so workspace.json doesn't keep a dangling id.
+        if let tvc = terminalViewController,
+           tvc.workspace.healAccountIDs(known: Set(agentAccounts.accounts.map(\.id))) {
+            scheduleSave()
+        }
+        terminalViewController?.refreshTabBar()
+        terminalViewController?.refreshSidebar()
+    }
+
+    /// Opens a throwaway pane carrying the account's environment, running its
+    /// login command.
+    func signInToAccount(_ account: AgentAccount) {
+        guard let tvc = terminalViewController else { return }
+        // Repair the account's preferences before signing in. `claude auth
+        // login` authenticates without marking onboarding complete, so an
+        // account missing that flag greets you with the first-run login
+        // selector even once it IS signed in. Fills only missing keys, so this
+        // is a no-op for an account that already has them — which is what lets
+        // an account created before this existed heal itself here.
+        let directory = AgentAccountSupport.canonical(account.directory, home: NSHomeDirectory())
+        DispatchQueue.global(qos: .userInitiated).async {
+            AccountSeeder.seedPreferences(from: NSHomeDirectory(), to: directory)
+        }
+        let command = SpawnableAgent.byID(account.agentID)?.loginCommand
+        tvc.newScratchTerminal(focus: true, accountID: account.id, startupCommand: command)
+        // Bring the terminal forward — the sign-in happens in the pane, not in
+        // the Settings window that started it.
+        tvc.view.window?.makeKeyAndOrderFront(nil)
+    }
+
+    /// Re-probes every account's identity off-main, then persists and calls back.
+    ///
+    /// On demand ONLY (Settings → Check, or after a sign-in): each probe is a
+    /// separate heavyweight process, so this must never sit on a timer or on any
+    /// chrome-refresh path.
+    func refreshAccountIdentities(then done: @escaping () -> Void) {
+        let accounts = agentAccounts.accounts
+        guard !accounts.isEmpty else { done(); return }
+        DispatchQueue.global(qos: .utility).async { [weak self] in
+            let probed = accounts.map { ($0.id, AgentAuthRunner.probe(account: $0)) }
+            DispatchQueue.main.async {
+                guard let self else { return }
+                for (id, status) in probed {
+                    guard let status, var account = self.agentAccounts.account(id: id) else { continue }
+                    account.lastKnownEmail = status.loggedIn ? status.email : nil
+                    account.lastKnownOrg = status.loggedIn ? status.orgName : nil
+                    self.agentAccounts.upsert(account)
+                }
+                try? self.agentAccountStore.save(self.agentAccounts)
+                done()
+            }
+        }
+    }
+
+    /// Surfaces only the seed results worth acting on — a missing source folder
+    /// is normal and stays quiet.
+    private func reportSeedProblems(_ results: [AccountSeeder.Result], for account: AgentAccount) {
+        let problems = results.filter(\.isProblem)
+        guard !problems.isEmpty else { return }
+        presentNotice(
+            title: "\(account.name) was created, with some items not shared",
+            detail: problems.map { result in
+                switch result {
+                case let .refusedUnsafe(id):      return "\(id) — refused as unsafe to link"
+                case let .failed(id, reason):     return "\(id) — \(reason)"
+                default:                          return result.itemID
+                }
+            }.joined(separator: "\n")
+            + "\n\nThe account works; these items just aren't shared with it.")
+    }
+
     /// Persists new settings for `project` and re-applies everything they
     /// influence: runtime name (+ sidebar re-sort), session preservation for
     /// future panes, and chrome refresh. Notifications are resolved at fire
@@ -851,6 +1086,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             initialTab: initialTab,
             // Unique to Home: every other project is rooted where it was added.
             homeDirectory: project.isHome ? project.rootPath : nil,
+            accounts: agentAccounts.accounts,
             onSaveHomeDirectory: project.isHome ? { [weak self] path in
                 self?.setHomeDirectory(path)
             } : nil
@@ -1058,6 +1294,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         controller.onSetFontSize = { [weak self] size in
             self?.setGhosttyFontDirective(key: "font-size", value: size.map(Self.renderFontSize))
         }
+        controller.accountsProvider = { [weak self] in self?.agentAccounts.accounts ?? [] }
+        controller.onAddAccount = { [weak self] account, selections, signIn in
+            self?.addAgentAccount(account, seeding: selections, signIn: signIn)
+        }
+        controller.onRemoveAccount = { [weak self] account in self?.removeAgentAccount(account) }
+        controller.onSignInAccount = { [weak self] account in self?.signInToAccount(account) }
+        controller.onCheckAccounts = { [weak self] done in self?.refreshAccountIdentities(then: done) }
+        controller.onHooksChanged = { [weak self] in self?.installHooksForAccounts() }
         settingsWindowController = controller
         controller.refresh()
         controller.showWindow(nil)
@@ -1301,6 +1545,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
                         return .ok
                     }
                 }
+            case .accounts(let probe):
+                // Slow: --probe starts one process per account. Reads the model
+                // on main, then does the probing here on the socket queue.
+                let accounts = DispatchQueue.main.sync { self.agentAccounts.accounts }
+                let home = NSHomeDirectory()
+                let rows = accounts.map { account -> AccountsSnapshot.Account in
+                    let status = probe ? AgentAuthRunner.probe(account: account, home: home) : nil
+                    return AccountsSnapshot.Account(
+                        id: account.id,
+                        name: account.name,
+                        directory: account.directory,
+                        agent: account.agentID,
+                        // A fresh probe wins; otherwise show what sign-in recorded.
+                        email: status?.email ?? account.lastKnownEmail,
+                        orgName: status?.orgName ?? account.lastKnownOrg,
+                        loggedIn: status?.loggedIn)
+                }
+                return .accounts(AccountsSnapshot(
+                    accounts: rows,
+                    defaultDirectory: AgentAccountSupport
+                        .agentHomeDirectory(agentID: AgentAccountSupport.defaultAgentID, home: home)
+                        .map { AgentAccountSupport.abbreviate($0, home: home) }))
             case .updateClone(let name):
                 let planned = DispatchQueue.main.sync { () -> TerminalViewController.UpdateClonePlan in
                     guard let tvc = self.terminalViewController else {
@@ -1360,8 +1626,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
                 return .error(message)
             }
             return .ok
-        case .newTab(let project, let focus):
-            switch tvc.openNewTab(inProject: project, focus: focus) {
+        case .newTab(let project, let focus, let account):
+            let resolvedAccount: String?
+            switch resolveAccountArgument(account) {
+            case .success(let id): resolvedAccount = id
+            case .failure(let message): return .error(message)
+            }
+            switch tvc.openNewTab(inProject: project, focus: focus, accountID: resolvedAccount) {
             case .success(let pane): return .pane(pane)
             case .failure(let error): return .error(error.localizedDescription)
             }
@@ -1406,8 +1677,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
                 return .error(message)
             }
             return .ok
-        case .split(let target, let vertical, let focus):
-            switch tvc.splitPane(target: target, vertical: vertical, focus: focus) {
+        case .split(let target, let vertical, let focus, let account):
+            let resolvedAccount: String?
+            switch resolveAccountArgument(account) {
+            case .success(let id): resolvedAccount = id
+            case .failure(let message): return .error(message)
+            }
+            switch tvc.splitPane(target: target, vertical: vertical, focus: focus,
+                                 accountID: resolvedAccount) {
             case .success(let pane): return .pane(pane)
             case .failure(let error): return .error(error.localizedDescription)
             }
@@ -1421,7 +1698,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
                 return .error(message)
             }
             return .ok
-        case .capture, .quit, .cloneProject, .removeProject, .updateClone:
+        case .capture, .quit, .cloneProject, .removeProject, .updateClone, .accounts:
             // Slow verbs — handled on the socket queue in startControlSocket.
             return .error("internal: slow verb routed to the main handler")
         }

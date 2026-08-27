@@ -13,6 +13,11 @@ final class ProjectSettingsSheet: NSObject {
     private let panel: NSWindow
     private let hostWindow: NSWindow
     private let onSave: (ProjectSettings) -> Void
+    /// What the sheet was opened with. `saveClicked` starts from this rather
+    /// than a blank record, so a field this sheet does not render survives a
+    /// Save instead of being silently erased. Every field the sheet DOES edit is
+    /// reassigned unconditionally below, so seeding changes nothing for those.
+    private let initialSettings: ProjectSettings
 
     private let nameField: NSTextField
     private var swatchButtons: [NSButton] = []
@@ -31,6 +36,12 @@ final class ProjectSettingsSheet: NSObject {
     private static let broadcastScopes: [BroadcastScope] = [.off, .currentTab, .project, .agents, .workspace]
     private static let broadcastLabels = ["Off", "Tab", "Project", "Agents", "Workspace"]
     private let envTextView = NSTextView()
+
+    /// Account choices, parallel to `accountPopup`'s items after the leading
+    /// "Default" row. Empty when no accounts are configured, in which case the
+    /// row is hidden entirely rather than shown as a useless one-item popup.
+    private let accountPopup = NSPopUpButton()
+    private let accountChoices: [AgentAccount]
 
     /// Home's working directory, unique to Home: every other project is rooted
     /// where it was added. nil hides the row entirely.
@@ -60,6 +71,7 @@ final class ProjectSettingsSheet: NSObject {
         on window: NSWindow,
         initialTab: String? = nil,
         homeDirectory: String? = nil,
+        accounts: [AgentAccount] = [],
         onSaveHomeDirectory: ((String) -> Void)? = nil,
         onSave: @escaping (ProjectSettings) -> Void
     ) {
@@ -68,6 +80,7 @@ final class ProjectSettingsSheet: NSObject {
             layoutStatus: layoutStatus, onSaveLayout: onSaveLayout,
             onApplyLayout: onApplyLayout, onClearLayout: onClearLayout,
             window: window, initialTab: initialTab, homeDirectory: homeDirectory,
+            accounts: accounts,
             onSaveHomeDirectory: onSaveHomeDirectory, onSave: onSave)
         active = sheet
         window.beginSheet(sheet.panel)
@@ -91,9 +104,11 @@ final class ProjectSettingsSheet: NSObject {
         window: NSWindow,
         initialTab: String?,
         homeDirectory: String?,
+        accounts: [AgentAccount],
         onSaveHomeDirectory: ((String) -> Void)?,
         onSave: @escaping (ProjectSettings) -> Void
     ) {
+        self.accountChoices = accounts
         self.hostWindow = window
         self.homeDirectory = homeDirectory
         self.initialHomeDirectory = homeDirectory
@@ -104,6 +119,7 @@ final class ProjectSettingsSheet: NSObject {
         self.onClearLayout = onClearLayout
         self.initialTab = initialTab
         self.onSave = onSave
+        self.initialSettings = current
 
         panel = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 440, height: 0),
@@ -163,6 +179,17 @@ final class ProjectSettingsSheet: NSObject {
         for label in Self.broadcastLabels { broadcastPopup.addItem(withTitle: label) }
         if let index = Self.broadcastScopes.firstIndex(of: BroadcastScope(code: current.broadcastScope)) {
             broadcastPopup.selectItem(at: index)
+        }
+
+        // Item 0 is the agent's own default login — always offered, never
+        // stored (nil is what "Default" means on disk).
+        accountPopup.addItem(withTitle: "Default")
+        for account in accounts { accountPopup.addItem(withTitle: account.name) }
+        if let stored = current.accountID,
+           let index = accounts.firstIndex(where: { $0.id == stored }) {
+            accountPopup.selectItem(at: index + 1)
+        } else {
+            accountPopup.selectItem(at: 0)
         }
 
         super.init()
@@ -356,6 +383,11 @@ final class ProjectSettingsSheet: NSObject {
         if homeDirectory != nil {
             generalRows.insert(row("Working Directory", homeDirectoryControls), at: 1)
         }
+        // Only when accounts exist — a lone "Default" popup would be a control
+        // that can't do anything.
+        if !accountChoices.isEmpty {
+            generalRows.append(row("Account", accountPopup))
+        }
         let general = NSStackView(views: generalRows)
         general.orientation = .vertical
         general.spacing = 12
@@ -480,7 +512,7 @@ final class ProjectSettingsSheet: NSObject {
     }
 
     @objc private func saveClicked() {
-        var edited = ProjectSettings()
+        var edited = initialSettings
         let trimmed = nameField.stringValue.trimmingCharacters(in: .whitespaces)
         edited.name = trimmed.isEmpty ? nil : trimmed
         edited.color = selectedColorID
@@ -496,6 +528,11 @@ final class ProjectSettingsSheet: NSObject {
         edited.autoHibernate = triStateValue(autoHibernateControl)
         edited.broadcastScope = Self.broadcastScopes[broadcastPopup.indexOfSelectedItem].code
         edited.env = parsedEnv()
+        // Item 0 ("Default") stores nil — the absence of an override IS the
+        // default login, so there is nothing to write for it.
+        let accountIndex = accountPopup.indexOfSelectedItem - 1
+        edited.accountID = accountChoices.indices.contains(accountIndex)
+            ? accountChoices[accountIndex].id : nil
         var agents: [ProjectAgent] = []
         for (index, agent) in SpawnableAgent.catalog.enumerated() where agentChecks[index].state == .on {
             let typed = agentCommandFields[index].stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
