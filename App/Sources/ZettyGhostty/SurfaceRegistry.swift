@@ -319,14 +319,22 @@ public final class SurfaceRegistry {
             // command (session preservation) and env vars (per-project
             // settings), when any is present.
             let command = surfaceCommand?(surface)
-            let environment = surfaceEnvironment?(surface) ?? [:]
+            // Sanitized at the boundary: a value libghostty rejects would free
+            // the WHOLE config (see EnvDirective), and rung 2 below re-applies
+            // our own env, so a bad pair would poison that rung too. Dropping
+            // one variable is always cheaper than losing `command`.
+            let environment = EnvDirective.sanitized(surfaceEnvironment?(surface) ?? [:])
             if terminalConfiguration != nil || command != nil || !environment.isEmpty {
                 // Zetty's own per-surface directives. Env keys are sorted for a
                 // deterministic config; ghostty's `env` directive repeats, one
                 // KEY=VALUE per line.
-                func addingZettyDirectives(to base: TerminalConfiguration) -> TerminalConfiguration {
+                func addingZettyDirectives(
+                    to base: TerminalConfiguration,
+                    includeEnvironment: Bool = true
+                ) -> TerminalConfiguration {
                     var merged = base
                     if let command { merged = merged.custom("command", command) }
+                    guard includeEnvironment else { return merged }
                     for key in environment.keys.sorted() {
                         merged = merged.custom("env", "\(key)=\(environment[key]!)")
                     }
@@ -339,14 +347,31 @@ public final class SurfaceRegistry {
                 // passthrough silently drops `command` and the pane launches a
                 // plain shell instead of attaching its preserved zmx session.
                 //
+                // Hence a LADDER, each rung dropping the next-most-expendable
+                // thing, because `command` is the only one whose loss strands a
+                // preserved session:
+                //   1. everything (user passthrough + command + env)
+                //   2. Zetty's own directives only  — a bad user config is out
+                //   3. command only                 — a bad env value is out
+                // Rung 3 is what makes "the pane always reattaches" true no
+                // matter what the other two carry.
+                //
                 // `setTerminalConfiguration` also returns false for a config
                 // equal to the controller's current one, so compare first —
                 // otherwise a no-op would be reported as a rejection.
                 if config != tc.terminalConfiguration, !tc.setTerminalConfiguration(config) {
-                    // Re-apply Zetty's own directives alone so preservation
-                    // survives a bad user config.
+                    // Rung 2: re-apply Zetty's own directives alone so
+                    // preservation survives a bad user config.
+                    var recovered = false
                     if command != nil || !environment.isEmpty {
-                        tc.setTerminalConfiguration(addingZettyDirectives(to: TerminalConfiguration()))
+                        recovered = tc.setTerminalConfiguration(
+                            addingZettyDirectives(to: TerminalConfiguration()))
+                    }
+                    // Rung 3: env is expendable, `command` is not.
+                    if !recovered, command != nil, !environment.isEmpty {
+                        tc.setTerminalConfiguration(
+                            addingZettyDirectives(to: TerminalConfiguration(),
+                                                  includeEnvironment: false))
                     }
                     // Report even when there was nothing of ours to re-apply:
                     // the user's passthrough is inert either way, and silence is
