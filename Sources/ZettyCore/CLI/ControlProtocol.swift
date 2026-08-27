@@ -8,6 +8,10 @@ import Foundation
 
 public enum ControlRequest: Equatable, Sendable {
     case status
+    /// List the configured agent accounts. `probe` additionally asks each one
+    /// who it is signed in as — a separate process per account, so it is
+    /// opt-in rather than the default.
+    case accounts(probe: Bool)
     case reload
     /// Open a project-less, ephemeral "scratch" terminal (plain shell, not
     /// persisted) in the Scratch sidebar section. Background by default; `focus`
@@ -21,7 +25,11 @@ public enum ControlRequest: Equatable, Sendable {
     /// Open a new tab in the named project (nil → the active project). Background
     /// by default — the active project/tab and keyboard focus stay put; `focus`
     /// switches to the new tab. Response `.pane` with the new pane's short id.
-    case newTab(project: String?, focus: Bool)
+    /// `account` names the agent account the new pane runs under (nil → the
+    /// project's default). An unknown name is an ERROR, never a silent fallback
+    /// to the default login — landing on the wrong account is the one mistake
+    /// this feature exists to prevent.
+    case newTab(project: String?, focus: Bool, account: String?)
     /// Add the directory at `path` (absolute — the CLI resolves relative paths
     /// against its own cwd) as a new project named `name` (nil → the
     /// directory's last path component). Added in the background by default;
@@ -86,7 +94,7 @@ public enum ControlRequest: Equatable, Sendable {
     /// Split the targeted pane (vertical = side by side). Background by default —
     /// the split appears but keyboard focus stays on the current pane; `focus`
     /// moves focus to the new pane. Response `.pane` with the new pane's short id.
-    case split(target: PaneSelector, vertical: Bool, focus: Bool)
+    case split(target: PaneSelector, vertical: Bool, focus: Bool, account: String?)
     /// Break the targeted pane out into a new tab inserted right after the
     /// current one. Background by default — the new tab is not selected; `focus`
     /// switches to it. The response is `.pane` with the moved pane's short id.
@@ -106,13 +114,15 @@ public enum ControlRequest: Equatable, Sendable {
 
 extension ControlRequest: Codable {
     private enum CodingKeys: String, CodingKey {
-        case command, target, text, enter, keys, project, wholeTab, killSessions, vertical, lines, path, name, gitInit, focus, fetch, discard, line, column, space, newName, color, icon
+        case command, target, text, enter, keys, project, wholeTab, killSessions, vertical, lines, path, name, gitInit, focus, fetch, discard, line, column, space, newName, color, icon, account, probe
     }
 
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         switch try container.decode(String.self, forKey: .command) {
         case "status": self = .status
+        case "accounts":
+            self = .accounts(probe: try container.decodeIfPresent(Bool.self, forKey: .probe) ?? false)
         case "reload": self = .reload
         case "scratch": self = .scratch(focus: try container.decodeIfPresent(Bool.self, forKey: .focus) ?? false)
         case "scratch-clear": self = .scratchClear
@@ -126,7 +136,8 @@ extension ControlRequest: Codable {
         case "new-tab":
             self = .newTab(
                 project: try container.decodeIfPresent(String.self, forKey: .project),
-                focus: try container.decodeIfPresent(Bool.self, forKey: .focus) ?? false
+                focus: try container.decodeIfPresent(Bool.self, forKey: .focus) ?? false,
+                account: try container.decodeIfPresent(String.self, forKey: .account)
             )
         case "add-project":
             self = .addProject(
@@ -193,7 +204,8 @@ extension ControlRequest: Codable {
             self = .split(
                 target: try container.decodeIfPresent(PaneSelector.self, forKey: .target) ?? .focused,
                 vertical: try container.decodeIfPresent(Bool.self, forKey: .vertical) ?? true,
-                focus: try container.decodeIfPresent(Bool.self, forKey: .focus) ?? false
+                focus: try container.decodeIfPresent(Bool.self, forKey: .focus) ?? false,
+                account: try container.decodeIfPresent(String.self, forKey: .account)
             )
         case "break":
             self = .breakPane(
@@ -223,6 +235,9 @@ extension ControlRequest: Codable {
         switch self {
         case .status:
             try container.encode("status", forKey: .command)
+        case .accounts(let probe):
+            try container.encode("accounts", forKey: .command)
+            try container.encode(probe, forKey: .probe)
         case .reload:
             try container.encode("reload", forKey: .command)
         case .scratch(let focus):
@@ -236,10 +251,11 @@ extension ControlRequest: Codable {
             try container.encodeIfPresent(text, forKey: .text)
             try container.encode(enter, forKey: .enter)
             try container.encode(keys, forKey: .keys)
-        case .newTab(let project, let focus):
+        case .newTab(let project, let focus, let account):
             try container.encode("new-tab", forKey: .command)
             try container.encodeIfPresent(project, forKey: .project)
             try container.encode(focus, forKey: .focus)
+            try container.encodeIfPresent(account, forKey: .account)
         case .addProject(let path, let name, let space, let focus):
             try container.encode("add-project", forKey: .command)
             try container.encode(path, forKey: .path)
@@ -300,11 +316,12 @@ extension ControlRequest: Codable {
         case .quit(let killSessions):
             try container.encode("quit", forKey: .command)
             try container.encode(killSessions, forKey: .killSessions)
-        case .split(let target, let vertical, let focus):
+        case .split(let target, let vertical, let focus, let account):
             try container.encode("split", forKey: .command)
             try container.encode(target, forKey: .target)
             try container.encode(vertical, forKey: .vertical)
             try container.encode(focus, forKey: .focus)
+            try container.encodeIfPresent(account, forKey: .account)
         case .breakPane(let target, let focus):
             try container.encode("break", forKey: .command)
             try container.encode(target, forKey: .target)
@@ -334,12 +351,74 @@ public enum ControlResponse: Equatable, Sendable {
     case pane(String)
     /// Captured pane output.
     case text(String)
+    /// The configured agent accounts.
+    case accounts(AccountsSnapshot)
     case error(String)
+}
+
+/// What `zetty accounts` reports.
+///
+/// Every field but `id`/`name` is decoded with `decodeIfPresent`, so an OLDER
+/// standalone `zetty` binary talking to a newer app doesn't throw on fields it
+/// has never heard of — the same tolerance `StatusSnapshot` relies on.
+public struct AccountsSnapshot: Codable, Equatable, Sendable {
+    public struct Account: Codable, Equatable, Sendable {
+        public let id: String
+        public let name: String
+        public let directory: String
+        public let agent: String?
+        public let email: String?
+        public let orgName: String?
+        public let loggedIn: Bool?
+
+        public init(id: String, name: String, directory: String, agent: String? = nil,
+                    email: String? = nil, orgName: String? = nil, loggedIn: Bool? = nil) {
+            self.id = id
+            self.name = name
+            self.directory = directory
+            self.agent = agent
+            self.email = email
+            self.orgName = orgName
+            self.loggedIn = loggedIn
+        }
+
+        private enum CodingKeys: String, CodingKey {
+            case id, name, directory, agent, email, orgName, loggedIn
+        }
+
+        public init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            id = try c.decode(String.self, forKey: .id)
+            name = try c.decode(String.self, forKey: .name)
+            directory = try c.decodeIfPresent(String.self, forKey: .directory) ?? ""
+            agent = try c.decodeIfPresent(String.self, forKey: .agent)
+            email = try c.decodeIfPresent(String.self, forKey: .email)
+            orgName = try c.decodeIfPresent(String.self, forKey: .orgName)
+            loggedIn = try c.decodeIfPresent(Bool.self, forKey: .loggedIn)
+        }
+    }
+
+    public var accounts: [Account]
+    /// Where the Default account's config lives, so the listing can show it.
+    public var defaultDirectory: String?
+
+    public init(accounts: [Account], defaultDirectory: String? = nil) {
+        self.accounts = accounts
+        self.defaultDirectory = defaultDirectory
+    }
+
+    private enum CodingKeys: String, CodingKey { case accounts, defaultDirectory }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        accounts = try c.decodeIfPresent([Account].self, forKey: .accounts) ?? []
+        defaultDirectory = try c.decodeIfPresent(String.self, forKey: .defaultDirectory)
+    }
 }
 
 extension ControlResponse: Codable {
     private enum CodingKeys: String, CodingKey {
-        case ok, status, pane, text, error
+        case ok, status, pane, text, error, accounts
     }
 
     public init(from decoder: Decoder) throws {
@@ -352,6 +431,8 @@ extension ControlResponse: Codable {
             self = .pane(pane)
         } else if let text = try container.decodeIfPresent(String.self, forKey: .text) {
             self = .text(text)
+        } else if let accounts = try container.decodeIfPresent(AccountsSnapshot.self, forKey: .accounts) {
+            self = .accounts(accounts)
         } else {
             self = .ok
         }
@@ -371,6 +452,9 @@ extension ControlResponse: Codable {
         case .text(let text):
             try container.encode(true, forKey: .ok)
             try container.encode(text, forKey: .text)
+        case .accounts(let snapshot):
+            try container.encode(true, forKey: .ok)
+            try container.encode(snapshot, forKey: .accounts)
         case .error(let message):
             try container.encode(false, forKey: .ok)
             try container.encode(message, forKey: .error)
@@ -394,9 +478,13 @@ public struct StatusSnapshot: Codable, Equatable, Sendable {
         /// this is a description of the pane's current state, not of whether it
         /// can be driven — see `Project.hibernated` for the reason it is false.
         public let live: Bool
+        /// The agent account this pane was spawned under, when it isn't the
+        /// default login. nil keeps the field absent for anyone not using
+        /// accounts.
+        public let account: String?
 
         public init(id: String, title: String?, cwd: String?, tool: String?, agentStatus: String?,
-                    isFocused: Bool, live: Bool) {
+                    isFocused: Bool, live: Bool, account: String? = nil) {
             self.id = id
             self.title = title
             self.cwd = cwd
@@ -404,10 +492,11 @@ public struct StatusSnapshot: Codable, Equatable, Sendable {
             self.agentStatus = agentStatus
             self.isFocused = isFocused
             self.live = live
+            self.account = account
         }
 
         private enum CodingKeys: String, CodingKey {
-            case id, title, cwd, tool, agentStatus, isFocused, live
+            case id, title, cwd, tool, agentStatus, isFocused, live, account
         }
 
         /// Hand-written so `live` defaults instead of throwing when an older
@@ -422,6 +511,7 @@ public struct StatusSnapshot: Codable, Equatable, Sendable {
             agentStatus = try c.decodeIfPresent(String.self, forKey: .agentStatus)
             isFocused = try c.decodeIfPresent(Bool.self, forKey: .isFocused) ?? false
             live = try c.decodeIfPresent(Bool.self, forKey: .live) ?? false
+            account = try c.decodeIfPresent(String.self, forKey: .account)
         }
     }
 

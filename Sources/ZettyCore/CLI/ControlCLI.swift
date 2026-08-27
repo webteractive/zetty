@@ -25,10 +25,19 @@ public enum ControlCLI {
                                               overlay, scrolled to the line
                                               (editing is delegated to your
                                               editor from the overlay)
-      zetty new-tab [--project <name>] [--focus]
+      zetty new-tab [--project <name>] [--account <name>] [--focus]
                                               open a tab in the background (active
                                               project by default); --focus switches
-                                              to it. Prints the new pane's id
+                                              to it. Prints the new pane's id.
+                                              --account runs the pane under that
+                                              agent account (an unknown name is an
+                                              error, never a silent fallback)
+
+      zetty accounts [--probe] [--json]        list agent accounts (Claude logins)
+                                              and where each one's config lives.
+                                              --probe additionally asks each account
+                                              who it is signed in as — one process
+                                              per account, so it is opt-in
 
       zetty add-project <path> [--name <name>] [--space <name>] [--focus]
                                               add a directory as a project in the
@@ -75,11 +84,12 @@ public enum ControlCLI {
       zetty remove-space <name>       delete a Space (its projects are kept, ungrouped)
       zetty move-to-space <project> (<space> | --none)
                           move a project into a Space, or out of every Space
-      zetty split [--pane <id> | --cwd <path>] [--horizontal] [--focus]
+      zetty split [--pane <id> | --cwd <path>] [--horizontal] [--account <name>] [--focus]
                                               split a pane in the background,
                                               vertical by default (focus stays put);
                                               --focus moves focus to the new pane.
-                                              Prints the new pane's id
+                                              Prints the new pane's id. --account
+                                              runs it under that agent account
       zetty break [--pane <id> | --cwd <path>] [--focus]
                                               move a pane into a new adjacent tab in
                                               the background; --focus switches to it.
@@ -130,7 +140,7 @@ public enum ControlCLI {
         guard let first = arguments.first else { return false }
         return ["status", "ls", "send", "capture", "view", "new-tab", "add-project", "new-project", "clone", "update-clone",
                 "remove-project", "hibernate", "wake", "split", "break", "focus", "close", "reload",
-                "scratch", "scratch-clear", "quit",
+                "scratch", "scratch-clear", "quit", "accounts",
                 "new-space", "rename-space", "remove-space", "move-to-space",
                 "help", "--help", "-h"].contains(first)
     }
@@ -149,6 +159,8 @@ public enum ControlCLI {
             return 0
         case "status", "ls":
             return runStatus(arguments)
+        case "accounts":
+            return runAccounts(arguments)
         case "send":
             return runSend(arguments)
         case "capture":
@@ -293,8 +305,72 @@ public enum ControlCLI {
         }
     }
 
+    private static func runAccounts(_ arguments: [String]) -> Int32 {
+        var probe = false
+        var json = false
+        var index = 0
+        while index < arguments.count {
+            switch arguments[index] {
+            case "--probe":
+                probe = true
+            case "--json":
+                json = true
+            case "--help", "-h":
+                print(usage)
+                return 0
+            default:
+                return failure("unknown argument \"\(arguments[index])\"")
+            }
+            index += 1
+        }
+        switch roundTrip(.accounts(probe: probe)) {
+        case .accounts(let snapshot):
+            if json {
+                let encoder = JSONEncoder()
+                encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+                if let data = try? encoder.encode(snapshot) {
+                    print(String(decoding: data, as: UTF8.self))
+                }
+            } else {
+                for line in accountLines(snapshot) { print(line) }
+            }
+            return 0
+        case .error(let message): return failure(message)
+        default: return failure("unexpected response")
+        }
+    }
+
+    /// Plain-text rendering for `zetty accounts`, kept pure so it is testable.
+    ///
+    /// The Default account is always listed: it is what a pane uses when nothing
+    /// else is chosen, so a listing without it would look like "no accounts in
+    /// use" rather than "one, the built-in one".
+    public static func accountLines(_ snapshot: AccountsSnapshot) -> [String] {
+        var lines: [String] = []
+        let width = max(7, snapshot.accounts.map(\.name.count).max() ?? 0)
+        func pad(_ text: String) -> String {
+            text.padding(toLength: max(width, text.count), withPad: " ", startingAt: 0)
+        }
+        // Widen the agent column to its longest entry so the columns line up.
+        let agentWidth = max(6, snapshot.accounts.compactMap(\.agent?.count).max() ?? 0)
+        for account in snapshot.accounts {
+            let identity = [account.email, account.orgName].compactMap { $0 }.joined(separator: " · ")
+            var fields = ["\(account.loggedIn == false ? "○" : "●") \(pad(account.name))"]
+            fields.append((account.agent ?? "?")
+                .padding(toLength: agentWidth, withPad: " ", startingAt: 0))
+            fields.append(identity.isEmpty ? "(identity unknown — run with --probe)" : identity)
+            fields.append(account.directory)
+            lines.append(fields.joined(separator: "  "))
+        }
+        lines.append("  \(pad("default"))  "
+            + "".padding(toLength: agentWidth, withPad: " ", startingAt: 0)
+            + "  (your original login)  " + (snapshot.defaultDirectory ?? "~"))
+        return lines
+    }
+
     private static func runNewTab(_ arguments: [String]) -> Int32 {
         var project: String?
+        var account: String?
         var focus = false
         var index = 0
         while index < arguments.count {
@@ -303,6 +379,10 @@ public enum ControlCLI {
                 index += 1
                 guard index < arguments.count else { return failure("--project needs a value") }
                 project = arguments[index]
+            case "--account":
+                index += 1
+                guard index < arguments.count else { return failure("--account needs a value") }
+                account = arguments[index]
             case "--focus":
                 focus = true
             case "--help", "-h":
@@ -313,7 +393,7 @@ public enum ControlCLI {
             }
             index += 1
         }
-        return expectPane(.newTab(project: project, focus: focus))
+        return expectPane(.newTab(project: project, focus: focus, account: account))
     }
 
     private static func runScratch(_ arguments: [String]) -> Int32 {
@@ -623,6 +703,7 @@ public enum ControlCLI {
     private static func runSplit(_ arguments: [String]) -> Int32 {
         var target = PaneSelector.focused
         var vertical = true
+        var account: String?
         var focus = false
         var index = 0
         while index < arguments.count {
@@ -639,6 +720,10 @@ public enum ControlCLI {
                 vertical = false
             case "--vertical":
                 vertical = true
+            case "--account":
+                index += 1
+                guard index < arguments.count else { return failure("--account needs a value") }
+                account = arguments[index]
             case "--focus":
                 focus = true
             case "--help", "-h":
@@ -649,7 +734,7 @@ public enum ControlCLI {
             }
             index += 1
         }
-        return expectPane(.split(target: target, vertical: vertical, focus: focus))
+        return expectPane(.split(target: target, vertical: vertical, focus: focus, account: account))
     }
 
     private static func runBreak(_ arguments: [String]) -> Int32 {
@@ -870,6 +955,9 @@ public enum ControlCLI {
                     if !pane.live { fields.append("-") }
                     if let tool = pane.tool { fields.append("[\(tool)]") }
                     if let status = pane.agentStatus { fields.append("(\(status))") }
+                    // Only when it isn't the default login — the marker is for
+                    // spotting the exception, not labelling every pane.
+                    if let account = pane.account { fields.append("·\(account)·") }
                     if let title = pane.title, !title.isEmpty { fields.append(title) }
                     if let cwd = pane.cwd { fields.append("— \(cwd)") }
                     if pane.isFocused { fields.append("*") }

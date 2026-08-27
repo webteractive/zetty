@@ -17,8 +17,8 @@ import Foundation
     #expect(try ControlWire.decodeRequest(ControlWire.encodeLine(ControlRequest.scratch(focus: false))) == .scratch(focus: false))
     #expect(try ControlWire.decodeRequest(ControlWire.encodeLine(ControlRequest.scratch(focus: true))) == .scratch(focus: true))
     #expect(try ControlWire.decodeRequest(ControlWire.encodeLine(ControlRequest.scratchClear)) == .scratchClear)
-    #expect(try ControlWire.decodeRequest(ControlWire.encodeLine(ControlRequest.newTab(project: "glen", focus: true))) == .newTab(project: "glen", focus: true))
-    #expect(try ControlWire.decodeRequest(ControlWire.encodeLine(ControlRequest.newTab(project: nil, focus: false))) == .newTab(project: nil, focus: false))
+    #expect(try ControlWire.decodeRequest(ControlWire.encodeLine(ControlRequest.newTab(project: "glen", focus: true, account: nil))) == .newTab(project: "glen", focus: true, account: nil))
+    #expect(try ControlWire.decodeRequest(ControlWire.encodeLine(ControlRequest.newTab(project: nil, focus: false, account: nil))) == .newTab(project: nil, focus: false, account: nil))
     #expect(try ControlWire.decodeRequest(ControlWire.encodeLine(ControlRequest.addProject(path: "/Users/x/proj", name: "proj", space: nil, focus: true)))
             == .addProject(path: "/Users/x/proj", name: "proj", space: nil, focus: true))
     #expect(try ControlWire.decodeRequest(ControlWire.encodeLine(ControlRequest.addProject(path: "/Users/x/proj", name: nil, space: nil, focus: false)))
@@ -38,10 +38,10 @@ import Foundation
             == .close(target: .pane("ab12"), wholeTab: true))
     #expect(try ControlWire.decodeRequest(ControlWire.encodeLine(ControlRequest.quit(killSessions: false))) == .quit(killSessions: false))
     #expect(try ControlWire.decodeRequest(ControlWire.encodeLine(ControlRequest.quit(killSessions: true))) == .quit(killSessions: true))
-    #expect(try ControlWire.decodeRequest(ControlWire.encodeLine(ControlRequest.split(target: .focused, vertical: true, focus: false)))
-            == .split(target: .focused, vertical: true, focus: false))
-    #expect(try ControlWire.decodeRequest(ControlWire.encodeLine(ControlRequest.split(target: .pane("ab12"), vertical: false, focus: true)))
-            == .split(target: .pane("ab12"), vertical: false, focus: true))
+    #expect(try ControlWire.decodeRequest(ControlWire.encodeLine(ControlRequest.split(target: .focused, vertical: true, focus: false, account: nil)))
+            == .split(target: .focused, vertical: true, focus: false, account: nil))
+    #expect(try ControlWire.decodeRequest(ControlWire.encodeLine(ControlRequest.split(target: .pane("ab12"), vertical: false, focus: true, account: nil)))
+            == .split(target: .pane("ab12"), vertical: false, focus: true, account: nil))
     #expect(try ControlWire.decodeRequest(ControlWire.encodeLine(ControlRequest.breakPane(target: .pane("ab12"), focus: true)))
             == .breakPane(target: .pane("ab12"), focus: true))
     #expect(try ControlWire.decodeRequest(ControlWire.encodeLine(ControlRequest.breakPane(target: .focused, focus: false)))
@@ -56,9 +56,9 @@ import Foundation
 
 @Test func focusDefaultsToFalseWhenAbsent() throws {
     // Simulate an older CLI that omits the focus key (backward compatibility).
-    #expect(try ControlWire.decodeRequest(#"{"command":"new-tab"}"#) == .newTab(project: nil, focus: false))
+    #expect(try ControlWire.decodeRequest(#"{"command":"new-tab"}"#) == .newTab(project: nil, focus: false, account: nil))
     #expect(try ControlWire.decodeRequest(#"{"command":"scratch"}"#) == .scratch(focus: false))
-    #expect(try ControlWire.decodeRequest(#"{"command":"split","target":{"kind":"focused"}}"#) == .split(target: .focused, vertical: true, focus: false))
+    #expect(try ControlWire.decodeRequest(#"{"command":"split","target":{"kind":"focused"}}"#) == .split(target: .focused, vertical: true, focus: false, account: nil))
     #expect(try ControlWire.decodeRequest(#"{"command":"break","target":{"kind":"focused"}}"#) == .breakPane(target: .focused, focus: false))
 }
 
