@@ -122,6 +122,10 @@ by the tool it's running.
   Hermes, Gemini, opencode, Pi, Cursor) in a project's **Agents** settings;
   opening a new tab/split then offers a keyboard-driven chooser to launch one
   or a plain shell.
+- **Multiple Claude accounts** — run a work login in one tab and a personal one
+  in the next. Each account keeps its own credentials, settings and history in
+  its own directory; set a default per project, override it per pane, and see
+  which is which from a status-bar chip and colored dots.
 - **Update notifications** — Zetty checks GitHub for newer releases and shows
   an "Update available" pill in the status bar (plus **Check for Updates…**);
   opt out with `check-updates = false`.
@@ -549,6 +553,67 @@ The master **"Ask which agent to launch…"** toggle silences the chooser withou
 unchecking your agents. This is per-project and stays on your machine (it is not
 written into the repo). The CLI (`zetty new-tab` / `split`) never prompts.
 
+### Agent accounts (multiple logins)
+
+Run more than one login side by side — a work account in one tab, a personal one
+in the next, or a default account per project. Supported for **Claude Code** and
+**Codex**; when both are set up, the Add Account sheet asks which one an account
+is for.
+
+Open **Settings (⌘,) → Accounts** and click **Add Account…**. Zetty creates a
+config directory under `~/.zetty/accounts/<name>` and seeds it, then either
+**Create & Sign In** opens a terminal running `claude auth login` so you can
+sign in on the spot, or **Create** just sets the account up — it shows as "Not
+signed in yet" and the **Sign In** button in the Accounts list authenticates it
+whenever you're ready. Your existing login is untouched either way; it stays
+available as the **Default** account.
+
+Under the hood an account is one environment variable pointing at a private
+config directory — `CLAUDE_CONFIG_DIR` for Claude Code, `CODEX_HOME` for Codex.
+Claude derives its Keychain entry from that path, so each account gets its own
+credentials automatically; Codex keeps its `auth.json` inside the directory, so
+relocating it isolates the login outright. Either way history and settings
+follow the account.
+
+**Choosing an account**
+
+- **Per project** — Project Settings → General → **Account**. Every new pane in
+  that project uses it, and clones inherit their source's.
+- **Per pane** — with agents enabled, the new-tab/split chooser lists each agent
+  once per account (`Claude Code — Work`, `Claude Code — Personal`).
+- **An open pane** — right-click the pane's gutter → **Account ▸**. Because a
+  program reads its environment once at startup, this closes the pane and opens
+  a fresh one in the same slot on the new account.
+
+An account applies to **new panes only**: a pane keeps the account it started
+with, which is why the chip can be trusted.
+
+**What gets shared**
+
+A fresh config directory is empty, so the Add Account sheet offers to share
+parts of your existing setup. Skills, commands, agents and `CLAUDE.md` are
+**symlinked** — edit them once, both accounts see it. `settings.json` is
+**copied**, because Claude writes to it and each account needs its own (that is
+also where Zetty's agent status hooks live, so status dots keep working).
+Plugins are never shared: that directory is mutable state, and two Claude
+processes writing through one link would corrupt it. Logins, project history
+and sessions are never shared.
+
+A new account also inherits your onboarding answers — theme, and the fact that
+you've used Claude Code before — so it starts at the prompt instead of the
+first-run walkthrough. It will still ask once per folder whether you trust it,
+the same as any fresh login.
+
+**Seeing which is which**
+
+A colored chip in the status bar names the focused pane's account; tab pills and
+sidebar rows carry a matching dot. Nothing appears until you create your first
+account.
+
+Removing an account only makes Zetty forget it — the directory and its login
+stay on disk, so you can add it back. Panes and projects using it fall back to
+the Default login.
+
 ### Project clones
 
 #### Bringing clone work back
@@ -619,6 +684,9 @@ zetty send --key C-c                     # send a control key
 zetty capture --lines 100                # recent pane output (preserved sessions)
 zetty view README.md:20                  # peek text read-only at line 20 (else: default app)
 zetty new-tab --project api              # background tab; prints the new pane id
+zetty accounts                           # list Claude accounts and their config dirs
+zetty accounts --probe                   # …and ask each one who it's signed in as
+zetty new-tab --account work             # open a tab on a specific account
 zetty split --pane 1a2b3c4d --horizontal # background split; prints the new pane id
 zetty split --pane 1a2b3c4d --focus      # ...or bring the new pane to front
 zetty break --pane 1a2b3c4d              # move a pane into its own (background) tab
