@@ -209,6 +209,13 @@ public final class TabList {
         "Tab \(index + 1)"
     }
 
+    /// Writes back a whole tree — for edits that change its shape rather than a
+    /// single surface's fields, like swapping a pane for a fresh one.
+    public func replaceTree(at index: Int, with tree: PaneTree) {
+        guard trees.indices.contains(index) else { return }
+        trees[index] = tree
+    }
+
     /// Mutate the leaf surface with `id` in whichever tree holds it (e.g. its
     /// persisted title). Returns false if no tab contains that surface.
     @discardableResult

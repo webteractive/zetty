@@ -29,6 +29,11 @@ public struct ProjectSettings: Codable, Sendable, Equatable {
     /// ONLY here (the private per-user store) — the repo file carries names
     /// at most (`ProjectFile.envNames`). New panes/sessions only.
     public var env: [String: String]?
+    /// This project's default agent account (an `AgentAccount` id), or nil to
+    /// follow the agent's own default login. Applies to NEW panes only — an
+    /// existing pane keeps whatever account it was stamped with at creation.
+    public var accountID: String?
+
     /// Per-project spawnable agents (Agents tab). nil/empty → feature off.
     /// Presence of an entry = that agent is enabled; `command` is its launch
     /// command. Stored in the private store only.
@@ -56,6 +61,7 @@ public struct ProjectSettings: Codable, Sendable, Equatable {
         preserveSessionsOverride: Bool? = nil,
         notificationsOverride: Bool? = nil,
         env: [String: String]? = nil,
+        accountID: String? = nil,
         agents: [ProjectAgent]? = nil,
         promptAgentOnNewPane: Bool? = nil,
         autoHibernate: Bool? = nil,
@@ -70,6 +76,7 @@ public struct ProjectSettings: Codable, Sendable, Equatable {
         self.preserveSessionsOverride = preserveSessionsOverride
         self.notificationsOverride = notificationsOverride
         self.env = env
+        self.accountID = accountID
         self.agents = agents
         self.promptAgentOnNewPane = promptAgentOnNewPane
         self.autoHibernate = autoHibernate
@@ -90,6 +97,7 @@ public struct ProjectSettings: Codable, Sendable, Equatable {
         preserveSessionsOverride = try c.decodeIfPresent(Bool.self, forKey: .preserveSessionsOverride)
         notificationsOverride = try c.decodeIfPresent(Bool.self, forKey: .notificationsOverride)
         env = try c.decodeIfPresent([String: String].self, forKey: .env)
+        accountID = try c.decodeIfPresent(String.self, forKey: .accountID)
         agents = try c.decodeIfPresent([ProjectAgent].self, forKey: .agents)
         promptAgentOnNewPane = try c.decodeIfPresent(Bool.self, forKey: .promptAgentOnNewPane)
         autoHibernate = try c.decodeIfPresent(Bool.self, forKey: .autoHibernate)

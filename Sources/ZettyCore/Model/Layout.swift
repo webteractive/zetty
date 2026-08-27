@@ -126,6 +126,25 @@ public struct Layout: Codable, Sendable, Equatable {
         return changed
     }
 
+    /// Replaces the leaf holding `surfaceID` with `replacement`, keeping its
+    /// slot, its siblings and every split ratio. False if the surface isn't here.
+    ///
+    /// The replacement carries a NEW id, which is the whole point: a pane's
+    /// environment is captured when its surface is created (and its preserved
+    /// session keeps the environment it was created with), so moving a pane to a
+    /// different account means a genuinely new surface — reusing the id would
+    /// reattach the old session with the old environment.
+    @discardableResult
+    public mutating func replace(surfaceID: UUID, with replacement: Surface) -> Bool {
+        var changed = false
+        root = Self.transform(root) { node in
+            guard case let .leaf(surface) = node, surface.id == surfaceID else { return nil }
+            changed = true
+            return .leaf(replacement)
+        }
+        return changed
+    }
+
     // MARK: - Directional navigation
 
     /// Normalized leaf frames in a unit square with a top-left origin

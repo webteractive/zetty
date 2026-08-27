@@ -35,6 +35,20 @@ public struct PaneTree: Codable, Sendable, Equatable {
         return true
     }
 
+    /// Swaps the pane `id` for `replacement` in the same slot, carrying focus
+    /// and zoom across to the new surface.
+    ///
+    /// Rewriting `focusedSurfaceID` and `zoomedSurfaceID` is the load-bearing
+    /// part: both hold the OLD uuid, and a zoom left pointing at a leaf that no
+    /// longer exists makes the pane disappear entirely.
+    @discardableResult
+    public mutating func replaceSurface(_ id: UUID, with replacement: Surface) -> Bool {
+        guard layout.replace(surfaceID: id, with: replacement) else { return false }
+        if focusedSurfaceID == id { focusedSurfaceID = replacement.id }
+        if zoomedSurfaceID == id { zoomedSurfaceID = replacement.id }
+        return true
+    }
+
     /// Splits the pane `id` (regardless of current focus) and restores focus to
     /// whatever pane was focused before — so a background split never moves the
     /// keyboard focus. Returns `newSurface.id`, or nil when `id` is not present.

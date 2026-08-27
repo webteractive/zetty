@@ -235,6 +235,22 @@ public final class WorkspaceModel {
 
     /// The project owning `surfaceID`, or nil. Used by the app layer to
     /// resolve per-project settings at pane-spawn time.
+    /// The surface with `id`, across every project (hibernated included).
+    ///
+    /// Companion to `project(containing:)`: the per-surface environment provider
+    /// needs the surface's OWN fields — its account — and not merely its
+    /// project's settings.
+    public func surface(with id: UUID) -> Surface? {
+        for project in projects {
+            for tree in project.tabList.trees {
+                if let surface = tree.layout.surfaces.first(where: { $0.id == id }) {
+                    return surface
+                }
+            }
+        }
+        return nil
+    }
+
     public func project(containing surfaceID: UUID) -> ProjectRuntime? {
         projects.first { project in
             project.tabList.trees.contains { tree in
@@ -318,6 +334,35 @@ public final class WorkspaceModel {
         spaces.removeAll { $0.id == id }
         for project in projects where project.spaceID == id { project.spaceID = nil }
         regroup()
+    }
+
+    /// Clears `accountID` on every surface whose account no longer exists, and
+    /// on every project's default. Mirrors how `regroup()` drops memberships
+    /// pointing at a dead `Space`: a hand-edited file, a partial restore, or a
+    /// removed account must not leave dangling ids behind.
+    ///
+    /// Resolution already falls through for an unknown id, so this is hygiene
+    /// rather than correctness — it keeps `workspace.json` honest about which
+    /// account a pane was actually stamped with.
+    ///
+    /// Returns true when anything changed, so the caller can persist.
+    @discardableResult
+    public func healAccountIDs(known: Set<String>) -> Bool {
+        var changed = false
+        for project in projects {
+            let stale = project.tabList.trees
+                .flatMap(\.layout.surfaces)
+                .filter { surface in
+                    guard let id = surface.accountID, id != AgentAccountSupport.defaultID
+                    else { return false }
+                    return !known.contains(id)
+                }
+            for surface in stale {
+                project.tabList.updateSurface(surface.id) { $0.accountID = nil }
+                changed = true
+            }
+        }
+        return changed
     }
 
     /// Reorders the Spaces themselves; members follow via `regroup()`.

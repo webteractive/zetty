@@ -20,6 +20,10 @@ public struct ResolvedProjectSettings: Equatable, Sendable {
     /// Env vars for this project's panes (empty when unset — values never
     /// come from the repo file).
     public var env: [String: String]
+    /// This project's default agent account id; nil = the agent's own default
+    /// login. Resolved here so a clone inherits its source's account along with
+    /// the rest of its settings.
+    public var accountID: String?
 }
 
 public enum ProjectSettingsResolver {
@@ -59,7 +63,8 @@ public enum ProjectSettingsResolver {
             notifySound: notifySound,
             notifyBadge: notifyBadge,
             notifySystem: notifySystem,
-            env: settings?.env ?? [:]
+            env: settings?.env ?? [:],
+            accountID: settings?.accountID
         )
     }
 }
