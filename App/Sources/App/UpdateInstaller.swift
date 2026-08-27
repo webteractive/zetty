@@ -1,4 +1,5 @@
 import AppKit
+import ZettyCore
 import ZettyGhostty
 
 enum UpdateInstallProgress {
@@ -165,7 +166,20 @@ final class UpdateInstaller: @unchecked Sendable {
         }
         let sourceApp = mountPoint.appendingPathComponent("zetty.app")
         guard FileManager.default.fileExists(atPath: sourceApp.path) else { return false }
-        return run("/usr/bin/ditto", [sourceApp.path, stagedApp.path])
+        guard run("/usr/bin/ditto", [sourceApp.path, stagedApp.path]) else { return false }
+        // Verify here, while the app is still alive and the failure can reach
+        // the user as an error. Once the helper is launched the old bundle is
+        // moved aside, and a staged copy that turns out to be incomplete is
+        // only recoverable by a rollback the user never sees.
+        return bundleIsComplete(at: stagedApp)
+    }
+
+    /// A bundle is usable only if every path the loader needs actually landed.
+    /// Shares its list with the swap helper (`SelfUpdateScript`).
+    private static func bundleIsComplete(at app: URL) -> Bool {
+        SelfUpdateScript.requiredBundlePaths.allSatisfy {
+            FileManager.default.fileExists(atPath: app.appendingPathComponent($0).path)
+        }
     }
 
     private static func launchHelper(script: String) -> Bool {

@@ -598,6 +598,14 @@ manual download or quarantine step needed for in-app updates). You can still
 choose **View Release Notes** to open the page instead. Set `check-updates =
 false` to disable the automatic checks (the menu item still works).
 
+The swap keeps your working copy until the new one is verified: the old bundle
+is moved aside rather than deleted, and if the copy is incomplete for any reason
+— an interrupted install, a full disk — the previous version is put back and
+relaunched. If a Zetty install ever fails to launch with a *"Library not
+loaded"* error naming `ZettyGhostty.framework`, its bundle is incomplete;
+reinstall from the [latest DMG](https://github.com/webteractive/zetty/releases)
+to repair it.
+
 ### Control CLI
 
 The `zetty` command drives the running app over `~/.zetty/zetty.sock` —

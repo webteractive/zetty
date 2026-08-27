@@ -1248,6 +1248,23 @@ Other conventions the script encodes: the annotated tag lands on the
 tag/commit use `v`-prefixed SemVer. Notes are never generated from the commit
 log — see the human-written-notes rule above.
 
+**The self-update swap must never delete the target before the replacement is
+verified.** A field crash on 0.1.40 was a `/Applications/zetty.app` whose
+`MacOS/zetty` was present but whose `ZettyGhostty.framework` was simply absent —
+dyld rejects that before `main` runs, so nothing inside the app can detect or
+repair it, and the user's only route back is a manual DMG reinstall. The shipped
+DMG was verified complete, so the bundle lost the framework *after* install; the
+one mechanism Zetty owns is the swap helper, which used to `rm -rf` the target
+and then `ditto`, leaving whatever the copy managed to write if it was cut short
+(a restart, a full disk). `SelfUpdateScript` now checks the staged bundle
+against `requiredBundlePaths` before touching the target, moves the old bundle
+to `<target>.zetty-previous` instead of deleting it, verifies the copy, and
+restores the old bundle if anything failed — and every path still relaunches, so
+a failed update leaves a working app rather than nothing.
+`UpdateInstaller.mountAndCopy` runs the same completeness check on the bundle it
+stages out of the DMG, while the app is still alive and the failure can surface
+as an error instead of a silent rollback.
+
 Signing: builds are **ad-hoc signed** (no Developer ID yet), so a downloaded
 DMG is quarantined and recipients must run `xattr -d com.apple.quarantine
 /Applications/zetty.app` once. In-app updates skip that. Swap in Developer ID
