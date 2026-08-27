@@ -11,6 +11,10 @@ struct PaneActionWiring {
     let onBreak: (UUID) -> Void
     let onSplit: (UUID, SplitDirection) -> Void
     let onScrollToBottom: (UUID) -> Void
+    /// The `Account ▸` entries for a pane; empty hides the submenu entirely.
+    let accountMenu: (UUID) -> [(id: String, title: String, color: NSColor?, isCurrent: Bool)]
+    /// Move this pane to that account (respawns it in place).
+    let onSetAccount: (UUID, String) -> Void
 }
 
 // MARK: - SurfaceNodeView
@@ -466,6 +470,24 @@ final class LeafContainerView: NSView {
         }
         menu.addItem(makeMenuItem("Scroll to Bottom", #selector(scrollToBottomTapped)))
         menu.addItem(.separator())
+        // Only when accounts exist — otherwise there is nothing to move between.
+        let accounts = paneActions?.accountMenu(surfaceID) ?? []
+        if accounts.count > 1 {
+            let submenu = NSMenu()
+            for entry in accounts {
+                let item = NSMenuItem(title: entry.title,
+                                      action: #selector(accountPicked(_:)), keyEquivalent: "")
+                item.target = self
+                item.representedObject = entry.id
+                item.state = entry.isCurrent ? .on : .off
+                if let color = entry.color { item.image = Self.dotImage(color) }
+                submenu.addItem(item)
+            }
+            let parent = NSMenuItem(title: "Account", action: nil, keyEquivalent: "")
+            parent.submenu = submenu
+            menu.addItem(parent)
+            menu.addItem(.separator())
+        }
         menu.addItem(makeMenuItem("Split Vertically", #selector(splitVerticalTapped)))
         menu.addItem(makeMenuItem("Split Horizontally", #selector(splitHorizontalTapped)))
         guard showsClose else { return menu }
@@ -473,6 +495,24 @@ final class LeafContainerView: NSView {
         menu.addItem(makeMenuItem("Break Pane into Tab", #selector(breakButtonTapped)))
         menu.addItem(makeMenuItem("Close Pane", #selector(closeButtonTapped)))
         return menu
+    }
+
+    /// Picking the account the pane already runs on must not tear down a
+    /// working pane, so the no-op is checked before anything else.
+    @objc private func accountPicked(_ sender: NSMenuItem) {
+        guard let id = sender.representedObject as? String, sender.state != .on else { return }
+        paneActions?.onSetAccount(surfaceID, id)
+    }
+
+    /// A small filled circle for an account's identity color.
+    private static func dotImage(_ color: NSColor) -> NSImage {
+        let size = NSSize(width: 8, height: 8)
+        let image = NSImage(size: size)
+        image.lockFocus()
+        color.setFill()
+        NSBezierPath(ovalIn: NSRect(origin: .zero, size: size)).fill()
+        image.unlockFocus()
+        return image
     }
 
     private func makeMenuItem(_ title: String, _ action: Selector) -> NSMenuItem {

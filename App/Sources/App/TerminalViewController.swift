@@ -292,12 +292,12 @@ final class TerminalViewController: NSViewController {
     /// When set, new panes get these environment variables (per-project env
     /// from settings). Affects NEW panes only — a preserved zmx session
     /// captures its env at first creation.
-    var surfaceEnvironmentProvider: ((UUID) -> [String: String]?)? {
-        didSet {
-            registry.surfaceEnvironment = surfaceEnvironmentProvider.map { provider in
-                { surface in provider(surface.id) }
-            }
-        }
+    ///
+    /// Takes the whole `Surface`, not just its id: the pane's own account is a
+    /// field on it, and re-deriving that from the id would mean a workspace-wide
+    /// pane scan on every spawn.
+    var surfaceEnvironmentProvider: ((Surface) -> [String: String]?)? {
+        didSet { registry.surfaceEnvironment = surfaceEnvironmentProvider }
     }
 
     /// Called with surface IDs removed by an explicit close (pane/tab/project),
@@ -911,6 +911,7 @@ final class TerminalViewController: NSViewController {
         statusBar.onShowEditorMenu = { [weak self] anchor in self?.showEditorMenu(from: anchor) }
         statusBar.onUpdateClicked = { [weak self] in self?.onUpdatePillClicked?() }
         statusBar.onBroadcastClicked = { [weak self] in self?.cycleBroadcast() }
+        statusBar.onAccountClicked = { [weak self] in self?.onOpenAccountSettings?() }
         statusBar.onCLIReinstallClicked = { [weak self] in self?.onCLIReinstallClicked?() }
         container.addSubview(statusBar)
         NSLayoutConstraint.activate([
@@ -950,6 +951,19 @@ final class TerminalViewController: NSViewController {
         )
         statusBar.setZoomed(paneTree.zoomedSurfaceID != nil)
         statusBar.setBroadcasting(broadcastScope)
+        // Reads the pane's STAMPED account, so the chip describes the process
+        // that is actually running rather than what the project would give a
+        // new pane. Cached identity only — never a probe on this path.
+        let accounts = accountsProvider?() ?? []
+        statusBar.setAccount(
+            paneTree.focusedSurface.map { surface in
+                AgentAccountResolver.resolve(
+                    paneAccountID: surface.accountID,
+                    projectAccountID: nil,
+                    accounts: accounts,
+                    home: NSHomeDirectory())
+            },
+            hasAccounts: !accounts.isEmpty)
         scheduleGitProbe(for: cwd, surfaceID: paneTree.focusedSurfaceID)
     }
 
@@ -1198,32 +1212,72 @@ final class TerminalViewController: NSViewController {
     /// picked agent, `onProceed(nil)` for a standard session, and neither for
     /// Cancel (no tab/pane created). Otherwise spawns immediately as a standard
     /// session.
-    func chooseAgentThenSpawn(_ onProceed: @escaping (String?) -> Void) {
+    func chooseAgentThenSpawn(_ onProceed: @escaping (_ command: String?, _ accountID: String?) -> Void) {
         guard workspace.projects.indices.contains(workspace.activeIndex) else {
-            onProceed(nil); return
+            onProceed(nil, nil); return
         }
         let project = workspace.projects[workspace.activeIndex]
         let config = agentsProvider?(project) ?? .disabled
         let agents = config.agents
         guard config.promptOnNewPane, !agents.isEmpty, let window = view.window else {
-            onProceed(nil); return
+            onProceed(nil, nil); return
         }
-        AgentChooserSheet.present(agents: agents, on: window) { [weak self] outcome in
+        AgentChooserSheet.present(
+            agents: agents,
+            accounts: accountsProvider?() ?? [],
+            defaultAccountID: projectAccountProvider?(project),
+            on: window
+        ) { [weak self] outcome in
             switch outcome {
-            case .agent(let command): onProceed(command)   // launch chosen agent
-            case .standard:           onProceed(nil)         // standard session
-            case .manage:             self?.onOpenAgentSettings?(project)
-            case .cancel:             break                  // nothing created
+            // launch chosen agent, on the chosen account
+            case let .agent(command, accountID): onProceed(command, accountID)
+            case let .standard(accountID):       onProceed(nil, accountID)
+            case .manage:                        self?.onOpenAgentSettings?(project)
+            case .cancel:                        break   // nothing created
             }
+        }
+    }
+
+    /// Stamps a new pane's account: an explicit pick, else the project's
+    /// default, else the agent's own default login.
+    ///
+    /// Every path that mints a `Surface` goes through here, and the stamp is a
+    /// CONCRETE value rather than "nil means inherit". The environment a pane
+    /// runs under is captured once, when libghostty creates the surface (and
+    /// again by zmx when the session is created), so a value that could drift
+    /// afterwards would describe a process that no longer matches — and the
+    /// status chip would name the wrong login.
+    func resolvedAccountID(explicit: String?, project: ProjectRuntime?) -> String {
+        if let explicit { return explicit }
+        if let project, let fromProject = projectAccountProvider?(project) { return fromProject }
+        return AgentAccountSupport.defaultID
+    }
+
+    /// Stamps every surface in `project` that has no account yet.
+    ///
+    /// Used by the paths that mint whole trees at once — layout templates and
+    /// clone registration — where there is no single surface to stamp at
+    /// construction. Like every other stamping site it must run BEFORE the
+    /// rebuild that spawns the panes.
+    func stampAccounts(in project: ProjectRuntime, accountID: String? = nil) {
+        let stamp = resolvedAccountID(explicit: accountID, project: project)
+        for surface in project.tabList.trees.flatMap(\.layout.surfaces) where surface.accountID == nil {
+            project.tabList.updateSurface(surface.id) { $0.accountID = stamp }
         }
     }
 
     /// Opens a new tab, optionally injecting a startup command once its pane
     /// spawns (used by the agent chooser). Shared by the interactive path.
-    func performNewTab(startupCommand: String?) {
+    func performNewTab(startupCommand: String?, accountID: String? = nil) {
         workspace.activeTabList.newTab()
-        if let startupCommand, let id = workspace.activeTabList.activeTree.focusedSurface?.id {
-            pendingStartupCommands[id] = startupCommand
+        if let id = workspace.activeTabList.activeTree.focusedSurface?.id {
+            // MUST precede rebuildSurfaceNodeView(): `pair(for:)` reads the
+            // surface environment exactly once, at creation. A stamp applied
+            // after the rebuild leaves a pane whose chip claims one account
+            // while its process runs on another.
+            let stamp = resolvedAccountID(explicit: accountID, project: workspace.activeProject)
+            workspace.activeTabList.updateSurface(id) { $0.accountID = stamp }
+            if let startupCommand { pendingStartupCommands[id] = startupCommand }
         }
         refreshTabBar()
         refreshSidebar()
@@ -1235,12 +1289,103 @@ final class TerminalViewController: NSViewController {
 
     /// Splits the focused pane, optionally injecting a startup command once the
     /// new pane spawns (used by the agent chooser). Shared by the split actions.
-    func performSplit(direction: SplitDirection, startupCommand: String?) {
+    func performSplit(direction: SplitDirection, startupCommand: String?, accountID: String? = nil) {
         let workingDir = paneTree.focusedSurface?.workingDir ?? NSHomeDirectory()
-        let newSurface = Surface(workingDir: workingDir)
+        // Stamped at construction, before the surface reaches the tree — so it
+        // is in place well ahead of the rebuild that spawns it.
+        let newSurface = Surface(
+            workingDir: workingDir,
+            accountID: resolvedAccountID(explicit: accountID, project: workspace.activeProject))
         if let startupCommand { pendingStartupCommands[newSurface.id] = startupCommand }
         paneTree.splitFocused(direction: direction, newSurface: newSurface)
         rebuildAndFocus()
+    }
+
+    /// Every configured agent account, for the pickers.
+    var accountsProvider: (() -> [AgentAccount])?
+
+    /// The status-bar account chip was clicked — open Settings → Accounts.
+    var onOpenAccountSettings: (() -> Void)?
+
+    /// A project's default account id (nil = the agent's own default login).
+    var projectAccountProvider: ((ProjectRuntime) -> String?)?
+
+    /// Moves an open pane to a different account by respawning it in place.
+    ///
+    /// A pane's environment is captured once — by libghostty when the surface is
+    /// created, and by zmx when its session is created — so this cannot be a
+    /// mutation. Reusing the surface id would hand back the EXISTING pair
+    /// (`SurfaceRegistry.pair(for:)` returns early for a known id) and reattach
+    /// the old session with the old environment: the chip would change and
+    /// nothing else would. Hence a brand-new `Surface` in the same slot.
+    func respawnPane(surfaceID: UUID, accountID: String) {
+        guard let old = workspace.surface(with: surfaceID),
+              old.accountID != accountID,
+              let project = workspace.project(containing: surfaceID),
+              let treeIndex = project.tabList.trees.firstIndex(where: {
+                  $0.layout.surfaces.contains { $0.id == surfaceID }
+              })
+        else { return }
+
+        // It is almost certainly running an agent — that is the point of moving it.
+        guard confirmClosingBusyPanes([surfaceID], what: "Pane") else { return }
+
+        // Carry the live state forward. `lastTitle` deliberately does NOT come
+        // along: the new process announces itself.
+        var replacement = Surface(
+            workingDir: PaneCwdStore.read(surfaceID)
+                ?? registry.workingDirectory(for: old)
+                ?? old.workingDir,
+            accountID: accountID)
+        replacement.fileTreeVisible = old.fileTreeVisible
+        replacement.fileTreeWidth = old.fileTreeWidth
+
+        // Relaunch whatever was running, on the new account.
+        if let running = foregroundBySurface[surfaceID], !running.isEmpty,
+           SpawnableAgent.catalog.contains(where: { $0.defaultCommand == running || $0.id == running }) {
+            pendingStartupCommands[replacement.id] = running
+        }
+
+        var tree = project.tabList.trees[treeIndex]
+        guard tree.replaceSurface(surfaceID, with: replacement) else { return }
+        project.tabList.replaceTree(at: treeIndex, with: tree)
+
+        // End the old session on the fast path. `reconcileSessions()` is the
+        // real guarantee and would catch this anyway — it re-checks ownership on
+        // the main thread before killing, and the replacement has a different
+        // uuid hence a different session name — but killing now leaves no window
+        // where both exist.
+        onSurfacesClosed?([surfaceID])
+        foregroundBySurface.removeValue(forKey: surfaceID)
+
+        refreshTabBar()
+        refreshSidebar()
+        rebuildSurfaceNodeView()
+        if let view = terminalView(forSurface: replacement.id) {
+            self.view.window?.makeFirstResponder(view)
+        }
+        onWorkspaceDidChange?()
+    }
+
+    /// The `Account ▸` menu for a pane: every account plus the default, with the
+    /// pane's current one checked.
+    func accountMenuEntries(for surfaceID: UUID)
+        -> [(id: String, title: String, color: NSColor?, isCurrent: Bool)] {
+        let accounts = accountsProvider?() ?? []
+        guard !accounts.isEmpty else { return [] }
+        let current = workspace.surface(with: surfaceID)?.accountID ?? AgentAccountSupport.defaultID
+        var entries: [(id: String, title: String, color: NSColor?, isCurrent: Bool)] = [(
+            id: AgentAccountSupport.defaultID,
+            title: "Default",
+            color: nil,
+            isCurrent: current == AgentAccountSupport.defaultID)]
+        for account in accounts {
+            entries.append((id: account.id,
+                            title: account.name,
+                            color: ZTheme.projectColor(id: account.colorID),
+                            isCurrent: current == account.id))
+        }
+        return entries
     }
 
     /// Sidebar "Rename…" — payload is the project runtime (the receiver
@@ -1316,6 +1461,7 @@ final class TerminalViewController: NSViewController {
               let built = template.tabList(rootPath: project.rootPath) else { return false }
         let closingSurfaces = project.tabList.trees.flatMap { $0.layout.surfaces.map(\.id) }
         project.tabList.replaceTrees(from: built.tabList)
+        stampAccounts(in: project)
         pendingStartupCommands.merge(built.commands) { _, new in new }
         onSurfacesClosed?(closingSurfaces)
         refreshTabBar()
@@ -1684,6 +1830,13 @@ final class TerminalViewController: NSViewController {
 
     // MARK: - Control socket (Zetty CLI)
 
+    /// The display name of a pane's account, or nil when it runs on the default
+    /// login (or names an account that no longer exists).
+    func accountDisplayName(for surface: Surface) -> String? {
+        guard let id = surface.accountID, id != AgentAccountSupport.defaultID else { return nil }
+        return accountsProvider?().first { $0.id == id }?.name
+    }
+
     /// Snapshot of the whole workspace for `Zetty status` / target resolution.
     func statusSnapshot() -> StatusSnapshot {
         // Space.id is a UUID minted at creation and never user-editable, so
@@ -1704,7 +1857,11 @@ final class TerminalViewController: NSViewController {
                         tool: foregroundBySurface[surface.id].flatMap { $0.isEmpty ? nil : $0 },
                         agentStatus: agentDetector.state(for: surface.id).status?.rawValue,
                         isFocused: isActiveTab && surface.id == tree.focusedSurfaceID,
-                        live: registry.isLive(surface.id)
+                        live: registry.isLive(surface.id),
+                        // Named, not id'd — and only when it isn't the default
+                        // login, so the field stays absent for anyone who
+                        // doesn't use accounts.
+                        account: accountDisplayName(for: surface)
                     )
                 }
                 let title = TabTitle.display(
@@ -1766,7 +1923,8 @@ final class TerminalViewController: NSViewController {
     /// Opens a new tab (CLI `new-tab`) in the named project (case-insensitive,
     /// nil → active project), makes it visible so its pane spawns, and returns
     /// the new pane's short id — or an error message.
-    func openNewTab(inProject name: String?, focus: Bool = false) -> Result<String, ControlError> {
+    func openNewTab(inProject name: String?, focus: Bool = false,
+                    accountID: String? = nil) -> Result<String, ControlError> {
         let targetIndex: Int
         if let name {
             guard let idx = workspace.projects.firstIndex(where: {
@@ -1783,6 +1941,11 @@ final class TerminalViewController: NSViewController {
         let tabList = project.tabList
         let newPaneID = tabList.newBackgroundTab()
         let newTabIndex = tabList.trees.count - 1
+        // Before any reveal/rebuild below: the surface environment is read once,
+        // when the pane spawns.
+        tabList.updateSurface(newPaneID) {
+            $0.accountID = self.resolvedAccountID(explicit: accountID, project: project)
+        }
 
         if focus {
             tabList.select(index: newTabIndex)
@@ -1944,6 +2107,9 @@ final class TerminalViewController: NSViewController {
         if let startupCommand, let firstSurface {
             pendingStartupCommands[firstSurface.id] = startupCommand
         }
+        // A clone inherits its source's account (resolvedSettings falls back to
+        // the source), so this stamps the inherited value rather than @default.
+        stampAccounts(in: project)
         refreshTabBar()
         refreshSidebar()
         if focus {
@@ -2283,7 +2449,8 @@ final class TerminalViewController: NSViewController {
     }
 
     /// Splits the targeted pane (CLI `split`) and returns the new pane's id.
-    func splitPane(target: PaneSelector, vertical: Bool, focus: Bool = false) -> Result<String, ControlError> {
+    func splitPane(target: PaneSelector, vertical: Bool, focus: Bool = false,
+                   accountID: String? = nil) -> Result<String, ControlError> {
         do {
             let pane = try target.resolve(in: statusSnapshot().panes)
             guard let location = locate(shortID: pane.id) else {
@@ -2292,7 +2459,13 @@ final class TerminalViewController: NSViewController {
             let tabList = workspace.projects[location.projectIndex].tabList
             let workingDir = tabList.trees[location.tabIndex].layout.surfaces
                 .first(where: { $0.id == location.surfaceID })?.workingDir ?? NSHomeDirectory()
-            let newSurface = Surface(workingDir: workingDir)
+            // Stamped from the target project's default, not the active one —
+            // a background split must not inherit whatever project is on screen.
+            let newSurface = Surface(
+                workingDir: workingDir,
+                accountID: resolvedAccountID(
+                    explicit: accountID,
+                    project: workspace.projects[location.projectIndex]))
             guard let newID = tabList.splitPane(
                 inTreeAt: location.tabIndex, paneID: location.surfaceID,
                 direction: vertical ? .vertical : .horizontal, newSurface: newSurface
@@ -2753,14 +2926,23 @@ final class TerminalViewController: NSViewController {
     func refreshTabBar() {
         let tabList = workspace.activeTabList
         var icons: [NSImage?] = []
+        var accountColorIDs: [String?] = []
+        let accounts = accountsProvider?() ?? []
         let titles: [String] = tabList.trees.indices.map { idx in
             let tree = tabList.trees[idx]
             icons.append(agentIcon(for: tree.focusedSurface))
+            // Only non-default accounts get a dot — it marks the exception.
+            accountColorIDs.append(tree.focusedSurface.flatMap { surface in
+                surface.accountID.flatMap { id in
+                    accounts.first { $0.id == id }?.colorID
+                }
+            })
             return tabDisplayTitle(for: tree, at: idx)
         }
         // Scratch terminals are disposable: every tab is closable (closing the
         // last one closes the scratch project), so always show the × there.
-        tabBarView?.update(titles: titles, icons: icons, selectedIndex: tabList.activeIndex,
+        tabBarView?.update(titles: titles, icons: icons, accountColorIDs: accountColorIDs,
+                           selectedIndex: tabList.activeIndex,
                            alwaysShowClose: workspace.activeProject.isScratch)
         // The status bar tracks the same focused-pane / active-tab state.
         refreshStatusBar()
@@ -2768,6 +2950,7 @@ final class TerminalViewController: NSViewController {
 
     /// Syncs the sidebar UI state with the workspace.
     func refreshSidebar() {
+        let sidebarAccounts = accountsProvider?() ?? []
         var sidebarProjects: [SidebarProject] = workspace.projects.map { project in
             let trees = project.tabList.trees
             // Agent status per tab (from the tab's focused surface).
@@ -2797,6 +2980,10 @@ final class TerminalViewController: NSViewController {
             // itself (there are no tab child rows to show it on).
             let projectIcon = trees.count == 1 ? agentIcon(for: trees[0].focusedSurface) : nil
             let identity = projectIdentity?(project)
+            // The project's DEFAULT account — what a new pane here would get.
+            let projectAccount = projectAccountProvider?(project).flatMap { id in
+                sidebarAccounts.first { $0.id == id }
+            }
             return SidebarProject(
                 name: project.name,
                 isPinned: project.isPinned,
@@ -2818,7 +3005,16 @@ final class TerminalViewController: NSViewController {
                 spaceID: project.spaceID,
                 spaceName: project.spaceID.flatMap { id in
                     workspace.spaces.first { $0.id == id }?.name
-                }
+                },
+                accountColor: ZTheme.projectColor(id: projectAccount?.colorID),
+                accountName: projectAccount?.name,
+                tabAccountColors: trees.count >= 2 ? trees.map { tree in
+                    tree.focusedSurface.flatMap { surface in
+                        surface.accountID.flatMap { id in
+                            sidebarAccounts.first { $0.id == id }
+                        }
+                    }.flatMap { ZTheme.projectColor(id: $0.colorID) }
+                } : []
             )
         }
         // Splice in "Cloning…" placeholder rows: each nests under its source via
@@ -2834,7 +3030,8 @@ final class TerminalViewController: NSViewController {
                 icon: nil, status: nil, projectColor: nil, customGlyph: nil,
                 isHibernated: false, isScratch: false, isHome: false,
                 isClone: true, cloneSourceIndex: sourceIndex, isPendingClone: true,
-                spaceID: nil, spaceName: nil
+                spaceID: nil, spaceName: nil,
+                accountColor: nil, accountName: nil, tabAccountColors: []
             ))
         }
         // Identity + appearance only — counts are NOT computed here. They must
@@ -2934,6 +3131,7 @@ final class TerminalViewController: NSViewController {
             project.tabList.replaceTrees(from: built.tabList)
             pendingStartupCommands.merge(built.commands) { _, new in new }
         }
+        stampAccounts(in: project)
         refreshTabBar()
         refreshSidebar()
         if activate {
@@ -2959,9 +3157,25 @@ final class TerminalViewController: NSViewController {
     /// `focus` is true it becomes active and spawns immediately; when false it is
     /// added to the Scratch section without stealing the current view (its shell
     /// spawns when first viewed). Returns the new pane's short id.
+    ///
+    /// `accountID` + `startupCommand` are how an account signs in: a throwaway
+    /// pane carrying that account's environment, running its login command.
+    /// Scratch is the right host — never persisted, and exempt from zmx, so no
+    /// session captures the login environment and outlives the pane.
     @discardableResult
-    func newScratchTerminal(focus: Bool) -> String {
+    func newScratchTerminal(focus: Bool, accountID: String? = nil,
+                            startupCommand: String? = nil) -> String {
         let project = workspace.addScratchProject(makeActive: focus)
+        // Before the rebuild below — the surface environment is read once, when
+        // the pane spawns. A scratch pane has no project default to inherit
+        // (`projectAccountProvider` refuses scratch), so this is @default unless
+        // a sign-in supplied one.
+        if let surface = project.tabList.activeTree.layout.surfaces.first {
+            project.tabList.updateSurface(surface.id) {
+                $0.accountID = accountID ?? AgentAccountSupport.defaultID
+            }
+            if let startupCommand { pendingStartupCommands[surface.id] = startupCommand }
+        }
         refreshTabBar()
         refreshSidebar()
         if focus {
@@ -3359,8 +3573,8 @@ final class TerminalViewController: NSViewController {
 
     /// Open a new tab and focus its single fresh pane.  Key equivalent: ⌘T.
     @objc func newTab(_ sender: Any?) {
-        chooseAgentThenSpawn { [weak self] command in
-            self?.performNewTab(startupCommand: command)
+        chooseAgentThenSpawn { [weak self] command, accountID in
+            self?.performNewTab(startupCommand: command, accountID: accountID)
         }
     }
 
@@ -3992,7 +4206,11 @@ final class TerminalViewController: NSViewController {
                 onSplit: { [weak self] id, direction in
                     self?.splitPane(surfaceID: id, direction: direction)
                 },
-                onScrollToBottom: { [weak self] id in self?.scrollToBottom(surfaceID: id) }
+                onScrollToBottom: { [weak self] id in self?.scrollToBottom(surfaceID: id) },
+                accountMenu: { [weak self] id in self?.accountMenuEntries(for: id) ?? [] },
+                onSetAccount: { [weak self] id, accountID in
+                    self?.respawnPane(surfaceID: id, accountID: accountID)
+                }
             ),
             onRatioChange: { [weak self] path, ratio in
                 // Write the dragged divider position back to the model (no

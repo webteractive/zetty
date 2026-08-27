@@ -14,15 +14,15 @@ extension TerminalViewController {
 
     /// Split the focused pane vertically (left / right).  Key equivalent: ⌘D.
     @objc func splitVertical(_ sender: Any?) {
-        chooseAgentThenSpawn { [weak self] command in
-            self?.performSplit(direction: .vertical, startupCommand: command)
+        chooseAgentThenSpawn { [weak self] command, accountID in
+            self?.performSplit(direction: .vertical, startupCommand: command, accountID: accountID)
         }
     }
 
     /// Split the focused pane horizontally (top / bottom).  Key equivalent: ⇧⌘D.
     @objc func splitHorizontal(_ sender: Any?) {
-        chooseAgentThenSpawn { [weak self] command in
-            self?.performSplit(direction: .horizontal, startupCommand: command)
+        chooseAgentThenSpawn { [weak self] command, accountID in
+            self?.performSplit(direction: .horizontal, startupCommand: command, accountID: accountID)
         }
     }
 
@@ -40,8 +40,8 @@ extension TerminalViewController {
             view.window?.makeFirstResponder(target)
         }
         paneTree.focus(surfaceID)
-        chooseAgentThenSpawn { [weak self] command in
-            self?.performSplit(direction: direction, startupCommand: command)
+        chooseAgentThenSpawn { [weak self] command, accountID in
+            self?.performSplit(direction: direction, startupCommand: command, accountID: accountID)
         }
     }
 

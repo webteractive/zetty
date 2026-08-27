@@ -11,33 +11,49 @@ import ZettyGhostty
 final class AgentChooserSheet: NSObject {
 
     enum Outcome {
-        case agent(String)   // launch this command
-        case standard        // plain session
-        case manage          // open Project Settings → Agents
-        case cancel          // do nothing
+        /// Launch this command, on this account (nil = whatever the project
+        /// default resolves to).
+        case agent(command: String, accountID: String?)
+        case standard(accountID: String?)   // plain session
+        case manage                         // open Project Settings → Agents
+        case cancel                         // do nothing
     }
+
+    /// Beyond this many rows the per-account expansion is dropped: the sheet has
+    /// no scroll view, and the 1–9 shortcuts only reach the first nine rows.
+    private static let rowBudget = 12
 
     /// Keeps the sheet alive for the duration of the modal.
     private static var active: AgentChooserSheet?
 
     private let panel: NSWindow
     private let hostWindow: NSWindow
-    private let agents: [ResolvedSpawnAgent]
+    /// Parallel to the list's rows: what each one does when activated.
+    private let outcomes: [Outcome]
     private let completion: (Outcome) -> Void
     private let listView: ChooserListView
 
     static func present(
         agents: [ResolvedSpawnAgent],
+        accounts: [AgentAccount] = [],
+        defaultAccountID: String? = nil,
         on window: NSWindow,
         completion: @escaping (Outcome) -> Void
     ) {
-        let sheet = AgentChooserSheet(agents: agents, host: window, completion: completion)
+        let sheet = AgentChooserSheet(agents: agents, accounts: accounts,
+                                      defaultAccountID: defaultAccountID,
+                                      host: window, completion: completion)
         active = sheet
         window.beginSheet(sheet.panel)
     }
 
-    private init(agents: [ResolvedSpawnAgent], host: NSWindow, completion: @escaping (Outcome) -> Void) {
-        self.agents = agents
+    private init(
+        agents: [ResolvedSpawnAgent],
+        accounts: [AgentAccount],
+        defaultAccountID: String?,
+        host: NSWindow,
+        completion: @escaping (Outcome) -> Void
+    ) {
         self.hostWindow = host
         self.completion = completion
 
@@ -49,15 +65,50 @@ final class AgentChooserSheet: NSObject {
         panel.titlebarAppearsTransparent = true
         panel.title = ""
 
-        // Rows: each agent (with its logo), then "Standard session" (terminal).
-        var items = agents.map { resolved -> ChooserListView.Item in
+        // Rows: each agent (with its logo) — expanded into one row per account
+        // when it can host them — then "Standard session" (terminal).
+        //
+        // The expansion is all-or-nothing: if expanding every account-capable
+        // agent would overflow the sheet, none of them expand and the panes fall
+        // back to the project's default account. A half-expanded list would be
+        // worse than an unexpanded one, since the missing accounts would look
+        // unavailable rather than merely unlisted.
+        let expandable = agents.filter { resolved in
+            resolved.agent.configDirEnvVar != nil
+                && accounts.contains { $0.agentID == resolved.agent.id }
+        }
+        let expandedCount = expandable.reduce(0) { total, resolved in
+            total + accounts.filter { $0.agentID == resolved.agent.id }.count   // + Default below
+        } + expandable.count
+        let expand = !expandable.isEmpty
+            && (agents.count - expandable.count) + expandedCount + 1 <= Self.rowBudget
+
+        var items: [ChooserListView.Item] = []
+        var outcomes: [Outcome] = []
+        for resolved in agents {
             let icon = AgentIcons.icon(forTool: resolved.agent.id)
                 ?? NSImage(systemSymbolName: "sparkles", accessibilityDescription: nil)
-            return ChooserListView.Item(title: resolved.agent.displayName, icon: icon)
+            let hosts = expand ? accounts.filter { $0.agentID == resolved.agent.id } : []
+            guard !hosts.isEmpty else {
+                items.append(.init(title: resolved.agent.displayName, icon: icon))
+                outcomes.append(.agent(command: resolved.command, accountID: nil))
+                continue
+            }
+            items.append(.init(title: "\(resolved.agent.displayName) — Default", icon: icon))
+            outcomes.append(.agent(command: resolved.command,
+                                   accountID: AgentAccountSupport.defaultID))
+            for account in hosts {
+                items.append(.init(title: "\(resolved.agent.displayName) — \(account.name)",
+                                   icon: icon,
+                                   dot: ZTheme.projectColor(id: account.colorID)))
+                outcomes.append(.agent(command: resolved.command, accountID: account.id))
+            }
         }
         let terminalIcon = NSImage(systemSymbolName: "apple.terminal", accessibilityDescription: nil)
             ?? NSImage(systemSymbolName: "terminal", accessibilityDescription: nil)
         items.append(ChooserListView.Item(title: "Standard session", icon: terminalIcon))
+        outcomes.append(.standard(accountID: defaultAccountID))
+        self.outcomes = outcomes
         listView = ChooserListView(items: items)
 
         super.init()
@@ -108,11 +159,8 @@ final class AgentChooserSheet: NSObject {
     }
 
     private func activate(_ index: Int) {
-        if index >= 0, index < agents.count {
-            finish(.agent(agents[index].command))
-        } else {
-            finish(.standard)
-        }
+        guard outcomes.indices.contains(index) else { return }
+        finish(outcomes[index])
     }
 
     @objc private func manageClicked() { finish(.manage) }
@@ -132,7 +180,13 @@ final class AgentChooserSheet: NSObject {
 /// Cancel button key equivalent.
 private final class ChooserListView: NSView {
 
-    struct Item { let title: String; let icon: NSImage? }
+    struct Item {
+        let title: String
+        let icon: NSImage?
+        /// The account's identity color, or nil for rows that aren't
+        /// account-specific.
+        var dot: NSColor?
+    }
 
     var onActivate: ((Int) -> Void)?
     private var selected = 0
@@ -172,10 +226,19 @@ private final class ChooserListView: NSView {
             label.drawsBackground = false
             label.translatesAutoresizingMaskIntoConstraints = false
 
+            // The account's identity color, trailing. Zero-width when the row
+            // isn't account-specific, so every row keeps the same constraints.
+            let dot = NSView()
+            dot.wantsLayer = true
+            dot.layer?.cornerRadius = 3
+            dot.layer?.backgroundColor = item.dot?.cgColor
+            dot.translatesAutoresizingMaskIntoConstraints = false
+
             // Add to the hierarchy BEFORE constraining — activation needs a
             // common ancestor.
             row.addSubview(iconView)
             row.addSubview(label)
+            row.addSubview(dot)
             stack.addArrangedSubview(row)
             NSLayoutConstraint.activate([
                 row.widthAnchor.constraint(equalTo: widthAnchor),
@@ -186,7 +249,11 @@ private final class ChooserListView: NSView {
                 iconView.heightAnchor.constraint(equalToConstant: 16),
                 label.leadingAnchor.constraint(equalTo: iconView.trailingAnchor, constant: 8),
                 label.centerYAnchor.constraint(equalTo: row.centerYAnchor),
-                label.trailingAnchor.constraint(lessThanOrEqualTo: row.trailingAnchor, constant: -8),
+                label.trailingAnchor.constraint(lessThanOrEqualTo: dot.leadingAnchor, constant: -8),
+                dot.trailingAnchor.constraint(equalTo: row.trailingAnchor, constant: -10),
+                dot.centerYAnchor.constraint(equalTo: row.centerYAnchor),
+                dot.widthAnchor.constraint(equalToConstant: item.dot == nil ? 0 : 6),
+                dot.heightAnchor.constraint(equalToConstant: item.dot == nil ? 0 : 6),
             ])
 
             rowViews.append(row)
