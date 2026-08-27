@@ -37,3 +37,18 @@ import Testing
     #expect(AgentSpawnConfig.disabled.agents.isEmpty)
     #expect(!AgentSpawnConfig.disabled.promptOnNewPane)
 }
+
+/// Tight chrome (the status chip, the Accounts list) needs a compact label:
+/// "Claude Code" and "Cursor Agent" are longer than the space deserves.
+@Test func shortNamesAreCompact() {
+    #expect(SpawnableAgent.byID("claude")?.shortName == "Claude")
+    #expect(SpawnableAgent.byID("cursor")?.shortName == "Cursor")
+}
+
+/// Agents whose name is already short don't need a second one.
+@Test func shortNameDefaultsToTheDisplayName() {
+    for id in ["codex", "hermes", "gemini", "opencode", "pi"] {
+        let agent = SpawnableAgent.byID(id)
+        #expect(agent?.shortName == agent?.displayName)
+    }
+}

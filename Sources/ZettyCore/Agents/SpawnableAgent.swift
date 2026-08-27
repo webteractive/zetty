@@ -16,23 +16,83 @@ public struct ProjectAgent: Codable, Sendable, Equatable {
 public struct SpawnableAgent: Sendable, Equatable {
     public let id: String
     public let displayName: String
+    /// Compact label for tight chrome — the status-bar account chip and the
+    /// Accounts list, where "Claude Code" and "Cursor Agent" are longer than the
+    /// space deserves. Defaults to `displayName`.
+    public let shortName: String
     public let defaultCommand: String
 
-    public init(id: String, displayName: String, defaultCommand: String) {
+    /// Environment variable that relocates this harness's whole config — and
+    /// therefore its credentials — into a directory of its own. `nil` means
+    /// Zetty knows no verified isolation mechanism for it, so it cannot host
+    /// accounts. Adding one later is this single line.
+    public let configDirEnvVar: String?
+
+    /// Where the harness keeps that config when the variable is unset, relative
+    /// to home. This is what the "Default" account means, and what an account
+    /// directory is forbidden from pointing at.
+    public let defaultConfigDirName: String?
+
+    /// Command that starts an interactive sign-in in a pane.
+    public let loginCommand: String?
+
+    /// Arguments that report who this config directory is signed in as, and how
+    /// to read the answer. nil = Zetty can't probe this agent's identity.
+    public let statusArguments: [String]?
+    public let statusFormat: AuthStatusFormat?
+
+    public init(
+        id: String,
+        displayName: String,
+        defaultCommand: String,
+        shortName: String? = nil,
+        configDirEnvVar: String? = nil,
+        defaultConfigDirName: String? = nil,
+        loginCommand: String? = nil,
+        statusArguments: [String]? = nil,
+        statusFormat: AuthStatusFormat? = nil
+    ) {
         self.id = id
         self.displayName = displayName
+        self.shortName = shortName ?? displayName
         self.defaultCommand = defaultCommand
+        self.configDirEnvVar = configDirEnvVar
+        self.defaultConfigDirName = defaultConfigDirName
+        self.loginCommand = loginCommand
+        self.statusArguments = statusArguments
+        self.statusFormat = statusFormat
     }
 
     public static let catalog: [SpawnableAgent] = [
-        .init(id: "claude",   displayName: "Claude Code",  defaultCommand: "claude"),
-        .init(id: "codex",    displayName: "Codex",        defaultCommand: "codex"),
+        .init(id: "claude",   displayName: "Claude Code",  defaultCommand: "claude",
+              shortName: "Claude",
+              configDirEnvVar: "CLAUDE_CONFIG_DIR",
+              defaultConfigDirName: ".claude",
+              loginCommand: "claude auth login",
+              statusArguments: ["auth", "status", "--json"],
+              statusFormat: .claudeJSON),
+        // Codex keeps credentials in `auth.json` INSIDE its config dir rather
+        // than the Keychain, so relocating the directory isolates the login
+        // outright. Its status output is prose ("Logged in using ChatGPT"), not
+        // JSON, so it can report whether an account is signed in but not who as.
+        .init(id: "codex",    displayName: "Codex",        defaultCommand: "codex",
+              configDirEnvVar: "CODEX_HOME",
+              defaultConfigDirName: ".codex",
+              loginCommand: "codex login",
+              statusArguments: ["login", "status"],
+              statusFormat: .plainText),
         .init(id: "hermes",   displayName: "Hermes",       defaultCommand: "hermes"),
         .init(id: "gemini",   displayName: "Gemini",       defaultCommand: "gemini"),
         .init(id: "opencode", displayName: "opencode",     defaultCommand: "opencode"),
         .init(id: "pi",       displayName: "Pi",           defaultCommand: "pi"),
-        .init(id: "cursor",   displayName: "Cursor Agent", defaultCommand: "cursor-agent"),
+        .init(id: "cursor",   displayName: "Cursor Agent", defaultCommand: "cursor-agent",
+              shortName: "Cursor"),
     ]
+
+    /// Catalog entries that can host accounts.
+    public static var accountCapable: [SpawnableAgent] {
+        catalog.filter { $0.configDirEnvVar != nil }
+    }
 
     public static func byID(_ id: String) -> SpawnableAgent? {
         catalog.first { $0.id == id }
