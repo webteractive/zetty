@@ -29,6 +29,9 @@ struct SidebarProject: Equatable {
     let isPendingClone: Bool             // transient "Cloning…" placeholder: spinner glyph, non-interactive
     let spaceID: UUID?                   // the Space this row renders under, nil for Pinned/Projects
     let spaceName: String?               // that Space's name — tags a hibernated row with where it will return
+    let accountColor: NSColor?           // project's DEFAULT agent account (nil = the default login)
+    let accountName: String?             // that account's name, for the row's tooltip
+    let tabAccountColors: [NSColor?]     // parallel to tabTitles; nil = the default login
 }
 
 /// Plain data for one Space header row: identity and appearance only. Counts
@@ -1479,6 +1482,8 @@ extension SidebarView: NSOutlineViewDelegate {
                 inSpace: project.spaceID != nil,
                 spaceName: project.spaceName,
                 isPendingClone: project.isPendingClone,
+                accountColor: project.accountColor,
+                accountName: project.accountName,
                 projectIndex: p,
                 target: self,
                 action: #selector(pinButtonClicked(_:))
@@ -1491,6 +1496,8 @@ extension SidebarView: NSOutlineViewDelegate {
             let title = projects[p].tabTitles[t]
             let status = projects[p].tabStatuses.indices.contains(t) ? projects[p].tabStatuses[t] : nil
             let icon = projects[p].tabIcons.indices.contains(t) ? projects[p].tabIcons[t] : nil
+            let accountColor = projects[p].tabAccountColors.indices.contains(t)
+                ? projects[p].tabAccountColors[t] : nil
 
             let identifier = NSUserInterfaceItemIdentifier("TabCell")
             let cellView: TabCellView
@@ -1500,7 +1507,8 @@ extension SidebarView: NSOutlineViewDelegate {
                 cellView = TabCellView()
                 cellView.identifier = identifier
             }
-            cellView.configure(title: title, isActive: p == activeProject && t == activeTab, agentStatus: status, icon: icon)
+            cellView.configure(title: title, isActive: p == activeProject && t == activeTab,
+                               agentStatus: status, icon: icon, accountColor: accountColor)
             return cellView
         }
     }
@@ -1732,6 +1740,11 @@ private final class ProjectCellView: NSTableCellView {
     private let toolIconView = NSImageView()
     private let nameLabel: NSTextField
     private let pinButton: NSButton
+    /// The project's DEFAULT agent account, trailing. Created unconditionally
+    /// with a 0↔6 width toggle so the row's constraints never change shape —
+    /// these cells are recycled on every refresh.
+    private let accountDot = NSView()
+    private let accountDotWidth: NSLayoutConstraint
     /// Collapses the tool-logo slot when the project has none (0 width, no gap).
     private var toolIconWidth: NSLayoutConstraint!
     private var toolIconGap: NSLayoutConstraint!
@@ -1741,6 +1754,7 @@ private final class ProjectCellView: NSTableCellView {
     override init(frame frameRect: NSRect) {
         nameLabel = NSTextField(labelWithString: "")
         pinButton = NSButton(title: "", target: nil, action: nil)
+        accountDotWidth = accountDot.widthAnchor.constraint(equalToConstant: 0)
 
         super.init(frame: frameRect)
 
@@ -1769,6 +1783,10 @@ private final class ProjectCellView: NSTableCellView {
         pinButton.imagePosition = .imageOnly
         pinButton.translatesAutoresizingMaskIntoConstraints = false
         addSubview(pinButton)
+        accountDot.wantsLayer = true
+        accountDot.layer?.cornerRadius = 3
+        accountDot.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(accountDot)
 
         toolIconWidth = toolIconView.widthAnchor.constraint(equalToConstant: 0)
         toolIconGap = nameLabel.leadingAnchor.constraint(equalTo: toolIconView.trailingAnchor, constant: 0)
@@ -1789,7 +1807,11 @@ private final class ProjectCellView: NSTableCellView {
 
             toolIconGap,
             nameLabel.centerYAnchor.constraint(equalTo: centerYAnchor),
-            nameLabel.trailingAnchor.constraint(equalTo: pinButton.leadingAnchor, constant: -4),
+            nameLabel.trailingAnchor.constraint(equalTo: accountDot.leadingAnchor, constant: -4),
+            accountDot.trailingAnchor.constraint(equalTo: pinButton.leadingAnchor, constant: -4),
+            accountDot.centerYAnchor.constraint(equalTo: centerYAnchor),
+            accountDot.heightAnchor.constraint(equalToConstant: 6),
+            accountDotWidth,
 
             pinButton.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -6),
             pinButton.centerYAnchor.constraint(equalTo: centerYAnchor),
@@ -1809,8 +1831,16 @@ private final class ProjectCellView: NSTableCellView {
                    inSpace: Bool = false,
                    spaceName: String? = nil,
                    isPendingClone: Bool = false,
+                   accountColor: NSColor? = nil,
+                   accountName: String? = nil,
                    projectIndex: Int, target: AnyObject, action: Selector) {
         glyphLeading.constant = isClone ? 18 : 4
+
+        // Re-resolved per render (the palette flips with the scheme), and
+        // re-run on every configure because these cells are recycled.
+        accountDotWidth.constant = accountColor == nil ? 0 : 6
+        accountDot.layer?.backgroundColor = accountColor?.cgColor
+        accountDot.toolTip = accountName.map { "New panes here use the \($0) account" }
 
         // A pending clone is a transient "Cloning…" placeholder: dim label, a
         // progress spinner in place of the glyph, and no tool logo or pin star.
@@ -1912,6 +1942,9 @@ private final class TabCellView: NSTableCellView {
     /// Collapses the logo slot when a tab has none (0 width, no gap).
     private var iconWidth: NSLayoutConstraint!
     private var iconGap: NSLayoutConstraint!
+    /// The pane's agent account, trailing (the leading dot is agent status).
+    private let accountDot = NSView()
+    private var accountDotWidth: NSLayoutConstraint!
 
     override init(frame frameRect: NSRect) {
         titleLabel = NSTextField(labelWithString: "")
@@ -1933,8 +1966,14 @@ private final class TabCellView: NSTableCellView {
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
         addSubview(titleLabel)
 
+        accountDot.wantsLayer = true
+        accountDot.layer?.cornerRadius = 3
+        accountDot.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(accountDot)
+
         iconWidth = iconView.widthAnchor.constraint(equalToConstant: 0)
         iconGap = titleLabel.leadingAnchor.constraint(equalTo: iconView.trailingAnchor, constant: 0)
+        accountDotWidth = accountDot.widthAnchor.constraint(equalToConstant: 0)
         NSLayoutConstraint.activate([
             dot.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 4),
             dot.centerYAnchor.constraint(equalTo: centerYAnchor),
@@ -1947,7 +1986,11 @@ private final class TabCellView: NSTableCellView {
             iconView.heightAnchor.constraint(equalToConstant: 12),
 
             iconGap,
-            titleLabel.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
+            accountDot.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
+            accountDot.centerYAnchor.constraint(equalTo: centerYAnchor),
+            accountDot.heightAnchor.constraint(equalToConstant: 6),
+            accountDotWidth,
+            titleLabel.trailingAnchor.constraint(equalTo: accountDot.leadingAnchor, constant: -4),
             titleLabel.centerYAnchor.constraint(equalTo: centerYAnchor),
         ])
     }
@@ -1955,7 +1998,13 @@ private final class TabCellView: NSTableCellView {
     @available(*, unavailable)
     required init?(coder _: NSCoder) { fatalError("not supported") }
 
-    func configure(title: String, isActive: Bool, agentStatus: AgentStatus?, icon: NSImage? = nil) {
+    func configure(title: String, isActive: Bool, agentStatus: AgentStatus?, icon: NSImage? = nil,
+                   accountColor: NSColor? = nil) {
+        // Trailing, deliberately: the LEADING dot is agent status, and two dots
+        // at the same edge would read as one noisy cluster.
+        accountDotWidth.constant = accountColor == nil ? 0 : 6
+        accountDot.layer?.backgroundColor = accountColor?.cgColor
+
         titleLabel.stringValue = title
         titleLabel.textColor = isActive ? ZTheme.current.fgColor : ZTheme.current.fg2Color
 

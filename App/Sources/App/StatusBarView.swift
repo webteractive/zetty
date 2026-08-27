@@ -31,6 +31,14 @@ final class StatusBarView: NSView {
     private let zoomChip = NSTextField(labelWithString: " ZOOM ")
     private let broadcastPill = NSView()
     private let broadcastButton = NSButton()
+
+    /// The focused pane's agent account. Hidden entirely when no accounts are
+    /// configured, so a user who never creates one sees no new chrome.
+    private let accountPill = NSView()
+    private let accountButton = NSButton()
+    private var shownAccount: AccountResolution?
+    /// Opens Settings → Accounts; the chip is the discoverable way in.
+    var onAccountClicked: (() -> Void)?
     private var shownBroadcastScope: BroadcastScope = .off
     /// Clicked to cycle broadcast scope (Off → Tab → Project → Agents → Workspace).
     var onBroadcastClicked: (() -> Void)?
@@ -90,6 +98,9 @@ final class StatusBarView: NSView {
     private var renderedVersion: String?
     private var renderedCLIStatus: CLIStatus?
     private var renderedBroadcastScope: BroadcastScope?
+    /// Cached by account id AND emptiness, so the chip re-renders when the
+    /// account changes or the last account is removed.
+    private var renderedAccountToken: String?
 
     /// Drops every cached render token so the next call actually re-renders.
     private func invalidateRenderCaches() {
@@ -98,6 +109,9 @@ final class StatusBarView: NSView {
         renderedVersion = nil
         renderedCLIStatus = nil
         renderedBroadcastScope = nil
+        // The palette flips its dark/light variant while the id is unchanged —
+        // without this the chip would freeze in the old scheme's color.
+        renderedAccountToken = nil
     }
 
     private var plainLabels: [NSTextField] {
@@ -184,7 +198,26 @@ final class StatusBarView: NSView {
             broadcastButton.centerYAnchor.constraint(equalTo: broadcastPill.centerYAnchor),
         ])
 
-        configureStack(leftStack, views: [modeChip, zoomChip, cwdLabel, branchIcon, branchLabel, aheadLabel, behindLabel, changesLabel])
+        accountPill.wantsLayer = true
+        accountPill.layer?.cornerRadius = 10
+        accountPill.layer?.borderWidth = 1
+        accountPill.translatesAutoresizingMaskIntoConstraints = false
+        configureSwitch(accountButton, action: #selector(accountClicked))
+        // Both are REQUIRED when a button carries an image and a title: the
+        // default position is `.imageOverlaps`, which draws the glyph on top of
+        // the label instead of beside it. Same pairing as the broadcast pill.
+        accountButton.imagePosition = .imageLeading
+        accountButton.imageHugsTitle = true
+        accountPill.addSubview(accountButton)
+        NSLayoutConstraint.activate([
+            accountPill.heightAnchor.constraint(equalToConstant: 20),
+            accountButton.leadingAnchor.constraint(equalTo: accountPill.leadingAnchor, constant: 9),
+            accountButton.trailingAnchor.constraint(equalTo: accountPill.trailingAnchor, constant: -9),
+            accountButton.centerYAnchor.constraint(equalTo: accountPill.centerYAnchor),
+        ])
+        accountPill.isHidden = true
+
+        configureStack(leftStack, views: [modeChip, zoomChip, accountPill, cwdLabel, branchIcon, branchLabel, aheadLabel, behindLabel, changesLabel])
         leftStack.setCustomSpacing(10, after: zoomChip)
         leftStack.setCustomSpacing(10, after: cwdLabel)
         // The cwd is the one label allowed to give way: the stack may compress
@@ -555,6 +588,58 @@ final class StatusBarView: NSView {
         broadcastPill.layer?.shadowOpacity = active ? 0.4 : 0
         broadcastPill.layer?.shadowRadius = 5
     }
+
+    /// The focused pane's account. `nil` (or the default account with no
+    /// accounts configured) hides the chip.
+    func setAccount(_ resolution: AccountResolution?, hasAccounts: Bool) {
+        shownAccount = hasAccounts ? resolution : nil
+        renderAccountPill()
+    }
+
+    /// Follows `renderBroadcastPill`'s cached-token shape: `attributedTitle` is
+    /// assigned only inside the guard, so the KVO leak stays bounded to real
+    /// changes rather than every refresh tick.
+    private func renderAccountPill() {
+        let token = shownAccount.map {
+            "\($0.accountID)|\($0.colorID ?? "")|\($0.agentID ?? "")"
+        } ?? ""
+        guard renderedAccountToken != token else { return }
+        renderedAccountToken = token
+
+        guard let account = shownAccount else {
+            accountPill.isHidden = true
+            return
+        }
+        accountPill.isHidden = false
+        let theme = ZTheme.current
+        // The account's own palette hue, never the accent — accent is reserved
+        // for focus/active/brand, and identity-by-hue is the projectPalette's job.
+        let tint = ZTheme.projectColor(id: account.colorID) ?? theme.fg3Color
+        accountButton.image = NSImage(systemSymbolName: "person.crop.circle",
+                                      accessibilityDescription: "Account")?
+            .withSymbolConfiguration(NSImage.SymbolConfiguration(pointSize: 9, weight: .semibold))
+        accountButton.contentTintColor = tint
+        // "Default" or "<Account> (<Agent>)" — the harness is named in text
+        // rather than shown as a logo. The default login isn't tied to one
+        // harness, so it carries no suffix.
+        let agentName = account.agentID.flatMap { SpawnableAgent.byID($0)?.shortName }
+        let label = agentName.map { "\(account.displayName) (\($0))" } ?? account.displayName
+        accountButton.attributedTitle = NSAttributedString(
+            string: " \(label)",
+            attributes: [
+                .font: ZTheme.monoFont(size: 10, weight: .semibold),
+                .foregroundColor: tint,
+            ])
+        accountButton.toolTip = account.isDefault
+            ? "This pane uses your default login — click to manage accounts"
+            : "This pane runs as \(account.displayName) — click to manage accounts"
+        accountPill.layer?.backgroundColor =
+            (account.isDefault ? theme.bg2Color : theme.bg3Color).cgColor
+        accountPill.layer?.borderColor =
+            (account.isDefault ? theme.borderColor : tint).cgColor
+    }
+
+    @objc private func accountClicked() { onAccountClicked?() }
 
     private func styleAppearanceButton() {
         guard renderedAppearance != appearanceMode else { return }

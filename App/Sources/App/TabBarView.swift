@@ -76,6 +76,10 @@ final class TabBarView: NSView {
     private var lastIcons: [NSImage?] = []
     private var lastSelectedIndex: Int?
     private var lastShowsClose: Bool?
+    /// Part of the render cache key: passed as IDs rather than NSColors so
+    /// equality is by value and a scheme change (same ids, different hues) is
+    /// handled by `applyTheme` → `restyle()` instead.
+    private var lastAccountColorIDs: [String?] = []
 
     /// Set once a drag has permuted `tabItems`, because a pill's `index` is baked
     /// in at init and no longer matches its position. Until the next full
@@ -287,7 +291,8 @@ final class TabBarView: NSView {
     /// the pill when one is bundled.
     /// `alwaysShowClose` forces a × on every tab even when there's only one
     /// (scratch terminals, where closing the last tab closes the project).
-    func update(titles: [String], icons: [NSImage?] = [], selectedIndex: Int, alwaysShowClose: Bool = false) {
+    func update(titles: [String], icons: [NSImage?] = [], accountColorIDs: [String?] = [],
+                selectedIndex: Int, alwaysShowClose: Bool = false) {
         // Live agents retitle their tabs every second; rebuilding the pills
         // mid-drag would destroy the one being dragged and kill the gesture.
         // Skip refreshes until the drag commits (which triggers one anyway).
@@ -300,6 +305,9 @@ final class TabBarView: NSView {
 
         let showsClose = alwaysShowClose || titles.count > 1
         let resolvedIcons = titles.indices.map { $0 < icons.count ? icons[$0] : nil }
+        let resolvedAccounts = titles.indices.map {
+            $0 < accountColorIDs.count ? accountColorIDs[$0] : nil
+        }
 
         // Nothing to do: agent title ticks land here several times a second,
         // and re-running the rebuild below dirtied the whole Auto Layout tree
@@ -309,6 +317,7 @@ final class TabBarView: NSView {
            selectedIndex == lastSelectedIndex,
            showsClose == lastShowsClose,
            resolvedIcons.count == lastIcons.count,
+           resolvedAccounts == lastAccountColorIDs,
            zip(resolvedIcons, lastIcons).allSatisfy({ $0 === $1 }) {
             return
         }
@@ -332,6 +341,7 @@ final class TabBarView: NSView {
 
         lastTitles = titles
         lastIcons = resolvedIcons
+        lastAccountColorIDs = resolvedAccounts
         lastSelectedIndex = selectedIndex
         lastShowsClose = showsClose
 
@@ -339,7 +349,8 @@ final class TabBarView: NSView {
             for (index, item) in tabItems.enumerated() {
                 item.apply(title: titles[index],
                            icon: resolvedIcons[index],
-                           isSelected: index == selectedIndex)
+                           isSelected: index == selectedIndex,
+                           accountColorID: resolvedAccounts[index])
             }
             if selectionMoved { revealTab(at: selectedIndex) }
             return
@@ -357,6 +368,9 @@ final class TabBarView: NSView {
         // Build new items.
         for (index, title) in titles.enumerated() {
             let item = TabItemView(title: title, icon: resolvedIcons[index], index: index, isSelected: index == selectedIndex, showsClose: showsClose)
+            item.apply(title: title, icon: resolvedIcons[index],
+                       isSelected: index == selectedIndex,
+                       accountColorID: resolvedAccounts[index])
             item.onSelect = { [weak self] idx in
                 self?.onSelect?(idx)
             }
@@ -596,6 +610,15 @@ private final class TabItemView: NSView {
     // MARK: Subviews
 
     private let statusDot: NSView
+    /// Marks a pane running on a non-default agent account. Created
+    /// unconditionally with a 0↔6 width toggle so `canRepresent` stays valid and
+    /// the in-place re-render path keeps working — a structural nil↔non-nil flip
+    /// would force the full pill rebuild that path exists to avoid.
+    private let accountDot: NSView
+    private let accountDotWidth: NSLayoutConstraint
+    /// Stored as an ID, not a resolved colour, so `restyle()` can re-resolve the
+    /// palette's dark/light variant on a scheme change.
+    private var accountColorID: String?
     /// Agent logo shown before the title when one is bundled (see
     /// TerminalViewController.agentIcon); nil → the name prefix is in the text.
     private let iconView: NSImageView?
@@ -627,6 +650,12 @@ private final class TabItemView: NSView {
         statusDot.wantsLayer = true
         statusDot.layer?.cornerRadius = 3.5
         statusDot.translatesAutoresizingMaskIntoConstraints = false
+
+        accountDot = NSView()
+        accountDot.wantsLayer = true
+        accountDot.layer?.cornerRadius = 3
+        accountDot.translatesAutoresizingMaskIntoConstraints = false
+        accountDotWidth = accountDot.widthAnchor.constraint(equalToConstant: 0)
 
         if let icon {
             let view = NSImageView(image: icon)
@@ -670,12 +699,17 @@ private final class TabItemView: NSView {
         addSubview(statusDot)
         if let iconView { addSubview(iconView) }
         addSubview(titleLabel)
+        addSubview(accountDot)
 
         var constraints: [NSLayoutConstraint] = [
             statusDot.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 10),
             statusDot.centerYAnchor.constraint(equalTo: centerYAnchor),
             statusDot.widthAnchor.constraint(equalToConstant: 7),
             statusDot.heightAnchor.constraint(equalToConstant: 7),
+
+            accountDot.centerYAnchor.constraint(equalTo: centerYAnchor),
+            accountDot.heightAnchor.constraint(equalToConstant: 6),
+            accountDotWidth,
 
             titleLabel.centerYAnchor.constraint(equalTo: centerYAnchor),
             heightAnchor.constraint(equalToConstant: 28),
@@ -701,14 +735,18 @@ private final class TabItemView: NSView {
             closeButton.target = self
             closeButton.action = #selector(closeClicked(_:))
             constraints += [
-                titleLabel.trailingAnchor.constraint(equalTo: closeButton.leadingAnchor, constant: -2),
+                titleLabel.trailingAnchor.constraint(equalTo: accountDot.leadingAnchor, constant: -2),
+                accountDot.trailingAnchor.constraint(equalTo: closeButton.leadingAnchor, constant: -3),
                 closeButton.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -6),
                 closeButton.centerYAnchor.constraint(equalTo: centerYAnchor),
                 closeButton.widthAnchor.constraint(equalToConstant: Self.closeButtonSize),
                 closeButton.heightAnchor.constraint(equalToConstant: Self.closeButtonSize),
             ]
         } else {
-            constraints.append(titleLabel.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -10))
+            constraints += [
+                titleLabel.trailingAnchor.constraint(equalTo: accountDot.leadingAnchor, constant: -2),
+                accountDot.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -10),
+            ]
         }
         NSLayoutConstraint.activate(constraints)
 
@@ -727,16 +765,29 @@ private final class TabItemView: NSView {
 
     /// Re-renders in place. Every assignment is guarded: an unchanged label or
     /// image still invalidates layout, and this runs on every agent title tick.
-    func apply(title: String, icon: NSImage?, isSelected: Bool) {
+    func apply(title: String, icon: NSImage?, isSelected: Bool, accountColorID: String? = nil) {
         if titleLabel.stringValue != title { titleLabel.stringValue = title }
         if let iconView, let icon, iconView.image !== icon { iconView.image = icon }
+        if self.accountColorID != accountColorID {
+            self.accountColorID = accountColorID
+            applyAccountDot()
+        }
         if self.isSelected != isSelected { self.isSelected = isSelected }  // didSet recolors
+    }
+
+    private func applyAccountDot() {
+        accountDotWidth.constant = accountColorID == nil ? 0 : 6
+        accountDot.layer?.backgroundColor = accountColorID
+            .flatMap { ZTheme.projectColor(id: $0) }?.cgColor
     }
 
     /// Recolors for the active theme without touching content.
     func restyle() {
         topBar.backgroundColor = ZTheme.current.accentColor.cgColor
         closeButton.contentTintColor = ZTheme.current.fg3Color
+        // Re-resolves the palette hue: the id is unchanged across a scheme
+        // change but its dark/light variant is not.
+        applyAccountDot()
         updateAppearance()
     }
 
