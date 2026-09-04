@@ -91,3 +91,11 @@ private func claudeCommands(_ settings: [String: Any], event: String) -> [String
     guard case let .conflict(snippet) = result else { Issue.record("expected .conflict"); return }
     #expect(snippet.contains("pre_approval_request:"))
 }
+
+@Test func claudeInstallAddsSessionStartMappedToIdle() {
+    // A just-started agent is present and waiting — green would be a lie.
+    let out = ClaudeHookConfig.install(into: [:], scriptPath: script)
+    #expect(claudeCommands(out, event: "SessionStart") == ["\(script) emit claude idle"])
+    let removed = ClaudeHookConfig.uninstall(from: out, scriptPath: script)
+    #expect(claudeCommands(removed, event: "SessionStart").isEmpty)
+}

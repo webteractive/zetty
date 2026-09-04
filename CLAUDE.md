@@ -151,6 +151,89 @@ in `ZettyCore` (`AppConfig` / `ConfigStore`); `AppDelegate` resolves + applies i
     one (`SurfaceRegistry.title` returns nil for the empty initial title so
     the fallback engages).
 
+  - **Restart recovery** (`zetty-restart-recovery`, default true; spec
+    `docs/superpowers/specs/2026-09-04-restart-recovery-design.md`). A
+    restart/shutdown/logout kills zmx too, so `applicationShouldTerminate`
+    classifies the quit from the Apple Event's `kAEQuitReason` (pure
+    `QuitReason`; ⌘Q/`zetty quit`/`NSApp.terminate` carry no reason → ordinary),
+    returns `.terminateLater`, captures `zmx history --vt` per preserved pane
+    within `RestartRecovery.shutdownBudget` (5s, atomic per-file writes — a late
+    finisher leaves a whole unreferenced file the next launch sweeps, never a
+    partial one), writes `~/.zetty/restart-recovery.json`, and ALWAYS replies
+    true — never cancel a shutdown. **The manifest is the only signal that
+    sessions died from a power-off**; the next launch deletes it the moment it
+    reads it, so a crash mid-recovery can't loop, and its absence (crash, panic,
+    plain quit) is the ordinary path. Snapshots replay through the wrapper
+    script's third argument (`attachCommand(…, snapshotPath:)` — passed only for
+    manifest surfaces, so an ordinary launch renders byte-identical commands);
+    resumes (`RestartRecovery.resumeCommand`:
+    `cd '<agent cwd>' && claude --resume '<id>'` / `codex resume '<id>'`, ids
+    validated `[A-Za-z0-9._-]{1,128}` at hook-parse time, cwd single-quoted via
+    `ShellQuote`) go through `pendingStartupCommands` — the
+    never-re-run-into-preserved-sessions rule holds because the manifest exists
+    only when those sessions are dead. The session id comes from hook payloads
+    (Claude `session_id`, Codex `thread-id`) into `AgentState.session`; Claude
+    also gets a `SessionStart → idle` hook so `/clear` and `--resume` refresh
+    the id (`idle`, never `running` — a just-started agent is waiting). Launch
+    at login is `SMAppService.mainApp` with NO config key (system-owned state,
+    same reasoning as `zetty-home-path` being a single source) — and it
+    registers whichever bundle called it, so toggle from `/Applications`.
+    `zetty quit --simulate-restart` is the test path, reusing
+    `performPowerOffRecovery(killingSessions: true)`. To exercise the REAL path
+    without losing sessions, send the app the same Apple Event macOS sends
+    (`kAEQuitApplication` + `kAEQuitReason` = `kAERestart`): it runs
+    classification, snapshot and manifest with `killingSessions: false`, so a
+    session hosting the tester survives.
+  - **Session ids come from TWO sources, and the probe outranks the detector.**
+    Hooks name the pane exactly but only fire when the agent acts, so a
+    long-running Claude or a Codex pane that never finished a turn would resume
+    nothing — on the reference workspace hooks alone covered 2 of 11 panes.
+    `AgentSessionLookup` (App) therefore reads each harness's OWN store for any
+    agent pane the probe sees without a session: Claude's
+    `~/.claude/projects/<slug>/<id>.jsonl` (file name IS the id; slug = every
+    non-alphanumeric character → `-`, undocumented so a candidate is CONFIRMED
+    against the `cwd` recorded inside before use) and Codex's
+    `~/.codex/sessions/<date>/rollout-*.jsonl` (first line carries `id` + `cwd`;
+    `codex resume --last` is NOT used — it is global, not per-directory, so it
+    would resume one pane's conversation into another). Policy is pure in
+    `AgentSessionStore`: newest-first, one per pane, never a duplicate, never an
+    id a hook already claimed. **The agent KIND for a looked-up session must
+    come from the probe, not `AgentState.kind`** — a pane can carry a stale kind
+    from the era when hook events matched by directory, which produced
+    `codex resume <claude id>` for two panes; the `resume tally` log line records
+    probe/detector/chosen so it can't regress unseen.
+  - **A captured snapshot must be SANITIZED before it is replayed**
+    (`SnapshotSanitizer`, pure + tested). `zmx history --vt` reproduces what the
+    pane emitted, and an agent killed by the power-off never undid its terminal
+    modes — every real snapshot carried `?1049h` (alt screen) plus
+    `?1000h`/`?1002h`/`?1003h`/`?1006h` (mouse) and `?2004h`, with no resets.
+    Replayed verbatim into a fresh shell that leaves the pane hostile: the shell
+    runs inside the alternate screen (so the replay is invisible in scrollback
+    AND no divider appears) and mouse reporting stays on with no TUI to consume
+    it, so every pointer movement types an escape at the prompt — observed as a
+    pane full of `zsh: command not found: 39`, whose interleaved bytes also
+    mangled the resume being typed into it, so that pane's agent never came
+    back. The sanitizer strips every DEC private mode set/reset and any scroll
+    region, keeps text/SGR/cursor motion, and appends a reset trailer
+    (margins, attributes, cursor, mouse off).
+  - **Recovery panes are spawned eagerly but STAGGERED**
+    (`spawnPanesAwaitingResume`, `resumeSpawnInterval` 2s). A pane has no pty
+    until its tab is shown and the resume rides on that spawn, so a project's
+    non-active tabs would wait for a click; the fix reuses the CLI's transient
+    `ensurePaneIsLive` select-spawn-restore so the view never moves. Spacing is
+    load-bearing, not politeness: each pane costs a GPU surface and starts an
+    agent process, and 11 agents launching together took the reference machine
+    past load 35. Hibernated projects are skipped — they were dormant before
+    the power-off and waking them would spawn work the user put away.
+  - **A resume is never typed into a pane whose agent is still running.** The
+    manifest assumes the power-off killed everything, and a restart CANCELLED
+    after Zetty quit breaks that: the app relaunches, sessions are alive, and
+    the resume lands in a live agent's prompt (observed for real). Resumes are
+    queued guarded (`queueStartupCommands(_:asAgentResume:)`), wait
+    `resumeGracePeriod` (4s, past the foreground probe's first poll), and are
+    dropped when the probe reports an agent in that pane. Template and clone
+    startup commands stay unguarded — they only ever target new panes.
+
 ### Home project
 
 A permanent **Home** project (`ProjectRuntime.isHome`) is seeded by default
@@ -1324,9 +1407,11 @@ Per-harness install (`HookInstaller` + the pure `*HookConfig` transforms):
   needsAttention, pre_llm_call→running, post_llm_call→idle, session start/end). If
   a `hooks:` block already exists, install shows a snippet to merge by hand.
 
-Notes: restart the agent after installing; correlation is by `cwd`, so two panes
-in the same directory both light up (exact per-pane routing needs a per-surface
-id libghostty doesn't expose).
+Notes: restart the agent after installing; correlation is by the `surface` field
+the hook helper reads from the pane's `ZETTY_SURFACE` (or the `ZETTY_CWD_FILE`
+stem for panes created before it), so two panes in one directory light
+independently. An event with no surface, or one naming a pane Zetty no longer
+has, falls back to matching every pane by `cwd`.
 
 ## Conventions
 

@@ -47,3 +47,13 @@ private let s1 = UUID(uuidString: "00000000-0000-0000-0000-0000000000A1")!
     let held = detector.update(session: s1, ptyFD: 3, lastOutputAt: 50, hookEvent: nil, now: 100)
     #expect(held.status == .needsAttention)
 }
+
+@Test func detectorApplyRecordsSessionFromEventAndEndedClearsIt() {
+    let detector = AgentDetector()
+    let running = AgentEvent(cwd: "/p", agent: .claude, event: .running, surface: s1, session: "sess-1")
+    #expect(detector.apply(event: running, session: s1, now: 100).session == AgentSession(id: "sess-1", cwd: "/p"))
+    let idle = AgentEvent(cwd: "/p", agent: .claude, event: .idle)
+    #expect(detector.apply(event: idle, session: s1, now: 101).session?.id == "sess-1")
+    let ended = AgentEvent(cwd: "/p", agent: .claude, event: .ended)
+    #expect(detector.apply(event: ended, session: s1, now: 102).session == nil)
+}

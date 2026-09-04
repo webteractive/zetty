@@ -58,6 +58,11 @@ public struct AppConfig: Equatable, Sendable {
     /// full zmx scrollback history into the surface before attaching. Only
     /// meaningful when `preserveSessions` is on and zmx is installed.
     public var restoreScrollback: Bool
+    /// When true (default), a restart/shutdown/logout quit snapshots preserved
+    /// panes' scrollback and tallies running harness sessions, and the next
+    /// launch replays + resumes them. Does not gate the login item (that is
+    /// system-owned state, registered from Settings).
+    public var restartRecovery: Bool
     /// Poll GitHub for newer releases and show an update pill (default true).
     /// Only gates automatic checks; the manual menu item always runs.
     public var checkUpdates: Bool
@@ -146,6 +151,7 @@ public struct AppConfig: Equatable, Sendable {
         editor: String? = nil,
         preserveSessions: Bool = false,
         restoreScrollback: Bool = true,
+        restartRecovery: Bool = true,
         checkUpdates: Bool = true,
         hibernateAfter: TimeInterval = 0,
         freeBackgroundPanesAfter: TimeInterval = 0,
@@ -167,6 +173,7 @@ public struct AppConfig: Equatable, Sendable {
         self.editor = editor
         self.preserveSessions = preserveSessions
         self.restoreScrollback = restoreScrollback
+        self.restartRecovery = restartRecovery
         self.checkUpdates = checkUpdates
         self.hibernateAfter = hibernateAfter
         self.freeBackgroundPanesAfter = freeBackgroundPanesAfter
@@ -273,6 +280,8 @@ public struct AppConfig: Equatable, Sendable {
                 // way back to the default.
                 let lowered = value.lowercased()
                 config.homePath = ["off", "none", "default", "~"].contains(lowered) ? nil : value
+            case "zetty-restart-recovery":
+                config.restartRecovery = ["true", "yes", "on", "1"].contains(value.lowercased())
             case "zetty-file-tree-show-hidden":
                 config.fileTree.showHidden = ["true", "yes", "on", "1"].contains(value.lowercased())
             case "zetty-file-tree-respect-gitignore":
@@ -407,6 +416,10 @@ public struct AppConfig: Equatable, Sendable {
         # Replay preserved panes' scrollback history when relaunch reattaches
         # them (only meaningful with preserve-sessions = true).
         restore-scrollback = \(restoreScrollback)
+
+        # After a macOS restart, shutdown or logout, replay each preserved pane's
+        # last screen and resume the Claude/Codex session it was running.
+        zetty-restart-recovery = \(restartRecovery)
 
         # Check GitHub for newer Zetty releases and show an update pill.
         check-updates = \(checkUpdates)

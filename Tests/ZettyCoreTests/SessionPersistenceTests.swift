@@ -127,3 +127,81 @@ private let idB = UUID(uuidString: "11111111-2222-3333-4444-555555555555")!
     let config = AppConfig(restoreScrollback: false)
     #expect(AppConfig.parse(config.rendered()) == config)
 }
+
+@Test func configParsesRestartRecovery() {
+    #expect(AppConfig.parse("").restartRecovery == true)
+    #expect(AppConfig.parse("zetty-restart-recovery = false").restartRecovery == false)
+    #expect(AppConfig.parse("zetty-restart-recovery = off").restartRecovery == false)
+    let rendered = AppConfig(restartRecovery: false).rendered()
+    #expect(rendered.contains("zetty-restart-recovery = false"))
+    // Reserved: must never reach ghostty (which would drop the whole config).
+    #expect(AppConfig.parse("zetty-restart-recovery = true").ghostty.isEmpty)
+}
+
+// MARK: - Restart snapshots
+
+@Test func attachCommandAppendsSnapshotPathAsFourthToken() {
+    let cmd = SessionPersistence.attachCommand(
+        zmxPath: "/opt/homebrew/bin/zmx",
+        surfaceID: idA,
+        restoreScriptPath: "/Users/g/.zetty/scrollback-restore.sh",
+        snapshotPath: "/Users/g/.zetty/snapshots/zetty-abcdef01.vt")
+    #expect(cmd == "/bin/sh /Users/g/.zetty/scrollback-restore.sh /opt/homebrew/bin/zmx zetty-abcdef01 /Users/g/.zetty/snapshots/zetty-abcdef01.vt")
+    // Without the script there is nothing to replay the file; the bare form is unchanged.
+    let bare = SessionPersistence.attachCommand(zmxPath: "/opt/homebrew/bin/zmx", surfaceID: idA,
+                                                snapshotPath: "/x.vt")
+    #expect(bare == "/usr/bin/env -u ZMX_SESSION /opt/homebrew/bin/zmx attach zetty-abcdef01")
+}
+
+@Test func restoreScriptReplaysSnapshotFileInsteadOfHistoryAndDeletesIt() throws {
+    let dir = FileManager.default.temporaryDirectory
+        .appendingPathComponent("zetty-restore-snap-\(UUID().uuidString)")
+    try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: dir) }
+
+    let scriptURL = dir.appendingPathComponent("scrollback-restore.sh")
+    try SessionPersistence.restoreScriptContents.write(to: scriptURL, atomically: true, encoding: .utf8)
+    let logURL = dir.appendingPathComponent("calls.log")
+    let stubURL = dir.appendingPathComponent("zmx")
+    try """
+    #!/bin/sh
+    echo "$1 $2" >> "\(logURL.path)"
+    """.write(to: stubURL, atomically: true, encoding: .utf8)
+    try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: stubURL.path)
+    let snapshotURL = dir.appendingPathComponent("zetty-test1234.vt")
+    try "REPLAYED SCREEN\n".write(to: snapshotURL, atomically: true, encoding: .utf8)
+
+    let process = Process()
+    process.executableURL = URL(fileURLWithPath: "/bin/sh")
+    process.arguments = [scriptURL.path, stubURL.path, "zetty-test1234", snapshotURL.path]
+    let stdout = Pipe()
+    process.standardOutput = stdout
+    try process.run()
+    let output = String(data: stdout.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+    process.waitUntilExit()
+
+    #expect(output.hasPrefix("REPLAYED SCREEN\n"))
+    #expect(output.contains(SessionPersistence.restoreDivider))
+    #expect(try String(contentsOf: logURL, encoding: .utf8) == "attach zetty-test1234\n")   // no history call
+    #expect(!FileManager.default.fileExists(atPath: snapshotURL.path))                      // consumed
+}
+
+@Test func restoreScriptFallsBackToHistoryWhenSnapshotFileIsMissing() throws {
+    let dir = FileManager.default.temporaryDirectory
+        .appendingPathComponent("zetty-restore-nosnap-\(UUID().uuidString)")
+    try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: dir) }
+    let scriptURL = dir.appendingPathComponent("scrollback-restore.sh")
+    try SessionPersistence.restoreScriptContents.write(to: scriptURL, atomically: true, encoding: .utf8)
+    let logURL = dir.appendingPathComponent("calls.log")
+    let stubURL = dir.appendingPathComponent("zmx")
+    try "#!/bin/sh\necho \"$1 $2\" >> \"\(logURL.path)\"\n".write(to: stubURL, atomically: true, encoding: .utf8)
+    try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: stubURL.path)
+
+    let process = Process()
+    process.executableURL = URL(fileURLWithPath: "/bin/sh")
+    process.arguments = [scriptURL.path, stubURL.path, "zetty-test1234", dir.appendingPathComponent("gone.vt").path]
+    try process.run()
+    process.waitUntilExit()
+    #expect(try String(contentsOf: logURL, encoding: .utf8) == "history zetty-test1234\nattach zetty-test1234\n")
+}

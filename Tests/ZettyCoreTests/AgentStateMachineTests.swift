@@ -55,3 +55,35 @@ private func reduce(
     let cleared = reduce(prev: prev, descriptor: claude, lastOutputAt: 99.9, now: 100)
     #expect(cleared.status == .running)
 }
+
+// MARK: - Harness session (restart recovery)
+
+@Test func hookEventWithSessionRecordsIt() {
+    let s = AgentStateMachine.reduce(
+        previous: .init(),
+        observation: AgentObservation(descriptor: claude, lastOutputAt: nil, hookEvent: .running, now: 100,
+                                      session: AgentSession(id: "abc", cwd: "/p")))
+    #expect(s.session == AgentSession(id: "abc", cwd: "/p"))
+}
+
+@Test func hookEventWithoutSessionKeepsPreviousSession() {
+    let prev = AgentState(kind: .claude, status: .running, session: AgentSession(id: "abc", cwd: "/p"))
+    let s = reduce(prev: prev, descriptor: claude, hook: .idle, now: 100)
+    #expect(s.session == AgentSession(id: "abc", cwd: "/p"))
+    #expect(s.status == .idle)
+}
+
+@Test func newSessionReplacesOldOne() {
+    let prev = AgentState(kind: .claude, status: .idle, session: AgentSession(id: "old", cwd: "/p"))
+    let s = AgentStateMachine.reduce(
+        previous: prev,
+        observation: AgentObservation(descriptor: claude, lastOutputAt: nil, hookEvent: .idle, now: 100,
+                                      session: AgentSession(id: "new", cwd: "/p")))
+    #expect(s.session?.id == "new")
+}
+
+@Test func noDescriptorClearsSession() {
+    let prev = AgentState(kind: .claude, status: .running, session: AgentSession(id: "abc", cwd: "/p"))
+    let s = reduce(prev: prev, descriptor: nil, now: 100)
+    #expect(s.session == nil)
+}

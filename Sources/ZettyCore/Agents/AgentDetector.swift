@@ -31,7 +31,8 @@ public final class AgentDetector {
             descriptor: descriptor,
             lastOutputAt: nil,
             hookEvent: event.hookEvent,
-            now: now
+            now: now,
+            session: event.session.map { AgentSession(id: $0, cwd: event.cwd) }
         )
         let next = AgentStateMachine.reduce(previous: state(for: session), observation: observation)
         states[session] = next

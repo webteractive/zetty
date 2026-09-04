@@ -105,9 +105,13 @@ public enum ControlCLI {
                                               --focus switches to it. Prints its
                                               pane id
       zetty scratch-clear                   close and clear all scratch terminals
-      zetty quit [--kill-sessions]          quit the app (no confirmation dialog);
+      zetty quit [--kill-sessions | --simulate-restart]
+                                            quit the app (no confirmation dialog);
                                               --kill-sessions also kills every
-                                              preserved zmx session (full shutdown)
+                                              preserved zmx session (full shutdown);
+                                              --simulate-restart runs the restart-
+                                              recovery snapshot first, then kills
+                                              sessions like a real restart (testing aid)
 
     Notes (script/agent friendly):
       - The default send/capture/split target is the focused pane. Send text
@@ -210,7 +214,9 @@ public enum ControlCLI {
         case "scratch-clear":
             return expectOK(.scratchClear, success: "cleared")
         case "quit":
-            return expectOK(.quit(killSessions: arguments.contains("--kill-sessions")), success: nil)
+            return expectOK(.quit(killSessions: arguments.contains("--kill-sessions"),
+                                  simulateRestart: arguments.contains("--simulate-restart")),
+                            success: nil)
         default:
             return failure("unknown command \"\(command)\"\n\n\(usage)")
         }

@@ -138,6 +138,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         tvc.sidebarPosition = appConfig.sidebarPosition
         let restoredFromDisk = restoreWorkspace(into: tvc)
         terminalViewController = tvc
+        // Restart recovery: the manifest exists only after a power-off quit and
+        // is deleted by this read. Only a restored layout can own its surfaces;
+        // after a fallback every entry would be dropped anyway.
+        if let manifest = RestartRecoveryRunner.consumeManifest() {
+            applyRecoveryManifest(manifest, to: tvc, restoredFromDisk: restoredFromDisk)
+        }
         projectSettings = projectSettingsStore.load()
         agentAccounts = agentAccountStore.load()
         // Drop stamps naming an account that no longer exists, so workspace.json
@@ -267,6 +273,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             // The bundled zsh integration writes $PWD here on every cd so the
             // status bar can show the focused pane's live working directory.
             env["ZETTY_CWD_FILE"] = PaneCwdStore.path(for: surface.id)
+            // The hook helper reports this back so an event routes to exactly
+            // this pane rather than to every pane sharing its cwd.
+            env["ZETTY_SURFACE"] = surface.id.uuidString
             return env
         }
         tvc.onAttentionCountChanged = { [weak self] count in
@@ -1169,7 +1178,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         // per-pane decision happens inside the closure at spawn time.
         let anyPreserve = appConfig.preserveSessions || projectSettings.anyPreserveOverrideOn
         if anyPreserve, let zmx = zmxPath {
-            let restoreScript = appConfig.restoreScrollback ? ScrollbackRestore.ensureScript() : nil
+            // A snapshot needs the wrapper even when history replay is off:
+            // the file is the only copy of that pane's screen.
+            let wantsScript = appConfig.restoreScrollback || !recoverySnapshotPaths.isEmpty
+            let restoreScript = wantsScript ? ScrollbackRestore.ensureScript() : nil
             tvc.sessionCommandProvider = { [weak self, weak tvc] id in
                 guard let self else { return nil }
                 // Resolve the owning project's effective value; a surface not
@@ -1182,7 +1194,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
                     guard self.appConfig.preserveSessions else { return nil }
                 }
                 return SessionPersistence.attachCommand(
-                    zmxPath: zmx, surfaceID: id, restoreScriptPath: restoreScript)
+                    zmxPath: zmx, surfaceID: id, restoreScriptPath: restoreScript,
+                    snapshotPath: self.recoverySnapshotPaths[id])
             }
         } else {
             tvc.sessionCommandProvider = nil
@@ -1417,6 +1430,117 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         return true
     }
 
+    /// Classifies the in-flight quit from the Apple Event that caused it.
+    /// Power-off quits (restart / shutdown / logout) carry `kAEQuitReason`;
+    /// ⌘Q, `zetty quit` and `NSApp.terminate(nil)` do not.
+    private func currentQuitReason() -> QuitReason {
+        guard let event = NSAppleEventManager.shared().currentAppleEvent else {
+            return QuitReason.classify(eventClass: nil, eventID: nil, reason: nil)
+        }
+        // AEEventClass/AEEventID/OSType are all FourCharCode (UInt32) already.
+        let reason = event.attributeDescriptor(forKeyword: AEKeyword(kAEQuitReason))?.enumCodeValue
+        return QuitReason.classify(
+            eventClass: event.eventClass,
+            eventID: event.eventID,
+            reason: reason)
+    }
+
+    /// A restart / shutdown / logout kills every zmx session; snapshot what we
+    /// can first and leave a manifest for the next launch. Never cancels the
+    /// quit: `.terminateLater` buys a bounded window, then we always reply true
+    /// — an app that stalls a shutdown is a bug met at the login window.
+    func applicationShouldTerminate(_: NSApplication) -> NSApplication.TerminateReply {
+        let reason = currentQuitReason()
+        ZettyLog.lifecycle.log("quit: reason \(reason)")
+        guard reason == .powerOff, appConfig.restartRecovery, terminalViewController != nil else {
+            return .terminateNow
+        }
+        performPowerOffRecovery(killingSessions: false) {
+            NSApp.reply(toApplicationShouldTerminate: true)
+        }
+        return .terminateLater
+    }
+
+    /// Snapshots preserved panes' scrollback (off-main, within
+    /// `RestartRecovery.shutdownBudget`), tallies harness sessions, writes the
+    /// recovery manifest, optionally kills every zmx session (what a real
+    /// power-off would do — for `zetty quit --simulate-restart`), then calls
+    /// `completion` on main. `completion` ALWAYS runs, whatever failed.
+    func performPowerOffRecovery(killingSessions: Bool, completion: @escaping () -> Void) {
+        precondition(Thread.isMainThread)
+        guard let tvc = terminalViewController else { completion(); return }
+
+        // Snapshot candidates: awake, non-scratch projects that preserve
+        // sessions. A hibernated project's sessions are already gone; scratch
+        // never preserves.
+        var snapshotCandidates: [UUID] = []
+        for project in tvc.workspace.projects where !project.isHibernated && !project.isScratch {
+            guard resolvedSettings(for: project).preserveSessions else { continue }
+            snapshotCandidates += project.tabList.trees.flatMap { $0.layout.surfaces.map(\.id) }
+        }
+        // Tally candidates: every session owner (a plain-shell pane has no
+        // scrollback to snapshot but can still resume its agent).
+        let owners = tvc.sessionOwnerSurfaceIDs
+        var states: [UUID: AgentState] = [:]
+        for id in owners { states[id] = tvc.agentState(for: id) }
+
+        // Hooks only report a session id once the agent has done something, so
+        // a long-running agent — or a Codex pane that hasn't finished a turn —
+        // would come back as a replayed screen with nothing resumed. The
+        // foreground probe knows what every pane is running regardless, so any
+        // agent pane still missing a session is looked up in the harness's own
+        // store below (off-main, inside the budget).
+        let lookupTargets = tvc.agentPanes()
+            .filter { states[$0.surface]?.session == nil }
+            .map { AgentSessionLookup.Target(surface: $0.surface, cwd: $0.cwd, agent: $0.agent) }
+        let claimedSessions = Set(states.values.compactMap { $0.session?.id })
+        let probedAgents = Dictionary(
+            tvc.agentPanes().map { ($0.surface, $0.agent) }, uniquingKeysWith: { first, _ in first })
+        let zmx = ZmxRunner.locate()
+
+        DispatchQueue.global(qos: .userInitiated).async {
+            var snapshots: [UUID: String] = [:]
+            if let zmx {
+                snapshots = RestartRecoveryRunner.captureSnapshots(
+                    for: snapshotCandidates, zmxPath: zmx, budget: RestartRecovery.shutdownBudget)
+            } else {
+                ZettyLog.lifecycle.log("snapshot: zmx not installed; manifest will carry resumes only")
+            }
+            // Fill the gaps from each harness's own session store, then hand
+            // the merged view to the tally. A looked-up session carries the
+            // probed agent kind, since the detector never saw this pane.
+            var merged = states
+            let recovered = AgentSessionLookup.fallbackSessions(
+                for: lookupTargets, claimed: claimedSessions)
+            for (surface, session) in recovered {
+                var state = merged[surface] ?? AgentState()
+                state.session = session
+                // The PROBE is the authority on what a pane is running, not the
+                // detector: a pane can carry a stale kind from the era when hook
+                // events matched by directory and lit every pane in it, which
+                // would label a Claude session `codex` and build a resume command
+                // the other harness can't honour.
+                state.kind = probedAgents[surface] ?? state.kind
+                merged[surface] = state
+                // Which source decided the harness matters: a wrong kind builds
+                // a resume command the other harness cannot honour.
+                ZettyLog.lifecycle.log(
+                    "resume tally: \(SessionPersistence.shortID(for: surface))"
+                    + " probe=\(probedAgents[surface]?.rawValue ?? "none")"
+                    + " detector=\(states[surface]?.kind?.rawValue ?? "none")"
+                    + " chosen=\(state.kind?.rawValue ?? "none")")
+            }
+            let manifest = RestartRecovery.Manifest.make(
+                surfaces: owners, snapshots: snapshots, agentStates: merged, now: Date())
+            _ = RestartRecoveryRunner.write(manifest)
+            if killingSessions, let zmx {
+                let sessions = ZmxRunner.listZettySessions(zmxPath: zmx)
+                ZmxRunner.killAndWait(sessions: sessions, zmxPath: zmx)
+            }
+            DispatchQueue.main.async(execute: completion)
+        }
+    }
+
     func applicationWillTerminate(_: Notification) {
         controlSocketServer?.stop()
         saveWorkspace()
@@ -1457,11 +1581,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
                     let tail = lines.map { Array(allLines.suffix(max(0, $0))) } ?? Array(allLines)
                     return .text(tail.joined(separator: "\n"))
                 }
-            case .quit(let killSessions):
-                // Respond first; the shared helper performs any kill-wait
-                // off-main, then terminates without displaying a GUI prompt.
+            case .quit(let killSessions, let simulateRestart):
+                // Respond first; the shared helpers perform any kill-wait
+                // off-main, then terminate without displaying a GUI prompt.
                 DispatchQueue.main.async {
-                    self.requestApplicationTermination(killingSessions: killSessions)
+                    if simulateRestart {
+                        // The manifest is written before the sessions die, exactly
+                        // like a real power-off; the terminate that follows carries
+                        // no Apple Event, so it classifies as ordinary and doesn't
+                        // write a second manifest.
+                        self.performPowerOffRecovery(killingSessions: true) { NSApp.terminate(nil) }
+                    } else {
+                        self.requestApplicationTermination(killingSessions: killSessions)
+                    }
                 }
                 return .ok
             case .cloneProject(let project, let name, let focus):
@@ -1731,6 +1863,34 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         return path
     }
 
+    /// Reconciles a consumed manifest against the restored workspace: keeps
+    /// snapshot paths for the attach command, queues resume commands, and
+    /// sweeps snapshot files nothing references any more.
+    private func applyRecoveryManifest(_ manifest: RestartRecovery.Manifest,
+                                       to tvc: TerminalViewController,
+                                       restoredFromDisk: Bool) {
+        let known: Set<UUID> = restoredFromDisk ? Set(tvc.sessionOwnerSurfaceIDs) : []
+        let (kept, dropped) = manifest.entries(applyingTo: known)
+        var resumes: [UUID: String] = [:]
+        for entry in kept {
+            if let path = entry.snapshot { recoverySnapshotPaths[entry.surface] = path }
+            if let agent = entry.agent, let id = entry.agentSession, let cwd = entry.agentCwd,
+               let command = RestartRecovery.resumeCommand(agent: agent, sessionID: id, cwd: cwd) {
+                resumes[entry.surface] = command
+            }
+        }
+        tvc.queueStartupCommands(resumes, asAgentResume: true)
+        // Panes in a project's non-active tabs have no pty yet, and the resume
+        // rides on the spawn — so bring them up ourselves, spaced out, instead
+        // of waiting for the user to click each one.
+        if !resumes.isEmpty { tvc.spawnPanesAwaitingResume() }
+        RestartRecoveryRunner.sweepSnapshots(keeping: Set(recoverySnapshotPaths.values))
+        ZettyLog.lifecycle.log(
+            "recovery: \(recoverySnapshotPaths.count) snapshot(s), \(resumes.count) resume(s) queued, "
+            + "\(manifest.entries.count - kept.count) entr(y/ies) dropped, "
+            + "\(dropped.count) dropped snapshot file(s)")
+    }
+
     /// Load the saved workspace and seed the terminal view controller with it.
     ///
     /// Restoration is unconditional — even if `preserveSessions` is false in the
@@ -1773,6 +1933,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             return false
         }
     }
+
+    /// Snapshot file per surface from a consumed recovery manifest — handed to
+    /// the pane's attach command as the wrapper script's third argument. The
+    /// script deletes the file after replaying it, so a later respawn of the
+    /// same surface finds nothing and falls through to the live history.
+    private var recoverySnapshotPaths: [UUID: String] = [:]
 
     /// Pending debounced autosave (coalesces rapid structural changes into one write).
     private var pendingSave: DispatchWorkItem?

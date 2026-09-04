@@ -1,4 +1,5 @@
 import AppKit
+import ServiceManagement
 import ZettyGhostty
 
 /// A small themed Settings window. Currently hosts the **Agent Status Hooks**
@@ -28,6 +29,10 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
 
     // Sessions section controls.
     private let preserveSwitch = NSSwitch()
+    private let loginItemSwitch = NSSwitch()
+    private let loginItemNote = NSTextField(wrappingLabelWithString:
+        "Registers this copy of Zetty as a login item. Turn it on from the copy in /Applications — "
+        + "a build folder's copy would be the one that launches.")
     private let sessionStatusLabel = NSTextField(labelWithString: "")
     private let orphanButton = NSButton(title: "", target: nil, action: nil)
     private var orphanSessions: [String] = []
@@ -348,6 +353,15 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         sessionStatusLabel.font = ZTheme.chromeFont(size: 11)
         sessionStatusLabel.textColor = ZTheme.current.fg3Color
         stack.addArrangedSubview(sessionStatusLabel)
+
+        // Not a config key: login-item state is owned by the system, so a
+        // key here would be a second source of truth with a precedence rule.
+        loginItemSwitch.target = self
+        loginItemSwitch.action = #selector(loginItemToggled(_:))
+        addFullWidth(switchRow("Launch at login", control: loginItemSwitch), to: stack)
+        loginItemNote.font = ZTheme.chromeFont(size: 11)
+        loginItemNote.textColor = ZTheme.current.fg3Color
+        stack.addArrangedSubview(loginItemNote)
 
         orphanButton.bezelStyle = .rounded
         orphanButton.target = self
@@ -820,6 +834,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         notifySoundSwitch.state = config.notifySound ? .on : .off
         notifyBadgeSwitch.state = config.notifyBadge ? .on : .off
         notifySystemSwitch.state = config.notifySystem ? .on : .off
+        loginItemSwitch.state = SMAppService.mainApp.status == .enabled ? .on : .off
 
         // Which zmx binary backs the feature is an implementation detail; the
         // status line only appears when zmx is missing, to explain the toggle.
@@ -842,6 +857,28 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
                 self.orphanButton.isHidden = orphans.isEmpty
             }
         }
+    }
+
+    @objc private func loginItemToggled(_ sender: NSSwitch) {
+        let service = SMAppService.mainApp
+        do {
+            if sender.state == .on {
+                try service.register()
+                // The system may hold a new item for user approval; send them there.
+                if service.status == .requiresApproval { SMAppService.openSystemSettingsLoginItems() }
+            } else {
+                try service.unregister()
+            }
+            ZettyLog.lifecycle.log(
+                "login item: \(sender.state == .on ? "registered" : "unregistered") "
+                + "(status \(service.status.rawValue))")
+        } catch {
+            // Ad-hoc-signed builds outside /Applications are the usual cause.
+            sessionStatusLabel.isHidden = false
+            sessionStatusLabel.stringValue = "Launch at login failed: \(error.localizedDescription)"
+            ZettyLog.lifecycle.error("login item: \(error.localizedDescription)")
+        }
+        loginItemSwitch.state = service.status == .enabled ? .on : .off
     }
 
     @objc private func preserveToggled(_ sender: NSSwitch) {

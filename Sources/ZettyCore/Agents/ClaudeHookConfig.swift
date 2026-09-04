@@ -9,6 +9,9 @@ public enum ClaudeHookConfig {
 
     /// (Claude hook event, Zetty status) pairs.
     public static let events: [(event: String, status: String)] = [
+        // Present-and-waiting, not busy: a fresh session's id has to be seen
+        // before its first prompt (and again after /clear or --resume).
+        ("SessionStart", "idle"),
         ("UserPromptSubmit", "running"),
         ("Notification", "needsAttention"),
         ("Stop", "idle"),

@@ -404,6 +404,7 @@ seeds a documented starter file on first launch. Format is plain
 | `viewer-highlight-command` | `bat --style=plain --color=always --paging=never` | Command the file viewer pipes a file through for syntax highlighting; `off` disables it. Zetty sets `BAT_THEME` to match the active scheme's light/dark axis — pass your own `--theme` here to override |
 | `viewer-max-bytes` | `2097152` | Largest file the viewer will render; bigger files open in their default app instead |
 | `zetty-home-path` | — | Directory the **Home** project is rooted at (`~` allowed); unset — or `off`/`~` — keeps it at your home directory |
+| `zetty-restart-recovery` | `true` | After a macOS restart/shutdown/logout, replay each preserved pane's last screen and resume the Claude/Codex session it was running |
 | `zetty-file-tree-show-hidden` | `true` | Show dotfiles in the per-pane file tree |
 | `zetty-file-tree-respect-gitignore` | `false` | Hide anything the repo's `.gitignore` excludes |
 | `zetty-file-tree-ignore` | — | Extra names to hide, comma-separated (e.g. `node_modules, vendor`) |
@@ -479,6 +480,47 @@ Once enabled, every pane runs inside its own zmx session:
 The Settings-offered download installs zmx into `~/.zetty/bin`; existing
 Homebrew or manual installs are detected automatically.
 
+#### Surviving a restart
+
+A macOS restart, shutdown or logout kills every process, zmx sessions
+included — so ordinarily every pane would come back as an empty shell. With
+`zetty-restart-recovery = true` (the default) Zetty notices that kind of quit
+and, before the sessions die:
+
+- **snapshots each preserved pane's screen** (its full scrollback, colors
+  intact) and replays it into the pane on relaunch, followed by a dim
+  `── restored after restart ──` divider so you can tell the replay from the
+  fresh shell beneath it;
+- **remembers which Claude Code or Codex session each pane was running** and
+  types `claude --resume <id>` / `codex resume <id>` into that pane once it
+  spawns (in the directory the agent was working in, under the same agent
+  account). Panes in background tabs pick theirs up when first viewed.
+
+Which session a pane was running is learned from the harness's status hooks
+where they have fired, and otherwise from the harness's own session store on
+disk, so a Claude that has been running untouched for days is still resumed.
+When two panes share one directory, the newest sessions for it are handed out
+one per pane, so you get the right set of conversations back even though a
+pair may land swapped.
+
+Panes in a project's background tabs are brought up for you a couple of
+seconds apart, rather than waiting to be clicked, so recovery finishes on its
+own without eleven agents starting at the same instant.
+
+Snapshots need preserve-sessions (zmx is the scrollback source); resumes work
+in any pane. Hermes panes come back as a plain shell, since Zetty has no
+verified way to resume one. ⌘Q and `zetty quit` are unaffected — those keep
+sessions alive as before — and a crash or power loss leaves nothing to recover
+from. If a restart is cancelled after Zetty has already quit, the relaunch
+notices each agent is still running and types nothing into it.
+
+**Launch at login** (Settings ⌘, → Sessions) registers Zetty as a login item so
+the relaunch happens by itself. Turn it on from the copy in `/Applications`:
+the login item points at whichever bundle registered it.
+
+`zetty quit --simulate-restart` runs the whole power-off path without
+rebooting — snapshot, manifest, then every session killed — for testing.
+
 ### `ssh://` links
 
 Zetty registers as a macOS handler for `ssh://` URLs. When another app opens
@@ -503,8 +545,10 @@ events the harness pings Zetty, which lights the sidebar dots:
   macOS notification that focuses the pane when clicked)
 - **dim** — agent is idle
 
-Restart the agent after installing a hook. Events correlate to panes by
-working directory, so two panes in the same directory light up together.
+Restart the agent after installing a hook. Events name the exact pane they
+came from (Zetty tags each pane's environment), so two panes in the same
+directory light up independently; hooks from an older helper fall back to
+matching by working directory.
 Toggling off uninstalls the hook cleanly.
 
 The hook event log (`~/.zetty/agent-events.jsonl`) is trimmed to its most
@@ -714,7 +758,16 @@ zetty focus --cwd ~/work/api
 zetty close --pane 1a2b3c4d --tab
 zetty reload                             # same as ⇧⌘,
 zetty quit --kill-sessions               # full shutdown, ends preserved sessions
+zetty quit --simulate-restart            # run restart recovery, then kill sessions (testing aid)
 ```
+
+**Every pane a CLI verb creates is spawned immediately**, even in the
+background: its shell — and any layout-template startup command or chosen agent
+— is running by the time the verb returns, while the project you are looking at
+stays put unless you pass `--focus`. That is what makes orchestration work, with
+one session adding, driving and removing panes across many projects and being
+able to `send` and `capture` them straight away. The cost is that a background
+`add-project` pays for its panes at creation rather than on first view.
 
 The **Home** project is targetable by name (`zetty new-tab --project Home`,
 `zetty hibernate Home`), but `zetty remove-project Home` is rejected — Home

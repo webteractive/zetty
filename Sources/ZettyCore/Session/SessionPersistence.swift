@@ -22,20 +22,34 @@ public enum SessionPersistence {
         namePrefix + shortID(for: surfaceID)
     }
 
+    /// Printed after a restart snapshot is replayed, so the replayed screen is
+    /// not mistaken for a live process (dim, one line).
+    public static let restoreDivider = "── restored after restart ──"
+
     /// Contents of the generated scrollback-restore wrapper
     /// (`~/.zetty/scrollback-restore.sh`; the app layer writes it). Replays
-    /// the session's full scrollback (`zmx history --vt`, attributes intact)
-    /// into the surface as ordinary output, then execs the attach so no
-    /// extra shell lingers. `unset ZMX_SESSION` covers the inherited-session
-    /// hazard (see `attachCommand`) for both zmx invocations. A missing
-    /// session (new pane) prints nothing — stderr is suppressed — and attach
-    /// creates it as before.
+    /// the session's full scrollback (attributes intact) into the surface as
+    /// ordinary output, then execs the attach so no extra shell lingers.
+    ///
+    /// Two sources, chosen by the optional third argument: a restart-recovery
+    /// snapshot file (the session is known dead — the file is printed, deleted,
+    /// and followed by `restoreDivider`), otherwise `zmx history --vt` for the
+    /// live session. `unset ZMX_SESSION` covers the inherited-session hazard
+    /// (see `attachCommand`) for both zmx invocations. A missing session (new
+    /// pane) prints nothing — stderr is suppressed — and attach creates it as
+    /// before.
     public static let restoreScriptContents = """
     #!/bin/sh
     # Zetty scrollback restore (generated; do not edit — rewritten on launch).
-    # $1 = zmx path, $2 = session name.
+    # $1 = zmx path, $2 = session name, $3 = optional restart snapshot file.
     unset ZMX_SESSION
-    "$1" history "$2" --vt 2>/dev/null
+    if [ -n "$3" ] && [ -f "$3" ]; then
+      cat "$3"
+      rm -f "$3"
+      printf '\\033[2m\(restoreDivider)\\033[0m\\n'
+    else
+      "$1" history "$2" --vt 2>/dev/null
+    fi
     exec "$1" attach "$2"
     """
 
@@ -47,6 +61,8 @@ public enum SessionPersistence {
     /// invocation is plain space-separated tokens — ghostty's `command`
     /// parser can't be relied on for quote grouping, so nothing may need
     /// quoting (paths with spaces are already unsupported by the bare form).
+    /// `snapshotPath` (restart recovery) is appended as a fourth token and is
+    /// subject to the same no-spaces rule.
     ///
     /// ZMX_SESSION is unset first (by `env -u` here, by the script there):
     /// when Zetty itself was launched from a zmx-backed terminal (e.g.
@@ -56,13 +72,18 @@ public enum SessionPersistence {
     public static func attachCommand(
         zmxPath: String,
         surfaceID: UUID,
-        restoreScriptPath: String? = nil
+        restoreScriptPath: String? = nil,
+        snapshotPath: String? = nil
     ) -> String {
         let session = sessionName(for: surfaceID)
         guard let script = restoreScriptPath else {
             return "/usr/bin/env -u ZMX_SESSION \(zmxPath) attach \(session)"
         }
-        return "/bin/sh \(script) \(zmxPath) \(session)"
+        var command = "/bin/sh \(script) \(zmxPath) \(session)"
+        // Fourth plain token; present only for a surface the recovery manifest
+        // named, so an ordinary launch renders exactly the command it did before.
+        if let snapshotPath { command += " \(snapshotPath)" }
+        return command
     }
 
     /// Parses full `zmx list` output into session name → root pid, for

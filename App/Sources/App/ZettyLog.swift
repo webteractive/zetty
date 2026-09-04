@@ -36,6 +36,11 @@ enum ZettyLog {
     /// `zetty-home-path` that no longer names a directory.
     static let config = ZettyLogger(category: "config")
 
+    /// App lifecycle: quit-reason classification, restart-recovery snapshots
+    /// written and replayed, the manifest consumed. Counts and paths only —
+    /// never scrollback contents.
+    static let lifecycle = ZettyLogger(category: "lifecycle")
+
     /// Recent lines, newest last, under a header identifying the build — the
     /// text "Copy diagnostics" puts on the clipboard.
     @MainActor

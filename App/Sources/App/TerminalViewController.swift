@@ -424,6 +424,48 @@ final class TerminalViewController: NSViewController {
     /// whose preserved zmx sessions this workspace owns (for orphan diffing).
     var sessionOwnerSurfaceIDs: [UUID] { workspace.sessionOwnerSurfaceIDs }
 
+    /// The detector's current view of a pane — kind, status, and the harness
+    /// session its hooks last reported. Read by the restart-recovery tally.
+    func agentState(for surfaceID: UUID) -> AgentState {
+        agentDetector.state(for: surfaceID)
+    }
+
+    /// Every pane the foreground probe currently sees running an agent, with
+    /// the directory that agent is working in.
+    ///
+    /// Hook-independent: this is the probe that drives tab identity, so it
+    /// reports a long-running agent that has never fired a hook — exactly the
+    /// pane restart recovery would otherwise have no session id for. The cwd
+    /// is resolved the same way `statusSnapshot` resolves it, so the two can
+    /// never disagree about where a pane is.
+    func agentPanes() -> [(surface: UUID, cwd: String, agent: AgentKind)] {
+        var found: [(surface: UUID, cwd: String, agent: AgentKind)] = []
+        for project in workspace.projects {
+            for tree in project.tabList.trees {
+                for surface in tree.layout.surfaces {
+                    guard let command = foregroundBySurface[surface.id], !command.isEmpty,
+                          let kind = AgentRegistry.match(command: command)?.kind else { continue }
+                    let cwd = PaneCwdStore.read(surface.id)
+                        ?? registry.workingDirectory(for: surface)
+                        ?? surface.workingDir
+                    found.append((surface: surface.id, cwd: cwd, agent: kind))
+                }
+            }
+        }
+        return found
+    }
+
+    /// Queues commands to be typed into panes once they spawn (same path as
+    /// layout-template startup commands). In-memory only.
+    ///
+    /// `asAgentResume` marks them as restart-recovery resumes, which are only
+    /// delivered into a pane whose session came back EMPTY — see
+    /// `guardedResumeSurfaces`.
+    func queueStartupCommands(_ commands: [UUID: String], asAgentResume: Bool = false) {
+        pendingStartupCommands.merge(commands) { _, new in new }
+        if asAgentResume { guardedResumeSurfaces.formUnion(commands.keys) }
+    }
+
     /// Called to reload configuration from disk (⇧⌘,).
     var onReloadConfig: (() -> Void)?
 
@@ -1182,8 +1224,9 @@ final class TerminalViewController: NSViewController {
         }
     }
 
-    /// Routes hook events to the sessions (surfaces) whose working directory
-    /// matches the event's `cwd`, then refreshes the status dots.
+    /// Routes hook events to the pane the event names (`surface`), falling back
+    /// to every surface whose working directory matches the event's `cwd`, then
+    /// refreshes the status dots.
     /// Fired when a pane's agent transitions INTO needs-attention (never
     /// during the startup replay). Payload: pane surface, agent kind, and the
     /// owning project (per-project notification overrides are resolved by the
@@ -1403,6 +1446,15 @@ final class TerminalViewController: NSViewController {
     /// first, then the global default); nil → seed the usual single pane.
     var layoutTemplateProvider: ((ProjectRuntime) -> LayoutTemplate?)?
 
+    /// Panes whose pending command is a restart-recovery resume. Such a
+    /// command must NEVER be typed into a pane that already has its agent
+    /// running: the manifest is written on the assumption that the power-off
+    /// killed every session, and a restart that gets CANCELLED after Zetty
+    /// quit (another app blocks it, or the user backs out) breaks exactly that
+    /// assumption — the app relaunches, the zmx sessions are still alive, and
+    /// the resume would land in a live agent's prompt.
+    private var guardedResumeSurfaces: Set<UUID> = []
+
     /// Startup commands awaiting injection into freshly spawned panes —
     /// populated ONLY by template application, and in-memory only, so a
     /// relaunch can never re-run a command into a preserved session.
@@ -1437,19 +1489,98 @@ final class TerminalViewController: NSViewController {
     private static let spawnGracePeriod: TimeInterval = 0.8
 
     /// Writes `payload` verbatim into a just-spawned pane once it can read.
-    /// Re-resolves the surface at delivery time so a pane closed inside the grace
-    /// period is simply skipped.
-    private func deliverAfterSpawn(_ payload: String, to surfaceID: UUID) {
-        DispatchQueue.main.asyncAfter(deadline: .now() + Self.spawnGracePeriod) { [weak self] in
+    /// Re-resolves the surface at delivery time so a pane closed inside the
+    /// grace period is simply skipped.
+    ///
+    /// `skipIfAgentRunning` is the restart-recovery guard: a resume must never
+    /// be typed into a pane whose agent survived (a cancelled restart), so
+    /// delivery is dropped when the foreground probe still reports one there.
+    private func deliverAfterSpawn(_ payload: String, to surfaceID: UUID,
+                                   after delay: TimeInterval,
+                                   skipIfAgentRunning: Bool = false) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
             guard let self, let surface = self.surface(with: surfaceID) else { return }
+            if skipIfAgentRunning,
+               let running = self.foregroundBySurface[surfaceID], !running.isEmpty,
+               AgentRegistry.match(command: running) != nil {
+                ZettyLog.lifecycle.log(
+                    "resume: skipped for \(SessionPersistence.shortID(for: surfaceID))"
+                    + " — its agent is still running")
+                return
+            }
             _ = self.registry.sendText(payload, to: surface)
         }
     }
 
-    /// Injects a template pane's startup command shortly after its view spawns.
+    /// Injects a pane's pending startup command shortly after its view spawns.
+    /// A restart-recovery resume waits longer and is guarded — see
+    /// `deliverAfterSpawn` and `guardedResumeSurfaces`.
     private func injectStartupCommandIfPending(_ surfaceID: UUID) {
         guard let command = pendingStartupCommands.removeValue(forKey: surfaceID) else { return }
-        deliverAfterSpawn(command + "\r", to: surfaceID)
+        let isResume = guardedResumeSurfaces.remove(surfaceID) != nil
+        deliverAfterSpawn(
+            command + "\r", to: surfaceID,
+            after: isResume ? Self.resumeGracePeriod : Self.spawnGracePeriod,
+            skipIfAgentRunning: isResume)
+    }
+
+    /// How long a restart-recovery resume waits after its pane spawns: long
+    /// enough to clear `spawnGracePeriod` AND the foreground probe's first
+    /// poll, which is what the guard above reads. Nothing about a resume is
+    /// latency-critical.
+    private static let resumeGracePeriod: TimeInterval = 4.0
+
+    /// Gap between eagerly spawned recovery panes. A pane costs a GPU surface
+    /// and its resume starts an agent process, and recovering a large workspace
+    /// at login means doing that many times over: eleven agents starting at
+    /// once took the reference machine's load average past 35. Spacing them is
+    /// what keeps recovery from becoming a thundering herd at login.
+    private static let resumeSpawnInterval: TimeInterval = 2.0
+
+    /// Spawns the panes that still owe a queued resume, one every
+    /// `resumeSpawnInterval`, WITHOUT changing what the user is looking at.
+    ///
+    /// A pane has no pty until its tab is shown, and the resume rides on that
+    /// spawn — so without this, a project's non-active tabs stay dead until
+    /// they are clicked. `ensurePaneIsLive` is the same transient
+    /// select-spawn-restore the CLI's background verbs use.
+    ///
+    /// Hibernated projects are deliberately skipped: they were dormant before
+    /// the power-off and waking them would spawn work the user put away.
+    func spawnPanesAwaitingResume() {
+        let pending = guardedResumeSurfaces.filter { !registry.isLive($0) }
+        guard !pending.isEmpty else { return }
+        ZettyLog.lifecycle.log("resume: spawning \(pending.count) unattended pane(s), one every \(Int(Self.resumeSpawnInterval))s")
+        // Ordered so the log and the load are predictable run to run.
+        let queue = pending.sorted { $0.uuidString < $1.uuidString }
+        for (offset, surfaceID) in queue.enumerated() {
+            let delay = Self.resumeSpawnInterval * Double(offset)
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+                guard let self else { return }
+                // Re-checked at fire time: the user may have visited the pane,
+                // closed it, or hibernated its project while we waited.
+                guard self.guardedResumeSurfaces.contains(surfaceID),
+                      !self.registry.isLive(surfaceID),
+                      let location = self.location(ofSurface: surfaceID),
+                      let project = self.workspace.project(containing: surfaceID),
+                      !project.isHibernated
+                else { return }
+                _ = self.ensurePaneIsLive(at: location)
+            }
+        }
+    }
+
+    /// The (project, tab, surface) triple for a surface, or nil when it is gone.
+    private func location(ofSurface surfaceID: UUID)
+        -> (projectIndex: Int, tabIndex: Int, surfaceID: UUID)? {
+        for (projectIndex, project) in workspace.projects.enumerated() {
+            for (tabIndex, tree) in project.tabList.trees.enumerated() {
+                if tree.layout.surfaces.contains(where: { $0.id == surfaceID }) {
+                    return (projectIndex, tabIndex, surfaceID)
+                }
+            }
+        }
+        return nil
     }
 
     /// Replaces `project`'s tabs with its resolved layout template (panes
@@ -1482,22 +1613,36 @@ final class TerminalViewController: NSViewController {
     private func handleAgentEvents(_ events: [AgentEvent], notify: Bool = true) {
         let now = Date().timeIntervalSince1970
         var changed = false
+
+        func apply(_ event: AgentEvent, to surface: Surface, in project: ProjectRuntime) {
+            let previous = agentDetector.state(for: surface.id).status
+            let next = agentDetector.apply(event: event, session: surface.id, now: now)
+            changed = true
+            if notify, next.status == .needsAttention, previous != .needsAttention,
+               let kind = next.kind {
+                onAgentNeedsAttention?(surface, kind, project)
+            }
+        }
+
         for event in events {
+            // Exact routing first: a hook that ran inside a Zetty pane names it.
+            if let surfaceID = event.surface,
+               let project = workspace.project(containing: surfaceID),
+               let surface = project.tabList.trees
+                   .flatMap({ $0.layout.surfaces })
+                   .first(where: { $0.id == surfaceID }) {
+                apply(event, to: surface, in: project)
+                continue
+            }
+            // Fallback: an older helper, or a pane Zetty no longer has — every
+            // pane whose cwd matches (two panes in one directory both light up).
             let target = Self.normalizedPath(event.cwd)
             for project in workspace.projects {
                 for tree in project.tabList.trees {
                     for surface in tree.layout.surfaces {
                         let cwd = registry.workingDirectory(for: surface).map(Self.normalizedPath)
                             ?? Self.normalizedPath(surface.workingDir)
-                        if cwd == target {
-                            let previous = agentDetector.state(for: surface.id).status
-                            let next = agentDetector.apply(event: event, session: surface.id, now: now)
-                            changed = true
-                            if notify, next.status == .needsAttention, previous != .needsAttention,
-                               let kind = next.kind {
-                                onAgentNeedsAttention?(surface, kind, project)
-                            }
-                        }
+                        if cwd == target { apply(event, to: surface, in: project) }
                     }
                 }
             }
@@ -1910,7 +2055,7 @@ final class TerminalViewController: NSViewController {
                 // The shell was just created and isn't reading its pty yet, so an
                 // immediate write is swallowed. Deliver on the same grace period
                 // startup commands use — exit 0 here means "queued".
-                deliverAfterSpawn(payload, to: surface.id)
+                deliverAfterSpawn(payload, to: surface.id, after: Self.spawnGracePeriod)
             case .unavailable:
                 return "pane \(pane.id) could not be made live"
             }
@@ -1964,7 +2109,7 @@ final class TerminalViewController: NSViewController {
             // tab and keyboard focus are unchanged.
             refreshTabBar()
             refreshSidebar()
-            spawnIfProjectDormant((targetIndex, newTabIndex, newPaneID))
+            spawnPaneInBackground((targetIndex, newTabIndex, newPaneID))
         }
         onWorkspaceDidChange?()
         return .success(SessionPersistence.shortID(for: newPaneID))
@@ -2031,6 +2176,12 @@ final class TerminalViewController: NSViewController {
         guard let surface = project.tabList.activeTree.focusedSurface
                 ?? project.tabList.activeTree.layout.surfaces.first else {
             return .failure(.noSuchPane("project added but no pane found"))
+        }
+        // A background add still brings its panes up: an orchestrator that adds
+        // a project expects its shells (and any layout-template startup
+        // command) to be running, not parked until someone clicks the row.
+        if !focus, let index = workspace.projects.firstIndex(where: { $0.id == project.id }) {
+            spawnPanesInBackground(ofProjectAt: index)
         }
         return .success(SessionPersistence.shortID(for: surface.id))
     }
@@ -2120,6 +2271,11 @@ final class TerminalViewController: NSViewController {
             }
         } else {
             onWorkspaceDidChange?()     // persist the added clone
+            // Same contract as a background add-project: the clone's panes run
+            // (including the agent chosen in the sheet) without being clicked.
+            if let index = workspace.projects.firstIndex(where: { $0.id == project.id }) {
+                spawnPanesInBackground(ofProjectAt: index)
+            }
         }
         if let branchError = outcome.branchError {
             presentNotice(
@@ -2490,7 +2646,7 @@ final class TerminalViewController: NSViewController {
             // A split in a dormant project exists only in the model, so spawn the
             // new pane before returning its id. A no-op when the `focus` branch
             // above already woke the project.
-            spawnIfProjectDormant((location.projectIndex, location.tabIndex, newID))
+            spawnPaneInBackground((location.projectIndex, location.tabIndex, newID))
             onWorkspaceDidChange?()
             return .success(SessionPersistence.shortID(for: newID))
         } catch {
@@ -2535,7 +2691,7 @@ final class TerminalViewController: NSViewController {
                     }
                 }
                 // Dormant project: spawn the moved pane so its id is usable.
-                spawnIfProjectDormant((location.projectIndex, newTabIndex, movedID))
+                spawnPaneInBackground((location.projectIndex, newTabIndex, movedID))
             }
             onWorkspaceDidChange?()
             return .success(SessionPersistence.shortID(for: movedID))
@@ -2622,18 +2778,33 @@ final class TerminalViewController: NSViewController {
         }
     }
 
-    /// Spawns `location`'s pane, but only when its project is hibernated — the
-    /// case where the id a background verb hands back would otherwise name a pane
-    /// that can never accept input.
+    /// Spawns `location`'s pane without moving the user's view, so a pane a CLI
+    /// verb just created is genuinely running by the time the verb returns.
     ///
-    /// A never-viewed pane in an *awake* project is deliberately left lazy: that
-    /// is the documented background contract, and `send` materializes it on
-    /// demand anyway. So this is narrowly about dormancy, not about liveness in
-    /// general.
-    private func spawnIfProjectDormant(_ location: (projectIndex: Int, tabIndex: Int, surfaceID: UUID)) {
-        guard workspace.projects.indices.contains(location.projectIndex),
-              workspace.projects[location.projectIndex].isHibernated else { return }
+    /// Every id a background verb hands back therefore names a live pane. That
+    /// matters for orchestration, where one session creates and drives panes
+    /// across many projects: its startup command runs, its agent starts, and
+    /// `capture` has something to read — none of which happens for a pane that
+    /// is still waiting to be clicked. `send` alone was not enough, because it
+    /// only materialises a pane when something is being typed into it.
+    ///
+    /// Hibernated projects are woken by `ensurePaneIsLive` (the verb targeted
+    /// them explicitly), and an already-live pane costs nothing here.
+    private func spawnPaneInBackground(_ location: (projectIndex: Int, tabIndex: Int, surfaceID: UUID)) {
+        guard workspace.projects.indices.contains(location.projectIndex) else { return }
         ensurePaneIsLive(at: location)
+    }
+
+    /// Spawns every tab of the project at `index`, one pane per tab — a rebuild
+    /// spawns all panes of the tab it makes visible, so a layout template's
+    /// splits come up together.
+    private func spawnPanesInBackground(ofProjectAt index: Int) {
+        guard workspace.projects.indices.contains(index) else { return }
+        let project = workspace.projects[index]
+        for (tabIndex, tree) in project.tabList.trees.enumerated() {
+            guard let first = tree.layout.surfaces.first, !registry.isLive(first.id) else { continue }
+            spawnPaneInBackground((index, tabIndex, first.id))
+        }
     }
 
     /// Makes the pane at `location` live so it can accept input, without
@@ -3186,6 +3357,9 @@ final class TerminalViewController: NSViewController {
             }
         } else {
             onWorkspaceDidChange?()     // persist without switching
+            if let index = workspace.projects.firstIndex(where: { $0.id == project.id }) {
+                spawnPanesInBackground(ofProjectAt: index)
+            }
         }
         let surface = project.tabList.activeTree.focusedSurface
             ?? project.tabList.activeTree.layout.surfaces[0]

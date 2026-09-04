@@ -89,8 +89,11 @@ public enum ControlRequest: Equatable, Sendable {
     case close(target: PaneSelector, wholeTab: Bool)
     /// Quit the app (bypasses the quit confirmation — the CLI call IS the
     /// confirmation). With `killSessions`, every preserved zmx session is
-    /// killed first: a full shutdown, nothing survives to reattach.
-    case quit(killSessions: Bool)
+    /// killed first: a full shutdown, nothing survives to reattach. With
+    /// `simulateRestart`, the power-off path runs first — snapshot, recovery
+    /// manifest, then every session killed as a real restart would — so
+    /// restart recovery can be verified without rebooting.
+    case quit(killSessions: Bool, simulateRestart: Bool)
     /// Split the targeted pane (vertical = side by side). Background by default —
     /// the split appears but keyboard focus stays on the current pane; `focus`
     /// moves focus to the new pane. Response `.pane` with the new pane's short id.
@@ -114,7 +117,7 @@ public enum ControlRequest: Equatable, Sendable {
 
 extension ControlRequest: Codable {
     private enum CodingKeys: String, CodingKey {
-        case command, target, text, enter, keys, project, wholeTab, killSessions, vertical, lines, path, name, gitInit, focus, fetch, discard, line, column, space, newName, color, icon, account, probe
+        case command, target, text, enter, keys, project, wholeTab, killSessions, simulateRestart, vertical, lines, path, name, gitInit, focus, fetch, discard, line, column, space, newName, color, icon, account, probe
     }
 
     public init(from decoder: Decoder) throws {
@@ -199,7 +202,9 @@ extension ControlRequest: Codable {
                 wholeTab: try container.decodeIfPresent(Bool.self, forKey: .wholeTab) ?? false
             )
         case "quit":
-            self = .quit(killSessions: try container.decodeIfPresent(Bool.self, forKey: .killSessions) ?? false)
+            self = .quit(
+                killSessions: try container.decodeIfPresent(Bool.self, forKey: .killSessions) ?? false,
+                simulateRestart: try container.decodeIfPresent(Bool.self, forKey: .simulateRestart) ?? false)
         case "split":
             self = .split(
                 target: try container.decodeIfPresent(PaneSelector.self, forKey: .target) ?? .focused,
@@ -313,9 +318,10 @@ extension ControlRequest: Codable {
             try container.encode("close", forKey: .command)
             try container.encode(target, forKey: .target)
             try container.encode(wholeTab, forKey: .wholeTab)
-        case .quit(let killSessions):
+        case .quit(let killSessions, let simulateRestart):
             try container.encode("quit", forKey: .command)
             try container.encode(killSessions, forKey: .killSessions)
+            try container.encode(simulateRestart, forKey: .simulateRestart)
         case .split(let target, let vertical, let focus, let account):
             try container.encode("split", forKey: .command)
             try container.encode(target, forKey: .target)

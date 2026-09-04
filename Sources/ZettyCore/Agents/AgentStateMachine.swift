@@ -11,9 +11,13 @@ public enum AgentStateMachine {
         }
         let kind = descriptor.kind
 
+        // A session id arrives on hook events only; keep the last one we saw
+        // until presence clears (Rule 1 above returns a fresh, session-less state).
+        let session = o.session ?? previous.session
+
         // Rule 2a: an explicit hook event wins.
         if let hook = o.hookEvent {
-            return AgentState(kind: kind, status: hook.asStatus)
+            return AgentState(kind: kind, status: hook.asStatus, session: session)
         }
 
         let hasRecentOutput: Bool = {
@@ -29,7 +33,7 @@ public enum AgentStateMachine {
         if descriptor.honorsHooks {
             // Rule 2b: attention is sticky until fresh output arrives.
             if previous.status == .needsAttention, !hasRecentOutput {
-                return AgentState(kind: kind, status: .needsAttention)
+                return AgentState(kind: kind, status: .needsAttention, session: session)
             }
         }
 
@@ -44,7 +48,7 @@ public enum AgentStateMachine {
             let prior = previous.status
             status = (prior == .running || prior == .idle) ? prior! : .idle
         }
-        return AgentState(kind: kind, status: status)
+        return AgentState(kind: kind, status: status, session: session)
     }
 }
 

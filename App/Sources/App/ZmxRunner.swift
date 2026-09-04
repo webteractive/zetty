@@ -58,6 +58,14 @@ enum ZmxRunner {
         run(zmxPath, ["history", session])
     }
 
+    /// `zmx history <session> --vt` — the session's scrollback WITH attributes,
+    /// as raw bytes (nil when the session doesn't exist or zmx fails). Bytes,
+    /// not String: escape sequences must round-trip untouched into the pane.
+    /// Blocking.
+    static func historyVT(session: String, zmxPath: String) -> Data? {
+        runData(zmxPath, ["history", session, "--vt"])
+    }
+
     /// Kills the given sessions in the background (fire-and-forget).
     static func kill(sessions: [String], zmxPath: String) {
         guard !sessions.isEmpty else { return }
@@ -135,6 +143,12 @@ enum ZmxRunner {
     /// call off-main for anything slow.
     @discardableResult
     private static func run(_ path: String, _ args: [String]) -> String? {
+        runData(path, args).flatMap { String(data: $0, encoding: .utf8) }
+    }
+
+    /// Raw stdout, so callers that must not lose bytes (VT scrollback) don't
+    /// go through a lossy String conversion.
+    private static func runData(_ path: String, _ args: [String]) -> Data? {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: path)
         process.arguments = args
@@ -154,6 +168,6 @@ enum ZmxRunner {
         let data = stdout.fileHandleForReading.readDataToEndOfFile()
         process.waitUntilExit()
         guard process.terminationStatus == 0 else { return nil }
-        return String(data: data, encoding: .utf8)
+        return data
     }
 }
