@@ -913,15 +913,9 @@ extension SidebarView: NSMenuDelegate {
         guard case .project(let p) = obj.kind, projects.indices.contains(p) else { return }
         // A "Cloning…" placeholder has no actions until the copy lands.
         guard !projects[p].isPendingClone else { return }
-        // Home is permanent: it can't be removed, it's never pinned or filed
-        // into a Space, and it isn't hibernated or woken from here — which
-        // leaves nothing for a context menu to offer. An empty menu shows
-        // nothing at all, which is the intent. Its Project Settings (the
-        // Working Directory row included) stay reachable via ⌥⌘, and the
-        // command palette.
-        guard !projects[p].isHome else { return }
 
         let isScratch = projects[p].isScratch
+        let isHome = projects[p].isHome
 
         let rename = NSMenuItem(title: "Rename\u{2026}",
                                 action: #selector(renameProjectMenuClicked(_:)),
@@ -947,7 +941,7 @@ extension SidebarView: NSMenuDelegate {
             // Home, scratch terminals, and clones are never Space members —
             // hide the item entirely rather than offering a move the model
             // will refuse (a clone follows its source's Space).
-            if !projects[p].isClone {
+            if !isHome && !projects[p].isClone {
                 let moveItem = NSMenuItem(title: "Move to Space", action: nil, keyEquivalent: "")
                 let submenu = NSMenu()
 
@@ -983,14 +977,20 @@ extension SidebarView: NSMenuDelegate {
                 menu.addItem(moveItem)
             }
 
-            let hibernate = NSMenuItem(
-                title: projects[p].isHibernated ? "Wake Project" : "Hibernate Project",
-                action: #selector(hibernateMenuClicked(_:)), keyEquivalent: "")
-            hibernate.target = self
-            hibernate.tag = p
-            menu.addItem(hibernate)
+            // Home is permanent and always available: it is the sidebar's
+            // guaranteed floor, so it is never put away from here (the command
+            // palette omits the verb for it too). Everything else in this menu
+            // still applies to it.
+            if !isHome {
+                let hibernate = NSMenuItem(
+                    title: projects[p].isHibernated ? "Wake Project" : "Hibernate Project",
+                    action: #selector(hibernateMenuClicked(_:)), keyEquivalent: "")
+                hibernate.target = self
+                hibernate.tag = p
+                menu.addItem(hibernate)
+            }
 
-            if !projects[p].isClone {
+            if !isHome && !projects[p].isClone {
                 let clone = NSMenuItem(title: "Clone Project\u{2026}",
                                        action: #selector(cloneProjectMenuClicked(_:)),
                                        keyEquivalent: "")
@@ -1009,16 +1009,19 @@ extension SidebarView: NSMenuDelegate {
             }
         }
 
-        menu.addItem(.separator())
+        // Home is permanent — it offers settings/hibernation but no removal.
+        if !isHome {
+            menu.addItem(.separator())
 
-        let removeTitle = isScratch ? "Close Terminal"
-            : projects[p].isClone ? "Remove Clone\u{2026}" : "Remove Project\u{2026}"
-        let remove = NSMenuItem(title: removeTitle,
-                                action: #selector(removeProjectMenuClicked(_:)),
-                                keyEquivalent: "")
-        remove.target = self
-        remove.tag = p
-        menu.addItem(remove)   // Home is the floor, so any other project is removable
+            let removeTitle = isScratch ? "Close Terminal"
+                : projects[p].isClone ? "Remove Clone\u{2026}" : "Remove Project\u{2026}"
+            let remove = NSMenuItem(title: removeTitle,
+                                    action: #selector(removeProjectMenuClicked(_:)),
+                                    keyEquivalent: "")
+            remove.target = self
+            remove.tag = p
+            menu.addItem(remove)   // Home is the floor, so any other project is removable
+        }
     }
 }
 
