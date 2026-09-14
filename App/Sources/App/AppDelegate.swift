@@ -165,6 +165,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         tvc.ghosttyConfiguration = makeTerminalConfiguration()
         tvc.onReloadConfig = { [weak self] in self?.reloadConfiguration(nil) }
         tvc.onOpenSettings = { [weak self] in self?.openSettings(nil) }
+        // Same two-step the account chip uses: show the window, then jump.
+        tvc.onOpenSettingsTab = { [weak self] tab in
+            self?.openSettings(nil)
+            self?.settingsWindowController?.selectTab(named: tab)
+        }
+        tvc.onCheckForUpdates = { [weak self] in self?.checkForUpdates(nil) }
+        tvc.onQuitApp = { [weak self] in self?.quitApplication(nil) }
+        tvc.onShutdownApp = { [weak self] in self?.shutDownApplication(nil) }
         // A rejected terminal config used to be silent — and since rejection
         // drops the session-preservation `command`, it stranded preserved
         // sessions on every relaunch. Surface it once per run instead.

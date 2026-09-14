@@ -472,6 +472,19 @@ final class TerminalViewController: NSViewController {
     /// Called to open the Settings window (sidebar gear; ⌘, equivalent).
     var onOpenSettings: (() -> Void)?
 
+    /// Opens Settings straight to a named tab ("General", "Appearance",
+    /// "Sessions", "Agents", "Accounts") — the palette's per-pane entries.
+    var onOpenSettingsTab: ((String) -> Void)?
+
+    /// Runs the App menu's update check.
+    var onCheckForUpdates: (() -> Void)?
+
+    /// App menu Quit: leaves preserved zmx sessions for the next launch.
+    var onQuitApp: (() -> Void)?
+
+    /// App menu full shutdown: ends every preserved session too (confirms).
+    var onShutdownApp: (() -> Void)?
+
     // MARK: - View lifecycle
 
     override func loadView() {
@@ -1908,34 +1921,71 @@ final class TerminalViewController: NSViewController {
     }
 
     /// The palette's command set, mapped to the controller's existing actions.
+    /// Grouped by builder rather than one flat array: the project/tab/Space
+    /// groups scale with the workspace, so the list runs to a few hundred
+    /// entries on a large one (the palette view renders only the first 50 and
+    /// tells you how many more matched). Static, frequently-used groups come
+    /// first so an empty query shows them before the per-project entries.
     private func buildCommands() -> [PaletteCommand] {
-        let base: [PaletteCommand] = [
+        paneCommands()
+            + tabCommands()
+            + viewCommands()
+            + appCommands()
+            + appearanceCommands()
+            + projectCommands()
+            + spaceCommands()
+            + schemeCommands()
+    }
+
+    /// Pane lifecycle, directional focus, zoom, copy mode. The focus/zoom/copy
+    /// entries are otherwise reachable only through the ⌃B prefix layer.
+    private func paneCommands() -> [PaletteCommand] {
+        [
             PaletteCommand(glyph: "+", label: "New Tab", kbd: "⌘T") { [weak self] in self?.newTab(nil) },
             PaletteCommand(glyph: "▮", label: "Split Pane Right", kbd: "⌘D") { [weak self] in self?.splitVertical(nil) },
             PaletteCommand(glyph: "▬", label: "Split Pane Down", kbd: "⇧⌘D") { [weak self] in self?.splitHorizontal(nil) },
+            PaletteCommand(glyph: "←", label: "Focus Pane Left", kbd: "⌃B h") { [weak self] in self?.focusPane(.left) },
+            PaletteCommand(glyph: "→", label: "Focus Pane Right", kbd: "⌃B l") { [weak self] in self?.focusPane(.right) },
+            PaletteCommand(glyph: "↑", label: "Focus Pane Up", kbd: "⌃B k") { [weak self] in self?.focusPane(.up) },
+            PaletteCommand(glyph: "↓", label: "Focus Pane Down", kbd: "⌃B j") { [weak self] in self?.focusPane(.down) },
+            PaletteCommand(glyph: "↺", label: "Cycle Pane Focus", kbd: "⌃B o") { [weak self] in self?.cyclePaneFocus(nil) },
+            PaletteCommand(glyph: "⤢", label: "Zoom Pane", kbd: "⌃B z") { [weak self] in self?.zoomPane(nil) },
+            PaletteCommand(glyph: "⌗", label: "Enter Copy Mode", kbd: "⌃B [") { [weak self] in _ = self?.enterCopyMode() },
             PaletteCommand(glyph: "⇤", label: "Resize Pane Left", kbd: "⌥⌘←") { [weak self] in self?.resizePaneLeft(nil) },
             PaletteCommand(glyph: "⇥", label: "Resize Pane Right", kbd: "⌥⌘→") { [weak self] in self?.resizePaneRight(nil) },
             PaletteCommand(glyph: "⤒", label: "Resize Pane Up", kbd: "⌥⌘↑") { [weak self] in self?.resizePaneUp(nil) },
             PaletteCommand(glyph: "⤓", label: "Resize Pane Down", kbd: "⌥⌘↓") { [weak self] in self?.resizePaneDown(nil) },
             PaletteCommand(glyph: "×", label: "Close Pane", kbd: "⌘W") { [weak self] in self?.closePane(nil) },
             PaletteCommand(glyph: "↗", label: "Break Pane into Tab", kbd: "⌥⌘T") { [weak self] in self?.breakPaneIntoTab(nil) },
+        ]
+    }
+
+    /// Tab verbs plus one "Go to Tab" entry per tab of the ACTIVE project —
+    /// other projects' tabs are reachable through their "Go to Project" entry,
+    /// which would otherwise multiply this list by the whole workspace.
+    private func tabCommands() -> [PaletteCommand] {
+        let tabList = workspace.activeTabList
+        var commands: [PaletteCommand] = [
             PaletteCommand(glyph: "⊗", label: "Close Tab", kbd: "⇧⌘W") { [weak self] in self?.closeTab(nil) },
             PaletteCommand(glyph: "→", label: "Next Tab", kbd: "⌘}") { [weak self] in self?.selectNextTab(nil) },
             PaletteCommand(glyph: "←", label: "Previous Tab", kbd: "⌘{") { [weak self] in self?.selectPreviousTab(nil) },
-            PaletteCommand(glyph: "★", label: "Pin / Unpin Current Project", kbd: "") { [weak self] in self?.togglePinActiveProject() },
-            PaletteCommand(glyph: "＋", label: "Add Project…", kbd: "⌘O") { [weak self] in self?.addProject(nil) },
-            PaletteCommand(glyph: "⎇", label: "Clone Current Project…", kbd: "") { [weak self] in
-                guard let self else { return }
-                self.promptCloneProject(at: self.workspace.activeIndex)
-            },
-            PaletteCommand(glyph: "⧉", label: "New Scratch Terminal", kbd: "⌃⌘N") { [weak self] in self?.newScratchTerminal() },
-            PaletteCommand(glyph: "⌦", label: "Close All Scratch Terminals", kbd: "") { [weak self] in self?.closeAllScratchTerminals() },
-            PaletteCommand(glyph: "☾", label: "Hibernate Current Project", kbd: "") { [weak self] in
-                guard let self else { return }
-                self.hibernateProject(self.workspace.activeProject)
-            },
-            PaletteCommand(glyph: "−", label: "Remove Current Project…", kbd: "") { [weak self] in self?.removeProject(nil) },
+            PaletteCommand(glyph: "✎", label: "Rename Tab…", kbd: "⌃B ,") { [weak self] in self?.beginRenameActiveTab() },
+        ]
+        for (index, tree) in tabList.trees.enumerated() where index != tabList.activeIndex {
+            let title = tabDisplayTitle(for: tree, at: index)
+            commands.append(PaletteCommand(glyph: "▸", label: "Go to Tab: \(title)", kbd: "") { [weak self] in
+                self?.selectTab(at: index)
+            })
+        }
+        return commands
+    }
+
+    /// Chrome toggles, the terminal's own view verbs, and broadcast scopes.
+    private func viewCommands() -> [PaletteCommand] {
+        [
             PaletteCommand(glyph: "⛶", label: "Toggle Sidebar", kbd: "⌘B") { [weak self] in self?.toggleSidebar(nil) },
+            PaletteCommand(glyph: "▤", label: "Toggle File Tree", kbd: "⇧⌘F") { [weak self] in self?.toggleFileTree(nil) },
+            PaletteCommand(glyph: "⤓", label: "Scroll to Bottom", kbd: "⌘↓") { [weak self] in self?.scrollToBottom(nil) },
             PaletteCommand(glyph: "⇉", label: "Broadcast: Tab", kbd: "") { [weak self] in self?.setBroadcast(.currentTab) },
             PaletteCommand(glyph: "⇉", label: "Broadcast: Project", kbd: "") { [weak self] in self?.setBroadcast(.project) },
             PaletteCommand(glyph: "⇉", label: "Broadcast: Agents", kbd: "") { [weak self] in self?.setBroadcast(.agents) },
@@ -1943,34 +1993,151 @@ final class TerminalViewController: NSViewController {
             PaletteCommand(glyph: "⇥", label: "Broadcast: Cycle Scope", kbd: "⇧⌘B") { [weak self] in self?.cycleBroadcast() },
             PaletteCommand(glyph: "○", label: "Broadcast: Off", kbd: "") { [weak self] in self?.setBroadcast(.off) },
             PaletteCommand(glyph: "◎", label: "Clear All Notifications", kbd: "") { [weak self] in self?.clearAllNotifications(nil) },
+        ]
+    }
+
+    /// App-level verbs. Settings gets one entry per pane as well as the plain
+    /// one, so "accounts" or "hooks" finds its way there without two steps.
+    private func appCommands() -> [PaletteCommand] {
+        var commands: [PaletteCommand] = [
+            PaletteCommand(glyph: "⚙", label: "Settings…", kbd: "⌘,") { [weak self] in self?.onOpenSettings?() },
+        ]
+        for tab in ["General", "Appearance", "Sessions", "Agents", "Accounts"] {
+            commands.append(PaletteCommand(glyph: "⚙", label: "Settings: \(tab)", kbd: "") { [weak self] in
+                self?.onOpenSettingsTab?(tab)
+            })
+        }
+        commands += [
+            PaletteCommand(glyph: "↻", label: "Reload Configuration", kbd: "⇧⌘,") { [weak self] in self?.onReloadConfig?() },
+            PaletteCommand(glyph: "⇩", label: "Check for Updates…", kbd: "") { [weak self] in self?.onCheckForUpdates?() },
+            PaletteCommand(glyph: "⊠", label: "Close Window", kbd: "⌘H") { [weak self] in
+                self?.view.window?.performClose(nil)
+            },
+            PaletteCommand(glyph: "⏻", label: "Quit Zetty", kbd: "⌘Q") { [weak self] in self?.onQuitApp?() },
+            PaletteCommand(glyph: "⏻", label: "Shutdown Zetty (end all sessions)…", kbd: "") { [weak self] in
+                self?.onShutdownApp?()
+            },
+        ]
+        return commands
+    }
+
+    /// Scheme/appearance switching. Scheme picks are scoped to the current axis
+    /// in `schemeCommands`, so they never flip dark↔light.
+    private func appearanceCommands() -> [PaletteCommand] {
+        [
             PaletteCommand(glyph: "◐", label: "Cycle Color Scheme", kbd: "⇧⌘T") { [weak self] in self?.onCycleScheme?() },
             PaletteCommand(glyph: "◑", label: "Cycle Appearance", kbd: "⇧⌘A") { [weak self] in self?.onCycleAppearance?() },
             PaletteCommand(glyph: "◑", label: "Appearance: System", kbd: "") { [weak self] in self?.onSetAppearance?(.system) },
             PaletteCommand(glyph: "●", label: "Appearance: Dark", kbd: "") { [weak self] in self?.onSetAppearance?(.dark) },
             PaletteCommand(glyph: "○", label: "Appearance: Light", kbd: "") { [weak self] in self?.onSetAppearance?(.light) },
-            PaletteCommand(glyph: "↻", label: "Reload Configuration", kbd: "⇧⌘,") { [weak self] in self?.onReloadConfig?() },
         ]
-        // Jump to any project (focuses its active pane).
-        let projectCommands = workspace.projects.enumerated().map { index, project in
-            let hibernated = project.isHibernated
-            return PaletteCommand(
-                glyph: hibernated ? "☾" : "◆",
-                label: hibernated ? "Wake Project: \(project.name)" : "Go to Project: \(project.name)",
-                kbd: "") { [weak self] in
-                    guard let self else { return }
-                    if hibernated { self.wakeProject(project) } else { self.selectProject(at: index) }
-                }
-        }
+    }
 
-        // Scheme picks are scoped to the current axis, so they never flip dark↔light.
+    private func schemeCommands() -> [PaletteCommand] {
         let scoped = ZTheme.current.isDark ? ZColorScheme.darkSchemes : ZColorScheme.lightSchemes
-        let schemeCommands = scoped.map { scheme in
+        return scoped.map { scheme in
             PaletteCommand(glyph: "◐", label: "Scheme: \(scheme.displayName)", kbd: "") { [weak self] in
                 self?.onSelectScheme?(scheme)
             }
         }
+    }
 
-        return base + projectCommands + schemeCommands
+    /// Workspace verbs, then per-project ones. Eligibility mirrors the sidebar
+    /// context menu exactly (scratch has no settings or hibernation; home and
+    /// clones can't be cloned; only clones merge back) — an entry the model
+    /// would refuse is omitted rather than shown and ignored.
+    private func projectCommands() -> [PaletteCommand] {
+        var commands: [PaletteCommand] = [
+            PaletteCommand(glyph: "＋", label: "Add Project…", kbd: "⌘O") { [weak self] in self?.addProject(nil) },
+            PaletteCommand(glyph: "★", label: "Pin / Unpin Current Project", kbd: "") { [weak self] in self?.togglePinActiveProject() },
+            PaletteCommand(glyph: "⧉", label: "New Scratch Terminal", kbd: "⌃⌘N") { [weak self] in self?.newScratchTerminal() },
+            PaletteCommand(glyph: "⌦", label: "Close All Scratch Terminals", kbd: "") { [weak self] in self?.closeAllScratchTerminals() },
+            PaletteCommand(glyph: "−", label: "Remove Current Project…", kbd: "") { [weak self] in self?.removeProject(nil) },
+        ]
+
+        for (index, project) in workspace.projects.enumerated() {
+            let name = project.name
+            let isClone = project.cloneSource != nil
+
+            // Jump to it (waking first when dormant).
+            commands.append(PaletteCommand(
+                glyph: project.isHibernated ? "☾" : "◆",
+                label: project.isHibernated ? "Wake Project: \(name)" : "Go to Project: \(name)",
+                kbd: ""
+            ) { [weak self] in
+                guard let self else { return }
+                if project.isHibernated { self.wakeProject(project) } else { self.selectProject(at: index) }
+            })
+
+            commands.append(PaletteCommand(glyph: "✎", label: "Rename Project: \(name)…", kbd: "") { [weak self] in
+                self?.onRenameProject?(project)
+            })
+
+            guard !project.isScratch else { continue }
+
+            // Only awake projects can hibernate; the dormant ones already
+            // offer "Wake Project" above.
+            if !project.isHibernated {
+                commands.append(PaletteCommand(glyph: "☾", label: "Hibernate Project: \(name)", kbd: "") { [weak self] in
+                    self?.hibernateProject(project)
+                })
+            }
+            if !isClone {
+                commands.append(PaletteCommand(glyph: "⚙", label: "Project Settings: \(name)…", kbd: "") { [weak self] in
+                    self?.onOpenProjectSettings?(project)
+                })
+            }
+            if !isClone && !project.isHome {
+                commands.append(PaletteCommand(glyph: "⎇", label: "Clone Project: \(name)…", kbd: "") { [weak self] in
+                    self?.promptCloneProject(at: index)
+                })
+            }
+            if isClone {
+                commands.append(PaletteCommand(glyph: "⤵", label: "Merge to Source: \(name)…", kbd: "") { [weak self] in
+                    self?.confirmMergeToSource(at: index)
+                })
+            }
+        }
+        return commands
+    }
+
+    /// Space verbs. "Move to Space" targets the ACTIVE project only — one entry
+    /// per project × Space would multiply the list by the workspace twice over.
+    private func spaceCommands() -> [PaletteCommand] {
+        var commands: [PaletteCommand] = [
+            PaletteCommand(glyph: "▦", label: "New Space…", kbd: "") { [weak self] in
+                self?.promptNewSpace(assigning: nil)
+            },
+        ]
+
+        // Home, scratch terminals and clones are never Space members (a clone
+        // follows its source), so the move entries are omitted for them —
+        // the same rule `WorkspaceModel.assign` enforces.
+        let active = workspace.activeProject
+        let activeIndex = workspace.activeIndex
+        if !active.isHome, !active.isScratch, active.cloneSource == nil {
+            if active.spaceID != nil {
+                commands.append(PaletteCommand(glyph: "▦", label: "Move \(active.name) to Space: None", kbd: "") { [weak self] in
+                    self?.assignProject(at: activeIndex, to: nil)
+                })
+            }
+            for space in workspace.spaces where space.id != active.spaceID {
+                commands.append(PaletteCommand(glyph: "▦", label: "Move \(active.name) to Space: \(space.name)", kbd: "") { [weak self] in
+                    self?.assignProject(at: activeIndex, to: space.id)
+                })
+            }
+        }
+
+        for space in workspace.spaces {
+            let name = space.name
+            commands.append(PaletteCommand(glyph: "☾", label: "Hibernate All in Space: \(name)", kbd: "") { [weak self] in
+                _ = self?.hibernateSpaceNamed(name)
+            })
+            commands.append(PaletteCommand(glyph: "☀", label: "Wake All in Space: \(name)", kbd: "") { [weak self] in
+                _ = self?.wakeSpaceNamed(name)
+            })
+        }
+        return commands
     }
 
     // MARK: - Control socket (Zetty CLI)

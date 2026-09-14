@@ -330,7 +330,16 @@ Command Line** and click install — this symlinks `zetty` into
 | `⌘C` / `⌘V` | Copy / paste (Ghostty defaults inside the terminal) |
 
 Everything above is also reachable from the menu bar and the command
-palette (`⌘K`).
+palette (`⌘K`). Beyond the shortcuts, the palette covers the prefix layer's
+pane verbs (directional focus, cycle, zoom, copy mode), the view toggles,
+Settings — with a direct entry per pane: General, Appearance, Sessions,
+Agents, Accounts — the update check, Close Window / Quit / Shutdown, every
+other tab in the active project, and per-project verbs (go to or wake, rename,
+hibernate, project settings, clone, merge a clone back to its source), plus
+the Space verbs: new Space, move the active project into one, and hibernate or
+wake all of a Space's members. Filtering is a plain substring match on the
+label, and only the first 50 matches are rendered — the footer says how many
+more matched, so keep typing to narrow a large workspace.
 
 Closing the main window keeps Zetty and its terminals running behind a **Z**
 in the macOS menu bar and hides its Dock icon until the window is restored. The

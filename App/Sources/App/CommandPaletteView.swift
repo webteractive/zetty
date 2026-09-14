@@ -20,7 +20,14 @@ struct PaletteCommand {
 final class CommandPaletteView: NSView, NSTextFieldDelegate {
 
     private let allCommands: [PaletteCommand]
+    /// The commands actually rendered — the matches, capped at
+    /// `maxRenderedRows`. Every index (selection, run, hover) is an index into
+    /// THIS array, so the cap needs no special handling anywhere else.
     private var filtered: [PaletteCommand]
+    /// Matches beyond the cap, surfaced as a "keep typing" hint rather than
+    /// silently dropped.
+    private var overflowCount = 0
+    private var overflowRow: NSView?
     private var selectedIndex = 0
     private let onClose: () -> Void
 
@@ -38,10 +45,16 @@ final class CommandPaletteView: NSView, NSTextFieldDelegate {
     private static let rowSpacing: CGFloat = 2
     private static let listInset: CGFloat = 16   // stack top+bottom padding
     private static let maxListHeight: CGFloat = 320
+    private static let overflowRowHeight: CGFloat = 28
+    /// A row view per match is built on open and on every keystroke, and the
+    /// project-scoped commands scale with the workspace (a few hundred entries
+    /// on a large one). Only the first 50 are built; the rest are one hint row.
+    private static let maxRenderedRows = 50
 
     init(commands: [PaletteCommand], onClose: @escaping () -> Void) {
         self.allCommands = commands
-        self.filtered = commands
+        self.filtered = Array(commands.prefix(Self.maxRenderedRows))
+        self.overflowCount = max(0, commands.count - Self.maxRenderedRows)
         self.onClose = onClose
         super.init(frame: .zero)
         translatesAutoresizingMaskIntoConstraints = false
@@ -180,6 +193,11 @@ final class CommandPaletteView: NSView, NSTextFieldDelegate {
             row.removeFromSuperview()
         }
         rowViews.removeAll()
+        if let overflowRow {
+            listStack.removeArrangedSubview(overflowRow)
+            overflowRow.removeFromSuperview()
+            self.overflowRow = nil
+        }
 
         for (index, command) in filtered.enumerated() {
             let row = PaletteRowView(command: command)
@@ -190,14 +208,41 @@ final class CommandPaletteView: NSView, NSTextFieldDelegate {
             rowViews.append(row)
         }
 
+        if overflowCount > 0 {
+            let hint = makeOverflowRow(count: overflowCount)
+            listStack.addArrangedSubview(hint)
+            hint.widthAnchor.constraint(equalTo: listStack.widthAnchor).isActive = true
+            overflowRow = hint
+        }
+
         emptyLabel.isHidden = !filtered.isEmpty
 
         // Size the scroll area to the content, capped so it scrolls beyond that.
-        let contentHeight = CGFloat(filtered.count) * (Self.rowHeight + Self.rowSpacing) + Self.listInset
+        var contentHeight = CGFloat(filtered.count) * (Self.rowHeight + Self.rowSpacing) + Self.listInset
+        if overflowCount > 0 { contentHeight += Self.overflowRowHeight + Self.rowSpacing }
         listHeight.constant = filtered.isEmpty ? 60 : min(contentHeight, Self.maxListHeight)
 
         selectedIndex = filtered.isEmpty ? -1 : 0
         highlight()
+    }
+
+    /// The "N more" footer. Not a `PaletteRowView` and not in `rowViews`, so it
+    /// can never be selected or run.
+    private func makeOverflowRow(count: Int) -> NSView {
+        let container = NSView()
+        container.translatesAutoresizingMaskIntoConstraints = false
+        let label = NSTextField(labelWithString:
+            "\(count) more \(count == 1 ? "match" : "matches") — keep typing to narrow")
+        label.font = ZTheme.chromeFont(size: 11)
+        label.textColor = ZTheme.current.fg3Color
+        label.translatesAutoresizingMaskIntoConstraints = false
+        container.addSubview(label)
+        NSLayoutConstraint.activate([
+            container.heightAnchor.constraint(equalToConstant: Self.overflowRowHeight),
+            label.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 50),
+            label.centerYAnchor.constraint(equalTo: container.centerYAnchor),
+        ])
+        return container
     }
 
     // MARK: - Selection / running
@@ -236,9 +281,11 @@ final class CommandPaletteView: NSView, NSTextFieldDelegate {
 
     func controlTextDidChange(_ obj: Notification) {
         let query = searchField.stringValue.trimmingCharacters(in: .whitespaces).lowercased()
-        filtered = query.isEmpty
+        let matches = query.isEmpty
             ? allCommands
             : allCommands.filter { $0.label.lowercased().contains(query) }
+        filtered = Array(matches.prefix(Self.maxRenderedRows))
+        overflowCount = matches.count - filtered.count
         rebuildRows()
     }
 
