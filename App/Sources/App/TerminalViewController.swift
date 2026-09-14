@@ -472,9 +472,9 @@ final class TerminalViewController: NSViewController {
     /// Called to open the Settings window (sidebar gear; ⌘, equivalent).
     var onOpenSettings: (() -> Void)?
 
-    /// Opens Settings straight to a named tab ("General", "Appearance",
-    /// "Sessions", "Agents", "Accounts") — the palette's per-pane entries.
-    var onOpenSettingsTab: ((String) -> Void)?
+    /// Opens Settings straight to one of its panes — the palette's per-pane
+    /// entries.
+    var onOpenSettingsTab: ((SettingsWindowController.Tab) -> Void)?
 
     /// Runs the App menu's update check.
     var onCheckForUpdates: (() -> Void)?
@@ -1924,8 +1924,9 @@ final class TerminalViewController: NSViewController {
     /// Grouped by builder rather than one flat array: the project/tab/Space
     /// groups scale with the workspace, so the list runs to a few hundred
     /// entries on a large one (the palette view renders only the first 50 and
-    /// tells you how many more matched). Static, frequently-used groups come
-    /// first so an empty query shows them before the per-project entries.
+    /// tells you how many more matched). The frequently-used groups come first
+    /// so an empty query shows them before the per-project entries, which are
+    /// the ones that grow with the workspace.
     private func buildCommands() -> [PaletteCommand] {
         paneCommands()
             + tabCommands()
@@ -1934,7 +1935,6 @@ final class TerminalViewController: NSViewController {
             + appearanceCommands()
             + projectCommands()
             + spaceCommands()
-            + schemeCommands()
     }
 
     /// Pane lifecycle, directional focus, zoom, copy mode. The focus/zoom/copy
@@ -1973,8 +1973,20 @@ final class TerminalViewController: NSViewController {
         ]
         for (index, tree) in tabList.trees.enumerated() where index != tabList.activeIndex {
             let title = tabDisplayTitle(for: tree, at: index)
+            // Anchored to one of the tab's panes rather than to its index, for
+            // the reason `liveIndex(of:)` gives: a tab closed or opened while
+            // the palette is up would shift every index after it. (If that pane
+            // is itself closed or broken out meanwhile, the entry follows the
+            // pane, or no-ops — both fail closed.)
+            guard let anchor = tree.layout.surfaces.first?.id else { continue }
             commands.append(PaletteCommand(glyph: "▸", label: "Go to Tab: \(title)", kbd: "") { [weak self] in
-                self?.selectTab(at: index)
+                guard let self, let found = self.location(ofSurface: anchor),
+                      // Still the active project: selecting an index into a
+                      // project that is no longer active would show the wrong
+                      // project's tab.
+                      found.projectIndex == self.workspace.activeIndex
+                else { return }
+                self.selectTab(at: found.tabIndex)
             })
         }
         return commands
@@ -1992,7 +2004,6 @@ final class TerminalViewController: NSViewController {
             PaletteCommand(glyph: "⇉", label: "Broadcast: Workspace", kbd: "") { [weak self] in self?.setBroadcast(.workspace) },
             PaletteCommand(glyph: "⇥", label: "Broadcast: Cycle Scope", kbd: "⇧⌘B") { [weak self] in self?.cycleBroadcast() },
             PaletteCommand(glyph: "○", label: "Broadcast: Off", kbd: "") { [weak self] in self?.setBroadcast(.off) },
-            PaletteCommand(glyph: "◎", label: "Clear All Notifications", kbd: "") { [weak self] in self?.clearAllNotifications(nil) },
         ]
     }
 
@@ -2000,10 +2011,11 @@ final class TerminalViewController: NSViewController {
     /// one, so "accounts" or "hooks" finds its way there without two steps.
     private func appCommands() -> [PaletteCommand] {
         var commands: [PaletteCommand] = [
+            PaletteCommand(glyph: "◎", label: "Clear All Notifications", kbd: "") { [weak self] in self?.clearAllNotifications(nil) },
             PaletteCommand(glyph: "⚙", label: "Settings…", kbd: "⌘,") { [weak self] in self?.onOpenSettings?() },
         ]
-        for tab in ["General", "Appearance", "Sessions", "Agents", "Accounts"] {
-            commands.append(PaletteCommand(glyph: "⚙", label: "Settings: \(tab)", kbd: "") { [weak self] in
+        for tab in SettingsWindowController.Tab.allCases {
+            commands.append(PaletteCommand(glyph: "⚙", label: "Settings: \(tab.rawValue)", kbd: "") { [weak self] in
                 self?.onOpenSettingsTab?(tab)
             })
         }
@@ -2021,25 +2033,34 @@ final class TerminalViewController: NSViewController {
         return commands
     }
 
-    /// Scheme/appearance switching. Scheme picks are scoped to the current axis
-    /// in `schemeCommands`, so they never flip dark↔light.
+    /// Scheme/appearance switching, including one entry per scheme. These are
+    /// static, so they belong ahead of the per-project groups — appended after
+    /// them they would fall past the palette's render cap on a large workspace.
     private func appearanceCommands() -> [PaletteCommand] {
-        [
+        var commands: [PaletteCommand] = [
             PaletteCommand(glyph: "◐", label: "Cycle Color Scheme", kbd: "⇧⌘T") { [weak self] in self?.onCycleScheme?() },
             PaletteCommand(glyph: "◑", label: "Cycle Appearance", kbd: "⇧⌘A") { [weak self] in self?.onCycleAppearance?() },
             PaletteCommand(glyph: "◑", label: "Appearance: System", kbd: "") { [weak self] in self?.onSetAppearance?(.system) },
             PaletteCommand(glyph: "●", label: "Appearance: Dark", kbd: "") { [weak self] in self?.onSetAppearance?(.dark) },
             PaletteCommand(glyph: "○", label: "Appearance: Light", kbd: "") { [weak self] in self?.onSetAppearance?(.light) },
         ]
-    }
-
-    private func schemeCommands() -> [PaletteCommand] {
+        // Scoped to the current axis, so a pick never flips dark↔light.
         let scoped = ZTheme.current.isDark ? ZColorScheme.darkSchemes : ZColorScheme.lightSchemes
-        return scoped.map { scheme in
+        commands += scoped.map { scheme in
             PaletteCommand(glyph: "◐", label: "Scheme: \(scheme.displayName)", kbd: "") { [weak self] in
                 self?.onSelectScheme?(scheme)
             }
         }
+        return commands
+    }
+
+    /// A project's index RIGHT NOW, by identity. The palette's commands are
+    /// built when it opens and run after it closes, and an agent driving the
+    /// control CLI can add, remove, hibernate or reorder projects in between —
+    /// an index captured at build time would then act on whichever project had
+    /// taken that slot, which for clone or merge means the wrong repository.
+    private func liveIndex(of project: ProjectRuntime) -> Int? {
+        workspace.projects.firstIndex { $0 === project }
     }
 
     /// Workspace verbs, then per-project ones. Eligibility mirrors the sidebar
@@ -2055,7 +2076,7 @@ final class TerminalViewController: NSViewController {
             PaletteCommand(glyph: "−", label: "Remove Current Project…", kbd: "") { [weak self] in self?.removeProject(nil) },
         ]
 
-        for (index, project) in workspace.projects.enumerated() {
+        for project in workspace.projects {
             let name = project.name
             let isClone = project.cloneSource != nil
 
@@ -2065,7 +2086,8 @@ final class TerminalViewController: NSViewController {
             // its entry only ever selects it.
             if project.isHome {
                 commands.append(PaletteCommand(glyph: "◆", label: "Go to Project: \(name)", kbd: "") { [weak self] in
-                    self?.selectProject(at: index)
+                    guard let self, let index = self.liveIndex(of: project) else { return }
+                    self.selectProject(at: index)
                 })
             } else {
                 commands.append(PaletteCommand(
@@ -2074,7 +2096,12 @@ final class TerminalViewController: NSViewController {
                     kbd: ""
                 ) { [weak self] in
                     guard let self else { return }
-                    if project.isHibernated { self.wakeProject(project) } else { self.selectProject(at: index) }
+                    // Re-read the flag too: it can flip while the palette is open.
+                    if project.isHibernated {
+                        self.wakeProject(project)
+                    } else if let index = self.liveIndex(of: project) {
+                        self.selectProject(at: index)
+                    }
                 })
             }
 
@@ -2091,20 +2118,24 @@ final class TerminalViewController: NSViewController {
                     self?.hibernateProject(project)
                 })
             }
-            if !isClone {
+            // One decision, not three: a clone merges back and has no settings
+            // of its own (it inherits the source's); anything else has settings
+            // and — unless it is Home — can be cloned.
+            if isClone {
+                commands.append(PaletteCommand(glyph: "⤵", label: "Merge to Source: \(name)…", kbd: "") { [weak self] in
+                    guard let self, let index = self.liveIndex(of: project) else { return }
+                    self.confirmMergeToSource(at: index)
+                })
+            } else {
                 commands.append(PaletteCommand(glyph: "⚙", label: "Project Settings: \(name)…", kbd: "") { [weak self] in
                     self?.onOpenProjectSettings?(project)
                 })
-            }
-            if !isClone && !project.isHome {
-                commands.append(PaletteCommand(glyph: "⎇", label: "Clone Project: \(name)…", kbd: "") { [weak self] in
-                    self?.promptCloneProject(at: index)
-                })
-            }
-            if isClone {
-                commands.append(PaletteCommand(glyph: "⤵", label: "Merge to Source: \(name)…", kbd: "") { [weak self] in
-                    self?.confirmMergeToSource(at: index)
-                })
+                if !project.isHome {
+                    commands.append(PaletteCommand(glyph: "⎇", label: "Clone Project: \(name)…", kbd: "") { [weak self] in
+                        guard let self, let index = self.liveIndex(of: project) else { return }
+                        self.promptCloneProject(at: index)
+                    })
+                }
             }
         }
         return commands
@@ -2123,16 +2154,18 @@ final class TerminalViewController: NSViewController {
         // follows its source), so the move entries are omitted for them —
         // the same rule `WorkspaceModel.assign` enforces.
         let active = workspace.activeProject
-        let activeIndex = workspace.activeIndex
         if !active.isHome, !active.isScratch, active.cloneSource == nil {
+            // By identity, not `workspace.activeIndex` — see `liveIndex(of:)`.
             if active.spaceID != nil {
                 commands.append(PaletteCommand(glyph: "▦", label: "Move \(active.name) to Space: None", kbd: "") { [weak self] in
-                    self?.assignProject(at: activeIndex, to: nil)
+                    guard let self, let index = self.liveIndex(of: active) else { return }
+                    self.assignProject(at: index, to: nil)
                 })
             }
             for space in workspace.spaces where space.id != active.spaceID {
                 commands.append(PaletteCommand(glyph: "▦", label: "Move \(active.name) to Space: \(space.name)", kbd: "") { [weak self] in
-                    self?.assignProject(at: activeIndex, to: space.id)
+                    guard let self, let index = self.liveIndex(of: active) else { return }
+                    self.assignProject(at: index, to: space.id)
                 })
             }
         }
@@ -4102,10 +4135,14 @@ final class TerminalViewController: NSViewController {
     private var hibernationTimer: Timer?
 
     /// Frees a project's sessions, processes, and panes; keeps its layout.
-    /// Never hibernates the active project (switches away first).
+    /// Never hibernates the active project (switches away first), and never
+    /// Home — it is the sidebar's guaranteed floor and no surface offers a
+    /// hibernate verb for it, so a hibernated Home would have nothing to wake
+    /// it. The rule lives here, in the funnel every path goes through; the
+    /// checks at the call sites are what keep a dead verb off the screen.
     func hibernateProject(_ project: ProjectRuntime, confirmIfBusy: Bool = true) {
         guard let index = workspace.projects.firstIndex(where: { $0.id == project.id }),
-              !project.isHibernated else { return }
+              !project.isHome, !project.isHibernated else { return }
         let surfaceIDs = project.tabList.trees.flatMap { $0.layout.surfaces.map(\.id) }
         if confirmIfBusy, !confirmClosingBusyPanes(surfaceIDs, what: "project “\(project.name)”") { return }
 
@@ -4156,6 +4193,9 @@ final class TerminalViewController: NSViewController {
         let matches = workspace.projects.filter { $0.name.lowercased() == name.lowercased() }
         guard let project = matches.first else { return "no project named \"\(name)\"" }
         guard matches.count == 1 else { return "\(matches.count) projects named \"\(name)\" — use the sidebar" }
+        // Before the count check, so a Home-only workspace gives the real
+        // reason. Same rule as `remove-project Home`.
+        guard !project.isHome else { return "Home can't be hibernated" }
         guard workspace.projects.count > 1 else { return "cannot hibernate the only project" }
         guard !project.isHibernated else { return "project \"\(project.name)\" is already hibernated" }
         hibernateProject(project, confirmIfBusy: false)
@@ -4215,7 +4255,8 @@ final class TerminalViewController: NSViewController {
                 isBusy: projectIsBusy(project),
                 isActive: false,
                 isHibernated: project.isHibernated,
-                autoDisabled: autoHibernateDisabled?(project) ?? false) {
+                autoDisabled: autoHibernateDisabled?(project) ?? false,
+                isHome: project.isHome) {
                 hibernateProject(project, confirmIfBusy: false)
             }
         }

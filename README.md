@@ -18,9 +18,10 @@ by the tool it's running.
   of the sidebar (its own house icon, no pin, and — though it supports tabs —
   they aren't listed in the sidebar). Seeded on first launch (rooted at your home
   directory, or wherever its **Working Directory** setting points), it can't be
-  removed but *can* be hibernated/woken like any project, and carries its own
-  project settings (working directory, color, icon, theme, env,
-  preserve-sessions, notifications).
+  removed or hibernated — not from the sidebar, not from the command palette,
+  and not by `hibernate-after` — and it carries its own project settings
+  (working directory, color, icon, theme, env, preserve-sessions,
+  notifications).
 - **Projects → tabs → splits** — add a project from one picker (**New Folder**
   to create one, optionally `git init`, or pick an existing directory); every
   project owns its own tabs, each tab an arbitrarily nested tree of split
@@ -582,6 +583,7 @@ surface can block inside libghostty's synchronous subprocess teardown and freeze
 Zetty's main thread, so live terminal surfaces belonging to awake projects stay
 attached until a safe non-blocking teardown path is available. Use
 `hibernate-after` when you want idle projects' processes and surfaces stopped.
+It skips the Home project, which is never put away without your asking.
 
 Zetty also continuously reconciles preserved sessions against the workspace, so
 closing a pane always ends its session — even one whose tab you never opened —
@@ -778,9 +780,11 @@ one session adding, driving and removing panes across many projects and being
 able to `send` and `capture` them straight away. The cost is that a background
 `add-project` pays for its panes at creation rather than on first view.
 
-The **Home** project is targetable by name (`zetty new-tab --project Home`,
-`zetty hibernate Home`), but `zetty remove-project Home` is rejected — Home
-can't be removed.
+The **Home** project is targetable by name (`zetty new-tab --project Home`),
+but `zetty remove-project Home` and `zetty hibernate Home` are both rejected —
+Home is permanent, and since no surface offers a hibernate verb for it, a
+hibernated Home would have nothing to wake it. (`zetty wake Home` still works,
+so a workspace saved in that state before this rule existed recovers.)
 
 **`add-project --space` errors on an unknown Space name** rather than creating
 one — a typo shouldn't silently produce a second near-identical Space. Space

@@ -165,11 +165,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         tvc.ghosttyConfiguration = makeTerminalConfiguration()
         tvc.onReloadConfig = { [weak self] in self?.reloadConfiguration(nil) }
         tvc.onOpenSettings = { [weak self] in self?.openSettings(nil) }
-        // Same two-step the account chip uses: show the window, then jump.
-        tvc.onOpenSettingsTab = { [weak self] tab in
-            self?.openSettings(nil)
-            self?.settingsWindowController?.selectTab(named: tab)
-        }
+        tvc.onOpenSettingsTab = { [weak self] tab in self?.openSettings(tab: tab) }
         tvc.onCheckForUpdates = { [weak self] in self?.checkForUpdates(nil) }
         tvc.onQuitApp = { [weak self] in self?.quitApplication(nil) }
         tvc.onShutdownApp = { [weak self] in self?.shutDownApplication(nil) }
@@ -210,10 +206,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         tvc.onRenameProject = { [weak self] project in self?.promptRenameProject(project) }
         tvc.onOpenProjectSettings = { [weak self] project in self?.presentProjectSettings(project) }
         tvc.accountsProvider = { [weak self] in self?.agentAccounts.accounts ?? [] }
-        tvc.onOpenAccountSettings = { [weak self] in
-            self?.openSettings(nil)
-            self?.settingsWindowController?.selectTab(named: "Accounts")
-        }
+        tvc.onOpenAccountSettings = { [weak self] in self?.openSettings(tab: .accounts) }
         // Routed through resolvedSettings so a clone inherits its source's
         // account along with the rest of its settings.
         tvc.projectAccountProvider = { [weak self] project in
@@ -1300,6 +1293,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     // MARK: - Settings
 
     private var settingsWindowController: SettingsWindowController?
+
+    /// Shows Settings and jumps to one of its panes — the status-bar account
+    /// chip and the palette's per-pane entries both arrive here.
+    private func openSettings(tab: SettingsWindowController.Tab) {
+        openSettings(nil)
+        settingsWindowController?.selectTab(tab)
+    }
 
     @objc private func openSettings(_ sender: Any?) {
         let controller = settingsWindowController ?? SettingsWindowController(

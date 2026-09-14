@@ -978,9 +978,9 @@ extension SidebarView: NSMenuDelegate {
             }
 
             // Home is permanent and always available: it is the sidebar's
-            // guaranteed floor, so it is never put away from here (the command
-            // palette omits the verb for it too). Everything else in this menu
-            // still applies to it.
+            // guaranteed floor, so it is never put away (the palette and
+            // `hibernateProject` refuse it too). Home keeps rename and settings
+            // here, but is never hibernated, moved to a Space, or removed.
             if !isHome {
                 let hibernate = NSMenuItem(
                     title: projects[p].isHibernated ? "Wake Project" : "Hibernate Project",
@@ -1009,7 +1009,7 @@ extension SidebarView: NSMenuDelegate {
             }
         }
 
-        // Home is permanent — it offers settings/hibernation but no removal.
+        // Home is permanent — it offers settings but no removal.
         if !isHome {
             menu.addItem(.separator())
 

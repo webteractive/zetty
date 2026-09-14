@@ -23,11 +23,10 @@ final class CommandPaletteView: NSView, NSTextFieldDelegate {
     /// The commands actually rendered — the matches, capped at
     /// `maxRenderedRows`. Every index (selection, run, hover) is an index into
     /// THIS array, so the cap needs no special handling anywhere else.
-    private var filtered: [PaletteCommand]
+    private var filtered: [PaletteCommand] = []
     /// Matches beyond the cap, surfaced as a "keep typing" hint rather than
     /// silently dropped.
     private var overflowCount = 0
-    private var overflowRow: NSView?
     private var selectedIndex = 0
     private let onClose: () -> Void
 
@@ -46,6 +45,9 @@ final class CommandPaletteView: NSView, NSTextFieldDelegate {
     private static let listInset: CGFloat = 16   // stack top+bottom padding
     private static let maxListHeight: CGFloat = 320
     private static let overflowRowHeight: CGFloat = 28
+    /// Where a row's label starts: the chip's 12pt inset + its 26pt width +
+    /// the 12pt gap. The overflow hint aligns to it.
+    private static let rowTextInset: CGFloat = 50
     /// A row view per match is built on open and on every keystroke, and the
     /// project-scoped commands scale with the workspace (a few hundred entries
     /// on a large one). Only the first 50 are built; the rest are one hint row.
@@ -53,8 +55,6 @@ final class CommandPaletteView: NSView, NSTextFieldDelegate {
 
     init(commands: [PaletteCommand], onClose: @escaping () -> Void) {
         self.allCommands = commands
-        self.filtered = Array(commands.prefix(Self.maxRenderedRows))
-        self.overflowCount = max(0, commands.count - Self.maxRenderedRows)
         self.onClose = onClose
         super.init(frame: .zero)
         translatesAutoresizingMaskIntoConstraints = false
@@ -62,6 +62,8 @@ final class CommandPaletteView: NSView, NSTextFieldDelegate {
         // Scrim.
         layer?.backgroundColor = NSColor.black.withAlphaComponent(0.4).cgColor
         buildPanel()
+        // Same two steps as the filter path: set the matches, render them.
+        setMatches(commands)
         rebuildRows()
     }
 
@@ -115,7 +117,7 @@ final class CommandPaletteView: NSView, NSTextFieldDelegate {
 
         // Command list.
         listStack.orientation = .vertical
-        listStack.spacing = 2
+        listStack.spacing = Self.rowSpacing
         listStack.alignment = .leading
         listStack.translatesAutoresizingMaskIntoConstraints = false
 
@@ -187,17 +189,22 @@ final class CommandPaletteView: NSView, NSTextFieldDelegate {
         ])
     }
 
+    /// Applies the render cap: `filtered` is what gets rows, `overflowCount` is
+    /// whatever it dropped. The one place that invariant is expressed.
+    private func setMatches(_ matches: [PaletteCommand]) {
+        filtered = Array(matches.prefix(Self.maxRenderedRows))
+        overflowCount = matches.count - filtered.count
+    }
+
     private func rebuildRows() {
-        for row in rowViews {
-            listStack.removeArrangedSubview(row)
-            row.removeFromSuperview()
+        // The stack holds the rows plus an optional overflow hint and nothing
+        // else (the empty-state label lives in the panel), so one sweep clears
+        // it — and can't leave a future non-row subview behind.
+        for view in listStack.arrangedSubviews {
+            listStack.removeArrangedSubview(view)
+            view.removeFromSuperview()
         }
         rowViews.removeAll()
-        if let overflowRow {
-            listStack.removeArrangedSubview(overflowRow)
-            overflowRow.removeFromSuperview()
-            self.overflowRow = nil
-        }
 
         for (index, command) in filtered.enumerated() {
             let row = PaletteRowView(command: command)
@@ -212,7 +219,6 @@ final class CommandPaletteView: NSView, NSTextFieldDelegate {
             let hint = makeOverflowRow(count: overflowCount)
             listStack.addArrangedSubview(hint)
             hint.widthAnchor.constraint(equalTo: listStack.widthAnchor).isActive = true
-            overflowRow = hint
         }
 
         emptyLabel.isHidden = !filtered.isEmpty
@@ -239,7 +245,7 @@ final class CommandPaletteView: NSView, NSTextFieldDelegate {
         container.addSubview(label)
         NSLayoutConstraint.activate([
             container.heightAnchor.constraint(equalToConstant: Self.overflowRowHeight),
-            label.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 50),
+            label.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: Self.rowTextInset),
             label.centerYAnchor.constraint(equalTo: container.centerYAnchor),
         ])
         return container
@@ -284,8 +290,7 @@ final class CommandPaletteView: NSView, NSTextFieldDelegate {
         let matches = query.isEmpty
             ? allCommands
             : allCommands.filter { $0.label.lowercased().contains(query) }
-        filtered = Array(matches.prefix(Self.maxRenderedRows))
-        overflowCount = matches.count - filtered.count
+        setMatches(matches)
         rebuildRows()
     }
 

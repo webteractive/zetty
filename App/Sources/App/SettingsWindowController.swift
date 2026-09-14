@@ -6,6 +6,18 @@ import ZettyGhostty
 /// section — a toggle per harness that installs/uninstalls Zetty's status hook.
 final class SettingsWindowController: NSWindowController, NSWindowDelegate {
 
+    /// The Settings panes, in display order. Single source of truth: the tab
+    /// view is built from these and every jump names one, so a renamed pane
+    /// can't leave a caller pointing at a label that no longer exists —
+    /// `selectTab` would have silently done nothing.
+    enum Tab: String, CaseIterable {
+        case general = "General"
+        case appearance = "Appearance"
+        case sessions = "Sessions"
+        case agents = "Agents"
+        case accounts = "Accounts"
+    }
+
     private let installer: HookInstaller
     private var switches: [(harness: Harness, control: NSSwitch)] = []
     private let configURL = ConfigStore().fileURL
@@ -165,11 +177,9 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         builtFontStamp = Self.fontStamp
         let tabs = NSTabView()
         tabs.translatesAutoresizingMaskIntoConstraints = false
-        tabs.addTabViewItem(tabItem("General", buildGeneralTab()))
-        tabs.addTabViewItem(tabItem("Appearance", buildAppearanceTab()))
-        tabs.addTabViewItem(tabItem("Sessions", buildSessionsTab()))
-        tabs.addTabViewItem(tabItem("Agents", buildAgentsTab()))
-        tabs.addTabViewItem(tabItem("Accounts", buildAccountsTab()))
+        for tab in Tab.allCases {
+            tabs.addTabViewItem(tabItem(tab.rawValue, content(for: tab)))
+        }
         root.addSubview(tabs)
         NSLayoutConstraint.activate([
             tabs.topAnchor.constraint(equalTo: root.topAnchor, constant: 12),
@@ -180,6 +190,16 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         tabView = tabs
         refresh()
         return root
+    }
+
+    private func content(for tab: Tab) -> NSView {
+        switch tab {
+        case .general: return buildGeneralTab()
+        case .appearance: return buildAppearanceTab()
+        case .sessions: return buildSessionsTab()
+        case .agents: return buildAgentsTab()
+        case .accounts: return buildAccountsTab()
+        }
     }
 
     private func tabItem(_ label: String, _ content: NSView) -> NSTabViewItem {
@@ -477,14 +497,12 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         return stack
     }
 
-    /// Jumps to a tab by label — used by the status-bar account chip, which is
-    /// the discoverable route into account management.
-    func selectTab(named label: String) {
-        guard let tabView,
-              let index = (0..<tabView.numberOfTabViewItems).first(where: {
-                  tabView.tabViewItem(at: $0).label == label
-              })
-        else { return }
+    /// Jumps to a pane — used by the status-bar account chip (the discoverable
+    /// route into account management) and by the command palette's per-pane
+    /// Settings entries.
+    func selectTab(_ tab: Tab) {
+        guard let tabView, let index = Tab.allCases.firstIndex(of: tab),
+              index < tabView.numberOfTabViewItems else { return }
         tabView.selectTabViewItem(at: index)
     }
 
