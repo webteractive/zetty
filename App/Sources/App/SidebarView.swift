@@ -913,9 +913,15 @@ extension SidebarView: NSMenuDelegate {
         guard case .project(let p) = obj.kind, projects.indices.contains(p) else { return }
         // A "Cloning…" placeholder has no actions until the copy lands.
         guard !projects[p].isPendingClone else { return }
+        // Home is permanent: it can't be removed, it's never pinned or filed
+        // into a Space, and it isn't hibernated or woken from here — which
+        // leaves nothing for a context menu to offer. An empty menu shows
+        // nothing at all, which is the intent. Its Project Settings (the
+        // Working Directory row included) stay reachable via ⌥⌘, and the
+        // command palette.
+        guard !projects[p].isHome else { return }
 
         let isScratch = projects[p].isScratch
-        let isHome = projects[p].isHome
 
         let rename = NSMenuItem(title: "Rename\u{2026}",
                                 action: #selector(renameProjectMenuClicked(_:)),
@@ -941,7 +947,7 @@ extension SidebarView: NSMenuDelegate {
             // Home, scratch terminals, and clones are never Space members —
             // hide the item entirely rather than offering a move the model
             // will refuse (a clone follows its source's Space).
-            if !isHome && !projects[p].isClone {
+            if !projects[p].isClone {
                 let moveItem = NSMenuItem(title: "Move to Space", action: nil, keyEquivalent: "")
                 let submenu = NSMenu()
 
@@ -984,7 +990,7 @@ extension SidebarView: NSMenuDelegate {
             hibernate.tag = p
             menu.addItem(hibernate)
 
-            if !isHome && !projects[p].isClone {
+            if !projects[p].isClone {
                 let clone = NSMenuItem(title: "Clone Project\u{2026}",
                                        action: #selector(cloneProjectMenuClicked(_:)),
                                        keyEquivalent: "")
@@ -1003,19 +1009,16 @@ extension SidebarView: NSMenuDelegate {
             }
         }
 
-        // Home is permanent — it offers settings/hibernation but no removal.
-        if !isHome {
-            menu.addItem(.separator())
+        menu.addItem(.separator())
 
-            let removeTitle = isScratch ? "Close Terminal"
-                : projects[p].isClone ? "Remove Clone\u{2026}" : "Remove Project\u{2026}"
-            let remove = NSMenuItem(title: removeTitle,
-                                    action: #selector(removeProjectMenuClicked(_:)),
-                                    keyEquivalent: "")
-            remove.target = self
-            remove.tag = p
-            menu.addItem(remove)   // Home is the floor, so any other project is removable
-        }
+        let removeTitle = isScratch ? "Close Terminal"
+            : projects[p].isClone ? "Remove Clone\u{2026}" : "Remove Project\u{2026}"
+        let remove = NSMenuItem(title: removeTitle,
+                                action: #selector(removeProjectMenuClicked(_:)),
+                                keyEquivalent: "")
+        remove.target = self
+        remove.tag = p
+        menu.addItem(remove)   // Home is the floor, so any other project is removable
     }
 }
 
