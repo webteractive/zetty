@@ -2059,15 +2059,24 @@ final class TerminalViewController: NSViewController {
             let name = project.name
             let isClone = project.cloneSource != nil
 
-            // Jump to it (waking first when dormant).
-            commands.append(PaletteCommand(
-                glyph: project.isHibernated ? "☾" : "◆",
-                label: project.isHibernated ? "Wake Project: \(name)" : "Go to Project: \(name)",
-                kbd: ""
-            ) { [weak self] in
-                guard let self else { return }
-                if project.isHibernated { self.wakeProject(project) } else { self.selectProject(at: index) }
-            })
+            // Jump to it (waking first when dormant). Home is the exception:
+            // it is the sidebar's guaranteed floor, so the palette offers no
+            // lifecycle verb for it at all — neither hibernate nor wake — and
+            // its entry only ever selects it.
+            if project.isHome {
+                commands.append(PaletteCommand(glyph: "◆", label: "Go to Project: \(name)", kbd: "") { [weak self] in
+                    self?.selectProject(at: index)
+                })
+            } else {
+                commands.append(PaletteCommand(
+                    glyph: project.isHibernated ? "☾" : "◆",
+                    label: project.isHibernated ? "Wake Project: \(name)" : "Go to Project: \(name)",
+                    kbd: ""
+                ) { [weak self] in
+                    guard let self else { return }
+                    if project.isHibernated { self.wakeProject(project) } else { self.selectProject(at: index) }
+                })
+            }
 
             commands.append(PaletteCommand(glyph: "✎", label: "Rename Project: \(name)…", kbd: "") { [weak self] in
                 self?.onRenameProject?(project)
@@ -2076,8 +2085,8 @@ final class TerminalViewController: NSViewController {
             guard !project.isScratch else { continue }
 
             // Only awake projects can hibernate; the dormant ones already
-            // offer "Wake Project" above.
-            if !project.isHibernated {
+            // offer "Wake Project" above. Home never appears here (see above).
+            if !project.isHibernated, !project.isHome {
                 commands.append(PaletteCommand(glyph: "☾", label: "Hibernate Project: \(name)", kbd: "") { [weak self] in
                     self?.hibernateProject(project)
                 })
