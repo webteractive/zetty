@@ -4,6 +4,31 @@ import ZettyGhostty
 // CLI mode: the app binary doubles as the `Zetty` CLI when invoked with a
 // recognized command (Settings installs a symlink into ~/.local/bin).
 let cliArguments = Array(CommandLine.arguments.dropFirst())
+// The CLI answers "which build is this?" from the bundle it is running out of.
+//
+// `Bundle.main` is resolved from the INVOKED path, which in CLI mode is the
+// ~/.local/bin/zetty symlink — a plain directory with no Info.plist, so every
+// key reads nil and the version would report "dev" for the normal way the CLI
+// is used. Resolving the executable's symlinks first lands on the real binary
+// inside the bundle; walking up from Contents/MacOS/zetty gives the .app.
+ControlCLI.versionInfo = {
+    let bundle: Bundle
+    if Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") != nil {
+        bundle = Bundle.main
+    } else if let executable = Bundle.main.executableURL?.resolvingSymlinksInPath(),
+              let resolved = Bundle(url: executable
+                  .deletingLastPathComponent()      // MacOS
+                  .deletingLastPathComponent()      // Contents
+                  .deletingLastPathComponent()) {   // zetty.app
+        bundle = resolved
+    } else {
+        bundle = Bundle.main
+    }
+    return (
+        version: bundle.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "dev",
+        commit: bundle.object(forInfoDictionaryKey: "ZettyBuildCommit") as? String
+    )
+}()
 if ControlCLI.recognizes(cliArguments) {
     exit(ControlCLI.run(cliArguments))
 }

@@ -8,6 +8,15 @@ import Foundation
 /// 0 success · 1 error (message on stderr) · 2 usage.
 public enum ControlCLI {
 
+    /// Filled by the app binary from its bundle before dispatch; the standalone
+    /// `swift build` executable leaves it nil and reports "dev".
+    public nonisolated(unsafe) static var versionInfo: (version: String, commit: String?)?
+
+    /// Pure so the format is testable without a bundle.
+    public static func versionLine(version: String, commit: String?) -> String {
+        commit.map { "zetty \(version) (\($0))" } ?? "zetty \(version)"
+    }
+
     public static let usage = """
     usage:
       zetty status [--json]                 workspace tree: projects → tabs → panes
@@ -121,6 +130,8 @@ public enum ControlCLI {
                                               recovery snapshot first, then kills
                                               sessions like a real restart (testing aid)
 
+      zetty --version | -v | version        print the version and build commit
+
     Notes (script/agent friendly):
       - The default send/capture/split target is the focused pane. Send text
         arguments are joined with spaces and sent verbatim; keys append after.
@@ -154,7 +165,8 @@ public enum ControlCLI {
                 "remove-project", "hibernate", "wake", "split", "break", "focus", "close", "reload",
                 "scratch", "scratch-clear", "quit", "accounts", "run",
                 "new-space", "rename-space", "remove-space", "move-to-space",
-                "help", "--help", "-h"].contains(first)
+                "help", "--help", "-h",
+                "version", "--version", "-v"].contains(first)
     }
 
     public static func run(_ arguments: [String]) -> Int32 {
@@ -168,6 +180,10 @@ public enum ControlCLI {
         switch command {
         case "help", "--help", "-h":
             print(usage)
+            return 0
+        case "version", "--version", "-v":
+            let info = versionInfo ?? (version: "dev", commit: nil)
+            print(versionLine(version: info.version, commit: info.commit))
             return 0
         case "status", "ls":
             return runStatus(arguments)
