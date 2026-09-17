@@ -113,11 +113,16 @@ public enum ControlRequest: Equatable, Sendable {
     /// overlay belongs to the window, so there's no pane target — it presents
     /// over whatever project and tab are active. Response `.ok`.
     case viewFile(path: String, line: Int?, column: Int?)
+    /// `zetty run` reporting that it is about to exec an agent under `account`
+    /// in the pane `surface` (a `ZETTY_SURFACE` uuid string). Best-effort and
+    /// advisory: the exec happens whether or not this is delivered, so the app
+    /// being closed costs only the chip's accuracy. Response `.ok`.
+    case accountRunning(surface: String, account: String)
 }
 
 extension ControlRequest: Codable {
     private enum CodingKeys: String, CodingKey {
-        case command, target, text, enter, keys, project, wholeTab, killSessions, simulateRestart, vertical, lines, path, name, gitInit, focus, fetch, discard, line, column, space, newName, color, icon, account, probe
+        case command, target, text, enter, keys, project, wholeTab, killSessions, simulateRestart, vertical, lines, path, name, gitInit, focus, fetch, discard, line, column, space, newName, color, icon, account, probe, surface
     }
 
     public init(from decoder: Decoder) throws {
@@ -126,6 +131,10 @@ extension ControlRequest: Codable {
         case "status": self = .status
         case "accounts":
             self = .accounts(probe: try container.decodeIfPresent(Bool.self, forKey: .probe) ?? false)
+        case "account-running":
+            self = .accountRunning(
+                surface: try container.decode(String.self, forKey: .surface),
+                account: try container.decode(String.self, forKey: .account))
         case "reload": self = .reload
         case "scratch": self = .scratch(focus: try container.decodeIfPresent(Bool.self, forKey: .focus) ?? false)
         case "scratch-clear": self = .scratchClear
@@ -243,6 +252,10 @@ extension ControlRequest: Codable {
         case .accounts(let probe):
             try container.encode("accounts", forKey: .command)
             try container.encode(probe, forKey: .probe)
+        case .accountRunning(let surface, let account):
+            try container.encode("account-running", forKey: .command)
+            try container.encode(surface, forKey: .surface)
+            try container.encode(account, forKey: .account)
         case .reload:
             try container.encode("reload", forKey: .command)
         case .scratch(let focus):

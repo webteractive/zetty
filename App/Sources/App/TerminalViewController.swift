@@ -584,6 +584,18 @@ final class TerminalViewController: NSViewController {
                 for (id, command) in commands where command.isEmpty && previous[id] != "" {
                     self.markTitleStale(id)
                 }
+                // The pane's foreground process is no longer that account's
+                // agent, so the `zetty run` it was launched by has ended.
+                for (id, command) in commands {
+                    guard let surface = self.workspace.surface(with: id),
+                          let running = surface.runningAccountID,
+                          let account = self.accountsProvider?()
+                              .first(where: { $0.id == running }),
+                          let agent = SpawnableAgent.byID(account.agentID),
+                          command != agent.defaultCommand
+                    else { continue }
+                    self.updateSurfaceAnywhere(id) { $0.runningAccountID = nil }
+                }
                 self.setNeedsChromeRefresh(tabBar: true, sidebar: true)
             }
         }
@@ -1013,7 +1025,7 @@ final class TerminalViewController: NSViewController {
         statusBar.setAccount(
             paneTree.focusedSurface.map { surface in
                 AgentAccountResolver.resolve(
-                    paneAccountID: surface.accountID,
+                    paneAccountID: effectiveAccountID(for: surface),
                     projectAccountID: nil,
                     accounts: accounts,
                     home: NSHomeDirectory())
@@ -1303,6 +1315,36 @@ final class TerminalViewController: NSViewController {
     /// again by zmx when the session is created), so a value that could drift
     /// afterwards would describe a process that no longer matches — and the
     /// status chip would name the wrong login.
+    /// The account a pane is actually running under: an explicit `zetty run`
+    /// override if one is live, otherwise the account it was spawned with.
+    ///
+    /// EVERY chrome read goes through here. Two places deciding this is exactly
+    /// the two-sources-of-truth trap the Spaces counts already avoid.
+    func effectiveAccountID(for surface: Surface) -> String? {
+        surface.runningAccountID ?? surface.accountID
+    }
+
+    /// Mutates a surface wherever it lives, mirroring `markTitleStale`.
+    @discardableResult
+    private func updateSurfaceAnywhere(_ id: UUID, _ mutate: (inout Surface) -> Void) -> Bool {
+        for project in workspace.projects
+        where project.tabList.updateSurface(id, mutate) {
+            return true
+        }
+        return false
+    }
+
+    /// Records that `zetty run` launched `accountID` in this pane.
+    /// Returns an error message, or nil on success — the shape `focusPane` uses.
+    func setRunningAccount(surfaceID: UUID, accountID: String) -> String? {
+        guard workspace.surface(with: surfaceID) != nil else {
+            return "no pane \(surfaceID.uuidString)"
+        }
+        updateSurfaceAnywhere(surfaceID) { $0.runningAccountID = accountID }
+        setNeedsChromeRefresh(tabBar: true, sidebar: true)
+        return nil
+    }
+
     func resolvedAccountID(explicit: String?, project: ProjectRuntime?) -> String {
         if let explicit { return explicit }
         if let project, let fromProject = projectAccountProvider?(project) { return fromProject }
@@ -1935,6 +1977,24 @@ final class TerminalViewController: NSViewController {
             + appearanceCommands()
             + projectCommands()
             + spaceCommands()
+            + accountCommands()
+    }
+
+    /// One entry per configured account. Opens a NEW tab stamped with the
+    /// account and starts its agent there — so unlike `zetty run`, no override
+    /// is involved and the chip is correct by construction. Deliberately
+    /// independent of Project Settings' enabled agents: addressing an account
+    /// by name is the whole point.
+    private func accountCommands() -> [PaletteCommand] {
+        (accountsProvider?() ?? []).compactMap { account in
+            guard let agent = SpawnableAgent.byID(account.agentID) else { return nil }
+            return PaletteCommand(glyph: "◉",
+                                  label: "Run Account: \(account.name)",
+                                  kbd: "") { [weak self] in
+                self?.performNewTab(startupCommand: agent.defaultCommand,
+                                    accountID: account.id)
+            }
+        }
     }
 
     /// Pane lifecycle, directional focus, zoom, copy mode. The focus/zoom/copy
@@ -2187,7 +2247,8 @@ final class TerminalViewController: NSViewController {
     /// The display name of a pane's account, or nil when it runs on the default
     /// login (or names an account that no longer exists).
     func accountDisplayName(for surface: Surface) -> String? {
-        guard let id = surface.accountID, id != AgentAccountSupport.defaultID else { return nil }
+        guard let id = effectiveAccountID(for: surface),
+              id != AgentAccountSupport.defaultID else { return nil }
         return accountsProvider?().first { $0.id == id }?.name
     }
 
@@ -3313,7 +3374,7 @@ final class TerminalViewController: NSViewController {
             icons.append(agentIcon(for: tree.focusedSurface))
             // Only non-default accounts get a dot — it marks the exception.
             accountColorIDs.append(tree.focusedSurface.flatMap { surface in
-                surface.accountID.flatMap { id in
+                effectiveAccountID(for: surface).flatMap { id in
                     accounts.first { $0.id == id }?.colorID
                 }
             })
@@ -3390,7 +3451,7 @@ final class TerminalViewController: NSViewController {
                 accountName: projectAccount?.name,
                 tabAccountColors: trees.count >= 2 ? trees.map { tree in
                     tree.focusedSurface.flatMap { surface in
-                        surface.accountID.flatMap { id in
+                        effectiveAccountID(for: surface).flatMap { id in
                             sidebarAccounts.first { $0.id == id }
                         }
                     }.flatMap { ZTheme.projectColor(id: $0.colorID) }

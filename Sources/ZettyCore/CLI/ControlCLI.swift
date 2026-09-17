@@ -38,6 +38,14 @@ public enum ControlCLI {
                                               --probe additionally asks each account
                                               who it is signed in as — one process
                                               per account, so it is opt-in
+      zetty run <account> [args …]            run that account's agent in THIS
+                                              terminal (execs it; the app need
+                                              not be running). Everything after
+                                              the account name is passed to the
+                                              harness. An unknown account name is
+                                              an error, never the default login.
+                                              A `z-<account>` shortcut command is
+                                              generated for each account
 
       zetty add-project <path> [--name <name>] [--space <name>] [--focus]
                                               add a directory as a project in the
@@ -144,7 +152,7 @@ public enum ControlCLI {
         guard let first = arguments.first else { return false }
         return ["status", "ls", "send", "capture", "view", "new-tab", "add-project", "new-project", "clone", "update-clone",
                 "remove-project", "hibernate", "wake", "split", "break", "focus", "close", "reload",
-                "scratch", "scratch-clear", "quit", "accounts",
+                "scratch", "scratch-clear", "quit", "accounts", "run",
                 "new-space", "rename-space", "remove-space", "move-to-space",
                 "help", "--help", "-h"].contains(first)
     }
@@ -165,6 +173,8 @@ public enum ControlCLI {
             return runStatus(arguments)
         case "accounts":
             return runAccounts(arguments)
+        case "run":
+            return runRunAccount(arguments)
         case "send":
             return runSend(arguments)
         case "capture":
@@ -372,6 +382,73 @@ public enum ControlCLI {
             + "".padding(toLength: agentWidth, withPad: " ", startingAt: 0)
             + "  (your original login)  " + (snapshot.defaultDirectory ?? "~"))
         return lines
+    }
+
+    /// `zetty run <account> [args …]` — exec the account's harness HERE.
+    ///
+    /// Deliberately does not touch the control socket to do its job, so it works
+    /// with the app closed, in Terminal.app, or over SSH. Everything after the
+    /// account name is passthrough, so the harness sees its own flags untouched.
+    private static func runRunAccount(_ arguments: [String]) -> Int32 {
+        let home = NSHomeDirectory()
+        let store = AgentAccountStore(
+            directory: ZettyPaths.applicationSupportDirectory(home: home))
+        let accounts = store.load().accounts
+
+        guard let name = arguments.first, name != "--help", name != "-h" else {
+            print("usage: zetty run <account> [args …]")
+            if accounts.isEmpty {
+                print("no accounts configured — add one in Settings (⌘,) → Accounts")
+            } else {
+                print("accounts: " + accounts.map(\.name).joined(separator: ", "))
+            }
+            return 2
+        }
+
+        let plan: AccountRunPlan
+        switch AccountRun.plan(accountName: name,
+                               arguments: Array(arguments.dropFirst()),
+                               accounts: accounts, home: home) {
+        case .success(let resolved):
+            plan = resolved
+        case .failure(.noAccountsConfigured):
+            return failure("no accounts configured — add one in Settings (⌘,) → Accounts")
+        case .failure(.unknownAccount(let wanted, let available)):
+            return failure("unknown account \"\(wanted)\" — known accounts: "
+                + available.joined(separator: ", "))
+        case .failure(.agentNotInCatalog(let agentID, let accountName)):
+            return failure("account \"\(accountName)\" names an unknown agent \"\(agentID)\"")
+        }
+
+        // Codex refuses to start when its config dir does not exist, and a
+        // fresh account's directory may never have been created.
+        if let directory = plan.configDirectory {
+            do {
+                try FileManager.default.createDirectory(
+                    atPath: directory, withIntermediateDirectories: true)
+            } catch {
+                return failure("couldn't create \(directory): \(error.localizedDescription)")
+            }
+        }
+
+        // Advisory: tell the app which account this pane is now running, so the
+        // status chip stops naming the account the pane was spawned with. The
+        // exec proceeds regardless — outside a Zetty pane, or with the app
+        // closed, there is simply nobody to tell.
+        if let surface = ProcessInfo.processInfo.environment["ZETTY_SURFACE"] {
+            notify(.accountRunning(surface: surface, account: plan.accountID))
+        }
+
+        for (key, value) in plan.environment { setenv(key, value, 1) }
+
+        // execvp replaces this process, so the harness owns the terminal and no
+        // zetty lingers. It only returns on failure.
+        let argv: [String] = [plan.command] + plan.arguments
+        var cArgs: [UnsafeMutablePointer<CChar>?] = argv.map { strdup($0) }
+        cArgs.append(nil)
+        execvp(plan.command, &cArgs)
+        return failure("couldn't launch \"\(plan.command)\": "
+            + String(cString: strerror(errno)))
     }
 
     private static func runNewTab(_ arguments: [String]) -> Int32 {
@@ -853,6 +930,45 @@ public enum ControlCLI {
     private static func failure(_ message: String) -> Int32 {
         FileHandle.standardError.write(Data("Zetty: \(message)\n".utf8))
         return 1
+    }
+
+    /// Write-only socket send: connect, write one line, close — never waits for
+    /// a reply.
+    ///
+    /// `roundTrip` blocks for up to 30s, which is the right budget for a verb
+    /// whose whole purpose is the answer but the wrong one here: `zetty run`
+    /// must exec the agent immediately even when the app is wedged, and this
+    /// report is advisory. A 250ms connect/send budget keeps a hung app from
+    /// delaying a launch.
+    private static func notify(_ request: ControlRequest) {
+        let path = (NSHomeDirectory() as NSString).appendingPathComponent(".zetty/zetty.sock")
+        let fd = socket(AF_UNIX, SOCK_STREAM, 0)
+        guard fd >= 0 else { return }
+        defer { close(fd) }
+
+        var on: Int32 = 1
+        setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &on, socklen_t(MemoryLayout<Int32>.size))
+        var timeout = timeval(tv_sec: 0, tv_usec: 250_000)
+        setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &timeout, socklen_t(MemoryLayout<timeval>.size))
+
+        var address = sockaddr_un()
+        address.sun_family = sa_family_t(AF_UNIX)
+        let pathBytes = path.utf8CString
+        guard pathBytes.count <= MemoryLayout.size(ofValue: address.sun_path) else { return }
+        withUnsafeMutableBytes(of: &address.sun_path) { destination in
+            pathBytes.withUnsafeBytes { source in
+                destination.copyMemory(from: UnsafeRawBufferPointer(
+                    start: source.baseAddress, count: source.count))
+            }
+        }
+        let connected = withUnsafePointer(to: &address) { pointer in
+            pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+                connect(fd, $0, socklen_t(MemoryLayout<sockaddr_un>.size))
+            }
+        }
+        guard connected == 0, let out = try? ControlWire.encodeLine(request) else { return }
+        let outBytes = Array(out.utf8)
+        _ = outBytes.withUnsafeBufferPointer { write(fd, $0.baseAddress, $0.count) }
     }
 
     /// One request → one response over the app's Unix socket.

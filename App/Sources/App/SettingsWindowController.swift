@@ -510,9 +510,22 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         accountRows = accountsProvider?() ?? []
         accountsTable.reloadData()
         updateAccountButtons()
-        accountsStatusLabel.stringValue = accountRows.isEmpty
-            ? "No accounts yet — the Default login is in use everywhere."
-            : "\(accountRows.count) account\(accountRows.count == 1 ? "" : "s"), plus the Default login."
+        guard !accountRows.isEmpty else {
+            accountsStatusLabel.stringValue =
+                "No accounts yet — the Default login is in use everywhere."
+            return
+        }
+        // The shim command is the only way to know `z-<name>` exists at all.
+        var status = "\(accountRows.count) account\(accountRows.count == 1 ? "" : "s"), "
+            + "plus the Default login.  Run one from any terminal with "
+            + accountRows.map(AccountShim.name(for:)).joined(separator: ", ") + "."
+        // A shim we could not write because something else owns that name.
+        let conflicts = AccountShimInstaller.conflicts(accounts: accountRows)
+        if !conflicts.isEmpty {
+            status += "  ⚠ " + conflicts.joined(separator: ", ")
+                + " already exist in ~/.local/bin and were left untouched."
+        }
+        accountsStatusLabel.stringValue = status
     }
 
     private func updateAccountButtons() {

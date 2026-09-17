@@ -76,10 +76,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     /// `~/Library/Application Support/zetty/` (created on first use) — shared
     /// by the workspace and project-settings stores.
     private lazy var appSupportDirectory: URL = {
-        let appSupport = FileManager.default.urls(
-            for: .applicationSupportDirectory, in: .userDomainMask
-        ).first ?? URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent("Library/Application Support")
-        let dir = appSupport.appendingPathComponent("zetty")
+        let dir = ZettyPaths.applicationSupportDirectory(home: NSHomeDirectory())
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         return dir
     }()
@@ -150,6 +147,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         // stays honest about which login each pane actually got.
         if tvc.workspace.healAccountIDs(known: Set(agentAccounts.accounts.map(\.id))) {
             scheduleSave()
+        }
+        // Idempotent: repairs shims after an app move, and clears any left by
+        // an account removed while this build wasn't running.
+        AccountShimInstaller.sync(accounts: agentAccounts.accounts)
+        // A pane with no preserved session had its process killed when the app
+        // quit, so a `zetty run` override that survived in workspace.json is
+        // stale. A pane WITH a session may still be running its agent, so it is
+        // left alone and the foreground probe decides.
+        let preservedOwners = Set(tvc.workspace.sessionOwnerSurfaceIDs)
+        for project in tvc.workspace.projects {
+            for tree in project.tabList.trees {
+                for surface in tree.layout.surfaces
+                where surface.runningAccountID != nil && !preservedOwners.contains(surface.id) {
+                    _ = project.tabList.updateSurface(surface.id) { $0.runningAccountID = nil }
+                }
+            }
         }
         applyProjectNameOverrides(to: tvc)
         applyThemeForActiveProject()   // initial active project's theme override
@@ -894,6 +907,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
                 case .success(let results):
                     self.agentAccounts.upsert(account)
                     try? self.agentAccountStore.save(self.agentAccounts)
+                    AccountShimInstaller.sync(accounts: self.agentAccounts.accounts)
                     // A new account's settings.json needs Zetty's status hooks
                     // written into it, or its panes would show no agent dots.
                     self.installHooksForAccounts()
@@ -944,6 +958,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     func removeAgentAccount(_ account: AgentAccount) {
         agentAccounts.remove(id: account.id)
         try? agentAccountStore.save(agentAccounts)
+        AccountShimInstaller.sync(accounts: agentAccounts.accounts)
         // Clear stamps naming it, so workspace.json doesn't keep a dangling id.
         if let tvc = terminalViewController,
            tvc.workspace.healAccountIDs(known: Set(agentAccounts.accounts.map(\.id))) {
@@ -1753,6 +1768,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             return .ok
         case .viewFile(let path, let line, let column):
             if let message = tvc.presentFileViewer(path: path, line: line, column: column) {
+                return .error(message)
+            }
+            return .ok
+        case .accountRunning(let surface, let account):
+            guard let id = UUID(uuidString: surface) else {
+                return .error("bad surface id \"\(surface)\"")
+            }
+            if let message = tvc.setRunningAccount(surfaceID: id, accountID: account) {
                 return .error(message)
             }
             return .ok
