@@ -36,6 +36,17 @@ public struct Surface: Codable, Sendable, Equatable, Identifiable {
     /// moved by respawning it, not by editing this.
     public var accountID: String?
 
+    /// An account `zetty run` started INSIDE this pane, believed to still be
+    /// running. Distinct from `accountID`, which records how the pane was
+    /// spawned and is never rewritten.
+    ///
+    /// Persisted because preserved zmx sessions outlive the app: after a
+    /// relaunch the agent is still there, so an in-memory-only override would
+    /// start describing the wrong login again on every launch — the same reason
+    /// `lastTitle` is persisted. Cleared by the foreground probe when the agent
+    /// exits, and at restore for panes that own no preserved session.
+    public var runningAccountID: String?
+
     public init(
         id: UUID = UUID(),
         workingDir: String,
@@ -43,7 +54,8 @@ public struct Surface: Codable, Sendable, Equatable, Identifiable {
         lastTitle: String? = nil,
         fileTreeVisible: Bool = false,
         fileTreeWidth: Double? = nil,
-        accountID: String? = nil
+        accountID: String? = nil,
+        runningAccountID: String? = nil
     ) {
         self.id = id
         self.workingDir = workingDir
@@ -52,10 +64,12 @@ public struct Surface: Codable, Sendable, Equatable, Identifiable {
         self.fileTreeVisible = fileTreeVisible
         self.fileTreeWidth = fileTreeWidth
         self.accountID = accountID
+        self.runningAccountID = runningAccountID
     }
 
     private enum CodingKeys: String, CodingKey {
         case id, workingDir, command, lastTitle, fileTreeVisible, fileTreeWidth, accountID
+        case runningAccountID
     }
 
     /// Hand-written so a `workspace.json` written by an older build — one with
@@ -69,5 +83,6 @@ public struct Surface: Codable, Sendable, Equatable, Identifiable {
         fileTreeVisible = try c.decodeIfPresent(Bool.self, forKey: .fileTreeVisible) ?? false
         fileTreeWidth = try c.decodeIfPresent(Double.self, forKey: .fileTreeWidth)
         accountID = try c.decodeIfPresent(String.self, forKey: .accountID)
+        runningAccountID = try c.decodeIfPresent(String.self, forKey: .runningAccountID)
     }
 }
