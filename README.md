@@ -639,9 +639,24 @@ follow the account.
 - **An open pane** — right-click the pane's gutter → **Account ▸**. Because a
   program reads its environment once at startup, this closes the pane and opens
   a fresh one in the same slot on the new account.
+- **By name, from any terminal** — `zetty run personal` runs that account's
+  agent right where you type it, with its config directory set. It needs no
+  picker, no project setting and not even a running Zetty, so an account is
+  always reachable. The command palette's **Run Account: …** entries are the
+  GUI twin, opening a new tab on that account.
 
-An account applies to **new panes only**: a pane keeps the account it started
-with, which is why the chip can be trusted.
+**Shortcut commands.** Each account also gets one: an account named *Personal*
+gives you `z-personal`, generated in `~/.local/bin` beside the `zetty` symlink
+and removed when the account is. It takes the same arguments
+(`z-personal --resume`). If `zetty` works in your shell these will too — they
+rely on the same `~/.local/bin` being on your `PATH`. A file of your own already
+sitting at that name is never overwritten; Settings → Accounts reports the
+collision instead.
+
+Choosing an account applies to **new panes only** — a pane keeps the environment
+it started with, which is why `Account ▸` respawns rather than switching in
+place. The account chip reports the login *running* in a pane, so a pane handed
+to `zetty run` shows the account actually in use and reverts when it exits.
 
 **What gets shared**
 
@@ -742,6 +757,10 @@ zetty new-tab --project api              # background tab; prints the new pane i
 zetty accounts                           # list Claude accounts and their config dirs
 zetty accounts --probe                   # …and ask each one who it's signed in as
 zetty new-tab --account work             # open a tab on a specific account
+zetty run personal                       # run that account's agent HERE (execs it)
+zetty run personal --resume              # ...args after the name go to the harness
+z-personal                               # the generated shortcut, same thing
+zetty --version                          # which build is this?
 zetty split --pane 1a2b3c4d --horizontal # background split; prints the new pane id
 zetty split --pane 1a2b3c4d --focus      # ...or bring the new pane to front
 zetty break --pane 1a2b3c4d              # move a pane into its own (background) tab

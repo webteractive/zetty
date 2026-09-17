@@ -624,9 +624,44 @@ Gotchas, all deliberate:
   with a 0↔6 width toggle so `canRepresent` stays valid and no structural flip
   forces a pill rebuild.
 
+- **An account is reachable by name, not only by picker.** `zetty run <account>`
+  (and the generated `z-<account>` shim) execs the harness in the CURRENT
+  terminal with the account's config-dir variable set, reading
+  `agent-accounts.json` directly — **no control socket in that path**, so it
+  works with the app closed, in Terminal.app, or over SSH. That is what makes a
+  project's enabled-agents setting stop gating access to an account. An unknown
+  name is an ERROR listing the known accounts, the same rule `--account` follows.
+  The advisory chip report uses `notify` (fire-and-forget, 250ms budget), NOT
+  `roundTrip` — the latter waits up to 30s, which would stall a launch whenever
+  the app is wedged.
+- **The shims are SCRIPTS that exec `~/.local/bin/zetty`, not symlinks to the app
+  binary.** All of them therefore inherit the freshness guarantee `CLILink`
+  already provides for that one symlink — an app update repairs one link and
+  every shim follows, instead of N stale links to detect. `AccountShim.marker`
+  (`# zetty-account-shim`) is load-bearing: a file without it is never written or
+  removed, so a user's own `z-<name>` survives.
+- **`Surface.runningAccountID` is the account RUNNING in a pane; `accountID` is
+  the one it was SPAWNED with.** Both are persisted, and the difference matters:
+  the spawn stamp can never be rewritten (the env was captured once, at
+  creation), but `zetty run` genuinely changes which login is running, so chrome
+  resolves `runningAccountID ?? accountID` through the single
+  `effectiveAccountID(for:)` accessor — never by reading either field directly.
+  The override is persisted because preserved zmx sessions outlive the app; it is
+  cleared by the foreground probe when the pane's foreground process stops being
+  that agent, and at restore for any pane owning no preserved session. **With
+  `preserve-sessions` off there is no probe**, so an override there clears only
+  at the next launch.
+- **Deriving the running account from the process environment was tried and
+  rejected.** `ps -E` on the foreground pid would be self-clearing and need no
+  stored field, but on macOS it returns a full environment only for user-owned,
+  non-hardened binaries — verified working for a user-installed `node`, and
+  returning nothing at all for `/bin/sleep` and `/bin/sh`. A chip that updates on
+  some installs and not others is worse than one with a documented rule.
+
 CLI: `accounts [--probe] [--json]` (a **slow verb** — probing starts a process
-per account) · `--account <name>` on `new-tab` / `split` · the account name in
-`zetty status`.
+per account) · `run <account> [args…]` (a **fast verb** that never reaches the
+socket — it execs the harness in place) · `--account <name>` on `new-tab` /
+`split` · the account name in `zetty status`.
 
 ### Project clones
 
