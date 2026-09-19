@@ -1203,9 +1203,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
                 // Resolve the owning project's effective value; a surface not
                 // yet in the model (shouldn't happen) follows the global.
                 if let project = tvc?.workspace.project(containing: id) {
-                    // Scratch terminals are ephemeral — always a plain shell.
-                    if project.isScratch { return nil }
-                    guard self.resolvedSettings(for: project).preserveSessions else { return nil }
+                    // Scratch panes ARE preserved, deliberately: without a
+                    // session their pty child is the shell with the agent under
+                    // it, and closing such a pane while that agent is still
+                    // writing wedges the main thread forever (Subprocess.stop
+                    // stops draining the pty while waiting for a child blocked
+                    // writing to it; Surface.deinit then joins that thread).
+                    // With a session the pty child is a `zmx attach` leaf, which
+                    // dies cleanly. Their sessions are killed on every quit, so
+                    // none outlives its pane — see applicationWillTerminate.
+                    //
+                    // Scratch follows the GLOBAL setting, never per-project: it
+                    // is rooted at home and would otherwise adopt the settings
+                    // of whatever project shares that path.
+                    if project.isScratch {
+                        guard self.appConfig.preserveSessions else { return nil }
+                    } else {
+                        guard self.resolvedSettings(for: project).preserveSessions else { return nil }
+                    }
                 } else {
                     guard self.appConfig.preserveSessions else { return nil }
                 }
@@ -1566,7 +1581,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
 
     func applicationWillTerminate(_: Notification) {
         controlSocketServer?.stop()
+        killScratchSessions()
         saveWorkspace()
+    }
+
+    /// Ends every scratch pane's zmx session, on EVERY quit path (this is the
+    /// one choke point they all reach).
+    ///
+    /// Scratch is the host for an account sign-in — a throwaway pane carrying
+    /// that account's environment — so a session of its own must never survive
+    /// to be reattached by hand. That risk is why scratch was exempt from zmx
+    /// altogether; killing here keeps the boundary while letting scratch panes
+    /// have the session that makes closing them safe.
+    private func killScratchSessions() {
+        guard let zmx = ZmxRunner.locate(), let tvc = terminalViewController else { return }
+        let sessions = tvc.workspace.projects.filter(\.isScratch)
+            .flatMap { $0.tabList.trees.flatMap { $0.layout.surfaces.map(\.id) } }
+            .map(SessionPersistence.sessionName(for:))
+        guard !sessions.isEmpty else { return }
+        // Synchronous: an async kill would race app termination.
+        ZmxRunner.killAndWait(sessions: sessions, zmxPath: zmx)
     }
 
     // MARK: - Control socket (Zetty CLI)

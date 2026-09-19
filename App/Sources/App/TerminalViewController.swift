@@ -3601,8 +3601,9 @@ final class TerminalViewController: NSViewController {
     ///
     /// `accountID` + `startupCommand` are how an account signs in: a throwaway
     /// pane carrying that account's environment, running its login command.
-    /// Scratch is the right host — never persisted, and exempt from zmx, so no
-    /// session captures the login environment and outlives the pane.
+    /// Scratch is the right host — never persisted, and its zmx session is
+    /// killed on close AND on quit, so no session captures the login
+    /// environment and outlives the pane.
     @discardableResult
     func newScratchTerminal(focus: Bool, accountID: String? = nil,
                             startupCommand: String? = nil) -> String {

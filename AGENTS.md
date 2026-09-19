@@ -145,6 +145,22 @@ in `ZettyCore` (`AppConfig` / `ConfigStore`); `AppDelegate` resolves + applies i
     relied on for quote grouping; the script's `unset ZMX_SESSION` covers the
     strip for both zmx calls. Script write failure falls back to the bare
     attach (session preserved, replay lost).
+  - **Scratch panes ARE preserved, and that is a deadlock fix, not a feature.**
+    Without a session a scratch pane's pty child is the shell with its agent
+    under it; closing such a pane while that agent is still writing wedges the
+    main thread FOREVER — `Subprocess.stop` stops draining the pty while waiting
+    for a child that is blocked writing to it, and `Surface.deinit` joins that
+    thread from main. `SIGKILL` cannot clear it (the child is unreapable until
+    the pty dies) and recovery is `kill -9` on Zetty. It fired on consecutive
+    mornings from a scratch pane running Claude. With a session the pty child is
+    a `zmx attach` LEAF, which dies cleanly. Scratch follows the GLOBAL
+    `preserve-sessions` only — it is rooted at home and would otherwise adopt
+    the settings of whatever project shares that path — and
+    `AppDelegate.killScratchSessions()` ends those sessions in
+    `applicationWillTerminate` (the one choke point every quit path reaches), so
+    none outlives its pane. That last part is load-bearing: scratch hosts
+    account sign-ins, and a surviving session would carry that account's
+    environment. Spec: `docs/superpowers/specs/2026-09-18-scratch-pane-deadlock-design.md`.
   - **Title persistence** — zmx never replays the title escape sequence, so
     each surface's last emitted title persists as `Surface.lastTitle` in
     `workspace.json` and seeds the tab name until the program emits a fresh
@@ -1352,7 +1368,7 @@ Commands (see `zetty --help` for full grammar and agent notes):
   its tabs/panes and ending their zmx sessions; no confirmation dialog,
   and the last remaining project can't be removed.
 - `scratch [--focus]` — open a project-less, ephemeral scratch terminal
-  (rooted at home, plain shell, never persisted) in the Scratch section, in
+  (rooted at home, never persisted) in the Scratch section, in
   the BACKGROUND by default; `--focus` switches to it. Prints the new pane
   id. `scratch-clear` closes and clears every scratch terminal at once.
 - `focus (--pane|--cwd)` · `close (--pane|--cwd) [--tab]` · `reload` ·

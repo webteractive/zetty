@@ -60,7 +60,9 @@ by the tool it's running.
   **Scratch** sidebar section, are never saved to the workspace, and every tab
   is closable — closing the last returns you to your first pinned project.
   Clear them all at once with **Close All Scratch Terminals** (`zetty
-  scratch-clear`).
+  scratch-clear`). Like any other pane they run inside a preserved session, so
+  `zetty capture` can read their output — but that session ends when the pane
+  closes or Zetty quits, so a scratch terminal never outlives itself.
 - **Spaces** — right-click a project → **Move to Space ▸** to file it into a
   named, colorable, collapsible sidebar section (or create one with **New
   Space…**); Spaces render below **Projects**, each with a color dot, optional
