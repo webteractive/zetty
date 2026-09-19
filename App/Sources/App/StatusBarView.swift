@@ -50,7 +50,29 @@ final class StatusBarView: NSView {
     private let aheadLabel = NSTextField(labelWithString: "")
     private let behindLabel = NSTextField(labelWithString: "")
     private let changesLabel = NSTextField(labelWithString: "")
+    /// The git views as one unit, so they fold away together.
+    private let gitStack = NSStackView()
+    /// The compact stand-in for the WHOLE left cluster — directory, branch and
+    /// a dirty dot in one pill, click for the full path and the counts.
+    private let locationChip = NSView()
+    private let locationChipLabel = NSTextField(labelWithString: "")
+    private let locationChipChevron = NSImageView()
     private let leftStack = NSStackView()
+
+    /// Whether the cwd and git have folded into `locationChip`. Unlike
+    /// `isCompact` this is about legibility, not the window floor — see
+    /// `LocationChip`.
+    private var isLocationCollapsed = false
+    private var shownGit: GitStatus = .none
+    /// The cwd as displayed, mirrored so the chip and its dropup can render
+    /// without reading it back off a label that may be hidden.
+    private var shownCwd = ""
+
+    /// `gitStack.fittingSize.width` remembered across passes, for the same
+    /// reason `cachedInfoWidth` is: hidden measures zero, and zero reads as
+    /// "it fits".
+    private var cachedGitWidth: CGFloat = 0
+    private var renderedLocationChipToken: String?
 
     // Right: "Open ▾" pill · appearance · scheme · shell · zetty build · libghostty.
     private let editorPill = NSView()
@@ -79,9 +101,52 @@ final class StatusBarView: NSView {
     private let sep2 = NSTextField(labelWithString: "·")
     private let sep3 = NSTextField(labelWithString: "·")
     private let ghosttyLabel = NSTextField(labelWithString: "")
-    private let rightStack = NSStackView()
+
+    // The right side is three pieces, and the split is load-bearing rather
+    // than cosmetic — see `layout()`. `pillStack` (the action controls) is the
+    // only one pinned to the trailing edge and the only one whose width reaches
+    // `fittingSize`; `infoStack` (the ambient stats) is frame-positioned inside
+    // `infoHost`, which claims the leftover space but is never sized by its
+    // contents; `infoChip` stands in for the whole ambient group when that
+    // leftover runs out.
+    private let infoStack = NSStackView()
+    private let infoHost = NSView()
+    private let pillStack = NSStackView()
+
+    /// The compact stand-in for `infoStack`: the colour scheme (dot + name, as
+    /// the wide bar renders it), clicked to open all the ambient stats.
+    ///
+    /// It shows the scheme rather than rotating through the stats, and the
+    /// distinction matters. `pillStack` hugs its content, so anything that
+    /// changes width in here resizes the stack and drags its neighbours
+    /// sideways — an earlier version rotated every 4s and moved `Open ▾` out
+    /// from under the pointer mid-click. A scheme name changes only when
+    /// someone changes the scheme, and by then `Open ▾` and the account have
+    /// folded away, so in the ordinary compact bar this pill is the only thing
+    /// in the stack and nothing can shift. Do not reintroduce anything that
+    /// changes width on a timer.
+    private let infoChip = NSView()
+    private let infoChipLabel = NSTextField(labelWithString: "")
+    private let infoChipGlyph = NSImageView()
+    private let infoChipChevron = NSImageView()
 
     private var appearanceMode = "System"
+
+    // MARK: - Compact mode
+
+    /// The ambient stats' current values, mirrored from `update(...)` so the
+    /// chip and its menu can render without re-reading the views.
+    private var infoValues = StatusInfoValues()
+    /// Whether `infoStack` has folded into `infoChip`. Flipped only by
+    /// `layout()`, through `StatusBarCompaction`'s hysteresis.
+    private var isCompact = false
+    /// `infoStack.fittingSize.width`, remembered across passes. A hidden stack
+    /// can measure zero, and a zero requirement would read as "it fits" and
+    /// bounce the bar straight back to wide.
+    private var cachedInfoWidth: CGFloat = 0
+    /// One baseline measurement per window, so the floor is on record even
+    /// when nobody ever drags the window narrow enough to flip the mode.
+    private var didLogFloor = false
 
     // MARK: - Render caches
     //
@@ -101,6 +166,9 @@ final class StatusBarView: NSView {
     /// Cached by account id AND emptiness, so the chip re-renders when the
     /// account changes or the last account is removed.
     private var renderedAccountToken: String?
+    /// Cached by the chip's rendered text plus its mode, so the 4s rotation
+    /// repaints but an unchanged refresh tick does not.
+    private var renderedChipToken: String?
 
     /// Drops every cached render token so the next call actually re-renders.
     private func invalidateRenderCaches() {
@@ -112,6 +180,8 @@ final class StatusBarView: NSView {
         // The palette flips its dark/light variant while the id is unchanged —
         // without this the chip would freeze in the old scheme's color.
         renderedAccountToken = nil
+        renderedChipToken = nil
+        renderedLocationChipToken = nil
     }
 
     private var plainLabels: [NSTextField] {
@@ -130,6 +200,10 @@ final class StatusBarView: NSView {
         }
         cwdLabel.lineBreakMode = .byTruncatingHead
         cwdLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        // A branch name is unbounded, and with the default (required)
+        // resistance a long one silently raises the window's minimum width —
+        // `.byTruncatingTail` alone never gets the chance to fire.
+        branchLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
 
         branchIcon.translatesAutoresizingMaskIntoConstraints = false
         if #available(macOS 11.0, *) {
@@ -217,12 +291,60 @@ final class StatusBarView: NSView {
         ])
         accountPill.isHidden = true
 
-        configureStack(leftStack, views: [modeChip, zoomChip, accountPill, cwdLabel, branchIcon, branchLabel, aheadLabel, behindLabel, changesLabel])
+        // The git chip, built like its right-hand counterpart: an NSTextField
+        // for the text (never a button's `attributedTitle`, which leaks a KVO
+        // record per assignment and this one re-renders on every git probe),
+        // and a gesture recognizer for the click.
+        locationChip.wantsLayer = true
+        locationChip.layer?.cornerRadius = 10
+        locationChip.layer?.borderWidth = 1
+        locationChip.translatesAutoresizingMaskIntoConstraints = false
+        locationChip.isHidden = true
+        locationChipLabel.lineBreakMode = .byTruncatingTail
+        locationChipLabel.translatesAutoresizingMaskIntoConstraints = false
+        locationChipLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        locationChipChevron.translatesAutoresizingMaskIntoConstraints = false
+        if #available(macOS 11.0, *) {
+            locationChipChevron.image = NSImage(systemSymbolName: "chevron.up",
+                                           accessibilityDescription: "Show git details")?
+                .withSymbolConfiguration(NSImage.SymbolConfiguration(pointSize: 8, weight: .semibold))
+            locationChipChevron.imageScaling = .scaleProportionallyDown
+        }
+        locationChip.addSubview(locationChipLabel)
+        locationChip.addSubview(locationChipChevron)
+        locationChip.addGestureRecognizer(
+            NSClickGestureRecognizer(target: self, action: #selector(locationChipClicked)))
+        NSLayoutConstraint.activate([
+            locationChip.heightAnchor.constraint(equalToConstant: 20),
+            locationChipLabel.leadingAnchor.constraint(equalTo: locationChip.leadingAnchor, constant: 9),
+            locationChipLabel.centerYAnchor.constraint(equalTo: locationChip.centerYAnchor),
+            locationChipChevron.leadingAnchor.constraint(equalTo: locationChipLabel.trailingAnchor, constant: 5),
+            locationChipChevron.trailingAnchor.constraint(equalTo: locationChip.trailingAnchor, constant: -8),
+            locationChipChevron.centerYAnchor.constraint(equalTo: locationChip.centerYAnchor),
+            locationChipChevron.widthAnchor.constraint(equalToConstant: 8),
+        ])
+
+        configureStack(gitStack, views: [branchIcon, branchLabel, aheadLabel, behindLabel, changesLabel])
+        gitStack.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+
+        configureStack(leftStack, views: [modeChip, zoomChip, accountPill, cwdLabel, gitStack, locationChip])
         leftStack.setCustomSpacing(10, after: zoomChip)
         leftStack.setCustomSpacing(10, after: cwdLabel)
-        // The cwd is the one label allowed to give way: the stack may compress
-        // and the path truncates (by the head) before anything else moves.
+        // The cwd is the one label allowed to give way FIRST: the path
+        // truncates (by the head) before anything else moves.
         leftStack.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        // But lowering it on the STACK is not enough, and assuming otherwise
+        // is what left the measured floor at 477pt. A stack pins its arranged
+        // subviews to its edges at required priority, so any child that
+        // resists compression holds the whole stack — and the window — open,
+        // whatever the stack's own resistance says. The account pill was the
+        // worst of them: its width follows an account name nobody bounded.
+        for squeezable in [accountPill, modeChip, zoomChip, aheadLabel,
+                           behindLabel, changesLabel] as [NSView] {
+            squeezable.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        }
+        accountButton.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        broadcastButton.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         // Version pill — a bordered button (like "Open ▾") showing the build
         // version; click checks for updates.
         versionButton.isBordered = false
@@ -261,15 +383,75 @@ final class StatusBarView: NSView {
             cliButton.centerYAnchor.constraint(equalTo: cliPill.centerYAnchor),
         ])
 
-        configureStack(rightStack, views: [broadcastPill, cliPill, editorPill, appearanceButton, sep0, schemeDot, schemeButton, sep1, shellLabel, sep2, ghosttyLabel, sep3, versionPill])
-        rightStack.setCustomSpacing(10, after: broadcastPill)
-        rightStack.setCustomSpacing(10, after: cliPill)
-        rightStack.setCustomSpacing(10, after: editorPill)
-        rightStack.setCustomSpacing(8, after: sep3)
+        // The compact chip: a scheme dot, the scheme name, and a chevron — the
+        // same anatomy as the location pill on the other side.
+        //
+        // The text is an NSTextField, never a button's `attributedTitle`: that
+        // setter leaks a KVO dependency record per assignment. The click comes
+        // from a gesture recognizer on the pill.
+        infoChip.wantsLayer = true
+        infoChip.layer?.cornerRadius = 10
+        infoChip.layer?.borderWidth = 1
+        infoChip.translatesAutoresizingMaskIntoConstraints = false
+        infoChip.isHidden = true
+        infoChipLabel.lineBreakMode = .byTruncatingTail
+        infoChipLabel.translatesAutoresizingMaskIntoConstraints = false
+        // The chip gives way before anything else, so its content can never be
+        // what holds the window open.
+        infoChipLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        infoChipGlyph.translatesAutoresizingMaskIntoConstraints = false
+        infoChipGlyph.imageScaling = .scaleProportionallyDown
+        infoChipChevron.translatesAutoresizingMaskIntoConstraints = false
+        if #available(macOS 11.0, *) {
+            infoChipChevron.image = NSImage(systemSymbolName: "chevron.up",
+                                            accessibilityDescription: "Show all status details")?
+                .withSymbolConfiguration(NSImage.SymbolConfiguration(pointSize: 8, weight: .semibold))
+            infoChipChevron.imageScaling = .scaleProportionallyDown
+        }
+        infoChip.addSubview(infoChipGlyph)
+        infoChip.addSubview(infoChipLabel)
+        infoChip.addSubview(infoChipChevron)
+        infoChip.addGestureRecognizer(
+            NSClickGestureRecognizer(target: self, action: #selector(infoChipClicked)))
+        NSLayoutConstraint.activate([
+            infoChip.heightAnchor.constraint(equalToConstant: 20),
+            infoChipGlyph.leadingAnchor.constraint(equalTo: infoChip.leadingAnchor, constant: 9),
+            infoChipGlyph.centerYAnchor.constraint(equalTo: infoChip.centerYAnchor),
+            infoChipGlyph.widthAnchor.constraint(equalToConstant: 8),
+            infoChipGlyph.heightAnchor.constraint(equalToConstant: 8),
+            infoChipLabel.leadingAnchor.constraint(equalTo: infoChipGlyph.trailingAnchor, constant: 6),
+            infoChipLabel.centerYAnchor.constraint(equalTo: infoChip.centerYAnchor),
+            infoChipChevron.leadingAnchor.constraint(equalTo: infoChipLabel.trailingAnchor, constant: 5),
+            infoChipChevron.trailingAnchor.constraint(equalTo: infoChip.trailingAnchor, constant: -8),
+            infoChipChevron.centerYAnchor.constraint(equalTo: infoChip.centerYAnchor),
+            infoChipChevron.widthAnchor.constraint(equalToConstant: 8),
+        ])
+
+        // Ambient stats. Frame-positioned inside `infoHost`, so this stack is
+        // deliberately NOT given `translatesAutoresizingMaskIntoConstraints =
+        // false` the way every other stack here is.
+        configureStack(infoStack, views: [appearanceButton, sep0, schemeDot, schemeButton,
+                                          sep1, shellLabel, sep2, ghosttyLabel, sep3, versionPill])
+        infoStack.setCustomSpacing(8, after: sep3)
+        infoStack.translatesAutoresizingMaskIntoConstraints = true
+
+        infoHost.wantsLayer = true
+        infoHost.layer?.masksToBounds = true
+        infoHost.translatesAutoresizingMaskIntoConstraints = false
+        infoHost.addSubview(infoStack)
+
+        // Action controls — the only part of the right side pinned to the
+        // trailing edge, and the only part whose width AppKit may turn into a
+        // window minimum.
+        configureStack(pillStack, views: [broadcastPill, cliPill, editorPill, infoChip])
+        pillStack.setCustomSpacing(10, after: broadcastPill)
+        pillStack.setCustomSpacing(10, after: cliPill)
+        pillStack.setCustomSpacing(10, after: editorPill)
 
         addSubview(topBorder)
         addSubview(leftStack)
-        addSubview(rightStack)
+        addSubview(infoHost)
+        addSubview(pillStack)
 
         NSLayoutConstraint.activate([
             topBorder.topAnchor.constraint(equalTo: topAnchor),
@@ -279,10 +461,13 @@ final class StatusBarView: NSView {
 
             leftStack.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 14),
             leftStack.centerYAnchor.constraint(equalTo: centerYAnchor),
-            leftStack.trailingAnchor.constraint(lessThanOrEqualTo: rightStack.leadingAnchor, constant: -12),
 
-            rightStack.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -14),
-            rightStack.centerYAnchor.constraint(equalTo: centerYAnchor),
+            pillStack.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -14),
+            pillStack.centerYAnchor.constraint(equalTo: centerYAnchor),
+
+            infoHost.trailingAnchor.constraint(equalTo: pillStack.leadingAnchor, constant: -10),
+            infoHost.centerYAnchor.constraint(equalTo: centerYAnchor),
+            infoHost.heightAnchor.constraint(equalToConstant: 20),
 
             branchIcon.widthAnchor.constraint(equalToConstant: 11),
             branchIcon.heightAnchor.constraint(equalToConstant: 11),
@@ -290,12 +475,294 @@ final class StatusBarView: NSView {
             schemeDot.heightAnchor.constraint(equalToConstant: 7),
         ])
 
+        // `infoHost` takes whatever is left between the two clusters, and
+        // NOTHING ties its width to the stack inside it. That is the whole
+        // reason the window can reach 320pt: an ambient group measured by Auto
+        // Layout would reach `fittingSize`, which is where AppKit derives the
+        // window's minimum content width from — the same trap the tab strip
+        // documents at length. Hiding the group on resize cannot substitute,
+        // because the window could never shrink far enough to trigger it.
+        //
+        // The pair below is a "fill the gap, but never overlap": priority 1
+        // pulls the host left across the leftover, 999 stops it reaching the
+        // left cluster. 999 rather than required so an extreme squeeze degrades
+        // into an overlap (the host is empty by then) instead of an
+        // unsatisfiable layout.
+        let hostFill = infoHost.leadingAnchor.constraint(equalTo: leftStack.trailingAnchor, constant: 12)
+        hostFill.priority = NSLayoutConstraint.Priority(1)
+        let hostClear = infoHost.leadingAnchor.constraint(greaterThanOrEqualTo: leftStack.trailingAnchor,
+                                                          constant: 12)
+        hostClear.priority = NSLayoutConstraint.Priority(999)
+        NSLayoutConstraint.activate([hostFill, hostClear])
+
         updateGit(.none)
         applyTheme()
     }
 
     @available(*, unavailable)
     required init?(coder _: NSCoder) { fatalError("not supported") }
+
+    // MARK: - Compact layout
+    //
+    // Verify a change in here by measuring, not by eye: log
+    // `window.contentView?.fittingSize.width` while dragging the window narrow
+    // and while adding tabs. It must stay flat and below `minimumContentSize`.
+
+    override func layout() {
+        super.layout()
+
+        // Measure before deciding. A stack reports zero while hidden, so the
+        // last real measurement stands in — otherwise a compact bar would read
+        // "0 fits in anything" and snap back to wide on the very next pass.
+        let measured = infoStack.fittingSize.width
+        if measured > 0 { cachedInfoWidth = measured }
+
+        let available = infoHost.bounds.width
+        let compact = StatusBarCompaction.isCompact(available: Double(available),
+                                                    required: Double(cachedInfoWidth),
+                                                    wasCompact: isCompact)
+        let flipped = compact != isCompact
+        if flipped {
+            isCompact = compact
+            applyCompactState()
+        }
+
+        // `fittingSize` is what AppKit turns into the window's minimum content
+        // width, so this line is the check: it must stay under
+        // `AppDelegate.minimumContentSize` in BOTH modes. Because the ambient
+        // group is frame-positioned rather than constrained, the wide reading
+        // answers it too — which is what makes the floor verifiable without
+        // dragging the window. If a report says the window won't shrink, read
+        // this back first.
+        if flipped || !didLogFloor, let content = window?.contentView {
+            didLogFloor = true
+            ZettyLog.chrome.log("statusbar: compact=\(compact) available=\(Int(available)) "
+                + "required=\(Int(cachedInfoWidth)) "
+                + "left=\(Int(leftStack.fittingSize.width)) "
+                + "pills=\(Int(pillStack.fittingSize.width)) "
+                + "bar=\(Int(fittingSize.width)) "
+                + "content=\(Int(content.fittingSize.width))")
+        }
+
+        layoutLocationCluster()
+
+        // The stack is frame-positioned so its width never reaches a
+        // constraint. Right-aligned, so the ambient stats stay adjacent to the
+        // controls they sit beside.
+        let size = NSSize(width: cachedInfoWidth, height: infoHost.bounds.height)
+        infoStack.frame = NSRect(x: infoHost.bounds.width - size.width, y: 0,
+                                 width: size.width, height: size.height)
+    }
+
+    /// Folds the working directory AND git into `locationChip` when keeping
+    /// them expanded would leave the path unreadable, and back again once
+    /// there is room.
+    ///
+    /// Measured against what the cwd would be left with — not against whether
+    /// git itself fits. The cwd truncates silently, so "does it fit" is always
+    /// yes and would never fire; what matters is how much of the path survives.
+    private func layoutLocationCluster() {
+        let measured = gitStack.fittingSize.width
+        if measured > 0 { cachedGitWidth = measured }
+
+        // Everything in the left cluster that is neither the cwd nor git.
+        let fixed = [modeChip, zoomChip, accountPill]
+            .filter { !$0.isHidden }
+            .reduce(0) { $0 + $1.fittingSize.width + leftStack.spacing }
+        let space = leftStack.bounds.width - fixed - cachedGitWidth - leftStack.spacing
+
+        let collapse = LocationChip.shouldCollapse(spaceIfExpanded: Double(space),
+                                                   wasCollapsed: isLocationCollapsed)
+        guard collapse != isLocationCollapsed else { return }
+        isLocationCollapsed = collapse
+        applyLocationCollapse()
+    }
+
+    private func applyLocationCollapse() {
+        let text = LocationChip.label(cwd: shownCwd, git: shownGit)
+        let showChip = isLocationCollapsed && !text.isEmpty
+        // `updateGit` calls this on every git probe — cwd changes plus a 15s
+        // timer — so the log has to be guarded by a real state change or it
+        // becomes a heartbeat rather than a signal.
+        let changed = gitStack.isHidden != isLocationCollapsed
+            || locationChip.isHidden == showChip
+        // The cwd folds in WITH git now: one pill for the whole cluster rather
+        // than a truncated path sitting beside a chip.
+        cwdLabel.isHidden = showChip
+        gitStack.isHidden = isLocationCollapsed
+        locationChip.isHidden = !showChip
+        renderLocationChip()
+        if changed {
+            ZettyLog.chrome.log("location: collapsed=\(isLocationCollapsed) chip=\(showChip) "
+                + "floor=\(Int(LocationChip.cwdFloor)) gitWidth=\(Int(cachedGitWidth)) "
+                + "left=\(Int(leftStack.bounds.width))")
+        }
+    }
+
+    private func renderLocationChip() {
+        guard !locationChip.isHidden else { return }
+        let text = LocationChip.label(cwd: shownCwd, git: shownGit)
+        guard renderedLocationChipToken != text else { return }
+        renderedLocationChipToken = text
+
+        let theme = ZTheme.current
+        locationChipLabel.stringValue = text
+        locationChipLabel.font = ZTheme.monoFont(size: 11)
+        // Purple stays git's semantic colour whether expanded or folded; the
+        // directory half rides along rather than getting a second hue.
+        locationChipLabel.textColor = shownGit.isRepo ? theme.purpleColor : theme.fg2Color
+        locationChipChevron.contentTintColor = theme.fg3Color
+        locationChip.layer?.backgroundColor = theme.bg2Color.cgColor
+        locationChip.layer?.borderColor = theme.borderColor.cgColor
+        locationChip.toolTip = "Working directory and git — click for the full path and counts"
+    }
+
+    /// The left cluster's dropup: the full working directory and the git state,
+    /// neither of which survives the truncation that made the chip necessary.
+    /// Display only — the status bar has never acted on either.
+    @objc private func locationChipClicked() {
+        let lines = LocationChip.detailLines(cwd: shownCwd, git: shownGit)
+        let account = shownAccount.map(accountDisplayName)
+        guard !lines.isEmpty || account != nil else { return }
+
+        let menu = NSMenu()
+        if let first = lines.first {
+            menu.addItem(withTitle: first, action: nil, keyEquivalent: "")
+        }
+        if lines.count > 1 {
+            menu.addItem(.separator())
+            for line in lines.dropFirst() {
+                menu.addItem(withTitle: line, action: nil, keyEquivalent: "")
+            }
+        }
+        if let account {
+            menu.addItem(.separator())
+            let item = NSMenuItem(title: "Account: \(account)",
+                                  action: #selector(accountClicked), keyEquivalent: "")
+            item.target = self
+            menu.addItem(item)
+        }
+        popUp(menu, from: locationChip)
+    }
+
+    /// Swaps the ambient group for the chip (or back) and re-renders the two
+    /// pills that carry a label only when there is room for one.
+    private func applyCompactState() {
+        infoStack.isHidden = isCompact
+        infoChip.isHidden = !isCompact
+        // Compact is two pills, and everything else earns its place by being
+        // in a state that would be wrong to hide. `Open ▾` never is — it is a
+        // menu, and folding a menu into a menu costs one click and loses
+        // nothing — so it always folds.
+        editorPill.isHidden = isCompact
+        // Same inputs, different labels — the cached renderers would no-op.
+        renderedBroadcastScope = nil
+        renderedChipToken = nil
+        updateBroadcastVisibility()
+        renderBroadcastPill()
+        updateAccountVisibility()
+        styleEditorButton()
+        renderInfoChip()
+    }
+
+    /// Broadcast is the one control that must not fold away silently: while it
+    /// is active every keystroke reaches N shells, which is why it is the only
+    /// pill that glows. So it folds when the scope is OFF — the overwhelmingly
+    /// common case, and the one where hiding it costs nothing — and breaks back
+    /// out, label and all, the moment it is armed.
+    private func updateBroadcastVisibility() {
+        broadcastPill.isHidden = isCompact && !shownBroadcastScope.isActive
+    }
+
+    /// The account folds into the location pill's dropup. It is identity rather
+    /// than state, and it is not the only place it shows — the tab pill carries
+    /// an account dot too, so a compact bar is not the last word on it.
+    private func updateAccountVisibility() {
+        accountPill.isHidden = isCompact || shownAccount == nil
+    }
+
+    private func renderInfoChip() {
+        guard isCompact else { return }
+        let theme = ZTheme.current
+        let update = pendingUpdate
+        // An update takes the chip over: it is the one item here worth acting
+        // on, and a menu is no place for a call to action.
+        let text = update.map { "Update \($0.version)" }
+            ?? infoValues.label(for: .scheme)
+        let token = "\(update != nil)|\(text)"
+        guard renderedChipToken != token else { return }
+        renderedChipToken = token
+
+        let tint = update != nil ? theme.accentColor : theme.fg2Color
+        infoChipLabel.stringValue = text
+        infoChipLabel.font = ZTheme.monoFont(size: 11)
+        infoChipLabel.textColor = tint
+        // Accent, matching `schemeDot` in the wide bar — the scheme is brand,
+        // which is one of the three things accent is for.
+        if #available(macOS 11.0, *) {
+            let symbol = update != nil ? "arrow.up.circle.fill" : "circle.fill"
+            infoChipGlyph.image = NSImage(systemSymbolName: symbol,
+                                          accessibilityDescription: "Status details")?
+                .withSymbolConfiguration(NSImage.SymbolConfiguration(pointSize: 8, weight: .semibold))
+        }
+        infoChipGlyph.contentTintColor = theme.accentColor
+        infoChipChevron.contentTintColor = theme.fg3Color
+        infoChipChevron.isHidden = update != nil
+        infoChip.layer?.backgroundColor = (update != nil ? theme.bg3Color : theme.bg2Color).cgColor
+        infoChip.layer?.borderColor = (update != nil ? theme.accentColor : theme.borderColor).cgColor
+        infoChip.toolTip = update != nil
+            ? "Update available — click to open the download page"
+            : "Appearance, scheme, shell, libghostty and version — click for all of them"
+    }
+
+    /// With an update pending the chip IS the update button; otherwise it opens
+    /// every ambient stat at once, each one still carrying the action its wide
+    /// counterpart had. The menu is where the readout lives now that the chip
+    /// itself has to hold a constant width.
+    @objc private func infoChipClicked() {
+        if pendingUpdate != nil {
+            onUpdateClicked?()
+            return
+        }
+        let menu = NSMenu()
+        menu.addItem(withTitle: "Appearance", action: nil, keyEquivalent: "")
+            .submenu = appearanceMenu()
+        menu.addItem(withTitle: "Color Scheme", action: nil, keyEquivalent: "")
+            .submenu = schemeMenu()
+
+        // The two controls that folded away. Each keeps the behaviour its pill
+        // had — broadcast cycles, Open opens its own picker — rather than
+        // growing a second way to do the same thing.
+        let broadcast = NSMenuItem(title: "Broadcast: \(shownBroadcastScope.displayLabel)",
+                                   action: #selector(broadcastClicked), keyEquivalent: "")
+        broadcast.target = self
+        menu.addItem(broadcast)
+
+        let open = NSMenuItem(title: "Open Directory In…",
+                              action: #selector(showEditorMenuFromChip), keyEquivalent: "")
+        open.target = self
+        menu.addItem(open)
+
+        menu.addItem(.separator())
+        for item in [StatusInfoItem.shell, .ghostty] where !infoValues.label(for: item).isEmpty {
+            menu.addItem(withTitle: infoValues.label(for: item), action: nil, keyEquivalent: "")
+        }
+        let version = NSMenuItem(title: infoValues.label(for: .version).isEmpty
+                                     ? "Check for Updates"
+                                     : "\(infoValues.label(for: .version)) — Check for Updates",
+                                 action: #selector(versionClicked), keyEquivalent: "")
+        version.target = self
+        menu.addItem(version)
+
+        popUp(menu, from: infoChip)
+    }
+
+    /// Hands off to the same picker the `Open ▾` pill shows. It opens as its
+    /// own menu once this one closes — a second click, which is the whole cost
+    /// of folding a menu into a menu.
+    @objc private func showEditorMenuFromChip() {
+        onShowEditorMenu?(infoChip)
+    }
 
     private func configureStack(_ stack: NSStackView, views: [NSView]) {
         stack.orientation = .horizontal
@@ -319,6 +786,10 @@ final class StatusBarView: NSView {
 
     /// Pops up an appearance picker (System / Dark / Light) above the button.
     @objc private func appearanceClicked() {
+        popUp(appearanceMenu(), from: appearanceButton)
+    }
+
+    private func appearanceMenu() -> NSMenu {
         let menu = NSMenu()
         for mode in [AppearanceMode.system, .dark, .light] {
             let item = NSMenuItem(title: mode.rawValue.capitalized,
@@ -328,11 +799,15 @@ final class StatusBarView: NSView {
             item.state = (mode.rawValue.capitalized == appearanceMode) ? .on : .off
             menu.addItem(item)
         }
-        popUp(menu, from: appearanceButton)
+        return menu
     }
 
     /// Pops up a scheme picker for the current axis above the button.
     @objc private func schemeClicked() {
+        popUp(schemeMenu(), from: schemeButton)
+    }
+
+    private func schemeMenu() -> NSMenu {
         let menu = NSMenu()
         let scoped = ZTheme.current.isDark ? ZColorScheme.darkSchemes : ZColorScheme.lightSchemes
         for scheme in scoped {
@@ -343,13 +818,13 @@ final class StatusBarView: NSView {
             item.state = (scheme == ZTheme.scheme) ? .on : .off
             menu.addItem(item)
         }
-        popUp(menu, from: schemeButton)
+        return menu
     }
 
-    private func popUp(_ menu: NSMenu, from button: NSButton) {
-        // Anchor above the button (status bar sits at the window bottom).
+    private func popUp(_ menu: NSMenu, from view: NSView) {
+        // Anchor above the view (status bar sits at the window bottom).
         let point = NSPoint(x: 0, y: -6)
-        menu.popUp(positioning: nil, at: point, in: button)
+        menu.popUp(positioning: nil, at: point, in: view)
     }
 
     @objc private func pickAppearance(_ sender: NSMenuItem) {
@@ -403,6 +878,7 @@ final class StatusBarView: NSView {
     func setUpdate(_ update: AvailableUpdate?) {
         pendingUpdate = update
         renderVersionPill()
+        renderInfoChip()
     }
 
     private func renderVersionPill() {
@@ -432,6 +908,10 @@ final class StatusBarView: NSView {
         // Every assignment is guarded: setting an unchanged `stringValue` still
         // invalidates layout, and this runs on every chrome refresh.
         if cwdLabel.stringValue != cwd { cwdLabel.stringValue = cwd }
+        if shownCwd != cwd {
+            shownCwd = cwd
+            applyLocationCollapse()
+        }
         appearanceMode = appearance
         if shellLabel.stringValue != shell { shellLabel.stringValue = shell }
         baseVersion = zetty
@@ -439,6 +919,12 @@ final class StatusBarView: NSView {
         if ghosttyLabel.stringValue != ghostty { ghosttyLabel.stringValue = ghostty }
         styleAppearanceButton()
         styleSchemeButton(scheme)
+
+        let values = StatusInfoValues(appearance: appearance, scheme: scheme, shell: shell,
+                                      ghostty: ghostty, version: zetty)
+        guard values != infoValues else { return }
+        infoValues = values
+        renderInfoChip()
     }
 
     /// Shows the key-layer mode chip: `PREFIX` while the prefix is armed,
@@ -468,11 +954,13 @@ final class StatusBarView: NSView {
     func setBroadcasting(_ scope: BroadcastScope) {
         shownBroadcastScope = scope
         renderBroadcastPill()
+        updateBroadcastVisibility()
     }
 
     @objc private func broadcastClicked() { onBroadcastClicked?() }
 
     func updateGit(_ status: GitStatus) {
+        shownGit = status
         let show = status.isRepo && !status.branch.isEmpty
         branchIcon.isHidden = !show
         branchLabel.isHidden = !show
@@ -484,6 +972,11 @@ final class StatusBarView: NSView {
         behindLabel.stringValue = "↓\(status.behind)"
         changesLabel.isHidden = !(show && status.changes > 0)
         changesLabel.stringValue = "●\(status.changes)"
+
+        // No special case for leaving a repo: the chip carries the directory
+        // too, so it stays valid — `LocationChip.label` simply drops the branch
+        // half. Re-rendering here is what stops a stale branch name persisting.
+        applyLocationCollapse()
     }
 
     // MARK: - Theme
@@ -513,21 +1006,30 @@ final class StatusBarView: NSView {
         sep1.textColor = theme.fg3Color
         sep2.textColor = theme.fg3Color
         sep3.textColor = theme.fg3Color
+        styleEditorButton()
+
+        styleAppearanceButton()
+        styleSchemeButton(schemeButton.title)
+        styleChips()
+        renderInfoChip()
+        renderLocationChip()
+    }
+
+    /// "Open ▾", or just the chevron once the bar is compact — at that width
+    /// every label the bar can drop is one the terminal gets back.
+    private func styleEditorButton() {
+        let theme = ZTheme.current
         editorPill.layer?.backgroundColor = theme.bg2Color.cgColor
         editorPill.layer?.borderColor = theme.borderColor.cgColor
         editorButton.contentTintColor = theme.fg2Color
         editorButton.attributedTitle = NSAttributedString(
-            string: "Open ",
+            string: isCompact ? "" : "Open ",
             attributes: [
                 .font: ZTheme.monoFont(size: 11, weight: .medium),
                 .foregroundColor: theme.fgColor,
             ]
         )
         editorButton.toolTip = "Open the focused pane's directory in an editor or Finder"
-
-        styleAppearanceButton()
-        styleSchemeButton(schemeButton.title)
-        styleChips()
     }
 
     /// Chips are bg3 pills with accent text and a soft accent glow (design
@@ -560,14 +1062,7 @@ final class StatusBarView: NSView {
         guard renderedBroadcastScope != shownBroadcastScope else { return }
         renderedBroadcastScope = shownBroadcastScope
         let active = shownBroadcastScope.isActive
-        let label: String
-        switch shownBroadcastScope {
-        case .off:        label = "OFF"
-        case .currentTab: label = "TAB"
-        case .project:    label = "PROJECT"
-        case .agents:     label = "AGENTS"
-        case .workspace:  label = "WORKSPACE"
-        }
+        let label = shownBroadcastScope.displayLabel
         let theme = ZTheme.current
         let tint = active ? theme.yellowColor : theme.fg3Color
         let symbolConfig = NSImage.SymbolConfiguration(pointSize: 9, weight: .semibold)
@@ -575,6 +1070,9 @@ final class StatusBarView: NSView {
                                         accessibilityDescription: "Broadcast")?
             .withSymbolConfiguration(symbolConfig)
         broadcastButton.contentTintColor = tint
+        // The scope stays spelled out even when compact. The pill is only on
+        // screen at all in the state where it is armed, and "broadcasting, but
+        // you'd have to hover to learn where" is the worst of both.
         broadcastButton.attributedTitle = NSAttributedString(
             string: " \(label)",
             attributes: [
@@ -607,10 +1105,10 @@ final class StatusBarView: NSView {
         renderedAccountToken = token
 
         guard let account = shownAccount else {
-            accountPill.isHidden = true
+            updateAccountVisibility()
             return
         }
-        accountPill.isHidden = false
+        updateAccountVisibility()
         let theme = ZTheme.current
         // The account's own palette hue, never the accent — accent is reserved
         // for focus/active/brand, and identity-by-hue is the projectPalette's job.
@@ -622,8 +1120,7 @@ final class StatusBarView: NSView {
         // "Default" or "<Account> (<Agent>)" — the harness is named in text
         // rather than shown as a logo. The default login isn't tied to one
         // harness, so it carries no suffix.
-        let agentName = account.agentID.flatMap { SpawnableAgent.byID($0)?.shortName }
-        let label = agentName.map { "\(account.displayName) (\($0))" } ?? account.displayName
+        let label = accountDisplayName(account)
         accountButton.attributedTitle = NSAttributedString(
             string: " \(label)",
             attributes: [
@@ -637,6 +1134,14 @@ final class StatusBarView: NSView {
             (account.isDefault ? theme.bg2Color : theme.bg3Color).cgColor
         accountPill.layer?.borderColor =
             (account.isDefault ? theme.borderColor : tint).cgColor
+    }
+
+    /// "Default", or "<Account> (<Agent>)". The harness is named in text rather
+    /// than shown as a logo; the default login isn't tied to one, so it carries
+    /// no suffix.
+    private func accountDisplayName(_ account: AccountResolution) -> String {
+        let agent = account.agentID.flatMap { SpawnableAgent.byID($0)?.shortName }
+        return agent.map { "\(account.displayName) (\($0))" } ?? account.displayName
     }
 
     @objc private func accountClicked() { onAccountClicked?() }

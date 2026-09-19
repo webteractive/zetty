@@ -192,6 +192,20 @@ are authoritative.
   version, plus pills for `Open ▾` (opens the focused pane's directory),
   appearance and scheme switchers, an "Update available" pill when one is
   waiting, and mode chips — `PREFIX`, `COPY`, `ZOOM`, `BROADCAST` (yellow).
+  **Compact** (a narrow window): the ambient readouts — appearance, scheme,
+  shell, libghostty, version — collapse into one `bg2` pill carrying the scheme
+  (accent dot + name + chevron, the same anatomy as the location pill) that
+  opens the set as a menu above itself; `Open ▾` and the broadcast pill drop to
+  their glyphs, and `Open ▾` and the account pill fold away entirely. On the
+  left, the working directory and git fold into a single purple-texted `bg2`
+  pill (`zetty ⏇ main ●`), which may vary in width — nothing clickable sits to
+  its right. The result is **two pills**; anything else breaks back out only in
+  the state that demands it (broadcast active, a mode armed, the CLI stale, an
+  update pending).
+- **Sidebar drawer** — the hidden sidebar floated over the content at its
+  normal `bg0`, behind a scrim of `bg0` at 55% (depth is surfaces, not shadows,
+  so it reads the same in a light scheme). A round 22pt `bg2` pin button sits
+  in the scrim just outside the drawer's edge.
 - **Hibernation placeholder** — shown in the content area when the active
   project is dormant: a `moon.zzz` glyph, "<project> is hibernated", a note
   that its sessions and processes were freed with the layout kept, and a

@@ -78,3 +78,25 @@ private func bytes(_ chord: String) -> String? {
     #expect(bytes("cmd+c") == nil)
     #expect(bytes("alt+x") == nil)
 }
+
+// MARK: - Display label
+
+/// The status bar renders the scope in two places once the bar goes compact —
+/// on the pill and in the menu it folds into — so the label has one home.
+
+@Test func everyScopeHasADisplayLabel() {
+    #expect(BroadcastScope.off.displayLabel == "OFF")
+    #expect(BroadcastScope.currentTab.displayLabel == "TAB")
+    #expect(BroadcastScope.project.displayLabel == "PROJECT")
+    #expect(BroadcastScope.agents.displayLabel == "AGENTS")
+    #expect(BroadcastScope.workspace.displayLabel == "WORKSPACE")
+}
+
+@Test func offIsTheOnlyInactiveScope() {
+    // The compact bar hides the pill exactly when this is false, so a new
+    // scope defaulting to inactive would hide a live broadcast.
+    #expect(!BroadcastScope.off.isActive)
+    for scope: BroadcastScope in [.currentTab, .project, .agents, .workspace] {
+        #expect(scope.isActive, "\(scope.displayLabel) should count as broadcasting")
+    }
+}

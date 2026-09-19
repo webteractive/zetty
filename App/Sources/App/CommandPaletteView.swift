@@ -1,4 +1,5 @@
 import AppKit
+import ZettyCore
 
 // MARK: - PaletteCommand
 
@@ -44,6 +45,9 @@ final class CommandPaletteView: NSView, NSTextFieldDelegate {
     private static let rowSpacing: CGFloat = 2
     private static let listInset: CGFloat = 16   // stack top+bottom padding
     private static let maxListHeight: CGFloat = 320
+    /// Clearance kept between the panel and the window edge once the window is
+    /// too small for the panel's preferred size.
+    private static let windowMargin: CGFloat = 16
     private static let overflowRowHeight: CGFloat = 28
     /// Where a row's label starts: the chip's 12pt inset + its 26pt width +
     /// the 12pt gap. The overflow hint aligns to it.
@@ -103,6 +107,8 @@ final class CommandPaletteView: NSView, NSTextFieldDelegate {
         searchField.drawsBackground = false
         searchField.focusRingType = .none
         searchField.delegate = self
+        searchField.lineBreakMode = .byTruncatingTail
+        searchField.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         searchField.translatesAutoresizingMaskIntoConstraints = false
 
         let searchRow = NSView()
@@ -134,6 +140,8 @@ final class CommandPaletteView: NSView, NSTextFieldDelegate {
 
         // Empty-state label (centered in the scroll area).
         emptyLabel.font = ZTheme.chromeFont(size: 13)
+        emptyLabel.lineBreakMode = .byTruncatingTail
+        emptyLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         emptyLabel.textColor = theme.fg3Color
         emptyLabel.alignment = .center
         emptyLabel.isHidden = true
@@ -145,11 +153,48 @@ final class CommandPaletteView: NSView, NSTextFieldDelegate {
         panel.addSubview(emptyLabel)
 
         listHeight = scrollView.heightAnchor.constraint(equalToConstant: Self.maxListHeight)
+        // Yields to the window cap below: both are about the list's height and
+        // only one of them can be required. `.defaultLow`, NOT `.defaultHigh`
+        // — see the width note below; 750 would make the open palette resize
+        // the window vertically.
+        listHeight.priority = .defaultLow
+        // ...but never to nothing: a zero-height list is an empty panel.
+        scrollView.heightAnchor.constraint(greaterThanOrEqualToConstant: 60).isActive = true
+        // `listHeight` is a required constant, so on a short window it would
+        // push the panel off the bottom. Cap it against the view as well and
+        // let the list scroll, which it already does.
+        scrollView.heightAnchor
+            .constraint(lessThanOrEqualTo: heightAnchor,
+                        multiplier: 1, constant: -(Self.windowMargin * 2 + 110))
+            .isActive = true
+
+        // 560 is the preference, not the rule — and the priority is the whole
+        // fix, not the cap.
+        //
+        // `.defaultHigh` (750) is NOT low enough: AppKit folds constraints at
+        // that priority into the window's minimum content size, so an open
+        // palette GREW the window to fit its own 560. The tab strip documents
+        // the same thing from the other side, and the sidebar's width hit it
+        // at 999. `.defaultLow` is the band that stays out of it, and it is
+        // safe here for the same reason it is there: nothing competes for
+        // these values, so each is simply satisfied whenever the window has
+        // room, and yields when it does not.
+        let preferredWidth = panel.widthAnchor.constraint(equalToConstant: 560)
+        preferredWidth.priority = .defaultLow
+        let widthCap = panel.widthAnchor.constraint(lessThanOrEqualTo: widthAnchor,
+                                                    constant: -Self.windowMargin * 2)
+        // The top inset shrinks with the window too: 96pt of empty space above
+        // the field is most of a short window.
+        let top = panel.topAnchor.constraint(equalTo: topAnchor, constant: 96)
+        top.priority = .defaultLow
+        let topCap = panel.topAnchor.constraint(lessThanOrEqualTo: centerYAnchor)
 
         NSLayoutConstraint.activate([
             panel.centerXAnchor.constraint(equalTo: centerXAnchor),
-            panel.topAnchor.constraint(equalTo: topAnchor, constant: 96),
-            panel.widthAnchor.constraint(equalToConstant: 560),
+            top, topCap,
+            panel.topAnchor.constraint(greaterThanOrEqualTo: topAnchor,
+                                       constant: Self.windowMargin),
+            preferredWidth, widthCap,
             listHeight,
             emptyLabel.centerXAnchor.constraint(equalTo: scrollView.centerXAnchor),
             emptyLabel.centerYAnchor.constraint(equalTo: scrollView.centerYAnchor),
@@ -241,11 +286,16 @@ final class CommandPaletteView: NSView, NSTextFieldDelegate {
             "\(count) more \(count == 1 ? "match" : "matches") — keep typing to narrow")
         label.font = ZTheme.chromeFont(size: 11)
         label.textColor = ZTheme.current.fg3Color
+        label.lineBreakMode = .byTruncatingTail
+        // Same rule as the rows: bounded on both sides and free to compress,
+        // or this one sentence sets the panel's width.
+        label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         label.translatesAutoresizingMaskIntoConstraints = false
         container.addSubview(label)
         NSLayoutConstraint.activate([
             container.heightAnchor.constraint(equalToConstant: Self.overflowRowHeight),
             label.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: Self.rowTextInset),
+            label.trailingAnchor.constraint(lessThanOrEqualTo: container.trailingAnchor, constant: -12),
             label.centerYAnchor.constraint(equalTo: container.centerYAnchor),
         ])
         return container
@@ -286,11 +336,13 @@ final class CommandPaletteView: NSView, NSTextFieldDelegate {
     // MARK: - NSTextFieldDelegate
 
     func controlTextDidChange(_ obj: Notification) {
-        let query = searchField.stringValue.trimmingCharacters(in: .whitespaces).lowercased()
-        let matches = query.isEmpty
-            ? allCommands
-            : allCommands.filter { $0.label.lowercased().contains(query) }
-        setMatches(matches)
+        // Fuzzy, not `contains`: a substring filter needs a command's exact
+        // wording before you can search for it, so "go zetty" found nothing.
+        // Ranking (and the AND-ing of space-separated terms) is pure and tested
+        // in `CommandSearch`.
+        let query = searchField.stringValue
+        let order = CommandSearch.rank(query: query, labels: allCommands.map(\.label))
+        setMatches(order.map { allCommands[$0] })
         rebuildRows()
     }
 
@@ -359,6 +411,7 @@ private final class PaletteRowView: NSView {
         titleLabel.stringValue = command.label
         titleLabel.font = ZTheme.chromeFont(size: 13.5)
         titleLabel.textColor = theme.fgColor
+        titleLabel.lineBreakMode = .byTruncatingTail
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
         addSubview(titleLabel)
 
@@ -366,8 +419,19 @@ private final class PaletteRowView: NSView {
         kbdLabel.font = ZTheme.chromeFont(size: 11)
         kbdLabel.textColor = theme.fg3Color
         kbdLabel.alignment = .right
+        kbdLabel.lineBreakMode = .byTruncatingTail
         kbdLabel.translatesAutoresizingMaskIntoConstraints = false
         addSubview(kbdLabel)
+
+        // Command labels are unbounded ("Go to Project: <any name>"), and rows
+        // are pinned to the list's width, which is pinned to the panel — so a
+        // label that resists compression sets a PANEL width, and through it a
+        // window minimum. That is what kept the open palette at 341pt after
+        // the constraint priorities were already fixed. The title gives way
+        // first, then the shortcut.
+        titleLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        kbdLabel.setContentCompressionResistancePriority(
+            NSLayoutConstraint.Priority(251), for: .horizontal)
 
         NSLayoutConstraint.activate([
             heightAnchor.constraint(equalToConstant: 42),
@@ -382,6 +446,10 @@ private final class PaletteRowView: NSView {
 
             titleLabel.leadingAnchor.constraint(equalTo: chip.trailingAnchor, constant: 12),
             titleLabel.centerYAnchor.constraint(equalTo: centerYAnchor),
+            // Without a trailing bound a label has nothing to truncate WITHIN,
+            // so `.byTruncatingTail` never fires and it simply overhangs.
+            titleLabel.trailingAnchor.constraint(lessThanOrEqualTo: kbdLabel.leadingAnchor,
+                                                 constant: -8),
 
             kbdLabel.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -12),
             kbdLabel.centerYAnchor.constraint(equalTo: centerYAnchor),

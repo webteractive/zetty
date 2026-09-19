@@ -30,6 +30,30 @@ by the tool it's running.
   shrink as more open, and once they hit their minimum width the strip scrolls
   instead — so a project with many tabs never forces the window wider than you
   want it, and the active tab is always scrolled into view.
+- **Narrow windows** — the window shrinks to **320 × 320**, roughly a
+  log-watching width. On the way down the status bar folds its ambient
+  readouts (appearance · scheme · shell · libghostty · version) into a single
+  chip showing the active **color scheme** (`● Nord`), and `Open ▾` and the
+  account fold in with them — click it for the rest. The left cluster
+  folds the same way once the path would stop being readable: working directory
+  and branch become one pill (`zetty ⏇ main ●`), with the full path, the
+  ahead/behind/changed counts, and the pane's account in its dropup. So a narrow
+  window is **two pills** — and anything else appears only in the state where
+  hiding it would be wrong: broadcast when it's **active**, `PREFIX`/`COPY`/`ZOOM`
+  when **armed**, the CLI pill when **stale**, and an **↑ Update** button when one
+  is waiting. Revealing the sidebar in a small window now splits the space it
+  has instead of forcing the window wider.
+- **Command palette** — `⌘K`, filtered **fuzzily**: type the letters in order
+  and they need not be adjacent, so `go zetty` finds **Go to Project: zetty**
+  and `tsb` finds **Toggle Sidebar**. Space-separated words all have to match
+  but may be given in any order (`zetty go` works too). The panel follows the
+  window when the window is small, rather than overhanging it.
+- **Sidebar drawer** — `⌘B` cycles three states rather than two: pinned →
+  hidden → drawer. From hidden, the toggle (`⌘B`, or the sidebar button at the
+  leading edge of the tab bar) floats the sidebar **over** the terminal behind
+  a dimmed scrim instead of pushing it aside. Picking a project or tab closes
+  it, as do `Esc`, `⌘B`, and a click on the scrim; the **pin** button just
+  outside its edge puts it back alongside the terminal.
 - **Pane gutter buttons** — every pane carries a thin top strip with a focus
   dot and click targets for **split vertically** and **split horizontally**;
   panes in a multi-pane tab additionally get **break into tab** and **close**.
@@ -318,8 +342,8 @@ Command Line** and click install — this symlinks `zetty` into
 | `⌘W` / `⇧⌘W` | Close pane / close tab |
 | `⌘}` / `⌘{` | Next / previous tab |
 | `⌘1`–`⌘9` | Jump to tab |
-| `⌘K` | Command palette |
-| `⌘B` | Toggle sidebar |
+| `⌘K` | Command palette (fuzzy — `go zetty` finds **Go to Project: zetty**) |
+| `⌘B` | Toggle sidebar — pinned → hidden → drawer |
 | `⇧⌘F` | Toggle the focused pane's file tree |
 | `⌘↓` | Scroll the focused pane back to the live tail |
 | `⌘O` (or `⇧⌘N`) | Add project (create or pick a folder) |

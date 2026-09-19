@@ -302,7 +302,11 @@ final class SidebarView: NSView {
 
     private func setupOutlineView() {
         let column = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("ItemColumn"))
-        column.minWidth = 160
+        // A column minimum propagates out through the scroll view and becomes
+        // sidebar width the window cannot reclaim. Rows truncate cleanly, so
+        // this only needs to be past the point where a glyph plus a couple of
+        // characters still reads.
+        column.minWidth = 60
         outlineView.addTableColumn(column)
         outlineView.outlineTableColumn = column
         outlineView.headerView = nil
@@ -471,8 +475,30 @@ final class SidebarView: NSView {
     }
 
     private func setupLayout() {
+        // Every one of these sits in a row pinned to both edges, so any that
+        // resists compression sets a sidebar width — and therefore a WINDOW
+        // width — the user cannot reclaim. Measured: with these left at their
+        // defaults the sidebar refused to go below 283pt, which blocked the
+        // window at 479 even though the sidebar's own floor said 120.
+        for squeezable in [searchField, addPill, bellButton, gearButton] as [NSView] {
+            squeezable.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        }
+        addButton.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+
         NSLayoutConstraint.activate([
-            widthAnchor.constraint(greaterThanOrEqualToConstant: 200),
+            // A genuine render floor, not the comfortable width. It is
+            // deliberately far under `SidebarMetrics.minWidth` (which bounds a
+            // DRAG) because at a narrow window the sidebar has to give way — a
+            // required 200 here becomes 200pt of window the user cannot
+            // reclaim, which is exactly the bug it caused.
+            //
+            // It is ALSO the slack that absorbs the status bar's own compact
+            // chrome, and that is why it has room to spare rather than sitting
+            // exactly at the number that works today: adding the left git chip
+            // cost ~9pt of required width and pushed the pinned-sidebar floor
+            // from 320 to 329 — caught only because `probeWindowFloor()` reran.
+            // Keep the headroom; the next small chip will want it too.
+            widthAnchor.constraint(greaterThanOrEqualToConstant: 100),
 
             searchField.topAnchor.constraint(equalTo: topAnchor, constant: 10),
             searchField.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 10),

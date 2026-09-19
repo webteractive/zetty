@@ -31,7 +31,12 @@ private final class StatusMenuDestination: NSObject {
 // main.swift instead, which never consults the storyboard key.
 final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDelegate {
     private let defaultContentSize = NSSize(width: 1280, height: 800)
-    private let minimumContentSize = NSSize(width: 600, height: 320)
+    /// 320pt wide is roughly 30 terminal columns with the sidebar closed — a
+    /// log-watching width. It is reachable only because the status bar folds
+    /// its ambient stats into one chip and the tab strip clips; both keep
+    /// themselves out of `fittingSize`, which is what AppKit would otherwise
+    /// derive a much larger floor from.
+    private let minimumContentSize = NSSize(width: 320, height: 320)
     private var window: NSWindow?
     /// Exists only while the retained main window is hidden.
     private var statusItem: NSStatusItem?
@@ -363,6 +368,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         // that cold-launched us (queued in application(_:open:)) can now open.
         workspaceReady = true
         drainPendingSSHURLs()
+
+        // One baseline reading of the chrome's width floors, once layout has
+        // settled. Free when nobody reads it, and it is the first thing worth
+        // seeing when someone reports that the window will not shrink.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in
+            self?.terminalViewController?.logChromeFloors("launch")
+            self?.terminalViewController?.probeWindowFloor()
+        }
     }
 
     /// Reflects the CLI symlink's staleness in the status bar (pill when it

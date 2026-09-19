@@ -36,6 +36,13 @@ enum ZettyLog {
     /// `zetty-home-path` that no longer names a directory.
     static let config = ZettyLogger(category: "config")
 
+    /// Chrome width: the status bar folding into compact mode, and the window
+    /// minimum that depends on it. Logged because the floor is a measurement,
+    /// not a constant — a constraint added anywhere in the right cluster can
+    /// silently raise it, and the symptom is a window that refuses to resize
+    /// rather than anything visibly wrong.
+    static let chrome = ZettyLogger(category: "chrome")
+
     /// App lifecycle: quit-reason classification, restart-recovery snapshots
     /// written and replayed, the manifest consumed. Counts and paths only —
     /// never scrollback contents.

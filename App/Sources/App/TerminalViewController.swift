@@ -223,6 +223,18 @@ final class TerminalViewController: NSViewController {
     private var sidebarLayoutConstraints: [NSLayoutConstraint] = []
     private var sidebarResizeHandle: SidebarResizeHandle?
     private var sidebarCollapsed = false
+    /// Whether the collapsed sidebar is currently floating OVER the content
+    /// rather than pushing it aside. Transient — only `sidebarCollapsed` is
+    /// persisted, so a relaunch never restores a half-open drawer.
+    private var sidebarDrawerOpen = false
+    private var sidebarScrim: SidebarScrimView?
+    private var sidebarPinButton: NSButton?
+    /// Held explicitly: this constraint lives on the common ancestor, not on
+    /// the button, so it cannot be found by filtering `pin.constraints`.
+    private var sidebarPinEdgeConstraint: NSLayoutConstraint?
+    /// Live only while the drawer is open, so Esc closes it without adding a
+    /// permanent key path or a third table to `KeyBindingEngine`.
+    private var sidebarDrawerKeyMonitor: Any?
 
     /// Which window side the sidebar sits on (config `sidebar-position`).
     /// Settable before the view loads; changing it afterwards re-pins live.
@@ -692,6 +704,8 @@ final class TerminalViewController: NSViewController {
         sidebarView?.applyTheme()
         statusBarView?.applyTheme()
         fileViewerOverlay?.applyTheme()
+        sidebarScrim?.applyTheme()
+        if let sidebarPinButton { SidebarPinButton.style(sidebarPinButton) }
         registry.reapplyTerminalTheme(ZTheme.current.terminalTheme())
         refreshTabBar()
         refreshSidebar()
@@ -745,6 +759,9 @@ final class TerminalViewController: NSViewController {
             // Selecting a hibernated project SHOWS it (a dormant placeholder with
             // a Wake button) — it stays hibernated until the wake is intentional.
             self.selectProject(at: index)
+            // Picking something is the drawer's whole purpose; leaving it over
+            // the pane the user just asked for would hide the result.
+            self.closeSidebarDrawer()
         }
         sidebar.onToggleHibernate = { [weak self] index in self?.toggleHibernation(at: index) }
 
@@ -752,6 +769,7 @@ final class TerminalViewController: NSViewController {
         sidebar.onOpenSettings = { [weak self] in self?.onOpenSettings?() }
         sidebar.onSelectTab = { [weak self] projectIndex, tabIndex in
             self?.selectProject(at: projectIndex, tabIndex: tabIndex)
+            self?.closeSidebarDrawer()
         }
 
         sidebar.onMoveTab = { [weak self] projectIndex, from, to in
@@ -841,7 +859,29 @@ final class TerminalViewController: NSViewController {
 
         NSLayoutConstraint.deactivate(sidebarLayoutConstraints)
 
-        let width = sidebar.widthAnchor.constraint(equalToConstant: sidebarWidth)
+        // A drawer must always leave some terminal showing behind it, so at a
+        // narrow window it gives way rather than covering everything. The
+        // pinned sidebar keeps its full width — there it is sharing space, not
+        // sitting on top of it.
+        let resolvedWidth = sidebarDrawerOpen
+            ? min(sidebarWidth, max(SidebarMetrics.minWidth, view.bounds.width - 60))
+            : sidebarWidth
+        let width = sidebar.widthAnchor.constraint(equalToConstant: resolvedWidth)
+        // LOW, not merely non-required. The sidebar's chosen width is a
+        // preference that must yield to the window's actual size: as a required
+        // constraint it becomes a floor AppKit adds to the content's own
+        // minimum, so revealing the sidebar in a small window RESIZED THE
+        // WINDOW instead of splitting it.
+        //
+        // 999 does NOT fix that, which is worth knowing before "optional"
+        // feels like enough: measured, a 999 width of 283 still blocked the
+        // window at 479. The tab strip's note says the same thing from the
+        // other side — even a 750 hug reaches the minimum. `.defaultLow` is
+        // the band that does not, and it is safe here because nothing competes
+        // for this width: with room the constraint is simply satisfied, and
+        // without it the sidebar compresses to `SidebarView`'s required
+        // render floor while the terminal keeps the rest.
+        width.priority = .defaultLow
         sidebarWidthConstraint = width
 
         var constraints: [NSLayoutConstraint] = [
@@ -859,12 +899,17 @@ final class TerminalViewController: NSViewController {
             handle.centerXAnchor.constraint(equalTo: separator.centerXAnchor),
         ]
 
+        // A drawer floats over the content, so the container spans the whole
+        // view and stops following the sidebar's edge. Without this the slide-in
+        // would drag the terminal along with it.
         let edge: NSLayoutConstraint
         switch sidebarPosition {
         case .left:
             edge = sidebar.leadingAnchor.constraint(equalTo: view.leadingAnchor)
             constraints += [
-                container.leadingAnchor.constraint(equalTo: sidebar.trailingAnchor),
+                sidebarDrawerOpen
+                    ? container.leadingAnchor.constraint(equalTo: view.leadingAnchor)
+                    : container.leadingAnchor.constraint(equalTo: sidebar.trailingAnchor),
                 container.trailingAnchor.constraint(equalTo: view.trailingAnchor),
                 separator.leadingAnchor.constraint(equalTo: sidebar.trailingAnchor),
             ]
@@ -872,11 +917,13 @@ final class TerminalViewController: NSViewController {
             edge = sidebar.trailingAnchor.constraint(equalTo: view.trailingAnchor)
             constraints += [
                 container.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-                container.trailingAnchor.constraint(equalTo: sidebar.leadingAnchor),
+                sidebarDrawerOpen
+                    ? container.trailingAnchor.constraint(equalTo: view.trailingAnchor)
+                    : container.trailingAnchor.constraint(equalTo: sidebar.leadingAnchor),
                 separator.trailingAnchor.constraint(equalTo: sidebar.leadingAnchor),
             ]
         }
-        edge.constant = sidebarCollapsed ? collapsedEdgeConstant : 0
+        edge.constant = (sidebarCollapsed && !sidebarDrawerOpen) ? collapsedEdgeConstant : 0
         constraints.append(edge)
         sidebarEdgeConstraint = edge
 
@@ -884,15 +931,21 @@ final class TerminalViewController: NSViewController {
         NSLayoutConstraint.activate(constraints)
 
         handle.dragDirectionSign = (sidebarPosition == .left) ? 1 : -1
+        // A drawer is dismissed, not resized — dragging its edge would fight
+        // the slide animation and resize the pinned sidebar behind it.
         handle.isHidden = sidebarCollapsed
-        separator.alphaValue = sidebarCollapsed ? 0 : 1
+        separator.alphaValue = (sidebarCollapsed && !sidebarDrawerOpen) ? 0 : 1
+        if sidebarDrawerOpen { layoutDrawerChrome() }
         // The tab bar's toggle button hugs the sidebar's edge.
         tabBarView?.sidebarPosition = sidebarPosition
     }
 
     /// The edge-constraint constant that slides the sidebar fully off-screen.
     private var collapsedEdgeConstant: CGFloat {
-        sidebarPosition == .left ? -sidebarWidth : sidebarWidth
+        // Follows the constraint actually in force, not `sidebarWidth`: a
+        // clamped drawer would otherwise park with a sliver still on screen.
+        let width = sidebarWidthConstraint?.constant ?? sidebarWidth
+        return sidebarPosition == .left ? -width : width
     }
 
     /// Width captured when a handle drag begins, so each drag event applies
@@ -1805,20 +1858,295 @@ final class TerminalViewController: NSViewController {
         if tabList.activeIndex != location[1] { selectTab(at: location[1]) }
     }
 
+    // MARK: - Chrome floors
+
+    /// Names which widget is holding the window open.
+    ///
+    /// AppKit turns the content view's `fittingSize` into the window's minimum
+    /// content size, but reports only the total — and the symptom of a
+    /// regression here is "the window won't resize", which says nothing about
+    /// the cause. Every widget that could be responsible is measured
+    /// separately, so the answer is in the log rather than in a bisect.
+    func logChromeFloors(_ note: String) {
+        let parts: [(String, NSView?)] = [
+            ("sidebar", sidebarView), ("tabBar", tabBarView),
+            ("statusBar", statusBarView), ("panes", rootContentView),
+            ("container", contentContainer), ("content", view.window?.contentView),
+        ]
+        let rendered = parts.compactMap { name, candidate in
+            candidate.map { "\(name)=\(Int($0.fittingSize.width))" }
+        }.joined(separator: " ")
+        ZettyLog.chrome.log("floors(\(note)) min=\(Int(view.window?.contentMinSize.width ?? 0)) "
+            + "actual=\(Int(view.window?.frame.width ?? 0)) \(rendered)")
+    }
+
+    /// Measures the width the window can ACTUALLY reach, by asking for the
+    /// minimum and reading back what AppKit allowed.
+    ///
+    /// `fittingSize` is not that number. It honours optional constraints at
+    /// their own priority, so a label that will happily truncate under
+    /// pressure still reports its full width — which is why a `fittingSize` of
+    /// 657 can sit above a window that drags down to 320 without complaint.
+    /// Only a real resize distinguishes "this constraint is required" from
+    /// "this constraint is merely preferred".
+    ///
+    /// Opt-in via `ZETTY_PROBE_FLOOR=1` because it briefly resizes the window.
+    func probeWindowFloor() {
+        guard ProcessInfo.processInfo.environment["ZETTY_PROBE_FLOOR"] == "1",
+              let window = view.window else { return }
+        let original = window.frame
+        let target = window.contentMinSize
+        window.setContentSize(target)
+        window.layoutIfNeeded()
+        let reached = window.contentRect(forFrameRect: window.frame).size
+        ZettyLog.chrome.log("probe: asked=\(Int(target.width))x\(Int(target.height)) "
+            + "reached=\(Int(reached.width))x\(Int(reached.height)) "
+            + "-> \(Int(reached.width) <= Int(target.width) ? "OK" : "BLOCKED")")
+        logChromeFloors("at-min")
+
+        // The reported bug was specifically "revealing the sidebar resizes the
+        // window", so the pinned case is measured too rather than inferred
+        // from the collapsed one.
+        let wasCollapsed = sidebarCollapsed
+        let wasDrawerOpen = sidebarDrawerOpen
+        sidebarDrawerOpen = false
+        sidebarCollapsed = false
+        applySidebarLayout()
+        window.setContentSize(target)
+        window.layoutIfNeeded()
+        let pinned = window.contentRect(forFrameRect: window.frame).size
+        ZettyLog.chrome.log("probe(sidebar pinned): reached=\(Int(pinned.width)) "
+            + "sidebar=\(Int(sidebarView?.bounds.width ?? 0)) "
+            + "-> \(Int(pinned.width) <= Int(target.width) ? "OK" : "BLOCKED")")
+
+        sidebarCollapsed = wasCollapsed
+        sidebarDrawerOpen = wasDrawerOpen
+        applySidebarLayout()
+
+        // Now every overlay, one at a time. An overlay only exists while it is
+        // open, so a floor it adds is invisible to every measurement above —
+        // which is exactly how the palette shipped resizing the window on ⌘K.
+        probeOverlay("palette", window: window, target: target,
+                     open: { self.toggleCommandPalette(nil) },
+                     isOpen: { self.commandPaletteView != nil },
+                     close: { self.toggleCommandPalette(nil) })
+
+        probeOverlay("sidebar drawer", window: window, target: target,
+                     open: {
+                         self.openSidebarDrawer()
+                         // Skip the slide: `.animator()` sets the constant over
+                         // 0.22s and the probe measures now.
+                         self.sidebarEdgeConstraint?.constant = 0
+                     },
+                     isOpen: { self.sidebarDrawerOpen },
+                     close: {
+                         self.sidebarDrawerOpen = false
+                         self.removeDrawerChrome()
+                         self.applySidebarLayout()
+                     })
+
+        // The file viewer loads off-main, so it cannot be measured in this
+        // pass. It restores the frame itself, once it has been.
+        probeFileViewer(window: window, target: target, original: original)
+    }
+
+    /// Opens one overlay, measures the width the window can reach with it up,
+    /// and closes it again. No-ops the open/close when it is already showing.
+    private func probeOverlay(_ name: String, window: NSWindow, target: NSSize,
+                              open: () -> Void, isOpen: () -> Bool, close: () -> Void) {
+        let wasOpen = isOpen()
+        if !wasOpen { open() }
+        window.setContentSize(target)
+        window.layoutIfNeeded()
+        let reached = window.contentRect(forFrameRect: window.frame).size
+        ZettyLog.chrome.log("probe(\(name)): reached=\(Int(reached.width))x\(Int(reached.height)) "
+            + "-> \(Int(reached.width) <= Int(target.width) ? "OK" : "BLOCKED")")
+        if !wasOpen { close() }
+    }
+
+    /// The file viewer's own pass. It reads and highlights off-main, so the
+    /// panel does not exist until a later run-loop turn; everything else in the
+    /// probe is synchronous. A real file is used rather than a synthetic one so
+    /// the measurement covers the header, the footer pill and the highlighter's
+    /// output, which is where the unbounded labels would be.
+    private func probeFileViewer(window: NSWindow, target: NSSize, original: NSRect) {
+        let sample = Bundle.main.bundlePath + "/Contents/Info.plist"
+        guard FileManager.default.isReadableFile(atPath: sample),
+              presentFileViewer(path: sample, line: 1, column: nil) == nil else {
+            ZettyLog.chrome.log("probe(file viewer): skipped — no readable sample")
+            window.setFrame(original, display: true)
+            return
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
+            guard let self else { return }
+            window.setContentSize(target)
+            window.layoutIfNeeded()
+            let reached = window.contentRect(forFrameRect: window.frame).size
+            let shown = self.fileViewerOverlay != nil
+            ZettyLog.chrome.log("probe(file viewer): shown=\(shown) "
+                + "reached=\(Int(reached.width))x\(Int(reached.height)) "
+                + "-> \(Int(reached.width) <= Int(target.width) ? "OK" : "BLOCKED")")
+            self.dismissFileViewer()
+            window.setFrame(original, display: true)
+        }
+    }
+
     // MARK: - Sidebar collapse
 
-    /// Slides the sidebar off-screen (or back) with ⌘B; the content area follows.
+    /// ⌘B, cycling three states rather than two: pinned → collapsed → drawer.
+    ///
+    /// From pinned it slides the sidebar away and the content widens, as it
+    /// always has. From collapsed it floats the sidebar back OVER the content
+    /// instead of pushing it aside — at a narrow window there is nothing to
+    /// push aside, and the drawer is the only way the sidebar fits at all.
     @objc func toggleSidebar(_ sender: Any?) {
+        if sidebarDrawerOpen { closeSidebarDrawer(); return }
+        if sidebarCollapsed { openSidebarDrawer(); return }
+        setSidebarCollapsed(true)
+    }
+
+    private func setSidebarCollapsed(_ collapsed: Bool) {
         guard let edge = sidebarEdgeConstraint else { return }
-        sidebarCollapsed.toggle()
-        sidebarResizeHandle?.isHidden = sidebarCollapsed
-        NSAnimationContext.runAnimationGroup { ctx in
-            ctx.duration = 0.22
-            ctx.allowsImplicitAnimation = true
-            edge.animator().constant = sidebarCollapsed ? collapsedEdgeConstant : 0
-            separatorView?.animator().alphaValue = sidebarCollapsed ? 0 : 1
+        sidebarCollapsed = collapsed
+        sidebarResizeHandle?.isHidden = collapsed
+        animateSidebar {
+            edge.animator().constant = collapsed ? self.collapsedEdgeConstant : 0
+            self.separatorView?.animator().alphaValue = collapsed ? 0 : 1
         }
         onWorkspaceDidChange?()
+    }
+
+    private func animateSidebar(_ body: @escaping () -> Void,
+                                completion: (() -> Void)? = nil) {
+        NSAnimationContext.runAnimationGroup({ ctx in
+            ctx.duration = 0.22
+            ctx.allowsImplicitAnimation = true
+            body()
+        }, completionHandler: completion)
+    }
+
+    // MARK: - Sidebar drawer
+
+    /// Floats the collapsed sidebar over the content, behind a scrim.
+    ///
+    /// The live `SidebarView` is reused, never a second instance: two of them
+    /// would each rebuild their outline on every chrome refresh, which is the
+    /// cost the whole coalescing design exists to avoid.
+    private func openSidebarDrawer() {
+        guard sidebarCollapsed, !sidebarDrawerOpen,
+              let sidebar = sidebarView, let container = contentContainer else { return }
+
+        sidebarDrawerOpen = true
+        installDrawerChrome(over: container, raising: sidebar)
+        // Re-pin the container to the view, then put the sidebar back
+        // off-screen and force a layout so the slide starts from the edge
+        // rather than jumping to its open position.
+        applySidebarLayout()
+        sidebarEdgeConstraint?.constant = collapsedEdgeConstant
+        sidebarScrim?.alphaValue = 0
+        view.layoutSubtreeIfNeeded()
+
+        animateSidebar {
+            self.sidebarEdgeConstraint?.animator().constant = 0
+            self.sidebarScrim?.animator().alphaValue = 1
+            self.sidebarPinButton?.animator().alphaValue = 1
+        }
+        installDrawerKeyMonitor()
+    }
+
+    /// Slides the drawer away and restores the ordinary collapsed layout.
+    func closeSidebarDrawer() {
+        guard sidebarDrawerOpen else { return }
+        removeDrawerKeyMonitor()
+        animateSidebar({
+            self.sidebarEdgeConstraint?.animator().constant = self.collapsedEdgeConstant
+            self.sidebarScrim?.animator().alphaValue = 0
+            self.sidebarPinButton?.animator().alphaValue = 0
+        }, completion: { [weak self] in
+            guard let self, self.sidebarDrawerOpen else { return }
+            self.sidebarDrawerOpen = false
+            self.removeDrawerChrome()
+            self.applySidebarLayout()
+        })
+    }
+
+    /// The drawer's pin button: keeps the sidebar where it is and goes back to
+    /// pushing the content aside. Without this there is no route from a drawer
+    /// back to a pinned sidebar.
+    @objc private func pinSidebarFromDrawer() {
+        guard sidebarDrawerOpen else { return }
+        removeDrawerKeyMonitor()
+        sidebarDrawerOpen = false
+        sidebarCollapsed = false
+        removeDrawerChrome()
+        applySidebarLayout()
+        animateSidebar { self.view.layoutSubtreeIfNeeded() }
+        onWorkspaceDidChange?()
+    }
+
+    private func installDrawerChrome(over container: NSView, raising sidebar: NSView) {
+        let scrim = SidebarScrimView()
+        scrim.onClick = { [weak self] in self?.closeSidebarDrawer() }
+        view.addSubview(scrim, positioned: .above, relativeTo: container)
+        // The sidebar is added BELOW the content in `setupSidebarAndContent`,
+        // which is right for a push layout and wrong for an overlay.
+        view.addSubview(sidebar, positioned: .above, relativeTo: scrim)
+
+        let pin = SidebarPinButton.make(target: self, action: #selector(pinSidebarFromDrawer))
+        pin.alphaValue = 0
+        view.addSubview(pin, positioned: .above, relativeTo: scrim)
+
+        sidebarScrim = scrim
+        sidebarPinButton = pin
+        NSLayoutConstraint.activate([
+            scrim.topAnchor.constraint(equalTo: view.topAnchor),
+            scrim.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+            scrim.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            scrim.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            pin.widthAnchor.constraint(equalToConstant: SidebarPinButton.size),
+            pin.heightAnchor.constraint(equalToConstant: SidebarPinButton.size),
+            pin.topAnchor.constraint(equalTo: view.topAnchor, constant: SidebarPinButton.edgeGap),
+        ])
+        layoutDrawerChrome()
+    }
+
+    /// Pins the drawer's pin button just outside whichever edge the sidebar
+    /// occupies. Re-run whenever the layout is rebuilt, since `sidebarPosition`
+    /// may have flipped.
+    private func layoutDrawerChrome() {
+        guard let pin = sidebarPinButton, let sidebar = sidebarView else { return }
+        sidebarPinEdgeConstraint?.isActive = false
+        let edge: NSLayoutConstraint = sidebarPosition == .left
+            ? pin.leadingAnchor.constraint(equalTo: sidebar.trailingAnchor,
+                                           constant: SidebarPinButton.edgeGap)
+            : pin.trailingAnchor.constraint(equalTo: sidebar.leadingAnchor,
+                                            constant: -SidebarPinButton.edgeGap)
+        edge.isActive = true
+        sidebarPinEdgeConstraint = edge
+    }
+
+    private func removeDrawerChrome() {
+        sidebarPinEdgeConstraint?.isActive = false
+        sidebarPinEdgeConstraint = nil
+        sidebarScrim?.removeFromSuperview()
+        sidebarPinButton?.removeFromSuperview()
+        sidebarScrim = nil
+        sidebarPinButton = nil
+    }
+
+    private func installDrawerKeyMonitor() {
+        guard sidebarDrawerKeyMonitor == nil else { return }
+        sidebarDrawerKeyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            guard let self, self.sidebarDrawerOpen, event.keyCode == 53,
+                  event.window === self.view.window else { return event }
+            self.closeSidebarDrawer()
+            return nil
+        }
+    }
+
+    private func removeDrawerKeyMonitor() {
+        if let monitor = sidebarDrawerKeyMonitor { NSEvent.removeMonitor(monitor) }
+        sidebarDrawerKeyMonitor = nil
     }
 
     // MARK: - Command palette

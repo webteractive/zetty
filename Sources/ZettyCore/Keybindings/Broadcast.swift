@@ -12,6 +12,18 @@ public enum BroadcastScope: Sendable, Equatable {
 
     public var isActive: Bool { self != .off }
 
+    /// The scope as the status bar names it, on the pill and in the menu it
+    /// folds into at narrow widths. One source so the two can't drift.
+    public var displayLabel: String {
+        switch self {
+        case .off: return "OFF"
+        case .currentTab: return "TAB"
+        case .project: return "PROJECT"
+        case .agents: return "AGENTS"
+        case .workspace: return "WORKSPACE"
+        }
+    }
+
     /// Stable string code for persistence (per-project settings). `.off` has no
     /// code — an absent/nil stored value means Off.
     public var code: String? {
