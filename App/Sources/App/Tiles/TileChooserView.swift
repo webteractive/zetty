@@ -67,7 +67,7 @@ final class TileChooserView: NSView {
         NSLayoutConstraint.activate([
             stack.centerYAnchor.constraint(equalTo: centerYAnchor),
             stack.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 28),
-            stack.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -28),
+            stack.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -28),
         ])
     }
 
@@ -82,12 +82,35 @@ final class TileChooserView: NSView {
         return field
     }
 
-    private func row(_ views: [NSView]) -> NSStackView {
+    /// Wrapped in a clipping scroll view so a long row of layouts can never
+    /// demand width from the window. A stack of fixed-width buttons is REQUIRED
+    /// width otherwise — eight of them is ~780pt nobody bounded, and the
+    /// sidebar (whose own width is deliberately `.defaultLow`) then absorbs
+    /// whatever is left over.
+    private func row(_ views: [NSView]) -> NSView {
         let row = NSStackView(views: views)
         row.orientation = .horizontal
         row.spacing = 10
-        row.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-        return row
+        row.translatesAutoresizingMaskIntoConstraints = false
+
+        let scroll = NSScrollView()
+        scroll.drawsBackground = false
+        scroll.hasHorizontalScroller = false
+        scroll.hasVerticalScroller = false
+        scroll.documentView = row
+        scroll.translatesAutoresizingMaskIntoConstraints = false
+        NSLayoutConstraint.activate([
+            row.topAnchor.constraint(equalTo: scroll.contentView.topAnchor),
+            row.bottomAnchor.constraint(equalTo: scroll.contentView.bottomAnchor),
+            row.leadingAnchor.constraint(equalTo: scroll.contentView.leadingAnchor),
+            scroll.heightAnchor.constraint(equalToConstant: 76),
+        ])
+        // The clip is sized by the OUTER chain only — never by the strip inside
+        // it. Same rule the tab strip documents at length.
+        let width = scroll.widthAnchor.constraint(equalToConstant: 900)
+        width.priority = .defaultLow
+        width.isActive = true
+        return scroll
     }
 
     private func button(title: String, image: NSImage?, subtitle: String? = nil,

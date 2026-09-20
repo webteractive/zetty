@@ -744,6 +744,20 @@ final class TerminalViewController: NSViewController {
         container.wantsLayer = true
         container.layer?.backgroundColor = ZTheme.current.bg1Color.cgColor
         container.translatesAutoresizingMaskIntoConstraints = false
+        // The container ALWAYS absorbs leftover width; the sidebar never does.
+        //
+        // The sidebar's width constraint is `.defaultLow` (250) on purpose — as
+        // anything higher it becomes a floor AppKit adds to the window minimum.
+        // But a plain NSView also hugs at 250, so the two TIED, and a tie
+        // resolves arbitrarily: the container collapsed toward its fitting size
+        // and the sidebar stretched to fill the window. That also put the
+        // sidebar's 8pt resize handle on top of the panes, so dragging a pane
+        // divider resized the sidebar instead.
+        //
+        // Priority 1 is the same trick `infoHost` uses in the status bar to
+        // claim leftover space without ever demanding any.
+        container.setContentHuggingPriority(.init(1), for: .horizontal)
+        container.setContentCompressionResistancePriority(.init(1), for: .horizontal)
 
         view.addSubview(sidebar)
         view.addSubview(container)
@@ -1945,6 +1959,25 @@ final class TerminalViewController: NSViewController {
         ZettyLog.chrome.log("floors(\(note)) footprint=\(footprint) "
             + "min=\(Int(view.window?.contentMinSize.width ?? 0)) "
             + "actual=\(Int(view.window?.frame.width ?? 0)) \(rendered)")
+        logRenderedGeometry(note)
+    }
+
+    /// `floors` reports FITTING sizes — a minimum, which says nothing about
+    /// what is actually on screen. This reports the real frames plus what is
+    /// living in the content container, which is where a stray full-size view
+    /// shows up.
+    func logRenderedGeometry(_ note: String) {
+        let actual: [(String, NSView?)] = [
+            ("sidebar", sidebarView), ("tabBar", tabBarView),
+            ("container", contentContainer), ("panes", rootContentView),
+        ]
+        let widths = actual.compactMap { name, candidate in
+            candidate.map { "\(name)=\(Int($0.frame.width))x\(Int($0.frame.height))" }
+        }.joined(separator: " ")
+        let occupants = (contentContainer?.subviews ?? [])
+            .map { "\(type(of: $0)):\(Int($0.frame.width))" }
+            .joined(separator: ",")
+        ZettyLog.chrome.log("geometry(\(note)) \(widths) container=[\(occupants)]")
     }
 
     /// Measures the width the window can ACTUALLY reach, by asking for the
@@ -2028,6 +2061,17 @@ final class TerminalViewController: NSViewController {
                      open: { self.setTileMode(true) },
                      isOpen: { self.isTileModeActive },
                      close: { self.setTileMode(false) })
+
+        // The CHOOSER specifically — it only renders when no view is open, so
+        // an ordinary tiles pass measures the grid and never sees it. That gap
+        // is how a row of fixed-width buttons reached the window unmeasured.
+        let reopen = openTileViews
+        openTileViews = []
+        probeOverlay("tile chooser", window: window, target: target,
+                     open: { self.setTileMode(true) },
+                     isOpen: { self.isTileModeActive },
+                     close: { self.setTileMode(false) })
+        openTileViews = reopen
 
         // The picker is its own overlay, and an overlay's floor is invisible to
         // every other measurement — which is how the command palette shipped
@@ -4254,6 +4298,7 @@ final class TerminalViewController: NSViewController {
             stopTileSpawnQueue()
             statusBarView?.setTiles(running: nil, idle: 0)
             let landing = tileFocusedSurfaceID
+            tileGridView?.removeFromSuperview()
             tileGridView = nil
             tileFocusedSurfaceID = nil
             // Exiting ALWAYS lands on the focused tile's pane. Touch nothing
@@ -5913,6 +5958,14 @@ final class TerminalViewController: NSViewController {
         placeholderView = nil
         cloneWarningBanner?.removeFromSuperview()
         cloneWarningBanner = nil
+        // The tile views belong in this teardown for the same reason as the
+        // rest: this function owns everything it puts in the container. Leaving
+        // them attached stranded a full-size view over the panes AND kept the
+        // registry's terminal views parented inside it, which is what broke
+        // normal mode.
+        tileChooserView?.removeFromSuperview()
+        tileChooserView = nil
+        tileGridView?.removeFromSuperview()
 
         // Pin below the tab bar (28 pt), or to the top if there is no tab bar yet;
         // and above the status bar (if present), else to the container bottom.
@@ -6018,6 +6071,7 @@ final class TerminalViewController: NSViewController {
                     self?.openTileView(profileID: profile.id)
                 },
                 onCustom: { [weak self] in self?.newTileView() })
+            tileGridView?.removeFromSuperview()
             tileGridView = nil
             container.addSubview(chooser)
             NSLayoutConstraint.activate([
@@ -6034,8 +6088,6 @@ final class TerminalViewController: NSViewController {
         }
 
         if tileMode {
-            tileChooserView?.removeFromSuperview()
-            tileChooserView = nil
             let grid = tileGridView ?? TileGridView(
                 // The ACTIVE PROFILE's grid, not the global key — that one is
                 // only the default a new view is seeded with.
@@ -6068,7 +6120,6 @@ final class TerminalViewController: NSViewController {
                                              tabIndex: tabIndex, slot: slot) ?? false
             }
             tileGridView = grid
-            grid.removeFromSuperview()
             container.addSubview(grid)
             NSLayoutConstraint.activate([
                 grid.topAnchor.constraint(equalTo: topGuide),
@@ -6164,6 +6215,7 @@ final class TerminalViewController: NSViewController {
         // Any structural change (tab add/close, split/close, project add, switch)
         // funnels through here — autosave so disk reflects the current layout.
         onWorkspaceDidChange?()
+        DispatchQueue.main.async { [weak self] in self?.logRenderedGeometry("rebuild") }
     }
 
     // MARK: - File tree
