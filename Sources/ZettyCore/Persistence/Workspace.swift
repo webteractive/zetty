@@ -16,6 +16,11 @@ public struct Workspace: Codable, Sendable, Equatable {
     /// `SidebarMetrics` bounds on restore. Missing in pre-existing files →
     /// the default width.
     public var sidebarWidth: Double
+    /// Tile views that were open, in strip order. Missing in pre-existing
+    /// files → empty, and the first ⇧⌘G then opens All Running.
+    public var openTileViewIDs: [UUID]
+    /// Which of them was showing. Missing → 0.
+    public var activeTileViewIndex: Int
 
     public init(
         schemaVersion: Int = 1,
@@ -23,7 +28,9 @@ public struct Workspace: Codable, Sendable, Equatable {
         spaces: [Space] = [],
         activeProjectIndex: Int = 0,
         sidebarCollapsed: Bool = false,
-        sidebarWidth: Double = SidebarMetrics.defaultWidth
+        sidebarWidth: Double = SidebarMetrics.defaultWidth,
+        openTileViewIDs: [UUID] = [],
+        activeTileViewIndex: Int = 0
     ) {
         self.schemaVersion = schemaVersion
         self.projects = projects
@@ -31,6 +38,8 @@ public struct Workspace: Codable, Sendable, Equatable {
         self.activeProjectIndex = activeProjectIndex
         self.sidebarCollapsed = sidebarCollapsed
         self.sidebarWidth = sidebarWidth
+        self.openTileViewIDs = openTileViewIDs
+        self.activeTileViewIndex = activeTileViewIndex
     }
 
     public init(from decoder: Decoder) throws {
@@ -43,5 +52,9 @@ public struct Workspace: Codable, Sendable, Equatable {
         sidebarWidth = SidebarMetrics.clampWidth(
             try container.decodeIfPresent(Double.self, forKey: .sidebarWidth) ?? SidebarMetrics.defaultWidth
         )
+        openTileViewIDs = try container.decodeIfPresent([UUID].self,
+                                                        forKey: .openTileViewIDs) ?? []
+        activeTileViewIndex = try container.decodeIfPresent(Int.self,
+                                                            forKey: .activeTileViewIndex) ?? 0
     }
 }
