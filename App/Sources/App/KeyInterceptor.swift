@@ -229,7 +229,11 @@ extension TerminalViewController {
             // Killing it stays on the tile's own menu, where it cannot happen
             // by accident from a grid of sixteen.
             case .closePane: detachFocusedTileSlot(); return
-            case .breakPane, .splitVertical, .splitHorizontal, .toggleFileTree:
+            // The live grid is the layout editor, so these mean in tile mode
+            // what they mean everywhere else. They were dead keys here.
+            case .splitVertical: splitFocusedTileSlot(.vertical); return
+            case .splitHorizontal: splitFocusedTileSlot(.horizontal); return
+            case .breakPane, .toggleFileTree:
                 return
             default:
                 break   // copy mode, paste, broadcast, zoom fall through

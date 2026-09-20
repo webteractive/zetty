@@ -67,6 +67,7 @@ final class TileView: NSView {
     private let onActivate: () -> Void
     private let onGoToPane: () -> Void
     private let onDetach: () -> Void
+    private let onSplit: (SplitDirection) -> Void
 
     init(surfaceID: UUID?,
          slotIndex: Int,
@@ -77,7 +78,8 @@ final class TileView: NSView {
          content: TileContent,
          onActivate: @escaping () -> Void,
          onGoToPane: @escaping () -> Void,
-         onDetach: @escaping () -> Void = {}) {
+         onDetach: @escaping () -> Void = {},
+         onSplit: @escaping (SplitDirection) -> Void = { _ in }) {
         self.surfaceID = surfaceID
         self.slotIndex = slotIndex
         self.status = status
@@ -85,6 +87,7 @@ final class TileView: NSView {
         self.onActivate = onActivate
         self.onGoToPane = onGoToPane
         self.onDetach = onDetach
+        self.onSplit = onSplit
         super.init(frame: .zero)
         wantsLayer = true
         layer?.cornerRadius = 8
@@ -95,6 +98,24 @@ final class TileView: NSView {
         // be an empty strip above an empty cell.
         if case .empty = content {} else { buildHeader(label: label, icon: icon) }
         buildBody(content: content)
+        // The live grid is the layout editor, so a slot splits like a pane.
+        menu = {
+            let menu = NSMenu()
+            let right = NSMenuItem(title: "Split Right", action: #selector(splitRight),
+                                   keyEquivalent: "")
+            right.target = self
+            menu.addItem(right)
+            let down = NSMenuItem(title: "Split Down", action: #selector(splitDown),
+                                  keyEquivalent: "")
+            down.target = self
+            menu.addItem(down)
+            menu.addItem(.separator())
+            let detach = NSMenuItem(title: "Remove Slot", action: #selector(detachClicked),
+                                    keyEquivalent: "")
+            detach.target = self
+            menu.addItem(detach)
+            return menu
+        }()
         applyTheme()
     }
 
@@ -251,6 +272,10 @@ final class TileView: NSView {
     @objc private func reattachClicked() { onActivate() }
 
     @objc private func detachClicked() { onDetach() }
+
+    @objc private func splitRight() { onSplit(.vertical) }
+
+    @objc private func splitDown() { onSplit(.horizontal) }
 
     // MARK: - State
 

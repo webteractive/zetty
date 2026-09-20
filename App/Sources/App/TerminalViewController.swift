@@ -4352,18 +4352,45 @@ final class TerminalViewController: NSViewController {
         focusTile(ids[(current + 1) % ids.count])
     }
 
-    /// Removes the focused slot from the view. The pane KEEPS RUNNING — this
-    /// is the tile-mode analogue of closing a pane, and closing the real one
-    /// from a grid of sixteen is too expensive to put on ⌘W.
-    func detachFocusedTileSlot() {
-        guard tileMode, let id = tileFocusedSurfaceID else { return }
-        let resolved = tileResolution()
-        guard let index = resolved.firstIndex(where: {
-            if case .pane(_, _, let slotID) = $0 { return slotID == id }
-            return false
-        }) else { return }
-        mutateActiveTileProfile { $0.detach(at: index) }
+    /// With a pane attached this DETACHES it — the pane keeps running and the
+    /// slot stays. On an ALREADY EMPTY slot it removes the slot and collapses
+    /// its split. Two presses to fully remove a filled slot, so the
+    /// destructive-looking one is never the first press.
+    func removeTileSlot(at index: Int) {
+        guard tileMode else { return }
+        let filled = activeTileProfile?.slots.indices.contains(index) == true
+            && activeTileProfile?.slots[index] != nil
+        mutateActiveTileProfile {
+            if filled { $0.detach(at: index) } else { $0.close(at: index) }
+        }
         tileFocusedSurfaceID = tileFocusableIDs.first
+    }
+
+    /// ⌘W and prefix `x` in tile mode.
+    func detachFocusedTileSlot() {
+        guard tileMode else { return }
+        guard let index = focusedTileSlotIndex else { return }
+        removeTileSlot(at: index)
+    }
+
+    /// Splits the focused slot — prefix `%` / `"`, which were dead keys here.
+    func splitFocusedTileSlot(_ direction: SplitDirection) {
+        guard tileMode, let index = focusedTileSlotIndex else { return }
+        mutateActiveTileProfile { $0.split(at: index, direction: direction) }
+    }
+
+    /// The slot the focus ring is on, or the first empty one when nothing is
+    /// focused — so splitting works in a view you have not typed into yet.
+    private var focusedTileSlotIndex: Int? {
+        let resolved = tileResolution()
+        if let id = tileFocusedSurfaceID {
+            let match = resolved.firstIndex {
+                if case .pane(_, _, let slotID) = $0 { return slotID == id }
+                return false
+            }
+            if let match { return match }
+        }
+        return resolved.indices.first
     }
 
     func beginRenameActiveTileView() {
@@ -5982,7 +6009,10 @@ final class TerminalViewController: NSViewController {
                 },
                 onAttach: { [weak self] index in self?.presentTileAttachPicker(slot: index) },
                 onDetach: { [weak self] index in
-                    self?.mutateActiveTileProfile { $0.detach(at: index) }
+                    self?.removeTileSlot(at: index)
+                },
+                onSplit: { [weak self] index, direction in
+                    self?.mutateActiveTileProfile { $0.split(at: index, direction: direction) }
                 })
             grid.onSetRatio = { [weak self] divider, ratio, isFinal in
                 self?.mutateActiveTileProfile(persist: isFinal) {

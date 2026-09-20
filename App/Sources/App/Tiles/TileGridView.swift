@@ -45,6 +45,8 @@ final class TileGridView: NSView {
     private let onAttach: (Int) -> Void
     /// Remove that slot from the view. The pane keeps running.
     private let onDetach: (Int) -> Void
+    /// Divide that slot in two.
+    private let onSplit: (Int, SplitDirection) -> Void
     /// A sidebar tab row was dropped on a slot: "project:tab" indices, and the
     /// slot it landed in. Returns whether it was accepted.
     var onDropSidebarTab: ((Int, Int, Int) -> Bool)?
@@ -67,13 +69,15 @@ final class TileGridView: NSView {
          onActivate: @escaping (UUID) -> Void,
          onGoToPane: @escaping (UUID) -> Void,
          onAttach: @escaping (Int) -> Void,
-         onDetach: @escaping (Int) -> Void) {
+         onDetach: @escaping (Int) -> Void,
+         onSplit: @escaping (Int, SplitDirection) -> Void) {
         self.rootProvider = rootProvider
         self.onCounts = onCounts
         self.onActivate = onActivate
         self.onGoToPane = onGoToPane
         self.onAttach = onAttach
         self.onDetach = onDetach
+        self.onSplit = onSplit
         super.init(frame: .zero)
         translatesAutoresizingMaskIntoConstraints = false
         wantsLayer = true
@@ -155,7 +159,8 @@ final class TileGridView: NSView {
                     self?.onActivate(id)
                 },
                 onGoToPane: { [weak self] in if let id { self?.onGoToPane(id) } },
-                onDetach: { [weak self] in self?.onDetach(index) })
+                onDetach: { [weak self] in self?.onDetach(index) },
+                onSplit: { [weak self] direction in self?.onSplit(index, direction) })
             tile.translatesAutoresizingMaskIntoConstraints = true
             addSubview(tile)
             tiles.append(tile)
