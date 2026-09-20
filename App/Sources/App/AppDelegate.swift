@@ -92,6 +92,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     /// Private per-project settings (identity + overrides), keyed by rootPath.
     private lazy var projectSettingsStore = ProjectSettingsStore(directory: appSupportDirectory)
 
+    /// The saved tile-view library. Global rather than per-project — a tile
+    /// view spans projects by definition.
+    private lazy var tileProfileStore = TileProfileStore(directory: appSupportDirectory)
+
     /// Global default layout template (hand-editable; a project's repo file
     /// wins when it carries its own).
     private lazy var layoutTemplateStore = LayoutTemplateStore(directory: appSupportDirectory)
@@ -258,6 +262,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             self?.appConfig.fileTree ?? FileTreeSettings()
         }
         tvc.tilesGridProvider = { [weak self] in self?.appConfig.tilesGrid ?? .default }
+        tvc.tileProfileStore = tileProfileStore
         tvc.editorProvider = { [weak self] in self?.appConfig.editor }
         tvc.layoutTemplateProvider = { [weak self] project in
             ProjectFileIO.load(projectRoot: project.rootPath)?.layoutTemplate
@@ -2060,6 +2065,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         do {
             let workspace = try workspaceStore.load()
             tvc.restoreSidebar(collapsed: workspace.sidebarCollapsed, width: workspace.sidebarWidth)
+            tvc.loadTileLibrary(openIDs: workspace.openTileViewIDs,
+                                activeIndex: workspace.activeTileViewIndex)
             let runtimes = SessionSnapshot.projectRuntimes(from: workspace)
             // Empty runtimes → fall back to the default WorkspaceModel already in
             // tvc (keeps the reap-safety contract: no restored surfaces to own).
@@ -2075,7 +2082,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             }
             return false
         } catch {
-            // Corrupt or unreadable — start fresh (tvc already has a default model).
+            // Corrupt or unreadable — start fresh (tvc already has a default
+            // model). The tile library is separate and still wants loading, or
+            // a first launch would find no All Running to open.
+            tvc.loadTileLibrary(openIDs: [], activeIndex: 0)
             return false
         }
     }
@@ -2108,6 +2118,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         let sidebar = tvc.sidebarStateForPersistence
         workspace.sidebarCollapsed = sidebar.collapsed
         workspace.sidebarWidth = sidebar.width
+        workspace.openTileViewIDs = tvc.openTileViewIDs
+        workspace.activeTileViewIndex = tvc.activeTileViewIndex
         try? workspaceStore.save(workspace)
     }
 

@@ -12,6 +12,10 @@ enum TileContent {
     case attaching
     /// The spawn failed; the reason is shown instead of a false "attaching".
     case failed(String)
+    /// A hole — the `+ Attach` cell that makes an empty grid explain itself.
+    case empty
+    /// The slot's project or tab is gone; carries the remembered label.
+    case missing(String)
 }
 
 // MARK: - TileStatus
@@ -45,7 +49,10 @@ final class TileView: NSView {
     static let headerHeight: CGFloat = 24
     private static let borderWidth: CGFloat = 1
 
-    let surfaceID: UUID
+    /// nil for a hole or a missing slot — neither has a pane.
+    let surfaceID: UUID?
+    /// Position in the profile: what attach and detach address.
+    let slotIndex: Int
 
     private let header = NSView()
     private let statusDot = NSView()
@@ -59,27 +66,34 @@ final class TileView: NSView {
     private var status: TileStatus
     private let onActivate: () -> Void
     private let onGoToPane: () -> Void
+    private let onDetach: () -> Void
 
-    init(surfaceID: UUID,
+    init(surfaceID: UUID?,
+         slotIndex: Int,
          label: String,
          icon: NSImage?,
          status: TileStatus,
          isFocused: Bool,
          content: TileContent,
          onActivate: @escaping () -> Void,
-         onGoToPane: @escaping () -> Void) {
+         onGoToPane: @escaping () -> Void,
+         onDetach: @escaping () -> Void = {}) {
         self.surfaceID = surfaceID
+        self.slotIndex = slotIndex
         self.status = status
         self.isFocused = isFocused
         self.onActivate = onActivate
         self.onGoToPane = onGoToPane
+        self.onDetach = onDetach
         super.init(frame: .zero)
         wantsLayer = true
         layer?.cornerRadius = 8
         layer?.masksToBounds = true
         layer?.borderWidth = Self.borderWidth
 
-        buildHeader(label: label, icon: icon)
+        // A hole has nothing to name, so it is body-only — the header would
+        // be an empty strip above an empty cell.
+        if case .empty = content {} else { buildHeader(label: label, icon: icon) }
         buildBody(content: content)
         applyTheme()
     }
@@ -115,12 +129,12 @@ final class TileView: NSView {
 
         goToPaneButton.isBordered = false
         goToPaneButton.bezelStyle = .inline
-        goToPaneButton.image = NSImage(systemSymbolName: "arrow.up.forward.square",
-                                       accessibilityDescription: "Go to pane")
+        goToPaneButton.image = NSImage(systemSymbolName: "xmark",
+                                       accessibilityDescription: "Detach from this view")
         goToPaneButton.imagePosition = .imageOnly
         goToPaneButton.target = self
-        goToPaneButton.action = #selector(goToPaneClicked)
-        goToPaneButton.toolTip = "Go to this pane"
+        goToPaneButton.action = #selector(detachClicked)
+        goToPaneButton.toolTip = "Detach from this view (the pane keeps running)"
         goToPaneButton.translatesAutoresizingMaskIntoConstraints = false
         header.addSubview(goToPaneButton)
 
@@ -160,8 +174,10 @@ final class TileView: NSView {
         body.wantsLayer = true
         body.translatesAutoresizingMaskIntoConstraints = false
         addSubview(body)
+        let bodyTop: NSLayoutYAxisAnchor
+        if case .empty = content { bodyTop = topAnchor } else { bodyTop = header.bottomAnchor }
         NSLayoutConstraint.activate([
-            body.topAnchor.constraint(equalTo: header.bottomAnchor),
+            body.topAnchor.constraint(equalTo: bodyTop),
             body.leadingAnchor.constraint(equalTo: leadingAnchor,
                                           constant: Self.borderWidth),
             body.trailingAnchor.constraint(equalTo: trailingAnchor,
@@ -184,6 +200,11 @@ final class TileView: NSView {
             addMessage("attaching\u{2026}")
         case .failed(let reason):
             addMessage(reason)
+        case .empty:
+            addMessage("+ Attach")
+        case .missing(let label):
+            addMessage("\(label)\nnot found")
+            addReattachButton()
         }
     }
 
@@ -194,7 +215,8 @@ final class TileView: NSView {
         messageLabel.stringValue = text
         messageLabel.font = ZTheme.chromeFont(size: 11)
         messageLabel.alignment = .center
-        messageLabel.lineBreakMode = .byTruncatingTail
+        messageLabel.lineBreakMode = .byWordWrapping
+        messageLabel.maximumNumberOfLines = 3
         messageLabel.translatesAutoresizingMaskIntoConstraints = false
         body.addSubview(messageLabel)
         NSLayoutConstraint.activate([
@@ -206,6 +228,28 @@ final class TileView: NSView {
                                                    constant: -8),
         ])
     }
+
+    /// A missing slot is actionable, not just informative — the pane it named
+    /// may exist again under a new tab, and re-picking it is one click. It
+    /// calls the same `onActivate` a hole does, so Reattach and `+ Attach` are
+    /// literally one path.
+    private func addReattachButton() {
+        let button = NSButton(title: "Reattach\u{2026}", target: self,
+                              action: #selector(reattachClicked))
+        button.isBordered = false
+        button.font = ZTheme.chromeFont(size: 11)
+        button.contentTintColor = ZTheme.current.accentColor
+        button.translatesAutoresizingMaskIntoConstraints = false
+        body.addSubview(button)
+        NSLayoutConstraint.activate([
+            button.centerXAnchor.constraint(equalTo: body.centerXAnchor),
+            button.topAnchor.constraint(equalTo: messageLabel.bottomAnchor, constant: 6),
+        ])
+    }
+
+    @objc private func reattachClicked() { onActivate() }
+
+    @objc private func detachClicked() { onDetach() }
 
     // MARK: - State
 
@@ -241,9 +285,14 @@ final class TileView: NSView {
     // MARK: - Interaction
 
     override func mouseDown(with event: NSEvent) {
-        onActivate()
+        // Single click focuses the tile (or opens the picker for a hole);
+        // double click leaves the grid for that pane, which is the gesture the
+        // header's arrow used to carry before × took its place.
+        if event.clickCount >= 2, surfaceID != nil {
+            onGoToPane()
+        } else {
+            onActivate()
+        }
         super.mouseDown(with: event)
     }
-
-    @objc private func goToPaneClicked() { onGoToPane() }
 }

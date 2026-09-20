@@ -5,7 +5,10 @@ import ZettyCore
 
 /// Everything the grid needs to render one tile.
 struct TileDescriptor {
-    let surfaceID: UUID
+    /// Position in the profile, which is what attach and detach address —
+    /// a hole has no surface, so the slot index is the only stable handle.
+    let slotIndex: Int
+    let surfaceID: UUID?
     let label: String
     let icon: NSImage?
     let status: TileStatus
@@ -40,6 +43,10 @@ final class TileGridView: NSView {
     private var tiles: [TileView] = []
     private let onActivate: (UUID) -> Void
     private let onGoToPane: (UUID) -> Void
+    /// A hole or a missing slot was clicked — open the picker for that index.
+    private let onAttach: (Int) -> Void
+    /// Remove that slot from the view. The pane keeps running.
+    private let onDetach: (Int) -> Void
     private var focusedID: UUID?
 
     /// Supplies `zetty-tiles-grid` at layout time rather than at construction,
@@ -51,11 +58,15 @@ final class TileGridView: NSView {
     init(gridProvider: @escaping () -> TilesGrid,
          onCounts: @escaping (Int, Int) -> Void,
          onActivate: @escaping (UUID) -> Void,
-         onGoToPane: @escaping (UUID) -> Void) {
+         onGoToPane: @escaping (UUID) -> Void,
+         onAttach: @escaping (Int) -> Void,
+         onDetach: @escaping (Int) -> Void) {
         self.gridProvider = gridProvider
         self.onCounts = onCounts
         self.onActivate = onActivate
         self.onGoToPane = onGoToPane
+        self.onAttach = onAttach
+        self.onDetach = onDetach
         super.init(frame: .zero)
         translatesAutoresizingMaskIntoConstraints = false
         wantsLayer = true
@@ -120,20 +131,29 @@ final class TileGridView: NSView {
         emptyLabel.isHidden = true
         scrollView.isHidden = false
 
-        let running = descriptors.filter { $0.status != .idle }.count
-        onCounts(running, descriptors.count - running)
+        let attached = descriptors.filter { $0.surfaceID != nil }
+        let running = attached.filter { $0.status != .idle }.count
+        onCounts(running, attached.count - running)
 
         for descriptor in descriptors {
             let id = descriptor.surfaceID
+            let index = descriptor.slotIndex
             let tile = TileView(
                 surfaceID: id,
+                slotIndex: index,
                 label: descriptor.label,
                 icon: descriptor.icon,
                 status: descriptor.status,
-                isFocused: id == focused,
+                isFocused: id != nil && id == focused,
                 content: descriptor.content,
-                onActivate: { [weak self] in self?.onActivate(id) },
-                onGoToPane: { [weak self] in self?.onGoToPane(id) })
+                // A hole or a missing slot activates the picker; a live tile
+                // takes focus. Reattach on a missing tile lands here too.
+                onActivate: { [weak self] in
+                    guard let id else { self?.onAttach(index); return }
+                    self?.onActivate(id)
+                },
+                onGoToPane: { [weak self] in if let id { self?.onGoToPane(id) } },
+                onDetach: { [weak self] in self?.onDetach(index) })
             tile.translatesAutoresizingMaskIntoConstraints = true
             documentView.addSubview(tile)
             tiles.append(tile)
