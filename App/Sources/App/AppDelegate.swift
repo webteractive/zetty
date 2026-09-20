@@ -183,6 +183,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         tvc.ghosttyConfiguration = makeTerminalConfiguration()
         tvc.onReloadConfig = { [weak self] in self?.reloadConfiguration(nil) }
         tvc.onShowTaskManager = { [weak self] in self?.showTaskManager() }
+        tvc.onToggleSessionsMode = { [weak self] in self?.toggleSessionsMode() }
         tvc.onOpenSettings = { [weak self] in self?.openSettings(nil) }
         tvc.onOpenSettingsTab = { [weak self] tab in self?.openSettings(tab: tab) }
         tvc.onCheckForUpdates = { [weak self] in self?.checkForUpdates(nil) }
@@ -1340,19 +1341,52 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     /// a close so reopening does not rebuild the whole thing.
     private var taskManagerWindowController: TaskManagerWindowController?
 
+    /// Opens Sessions in whichever form `zetty-sessions-view` names, and
+    /// closes the drawer again if it is already showing — the status bar pill
+    /// and the menu item are both toggles.
     @MainActor @objc func showTaskManager() {
         guard let tvc = terminalViewController else { return }
-        if taskManagerWindowController == nil {
-            taskManagerWindowController = TaskManagerWindowController(
-                sampler: tvc.sessionSampler,
-                rowsProvider: { [weak tvc] in tvc?.taskRows() ?? [] },
-                footprintProvider: { ProcessFootprint.current() },
-                onReveal: { [weak tvc] row in tvc?.revealPane(row) },
-                onInterrupt: { [weak tvc] row in tvc?.interruptSession(row) },
-                onKill: { [weak tvc] row in tvc?.killSession(row) }
-            )
+        switch appConfig.sessionsView {
+        case .drawer:
+            tvc.setSessionsDrawer(visible: !tvc.isSessionsDrawerVisible)
+        case .window:
+            if taskManagerWindowController == nil {
+                taskManagerWindowController =
+                    TaskManagerWindowController(sessions: tvc.makeSessionsView(mode: .window))
+            }
+            taskManagerWindowController?.show()
         }
-        taskManagerWindowController?.show()
+        terminalViewController?.sessionsWindowOpen =
+            appConfig.sessionsView == .window && taskManagerWindowController?.window?.isVisible == true
+        refreshSessionsChrome()
+    }
+
+    /// Repaints the status bar's Sessions pill after the view opens, closes or
+    /// changes form.
+    @MainActor private func refreshSessionsChrome() {
+        terminalViewController?.refreshStatusBarSessions()
+    }
+
+    /// Flips between docked and detached, and REWRITES the setting — the
+    /// toggle is the setting, so the form it is in survives a relaunch.
+    @MainActor func toggleSessionsMode() {
+        guard let tvc = terminalViewController else { return }
+        switch appConfig.sessionsView {
+        case .drawer:
+            tvc.setSessionsDrawer(visible: false)
+            appConfig.sessionsView = .window
+            saveConfig()
+            taskManagerWindowController =
+                TaskManagerWindowController(sessions: tvc.makeSessionsView(mode: .window))
+            taskManagerWindowController?.show()
+        case .window:
+            taskManagerWindowController?.close()
+            taskManagerWindowController = nil
+            appConfig.sessionsView = .drawer
+            saveConfig()
+            tvc.setSessionsDrawer(visible: true)
+        }
+        refreshSessionsChrome()
     }
 
     // MARK: - Settings

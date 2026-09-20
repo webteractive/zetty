@@ -88,6 +88,10 @@ public struct AppConfig: Equatable, Sendable {
     /// config (a leading `~` is still unexpanded). `nil` — the default — roots
     /// Home at the account's home directory. Resolve with `resolvedHomePath`.
     public var homePath: String?
+    /// How the Sessions view presents itself. Toggling it in the app rewrites
+    /// this, so the two forms are one setting rather than a setting plus a
+    /// separate runtime state that can disagree with it.
+    public var sessionsView: SessionsViewMode = .drawer
     /// Raw ghostty directives (from `ghostty.<key> = <value>` lines), forwarded
     /// to the terminal unchanged.
     /// Command the read-only file viewer pipes a file through for syntax
@@ -160,6 +164,7 @@ public struct AppConfig: Equatable, Sendable {
         notifySystem: Bool = true,
         sidebarPosition: SidebarPosition = .left,
         homePath: String? = nil,
+        sessionsView: SessionsViewMode = .drawer,
         viewerHighlightCommand: String = AppConfig.defaultViewerHighlightCommand,
         viewerMaxBytes: Int = AppConfig.defaultViewerMaxBytes,
         fileTree: FileTreeSettings = FileTreeSettings(),
@@ -182,6 +187,7 @@ public struct AppConfig: Equatable, Sendable {
         self.notifySystem = notifySystem
         self.sidebarPosition = sidebarPosition
         self.homePath = homePath
+        self.sessionsView = sessionsView
         self.viewerHighlightCommand = viewerHighlightCommand
         self.viewerMaxBytes = viewerMaxBytes
         self.fileTree = fileTree
@@ -280,6 +286,9 @@ public struct AppConfig: Equatable, Sendable {
                 // way back to the default.
                 let lowered = value.lowercased()
                 config.homePath = ["off", "none", "default", "~"].contains(lowered) ? nil : value
+            case "zetty-sessions-view":
+                // An unrecognised value keeps the default rather than failing.
+                config.sessionsView = SessionsViewMode(rawValue: value.lowercased()) ?? .drawer
             case "zetty-restart-recovery":
                 config.restartRecovery = ["true", "yes", "on", "1"].contains(value.lowercased())
             case "zetty-file-tree-show-hidden":
@@ -448,6 +457,10 @@ public struct AppConfig: Equatable, Sendable {
         # open here). Defaults to your home directory; `off` or `~` restores it.
         \(homePath.map { "zetty-home-path = \($0)" } ?? "# zetty-home-path = ~/Projects")
 
+        # Where the Sessions view appears: docked to the bottom of the window,
+        # or in its own window. The detach and dock buttons rewrite this.
+        zetty-sessions-view = \(sessionsView.rawValue)
+
         # Syntax highlighting for the read-only file viewer: the file is piped
         # through this command and its ANSI colors are rendered. `off` disables
         # it. A missing or failing command falls back to plain text.
@@ -550,4 +563,16 @@ public struct AppConfig: Equatable, Sendable {
     #   window-padding-x = 8
 
     """
+}
+
+// MARK: - SessionsViewMode
+
+/// Where the Sessions view appears.
+///
+/// Docked by default: it is a monitor you glance at while working in a pane,
+/// and a separate window is one more thing to arrange. Detaching is for when
+/// you want it beside the terminal rather than below it.
+public enum SessionsViewMode: String, Sendable, CaseIterable {
+    case drawer
+    case window
 }

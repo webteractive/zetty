@@ -1588,6 +1588,38 @@ Four things here will look like tidy-ups and are not:
   spans hibernated projects; the latter excludes them, so using it would report
   every dormant project's session as an orphan and invite the user to kill it.
 
+**Docked or detached, one view.** `zetty-sessions-view = drawer | window`
+(default `drawer`). `SessionsView` is the whole thing; the bottom drawer and
+`TaskManagerWindowController` are both just hosts for it, because a second
+implementation for the drawer would drift from the first within a release.
+
+The drawer slots above `bottomGuide` in `rebuildSurfaceNodeView`, mirroring how
+`CloneWarningBanner` slots below `topGuide`, so it appears and disappears with
+the rebuild every structural change already funnels through. **Its height is a
+`.defaultLow` preference capped at 45% of the container**, never a constant: a
+required height there becomes a window minimum — the trap that has broken the
+320pt floor three times — and a fixed 220pt drawer in a 320pt-tall window
+leaves no terminal at all. It is in `probeWindowFloor`, the first overlay that
+can actually move the floor since it lives inside the main window.
+
+**The toggle IS the setting.** Detaching and docking rewrite
+`zetty-sessions-view` through `AppConfig.rendered()`, so the form it is left in
+survives a relaunch, and there is no runtime state that can disagree with the
+file. An unrecognised value keeps the default rather than failing, because
+ghostty validates all-or-nothing and a typo must not cost the whole config.
+
+**`SessionsView` claims `sampler.onUpdate` in `setActive`,** not at
+construction. That is what lets one sampler serve whichever host is on screen:
+only the active view is subscribed, so a drawer and a detached window can never
+both redraw from the same tick.
+
+**The status-bar pill is a fixed-width glyph plus a dot**, never a percentage.
+`pillStack` hugs its content, so a number changing every few seconds would slide
+Broadcast and `Open ▾` out from under the pointer — the exact jitter that killed
+the cycling ambient chip. The dot turns yellow above `SessionsView.busyThreshold`,
+and the pill follows the compact rule the rest of the bar follows: it folds into
+the `⋯` menu, except while a session is hot or the view is open.
+
 **Interrupt is two mechanisms, and that is not redundancy.** A live pane gets
 `ETX` written into its pty through `sendText` — literally Ctrl-C, respecting
 the shell's job control, and it signals nothing so it cannot reach the wrong

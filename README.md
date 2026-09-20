@@ -43,11 +43,17 @@ by the tool it's running.
   when **armed**, the CLI pill when **stale**, and an **↑ Update** button when one
   is waiting. Revealing the sidebar in a small window now splits the space it
   has instead of forcing the window wider.
-- **Sessions window** — **View → Sessions…** (or the command palette) lists
+- **Sessions** — **View → Sessions…**, the command palette, or the status-bar
+  pill. It docks to the **bottom of the window** by default; the ⤡ button in
+  its header detaches it into its own window, and the ⤠ button docks it back.
+  Whichever form you leave it in is remembered — the buttons rewrite
+  `zetty-sessions-view`. It lists
   every zmx session Zetty spawned: which pane owns it, what it is running, its
   live CPU, and the resident memory of its own processes. Above the list,
   Zetty's measured footprint. Per row: **Reveal Pane**, **Interrupt** (Ctrl-C),
-  and **Kill Session…**. CPU is measured *between refreshes* rather than taken
+  and **Kill Session…**. The status-bar pill carries a dot that turns yellow
+  when a session is busy; it folds into the compact bar's menu on a narrow
+  window unless something is busy. CPU is measured *between refreshes* rather than taken
   from `ps`'s lifetime average, so the first reading after opening shows `—`
   and a number appears a few seconds later — a process that was busy an hour
   ago and is idle now reads as idle, which is the point.

@@ -1046,6 +1046,7 @@ final class TerminalViewController: NSViewController {
         statusBar.onSelectScheme = { [weak self] scheme in self?.onSelectScheme?(scheme) }
         statusBar.onShowEditorMenu = { [weak self] anchor in self?.showEditorMenu(from: anchor) }
         statusBar.onBuildEditorMenu = { [weak self] in self?.editorMenu() ?? NSMenu() }
+        statusBar.onSessionsClicked = { [weak self] in self?.onShowTaskManager?() }
         statusBar.onUpdateClicked = { [weak self] in self?.onUpdatePillClicked?() }
         statusBar.onBroadcastClicked = { [weak self] in self?.cycleBroadcast() }
         statusBar.onAccountClicked = { [weak self] in self?.onOpenAccountSettings?() }
@@ -1970,6 +1971,13 @@ final class TerminalViewController: NSViewController {
 
         // The file viewer loads off-main, so it cannot be measured in this
         // pass. It restores the frame itself, once it has been.
+        // The drawer lives INSIDE this window, unlike the detached Sessions
+        // window, so it is the first overlay that can actually move the floor.
+        probeOverlay("sessions drawer", window: window, target: target,
+                     open: { self.setSessionsDrawer(visible: true) },
+                     isOpen: { self.isSessionsDrawerVisible },
+                     close: { self.setSessionsDrawer(visible: false) })
+
         probeSessionRows()
         probeFileViewer(window: window, target: target, original: original)
     }
@@ -3700,6 +3708,60 @@ final class TerminalViewController: NSViewController {
 
     // MARK: - Task manager
 
+    /// The docked Sessions view, when `zetty-sessions-view = drawer`. Held so
+    /// `rebuildSurfaceNodeView` can re-slot the same instance rather than
+    /// rebuilding its table on every structural change.
+    private var sessionsDrawer: SessionsView?
+    private var sessionsDrawerVisible = false
+    /// Flips `zetty-sessions-view` and moves the view; AppDelegate owns both.
+    var onToggleSessionsMode: (() -> Void)?
+
+    /// Builds a Sessions view wired to this controller's data and actions.
+    /// Both hosts use it, so the drawer and the window cannot diverge.
+    func makeSessionsView(mode: SessionsViewMode) -> SessionsView {
+        SessionsView(
+            mode: mode,
+            sampler: sessionSampler,
+            rowsProvider: { [weak self] in self?.taskRows() ?? [] },
+            footprintProvider: { ProcessFootprint.current() },
+            onReveal: { [weak self] row in self?.revealPane(row) },
+            onInterrupt: { [weak self] row in self?.interruptSession(row) },
+            onKill: { [weak self] row in self?.killSession(row) },
+            onToggleMode: { [weak self] in self?.onToggleSessionsMode?() }
+        )
+    }
+
+    /// Shows or hides the docked Sessions drawer.
+    func setSessionsDrawer(visible: Bool) {
+        guard sessionsDrawerVisible != visible else { return }
+        sessionsDrawerVisible = visible
+        if visible {
+            let view = sessionsDrawer ?? makeSessionsView(mode: .drawer)
+            view.onTick = { [weak self] in self?.refreshStatusBarSessions() }
+            sessionsDrawer = view
+            view.setActive(true)
+        } else {
+            sessionsDrawer?.setActive(false)
+            sessionsDrawer?.removeFromSuperview()
+            sessionsDrawer = nil
+        }
+        rebuildSurfaceNodeView()
+    }
+
+    var isSessionsDrawerVisible: Bool { sessionsDrawerVisible }
+
+    /// Repaints the status bar's Sessions pill. Called when the view opens,
+    /// closes or changes form, and on each sampler tick so the load dot tracks
+    /// the busiest session.
+    func refreshStatusBarSessions() {
+        statusBarView?.setSessions(open: sessionsDrawerVisible || sessionsWindowOpen,
+                                   peakCPU: sessionsDrawer?.peakCPU ?? detachedPeakCPU?())
+    }
+
+    /// Supplied by AppDelegate, which owns the detached window.
+    var sessionsWindowOpen = false
+    var detachedPeakCPU: (() -> Double?)?
+
     /// Raised by the palette and the Window menu; AppDelegate owns the window.
     var onShowTaskManager: (() -> Void)?
 
@@ -5073,7 +5135,33 @@ final class TerminalViewController: NSViewController {
         // Pin below the tab bar (28 pt), or to the top if there is no tab bar yet;
         // and above the status bar (if present), else to the container bottom.
         var topGuide: NSLayoutYAxisAnchor = tabBarView?.bottomAnchor ?? container.topAnchor
-        let bottomGuide = statusBarView?.topAnchor ?? container.bottomAnchor
+        var bottomGuide = statusBarView?.topAnchor ?? container.bottomAnchor
+
+        // The Sessions drawer, mirroring how CloneWarningBanner slots in below
+        // the top guide: above the status bar, below the terminal, and it
+        // appears and disappears with the rebuild that every structural change
+        // already funnels through.
+        if sessionsDrawerVisible, let drawer = sessionsDrawer {
+            drawer.removeFromSuperview()
+            container.addSubview(drawer)
+            // Its height is a PREFERENCE, capped against the container. A
+            // required constant here becomes a window minimum — the trap this
+            // window's 320pt floor has already been broken by three times —
+            // and a 200pt drawer in a 320pt-tall window leaves no terminal.
+            let preferred = drawer.heightAnchor.constraint(equalToConstant: 220)
+            preferred.priority = .defaultLow
+            NSLayoutConstraint.activate([
+                drawer.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+                drawer.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+                drawer.bottomAnchor.constraint(equalTo: bottomGuide),
+                preferred,
+                drawer.heightAnchor.constraint(lessThanOrEqualTo: container.heightAnchor,
+                                               multiplier: 0.45),
+                // Small enough never to bind at the minimum window height.
+                drawer.heightAnchor.constraint(greaterThanOrEqualToConstant: 80),
+            ])
+            bottomGuide = drawer.topAnchor
+        }
 
         // A clone's working copy is disposable — slot a caution strip below the
         // tab bar and push the content (terminal OR hibernation placeholder)

@@ -35,6 +35,20 @@ final class StatusBarView: NSView {
     private let broadcastPill = NSView()
     private let broadcastButton = NSButton()
 
+    /// Sessions: a FIXED-WIDTH glyph plus a dot coloured by the busiest
+    /// session. Deliberately no percentage — a number here would change width
+    /// every few seconds, and `pillStack` hugs its content, so its neighbours
+    /// would slide out from under the pointer. The numbers live in the view it
+    /// opens.
+    private let sessionsPill = NSView()
+    private let sessionsButton = NSButton()
+    private let sessionsDot = NSView()
+    private var sessionsOpen = false
+    private var sessionsPeakCPU: Double?
+    private var renderedSessionsToken: String?
+    /// Opens or closes the Sessions view.
+    var onSessionsClicked: (() -> Void)?
+
     /// The focused pane's agent account. Hidden entirely when no accounts are
     /// configured, so a user who never creates one sees no new chrome.
     private let accountPill = NSView()
@@ -185,6 +199,7 @@ final class StatusBarView: NSView {
         renderedAccountToken = nil
         renderedChipToken = nil
         renderedLocationChipToken = nil
+        renderedSessionsToken = nil
     }
 
     private var plainLabels: [NSTextField] {
@@ -446,7 +461,30 @@ final class StatusBarView: NSView {
         // Action controls — the only part of the right side pinned to the
         // trailing edge, and the only part whose width AppKit may turn into a
         // window minimum.
-        configureStack(pillStack, views: [broadcastPill, cliPill, editorPill, infoChip])
+        sessionsPill.wantsLayer = true
+        sessionsPill.layer?.cornerRadius = 10
+        sessionsPill.layer?.borderWidth = 1
+        sessionsPill.translatesAutoresizingMaskIntoConstraints = false
+        configureSwitch(sessionsButton, action: #selector(sessionsClicked))
+        sessionsButton.imagePosition = .imageOnly
+        sessionsDot.wantsLayer = true
+        sessionsDot.layer?.cornerRadius = 3
+        sessionsDot.translatesAutoresizingMaskIntoConstraints = false
+        sessionsPill.addSubview(sessionsButton)
+        sessionsPill.addSubview(sessionsDot)
+        NSLayoutConstraint.activate([
+            sessionsPill.heightAnchor.constraint(equalToConstant: 20),
+            sessionsButton.leadingAnchor.constraint(equalTo: sessionsPill.leadingAnchor, constant: 8),
+            sessionsButton.centerYAnchor.constraint(equalTo: sessionsPill.centerYAnchor),
+            sessionsDot.leadingAnchor.constraint(equalTo: sessionsButton.trailingAnchor, constant: 5),
+            sessionsDot.trailingAnchor.constraint(equalTo: sessionsPill.trailingAnchor, constant: -8),
+            sessionsDot.centerYAnchor.constraint(equalTo: sessionsPill.centerYAnchor),
+            sessionsDot.widthAnchor.constraint(equalToConstant: 6),
+            sessionsDot.heightAnchor.constraint(equalToConstant: 6),
+        ])
+
+        configureStack(pillStack, views: [broadcastPill, cliPill, sessionsPill, editorPill, infoChip])
+        pillStack.setCustomSpacing(10, after: sessionsPill)
         pillStack.setCustomSpacing(10, after: broadcastPill)
         pillStack.setCustomSpacing(10, after: cliPill)
         pillStack.setCustomSpacing(10, after: editorPill)
@@ -660,6 +698,7 @@ final class StatusBarView: NSView {
         updateBroadcastVisibility()
         renderBroadcastPill()
         updateAccountVisibility()
+        updateSessionsVisibility()
         styleEditorButton()
         renderInfoChip()
     }
@@ -744,6 +783,11 @@ final class StatusBarView: NSView {
             menu.addItem(withTitle: "Open Directory In", action: nil, keyEquivalent: "")
                 .submenu = editors
         }
+
+        let sessions = NSMenuItem(title: sessionsOpen ? "Hide Sessions" : "Sessions…",
+                                  action: #selector(sessionsClicked), keyEquivalent: "")
+        sessions.target = self
+        menu.addItem(sessions)
 
         menu.addItem(.separator())
         for item in [StatusInfoItem.shell, .ghostty] where !infoValues.label(for: item).isEmpty {
@@ -1008,6 +1052,7 @@ final class StatusBarView: NSView {
         styleChips()
         renderInfoChip()
         renderLocationChip()
+        renderSessionsPill()
     }
 
     /// "Open ▾", or just the chevron once the bar is compact — at that width
@@ -1140,6 +1185,48 @@ final class StatusBarView: NSView {
     }
 
     @objc private func accountClicked() { onAccountClicked?() }
+
+    @objc private func sessionsClicked() { onSessionsClicked?() }
+
+    /// `peak` is the busiest session's CPU, or nil when nothing is measured.
+    func setSessions(open: Bool, peakCPU: Double?) {
+        sessionsOpen = open
+        sessionsPeakCPU = peakCPU
+        renderSessionsPill()
+        updateSessionsVisibility()
+    }
+
+    /// Follows the compact rule the rest of the bar follows: it folds into the
+    /// `⋯` menu, EXCEPT while a session is hot — the one state where hiding it
+    /// would be wrong.
+    private func updateSessionsVisibility() {
+        let hot = (sessionsPeakCPU ?? 0) >= SessionsView.busyThreshold
+        sessionsPill.isHidden = isCompact && !hot && !sessionsOpen
+    }
+
+    private func renderSessionsPill() {
+        let hot = (sessionsPeakCPU ?? 0) >= SessionsView.busyThreshold
+        let token = "\(sessionsOpen)|\(hot)|\(sessionsPeakCPU == nil)"
+        guard renderedSessionsToken != token else { return }
+        renderedSessionsToken = token
+
+        let theme = ZTheme.current
+        if #available(macOS 11.0, *) {
+            sessionsButton.image = NSImage(systemSymbolName: "square.stack.3d.down.right",
+                                           accessibilityDescription: "Sessions")?
+                .withSymbolConfiguration(NSImage.SymbolConfiguration(pointSize: 10, weight: .semibold))
+        }
+        sessionsButton.contentTintColor = sessionsOpen ? theme.accentColor : theme.fg2Color
+        // Attention, not alarm: a busy session is usually doing its job.
+        sessionsDot.layer?.backgroundColor = (hot ? theme.yellowColor : theme.fg3Color).cgColor
+        sessionsPill.layer?.backgroundColor =
+            (sessionsOpen ? theme.bg3Color : theme.bg2Color).cgColor
+        sessionsPill.layer?.borderColor =
+            (sessionsOpen ? theme.accentColor : theme.borderColor).cgColor
+        sessionsPill.toolTip = hot
+            ? "Sessions — one is busy"
+            : "Sessions: zmx sessions, their CPU and memory"
+    }
 
     private func styleAppearanceButton() {
         guard renderedAppearance != appearanceMode else { return }
