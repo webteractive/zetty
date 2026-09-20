@@ -2417,6 +2417,7 @@ final class TerminalViewController: NSViewController {
         var commands: [PaletteCommand] = [
             PaletteCommand(glyph: "◎", label: "Clear All Notifications", kbd: "") { [weak self] in self?.clearAllNotifications(nil) },
             PaletteCommand(glyph: "⚙", label: "Settings…", kbd: "⌘,") { [weak self] in self?.onOpenSettings?() },
+            PaletteCommand(glyph: "◱", label: "Sessions…", kbd: "") { [weak self] in self?.onShowTaskManager?() },
         ]
         for tab in SettingsWindowController.Tab.allCases {
             commands.append(PaletteCommand(glyph: "⚙", label: "Settings: \(tab.rawValue)", kbd: "") { [weak self] in
@@ -3652,6 +3653,109 @@ final class TerminalViewController: NSViewController {
         workspace.togglePin(at: workspace.activeIndex)
         refreshSidebar()
         onWorkspaceDidChange?()
+    }
+
+    // MARK: - Task manager
+
+    /// Raised by the palette and the Window menu; AppDelegate owns the window.
+    var onShowTaskManager: (() -> Void)?
+
+    /// The task manager's rows, assembled here because everything they need is
+    /// private or main-only: `location(ofSurface:)`, the workspace, and the
+    /// sampler's cache. The window is a renderer and reaches for none of it.
+    func taskRows() -> [TaskRow] {
+        var labels: [UUID: String] = [:]
+        for id in sessionOwnerSurfaceIDs {
+            guard let found = location(ofSurface: id),
+                  workspace.projects.indices.contains(found.projectIndex) else { continue }
+            let project = workspace.projects[found.projectIndex]
+            guard project.tabList.trees.indices.contains(found.tabIndex) else { continue }
+            let tab = tabDisplayTitle(for: project.tabList.trees[found.tabIndex],
+                                      at: found.tabIndex)
+            labels[id] = "\(project.name) / \(tab)"
+        }
+
+        // `foregroundBySurface` is keyed by surface id; TaskInventory keys by
+        // session name, so translate rather than probing a second time.
+        var running: [String: String] = [:]
+        for (id, command) in foregroundBySurface {
+            running[SessionPersistence.sessionName(for: id)] = command
+        }
+
+        return TaskInventory.rows(sessions: lastSessionPIDs,
+                                  owned: sessionOwnerSurfaceIDs,
+                                  paneLabels: labels,
+                                  running: running,
+                                  loads: sessionSampler.loads)
+    }
+
+    /// Focuses the pane a session belongs to, so triage can start by looking
+    /// at the thing rather than by acting on it.
+    func revealPane(_ row: TaskRow) {
+        guard let id = row.surfaceID, let found = location(ofSurface: id) else { return }
+        // The same reveal the CLI's `focus` verb uses: project, tab, then the
+        // pane itself, with first responder moved so it is genuinely focused.
+        focusPane(at: found)
+        view.window?.makeKeyAndOrderFront(nil)
+    }
+
+    /// Ctrl-C for a session, by whichever route cannot misfire.
+    ///
+    /// A live pane gets ETX written into its pty: that is exactly what Ctrl-C
+    /// does, it respects the shell's job control, and it SIGNALS NOTHING, so it
+    /// cannot reach the wrong process. Only a pane with no pty — never viewed,
+    /// hibernated, or an orphan — falls back to signalling.
+    func interruptSession(_ row: TaskRow) {
+        if let id = row.surfaceID, registry.isLive(id),
+           let surface = workspace.surface(with: id) {
+            _ = registry.sendText("\u{03}", to: surface)
+            return
+        }
+        signalForegroundGroup(ofSession: row.session, signal: SIGINT)
+    }
+
+    /// SIGINT to a session's foreground process group, re-resolved first.
+    ///
+    /// The pid in the row was sampled up to three seconds ago and may have been
+    /// reused since, so nothing here trusts it. Every step bails rather than
+    /// guessing: refusing to act is always correct, signalling the wrong group
+    /// is not.
+    private func signalForegroundGroup(ofSession session: String, signal: Int32) {
+        guard let zmx = ZmxRunner.locate() else { return }
+        DispatchQueue.global(qos: .userInitiated).async {
+            let pids = ZmxRunner.sessionPIDs(zmxPath: zmx)
+            guard let rootPID = pids[session],
+                  let ps = ZmxRunner.psSnapshot() else { return }
+            let table = ProcessTable(psOutput: ps)
+            guard let root = table.samples[rootPID],
+                  !root.tty.isEmpty, root.tty != "??" else { return }
+            // The foreground group on the session's own TTY — the same rule
+            // `ForegroundProcess` uses to decide what a pane is running.
+            let foreground = table.samples.values.filter {
+                $0.tty == root.tty && $0.stat.contains("+")
+            }
+            guard let leader = foreground.first(where: { $0.pid == $0.pgid }),
+                  leader.pgid > 0 else { return }
+            _ = kill(-leader.pgid, signal)
+        }
+    }
+
+    /// For an owned row this CLOSES THE PANE rather than killing the session.
+    ///
+    /// Killing the session directly leaves the pane attached to a corpse that
+    /// nothing respawns, because the model still owns the surface — and it
+    /// would create a second path for session lifetime when the rule is that
+    /// lifetime follows model ownership, with reconcileSessions sweeping the
+    /// rest. An orphan has no pane, so it is killed directly.
+    func killSession(_ row: TaskRow) {
+        guard let id = row.surfaceID else {
+            guard let zmx = ZmxRunner.locate() else { return }
+            ZmxRunner.kill(sessions: [row.session], zmxPath: zmx)
+            return
+        }
+        // `confirmIfBusy: false` because the task manager already confirmed,
+        // naming the pane; a second dialog for one click is noise.
+        closePane(surfaceID: id, confirmIfBusy: false)
     }
 
     /// Title shared by the tab bar, sidebar tab rows, and hidden-window menu.

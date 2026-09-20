@@ -1556,6 +1556,62 @@ shortcut (250 vs 251).
 overlay's floor is invisible to every other measurement — which is exactly how
 this shipped.
 
+### Session task manager
+
+**View → Sessions…** Design: `docs/superpowers/specs/2026-09-20-session-task-manager-design.md`.
+Pure model in `ZettyCore/Monitor/` (`CPUTime` · `ProcessTable` · `CPURate` ·
+`SessionLoad` · `TaskInventory` · `ByteFormat`), all unit-tested; process IO and
+AppKit in `SessionSampler`, `ProcessFootprint` and
+`TaskManagerWindowController`.
+
+Four things here will look like tidy-ups and are not:
+
+- **`ps %cpu` is deliberately unused.** It is an average over each process's
+  whole lifetime, so an agent that pegged a core an hour ago and has idled
+  since still reports high — for a tool whose job is naming the culprit that
+  is confidently wrong. CPU is differenced from cumulative `time` instead,
+  which is why the sampler is stateful and why **the first tick renders `—`
+  rather than `0.0%`**: zero would be a claim, and a false one.
+- **The sampler rides the foreground probe's existing `ps` sweep.** It does not
+  own a timer. A second polling loop is the mistake the `git` pill and
+  synchronous chrome refresh already made here. Its ingest takes its OWN hop to
+  main, because the probe's hop returns early whenever foreground identities
+  are unchanged — most ticks — and sampling from inside it would freeze the CPU
+  column. Closing the window drops the retained snapshot, or reopening would
+  difference against a snapshot from minutes ago and report one enormous rate.
+- **Kill on an owned row closes the pane**, it does not kill the session.
+  Killing the session directly leaves the pane attached to a corpse nothing
+  respawns, and invents a second path for session lifetime when the rule is
+  that lifetime follows model ownership with `reconcileSessions()` sweeping the
+  rest. Orphans have no pane and are killed directly, unconfirmed.
+- **Ownership is `sessionOwnerSurfaceIDs`, never `allSurfaceIDs`.** The former
+  spans hibernated projects; the latter excludes them, so using it would report
+  every dormant project's session as an orphan and invite the user to kill it.
+
+**Interrupt is two mechanisms, and that is not redundancy.** A live pane gets
+`ETX` written into its pty through `sendText` — literally Ctrl-C, respecting
+the shell's job control, and it signals nothing so it cannot reach the wrong
+process. Only a pane with no pty (never viewed, hibernated, or an orphan) falls
+back to `SIGINT` on the foreground process group, and that path re-resolves the
+session and its group from scratch first, because the pid on screen was sampled
+up to three seconds ago and may have been reused.
+
+**Numbers are labelled by what they are.** The header's footprint is measured
+(`task_info` → `phys_footprint`, in-process, matching `footprint -p`). The
+per-row column is headed **SESSION RSS**, not "MEM", because it is the resident
+set of that session's processes and NOT what the pane costs Zetty — per-pane
+GPU memory lives inside libghostty and is unreachable from Swift. There is no
+per-pane memory column because there is no per-pane memory figure to put in it.
+
+Known v1 limitations: an orphan's RUNNING column reads `shell`, because
+`foregroundBySurface` is built by iterating `allSurfaceIDs` and nothing owns an
+orphan; and with `preserve-sessions` off there are no sessions at all, so the
+window shows the footprint and says so.
+
+Writing tests against these types: **arithmetic inside an `#expect` operand is
+typed as `Int` and compared against `Int64`**, which fails while printing two
+identical numbers. Precompute the expected value into a typed constant.
+
 ### Sidebar drawer
 
 `⌘B` cycles **pinned → hidden → drawer**. From hidden the sidebar floats over

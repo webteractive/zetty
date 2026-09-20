@@ -43,6 +43,14 @@ by the tool it's running.
   when **armed**, the CLI pill when **stale**, and an **↑ Update** button when one
   is waiting. Revealing the sidebar in a small window now splits the space it
   has instead of forcing the window wider.
+- **Sessions window** — **View → Sessions…** (or the command palette) lists
+  every zmx session Zetty spawned: which pane owns it, what it is running, its
+  live CPU, and the resident memory of its own processes. Above the list,
+  Zetty's measured footprint. Per row: **Reveal Pane**, **Interrupt** (Ctrl-C),
+  and **Kill Session…**. CPU is measured *between refreshes* rather than taken
+  from `ps`'s lifetime average, so the first reading after opening shows `—`
+  and a number appears a few seconds later — a process that was busy an hour
+  ago and is idle now reads as idle, which is the point.
 - **Command palette** — `⌘K`, filtered **fuzzily**: type the letters in order
   and they need not be adjacent, so `go zetty` finds **Go to Project: zetty**
   and `tsb` finds **Toggle Sidebar**. Space-separated words all have to match

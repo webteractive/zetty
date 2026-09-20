@@ -182,6 +182,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         // Forward the user's ghostty config (file + passthrough) to the terminal.
         tvc.ghosttyConfiguration = makeTerminalConfiguration()
         tvc.onReloadConfig = { [weak self] in self?.reloadConfiguration(nil) }
+        tvc.onShowTaskManager = { [weak self] in self?.showTaskManager() }
         tvc.onOpenSettings = { [weak self] in self?.openSettings(nil) }
         tvc.onOpenSettingsTab = { [weak self] tab in self?.openSettings(tab: tab) }
         tvc.onCheckForUpdates = { [weak self] in self?.checkForUpdates(nil) }
@@ -1333,6 +1334,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         }
     }
 
+    // MARK: - Task manager
+
+    /// Built once and kept, like Settings: the sampler it holds must survive
+    /// a close so reopening does not rebuild the whole thing.
+    private var taskManagerWindowController: TaskManagerWindowController?
+
+    @MainActor @objc func showTaskManager() {
+        guard let tvc = terminalViewController else { return }
+        if taskManagerWindowController == nil {
+            taskManagerWindowController = TaskManagerWindowController(
+                sampler: tvc.sessionSampler,
+                rowsProvider: { [weak tvc] in tvc?.taskRows() ?? [] },
+                footprintProvider: { ProcessFootprint.current() },
+                onReveal: { [weak tvc] row in tvc?.revealPane(row) },
+                onInterrupt: { [weak tvc] row in tvc?.interruptSession(row) },
+                onKill: { [weak tvc] row in tvc?.killSession(row) }
+            )
+        }
+        taskManagerWindowController?.show()
+    }
+
     // MARK: - Settings
 
     private var settingsWindowController: SettingsWindowController?
@@ -2398,6 +2420,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         )
         palette.keyEquivalentModifierMask = [.command]
         viewMenu.addItem(palette)
+
+        // "Sessions…" — no key equivalent on purpose. A chord has to be proved
+        // free across four independent surfaces first, and a well-known one
+        // spent here is spent for good; this window has not earned that yet.
+        let sessions = NSMenuItem(title: "Sessions\u{2026}",
+                                  action: #selector(showTaskManager),
+                                  keyEquivalent: "")
+        sessions.target = self
+        viewMenu.addItem(sessions)
 
         // "Toggle Sidebar"  ⌘B
         let toggleSidebar = NSMenuItem(
