@@ -2002,6 +2002,20 @@ final class TerminalViewController: NSViewController {
                      isOpen: { self.isTileModeActive },
                      close: { self.setTileMode(false) })
 
+        // The picker is its own overlay, and an overlay's floor is invisible to
+        // every other measurement — which is how the command palette shipped
+        // growing the window on ⌘K.
+        probeOverlay("tile picker", window: window, target: target,
+                     open: {
+                         self.setTileMode(true)
+                         self.presentTileAttachPicker(slot: 0)
+                     },
+                     isOpen: { self.isTileAttachPickerOpen },
+                     close: {
+                         self.dismissTileAttachPicker()
+                         self.setTileMode(false)
+                     })
+
         probeSessionRows()
         probeFileViewer(window: window, target: target, original: original)
     }
@@ -3838,10 +3852,44 @@ final class TerminalViewController: NSViewController {
         }
     }
 
-    /// Opens the attach picker for one slot. Real implementation in the
-    /// picker task; a no-op here keeps the tree building.
+    private var tileAttachPicker: TileAttachPicker?
+
+    var isTileAttachPickerOpen: Bool { tileAttachPicker != nil }
+
+    /// Every pane in the workspace as an attach candidate: what it is called,
+    /// what it is running, and the durable key that identifies it.
+    private func tileAttachCandidates() -> [TileAttachPicker.Candidate] {
+        workspace.projects.flatMap { project in
+            project.tabList.trees.enumerated().map { index, tree in
+                let label = "\(project.name) / \(tabDisplayTitle(for: tree, at: index))"
+                let surfaceID = tree.focusedSurfaceID ?? tree.layout.surfaces.first?.id
+                let detail = surfaceID
+                    .flatMap { foregroundBySurface[$0] }
+                    .flatMap { $0.isEmpty ? nil : $0 } ?? "shell"
+                return TileAttachPicker.Candidate(
+                    label: label, detail: detail,
+                    slot: TileSlot(projectRoot: project.rootPath,
+                                   tabID: tree.id, label: label))
+            }
+        }
+    }
+
     func presentTileAttachPicker(slot index: Int) {
-        ZettyLog.chrome.log("tiles: attach requested for slot \(index)")
+        guard tileMode, let container = contentContainer, tileAttachPicker == nil else { return }
+        let picker = TileAttachPicker(candidates: tileAttachCandidates()) { [weak self] chosen in
+            guard let self else { return }
+            self.tileAttachPicker = nil
+            guard let chosen else { return }
+            self.mutateActiveTileProfile { $0.attach(chosen, at: index) }
+            self.enqueueMissingTileSurfaces()
+        }
+        tileAttachPicker = picker
+        picker.present(in: container)
+    }
+
+    func dismissTileAttachPicker() {
+        tileAttachPicker?.close(nil)
+        tileAttachPicker = nil
     }
 
     // MARK: Tile views
