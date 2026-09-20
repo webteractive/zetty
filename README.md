@@ -44,17 +44,30 @@ by the tool it's running.
   is waiting. Revealing the sidebar in a small window now splits the space it
   has instead of forcing the window wider.
 - **Tile mode** — `⇧⌘G`, `Ctrl+B g`, the grid button in the tab bar, **View →
-  Tile Running Sessions**, the command palette, or `zetty tiles`. A grid of **live, interactive terminals**:
-  one tile per pane that is actually running something, gathered from every
-  awake project. The tiles are the real terminals, so typing into the focused
-  one reaches its shell — answer three agents without leaving the grid. A pane
-  that finishes stays tiled and dims rather than vanishing under your cursor,
-  and leaving lands you in whichever tile you last typed into. Panes that have
-  a session but were never opened this launch attach in the background, two
-  seconds apart. `zetty-tiles-grid` (default `4x4`) sets how many tiles fill a
-  screenful before it scrolls, and the status bar carries the running/idle
-  count while the grid is up. Needs `preserve-sessions = true`; without it the
-  grid says so.
+  Tile Running Sessions**, the command palette, or `zetty tiles`. A grid of
+  **live, interactive terminals** drawn from every awake project: the tiles are
+  the real terminals, so typing into the focused one reaches its shell and you
+  can answer three agents without leaving the grid.
+  - **You choose what is in it.** An empty slot is a `+ Attach` cell; click it
+    for a fuzzy-searchable list of every pane, drag a tab row out of the
+    sidebar onto it, or use a pane's right-click → **Add to Tile View ▸**.
+    A tile's `×` detaches the slot — the pane keeps running.
+  - **Tile views are tabs.** While the grid is up the tab bar's strip carries
+    tile views instead of the active project's tabs, with `+` opening your
+    saved **profiles**. Several can be open at once.
+  - **Profiles save themselves.** An open view *is* its profile: attaching,
+    renaming and resizing write through immediately, with no save step.
+    A slot remembers its project and tab, so it reattaches after a relaunch
+    even if the tab was renamed or reordered; one whose tab is gone shows the
+    name it had, with a **Reattach…** action.
+  - **All Running** is a built-in profile that auto-fills with every pane that
+    is running something — the old behaviour, now one choice among several.
+    It needs `preserve-sessions = true`; manual views do not. **Duplicate as
+    Manual** turns it into an editable view.
+  - `zetty-tiles-grid` (default `4x4`) seeds the grid of a new view; each
+    profile keeps its own thereafter. It caps what is visible, never what can
+    be attached, so shrinking a grid cannot drop a pane. The status bar carries
+    the running/idle count while the grid is up.
 - **Sessions** — `⌘J`, **View → Sessions…**, the command palette, or the
   status-bar pill. It docks to the **bottom of the window** by default; the ⤡ button in
   its header detaches it into its own window, and the ⤠ button docks it back.
@@ -369,7 +382,7 @@ Command Line** and click install — this symlinks `zetty` into
 | `⌘}` / `⌘{` | Next / previous tab |
 | `⌘1`–`⌘9` | Jump to tab |
 | `⌘J` | Toggle Sessions (docked drawer, or its own window) |
-| `⇧⌘G` | Toggle tile mode — a grid of every running session |
+| `⇧⌘G` | Toggle tile mode — a grid of manually attached panes |
 | `⌘K` | Command palette (fuzzy — `go zetty` finds **Go to Project: zetty**) |
 | `⌘B` | Toggle sidebar — pinned → hidden → drawer |
 | `⇧⌘F` | Toggle the focused pane's file tree |
@@ -418,7 +431,7 @@ Press `Ctrl+B` (the prefix, configurable), then:
 | `z` | Zoom / unzoom pane |
 | `!` | Break focused pane into a new tab |
 | `e` | Toggle the focused pane's file tree |
-| `g` | Toggle tile mode — a grid of every running session |
+| `g` | Toggle tile mode — a grid of manually attached panes |
 | `c` | New tab |
 | `n` / `p` | Next / previous tab |
 | `1`–`9` | Jump to tab |
@@ -470,7 +483,7 @@ seeds a documented starter file on first launch. Format is plain
 | `viewer-max-bytes` | `2097152` | Largest file the viewer will render; bigger files open in their default app instead |
 | `zetty-home-path` | — | Directory the **Home** project is rooted at (`~` allowed); unset — or `off`/`~` — keeps it at your home directory |
 | `zetty-restart-recovery` | `true` | After a macOS restart/shutdown/logout, replay each preserved pane's last screen and resume the Claude/Codex session it was running |
-| `zetty-tiles-grid` | `4x4` | How many tiles fill one screenful of tile mode (⇧⌘G), as `<cols>x<rows>`. A **cap**, not a fixed cell count: fewer sessions grow to fill the window, more than fit scroll. Up to `8x8` |
+| `zetty-tiles-grid` | `4x4` | Grid a NEW tile view is seeded with, as `<cols>x<rows>`; each profile keeps its own thereafter. A **cap**, not a fixed cell count: fewer tiles grow to fill the window, more than fit scroll. Up to `8x8` |
 | `zetty-file-tree-show-hidden` | `true` | Show dotfiles in the per-pane file tree |
 | `zetty-file-tree-respect-gitignore` | `false` | Hide anything the repo's `.gitignore` excludes |
 | `zetty-file-tree-ignore` | — | Extra names to hide, comma-separated (e.g. `node_modules, vendor`) |
@@ -843,8 +856,9 @@ zetty scratch-clear                      # close and clear all scratch terminals
 zetty focus --cwd ~/work/api
 zetty close --pane 1a2b3c4d --tab
 zetty reload                             # same as ⇧⌘,
-zetty tiles                              # toggle the grid of running sessions
+zetty tiles                              # toggle the grid
 zetty tiles --off                        # close it (idempotent, for scripts)
+zetty tiles --profile morning            # open a saved tile view by name
 zetty quit --kill-sessions               # full shutdown, ends preserved sessions
 zetty quit --simulate-restart            # run restart recovery, then kill sessions (testing aid)
 ```

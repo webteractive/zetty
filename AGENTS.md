@@ -1646,116 +1646,95 @@ identical numbers. Precompute the expected value into a typed constant.
 
 ### Tile mode
 
-⇧⌘G (also `Ctrl+B g`, **View → Tile Running Sessions**, ⌘K, and `zetty tiles`)
-replaces the pane area with a grid of **live, interactive terminals** — one
-tile per pane the foreground probe reports running a command, across every
-awake project. Design:
-`docs/superpowers/specs/2026-09-20-tile-mode-design.md`. Pure model in
-`ZettyCore/Tiles/` (`TileMembership` · `TileGrid`), both unit-tested; AppKit in
-`App/Sources/App/Tiles/` (`TileView` · `TileGridView`).
+⇧⌘G (also `Ctrl+B g`, the tab bar's grid button, **View → Tile Running
+Sessions**, ⌘K, and `zetty tiles`) replaces the pane area with a grid of
+**live, interactive terminals** drawn from every awake project. Designs:
+`docs/superpowers/specs/2026-09-20-tile-mode-design.md` (rendering, reflow,
+cost) and `2026-09-20-tile-profiles-design.md` (profiles, which superseded the
+first one's membership model). Pure model in `ZettyCore/Tiles/`
+(`TileProfile` · `TileResolution` · `TileProfileStore` · `TileGrid` ·
+`TileMembership`), all unit-tested; AppKit in `App/Sources/App/Tiles/`
+(`TileView` · `TileGridView` · `TileAttachPicker`).
 
-Five things here will look like tidy-ups and are not:
+**An open tile view IS its profile.** There is no template/instance split and
+no save step: `mutateActiveTileProfile` is the ONLY writer, and it updates the
+library and writes `tile-profiles.json` on every change. Closing a view's tab
+leaves the profile in the library.
+
+Eight things here will look like tidy-ups and are not:
 
 - **The tiles are the registry's real `AppTerminalView`s**, so typing into a
-  focused tile reaches its pty with no forwarding. That is the whole mechanism,
-  and it is why a tile resizes the pty and every TUI in it reflows.
-- **The grid is NOT window-area-bounded, and the design argued that it was.**
-  Measured 2026-09-20 at 828x705, opening a 16-tile grid (265x160 tiles) took
-  the footprint from **87 MB at one live pane to 297 MB** — about **14 MB per
-  extra pane**, not the one-full-pane's-worth the spec predicted. Half the
-  prediction held and half did not, and the split is the useful part:
-  **`IOSurface` DID stay area-bounded** (26.7 -> 51.4 MB, 4 -> 51 regions —
-  ~1.6 MB per tile, exactly `pane_px x 4 x 3` at tile size), but
-  **`IOAccelerator (graphics)` did not** (15.0 -> 117.6 MB, 58 -> 364 regions).
-  That allocation is per-surface Metal state, not a render target, so shrinking
-  a pane does not shrink it. Any future reasoning about pane memory here has to
-  account for both, and a tile cap is the lever if this becomes a problem —
-  `TileGrid` already supports overflow scrolling.
-- **Membership is sticky.** A pane that goes idle stays tiled, dims, and keeps
-  its index forever (`TileMembership`); only a surface that stops existing is
-  dropped. The probe re-reports every 3s and the tiles are interactive, so a
-  grid that dropped idle panes would remove the tile being typed into at the
-  moment it went idle waiting for input.
+  focused tile reaches its pty with no forwarding. That is also why a tile
+  resizes the pty and every TUI in it reflows — accepted.
+- **The grid is NOT window-area-bounded, and the first design argued it was.**
+  Measured 2026-09-20 at 828x705: a 16-tile grid took the footprint from
+  **87 MB at one live pane to 297 MB**, about **14 MB per extra pane**.
+  `IOSurface` DID stay area-bounded (26.7 → 51.4 MB, 4 → 51 regions, ~1.6 MB
+  per tile, exactly `pane_px x 4 x 3`), but `IOAccelerator (graphics)` did not
+  (15.0 → 117.6 MB, 58 → 364 regions) — per-surface Metal state, not a render
+  target, so a smaller pane does not shrink it.
+- **A slot keys on canonical `rootPath` + `PaneTree.id`, and neither obvious
+  alternative works.** Project *names* are not unique; a tab's display *title*
+  is regenerated from its running agent every second; a tab's *index* shifts on
+  reorder. `PaneTree.id` was added for this, decoded tolerantly. **`Tab.id` IS
+  `PaneTree.id`** — `SessionSnapshot` threads it in both directions, and
+  dropping it (as it did at first) makes every slot in every profile resolve as
+  `.missing` after one relaunch.
+- **The grid caps VISIBLE slots, never attachments.** `TileProfile.setGrid`
+  never truncates past an attachment, so shrinking a profile's grid cannot drop
+  a pane; it does trim trailing holes, so it leaves no phantom attach cells.
+  The view scrolls past capacity.
+- **The size comes from the ACTIVE PROFILE's grid**, not `zetty-tiles-grid` —
+  that key only seeds a new view. Reading the global one there silently renders
+  every profile at the default shape.
+- **⌘W detaches, it does not close the pane**; ⇧⌘W closes the view. Killing the
+  real pane stays on the tile's own menu, because doing it by accident from a
+  grid of sixteen is expensive. Both are native menu equivalents, resolved
+  before the surface sees them, so their `@objc` actions branch as well as the
+  prefix layer.
 - **Esc and ⏎ belong to the pty, never the grid** — "esc to interrupt" is
-  Claude's own UI and ⏎ submits. So the toggle is the only exit, and **it
-  always lands on the focused tile's pane**. Touch nothing and that is where
-  you started; answer three agents and you exit into the last one.
+  Claude's own UI and ⏎ submits. The toggle is the only exit, and it always
+  lands on the focused tile's pane.
 - **Tile mode never changes the active project.** Moving focus across tiles
   would otherwise re-run `applyThemeForActiveProject()` per hop, and with
   per-project appearance overrides the app would flip dark/light as you arrow
-  around. One project switch happens, on exit. The status bar still follows the
-  focused TILE (`statusBarSurface`), so its cwd, branch and account describe
-  what is being typed into.
-- **Missing surfaces are attached on a stagger** (`tileSpawnInterval`, 2s).
-  After a relaunch the probe reads session pids directly, so it reports busy
-  panes whose tabs were never viewed. `SurfaceRegistry.pair(for:)` creates the
-  pty eagerly with no window required, so this is one call per tick — and
-  deliberately NOT `ensurePaneIsLive`, which cannot work here: while `tileMode`
-  is on the rebuild renders the grid, so selecting a project and tab renders
-  the grid again and spawns nothing.
+  around. The status bar still follows the focused TILE
+  (`statusBarSurface`).
 
-Grid size is `zetty-tiles-grid` (default `4x4`, max `8x8`), a **cap** rather
-than a fixed cell count — below capacity tiles grow near-square to fill the
-window, at or above it the grid is exactly that shape and scrolls, and the
-visible rows always split the height rather than sitting at `minTileHeight`
-with a dead stripe below. `TileGrid.minTileWidth` came DOWN to 120 for this:
-at 240 the column count derived from the width capped an 828pt window at three
-columns, so the default 4x4 was unreachable. It is now a last-resort clamp that
-binds only near the 320pt window floor, and the setting is what governs size.
-Tiles carry a 1pt border and a 12pt gap — a grid of sixteen terminals needs
-separation two panes do not, and the border doubles as the focus signal
-(accent when focused) so there is one accent cue rather than two.
+**Three attach paths, one mutation.** The `+ Attach` cell opens
+`TileAttachPicker` (a `CommandPaletteView`-shaped overlay reusing
+`CommandSearch.rank`); a sidebar tab row can be dropped on a slot; and a pane's
+right-click offers `Add to Tile View ▸`. All three call
+`mutateActiveTileProfile { $0.attach(...) }`, so they cannot drift. The drop
+lands on the GRID, outside the outline view, so `SidebarView.validateDrop` —
+the rule protecting the pinned-first invariant — is never consulted.
 
-**The running/idle count is a status-bar chip, not a grid header.** It sits in
-the LEFT cluster beside `PREFIX`/`COPY`/`ZOOM` (`StatusBarView.setTiles`),
-never in `pillStack` — the count changes on the probe's 3s tick, and anything
-in the trailing stack that changes width on a timer slides Broadcast and
-`Open ▾` out from under the pointer, which is the jitter that killed the
-cycling ambient chip. The left cluster is anchored to the leading edge with
-nothing clickable to its right, so it may vary freely. It follows the compact
-bar's rule too: shown only while the grid is up. The grid itself has no header,
-which also gives the tiles back 28pt of height.
+**All Running is computed, not stored.** `TileProfile.kind == .allRunning`
+takes its slots from `TileMembership` at render time, which is what keeps that
+type and its sticky-ordering tests alive. `mutateActiveTileProfile` REFUSES to
+edit it (a write would be silently lost and read as a bug); **Duplicate as
+Manual** snapshots it into an editable view. It is the one thing here that
+still needs `preserve-sessions`, and it says so when empty.
 
-**The tab bar keeps its chrome buttons in tile mode but drops its PILLS**
-(`TabBarView.isTileMode` hides `tabScrollView` and `+`; `layout()` returns
-early so it never positions a hidden `+`). The pills name the ACTIVE project's
-tabs and the grid spans every project, so a strip of one project's tabs above
-sixteen unrelated panes labels the wrong thing. Hiding the whole bar was tried
-first and **took the sidebar toggle with it** — that button lives in the tab
-bar, and there is nowhere else to reach it.
+**Chrome.** The strip carries tile-view pills while the grid is up
+(`refreshTabBar` branches; every `tabBar.on*` callback branches with it), `+`
+raises the profile library as a menu, and the tab bar keeps its sidebar and
+grid buttons — hiding the whole bar took the sidebar toggle with it, which is
+why only the pills fold. The running/idle count is a status-bar chip in the
+LEFT cluster, never `pillStack`: it changes on the probe's 3s tick, and
+anything in the trailing stack that changes width on a timer slides Broadcast
+and `Open ▾` out from under the pointer. Tiles carry a 1pt border and a 12pt
+gap, with the border going accent on focus so there is one accent cue, not two.
 
-**The tile toggle is a tab-bar button pinned to the trailing edge, beside `+`**,
-present in both states on purpose: it is how you enter the grid with a mouse as well as leave
-it, and it goes accent while the grid is up (the rule the status bar's mode
-chips follow). Style it from `init` as well as `applyTheme` — the other chrome
-buttons do, and a button styled only on theme change renders blank until the
-first scheme switch.
+**`TileGridView` and `TileAttachPicker` are both in `probeWindowFloor()`'s
+list.** They live inside the main window, so a floor either sets is invisible
+to every other measurement — how the command palette shipped growing the window
+on ⌘K. Every layout pass logs `tiles: count=… cols=… cap=… tile=…x…`; verify a
+change here by reading that back, not by eye.
 
-It is **constrained** to the trailing edge, not frame-positioned beside `+`
-the way `+` is positioned beside the strip. Two reasons: a toggle that moved
-when `+` disappeared would be hard to click twice, and the tab strip's rule
-still holds — the clip is pinned to the tile button's leading edge minus a
-CONSTANT `addButtonSlot`, so the chain from bar edge to clip is still all
-constants and never references the strip. Re-run `ZETTY_PROBE_FLOOR=1` after
-touching it.
-
-Bindings are **re-interpreted at dispatch** in `perform(binding:interceptor:)`
-rather than given a third table: `h/j/k/l`/arrows/`o` move tile focus, `1`–`9`
-select the Nth tile, `x` and ⌘W close that pane in its own project, and the tab
-verbs (`c n p ,`) plus the splits are silent no-ops because they would act on a
-project you cannot see. Copy mode falls through unchanged and is
-**needs-testing, not done** — its cursor maths assumes a pane-sized viewport.
-
-With `preserve-sessions` off there is no probe and the grid is permanently
-empty — it says so rather than rendering blank, like the file viewer's `.empty`
-case. `TileGridView` is in `probeWindowFloor()`'s list: it lives inside the
-main window, so a floor it sets is invisible to every other measurement. Its
-tiles are frame-positioned inside the scroll view's document view, never
-constrained against the clip — the tab strip's rule.
-
-Deferred: a broadcast scope over tiles, drag-reordering, per-tile font
-overrides, tiling hibernated projects, persisting tile mode across relaunch,
-and a detachable Sessions-style window.
+Deferred: a profiles manager window; import/export or sharing profiles through
+`.zetty/project.json`; per-profile theme or font; nested grids; drag-reordering
+slots within a view.
 
 ### Sidebar drawer
 
