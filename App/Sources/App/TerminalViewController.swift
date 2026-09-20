@@ -3788,6 +3788,7 @@ final class TerminalViewController: NSViewController {
     private var tileMode = false
     private var tileFocusedSurfaceID: UUID?
     private var tileGridView: TileGridView?
+    private var tileChooserView: TileChooserView?
     /// Surfaces the grid asked for that had no pair yet, and why a spawn
     /// failed when one did.
     private var tileSpawnQueue: [UUID] = []
@@ -3876,11 +3877,11 @@ final class TerminalViewController: NSViewController {
             seeded = true
         }
         if seeded { persistTileLibrary() }
+        // Only what was actually open. Toggling into tile mode opens the
+        // CHOOSER, not whatever happened to be first — All Running used to
+        // arrive uninvited that way.
         openTileViews = openIDs.compactMap { id in
             tileLibrary.profiles.first { $0.id == id }
-        }
-        if openTileViews.isEmpty, let first = tileLibrary.profiles.first {
-            openTileViews = [first]
         }
         activeTileViewIndex = min(max(activeIndex, 0), max(0, openTileViews.count - 1))
     }
@@ -4123,6 +4124,17 @@ final class TerminalViewController: NSViewController {
 
     /// Asks for a name and a shape first. A view IS a structure before it is
     /// anything else, so picking one is the first thing creating it should do.
+    /// Starts a view from a layout — the chooser's primary action. Named
+    /// after the layout, which is almost always what you would have typed.
+    func openTileView(fromLayout layout: TileLayout) {
+        let profile = TileProfile(name: layout.name, root: layout.root)
+        tileLibrary.profiles.append(profile)
+        persistTileLibrary()
+        openTileViews.append(profile)
+        setTileMode(true)
+        selectTileView(at: openTileViews.count - 1)
+    }
+
     func newTileView(then completion: (() -> Void)? = nil) {
         presentTileConfigSheet(
             name: "Tiles \(tileLibrary.profiles.count)",
@@ -4187,7 +4199,11 @@ final class TerminalViewController: NSViewController {
         guard openTileViews.indices.contains(index) else { return }
         openTileViews.remove(at: index)
         if openTileViews.isEmpty {
-            setTileMode(false)
+            // Back to the chooser rather than out of tile mode — closing your
+            // last view is a reason to pick another, not to leave.
+            activeTileViewIndex = 0
+            rebuildSurfaceNodeView()
+            refreshTabBar()
             return
         }
         selectTileView(at: min(index, openTileViews.count - 1))
@@ -5991,7 +6007,35 @@ final class TerminalViewController: NSViewController {
         // Tile mode replaces the pane area, exactly where the hibernation
         // placeholder substitutes itself. Pruning needs no change: the
         // surfaces the grid shows are ones `allSurfaceIDs` already retains.
+        if tileMode, openTileViews.isEmpty {
+            let chooser = TileChooserView(
+                layouts: tileLibrary.layouts,
+                profiles: tileLibrary.profiles,
+                onPickLayout: { [weak self] layout in
+                    self?.openTileView(fromLayout: layout)
+                },
+                onPickProfile: { [weak self] profile in
+                    self?.openTileView(profileID: profile.id)
+                },
+                onCustom: { [weak self] in self?.newTileView() })
+            tileGridView = nil
+            container.addSubview(chooser)
+            NSLayoutConstraint.activate([
+                chooser.topAnchor.constraint(equalTo: topGuide),
+                chooser.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+                chooser.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+                chooser.bottomAnchor.constraint(equalTo: bottomGuide),
+            ])
+            tileChooserView = chooser
+            statusBarView?.setTiles(running: nil, idle: 0)
+            registry.prune(keeping: Set(allSurfaceIDs))
+            onWorkspaceDidChange?()
+            return
+        }
+
         if tileMode {
+            tileChooserView?.removeFromSuperview()
+            tileChooserView = nil
             let grid = tileGridView ?? TileGridView(
                 // The ACTIVE PROFILE's grid, not the global key — that one is
                 // only the default a new view is seeded with.
