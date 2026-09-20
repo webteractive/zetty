@@ -32,6 +32,13 @@ final class StatusBarView: NSView {
     // marks the active mode, fills stay on the bg3 surface.
     private let modeChip = NSTextField(labelWithString: "")
     private let zoomChip = NSTextField(labelWithString: " ZOOM ")
+    /// Tile mode's running/idle count. It lives in the LEFT cluster, not
+    /// `pillStack`: the count changes on the foreground probe's 3s tick, and
+    /// anything in the trailing stack that changes width on a timer slides
+    /// Broadcast and `Open` out from under the pointer. The left cluster is
+    /// anchored to the leading edge with nothing clickable to its right, so it
+    /// may vary freely.
+    private let tilesChip = NSTextField(labelWithString: "")
     private let broadcastPill = NSView()
     private let broadcastButton = NSButton()
 
@@ -263,7 +270,7 @@ final class StatusBarView: NSView {
             editorButton.centerYAnchor.constraint(equalTo: editorPill.centerYAnchor),
         ])
 
-        for chip in [modeChip, zoomChip] {
+        for chip in [modeChip, zoomChip, tilesChip] {
             chip.wantsLayer = true
             chip.layer?.cornerRadius = 4
             chip.alignment = .center
@@ -345,8 +352,8 @@ final class StatusBarView: NSView {
         configureStack(gitStack, views: [branchIcon, branchLabel, aheadLabel, behindLabel, changesLabel])
         gitStack.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
 
-        configureStack(leftStack, views: [modeChip, zoomChip, accountPill, cwdLabel, gitStack, locationChip])
-        leftStack.setCustomSpacing(10, after: zoomChip)
+        configureStack(leftStack, views: [modeChip, zoomChip, tilesChip, accountPill, cwdLabel, gitStack, locationChip])
+        leftStack.setCustomSpacing(10, after: tilesChip)
         leftStack.setCustomSpacing(10, after: cwdLabel)
         // The cwd is the one label allowed to give way FIRST: the path
         // truncates (by the head) before anything else moves.
@@ -357,7 +364,7 @@ final class StatusBarView: NSView {
         // resists compression holds the whole stack — and the window — open,
         // whatever the stack's own resistance says. The account pill was the
         // worst of them: its width follows an account name nobody bounded.
-        for squeezable in [accountPill, modeChip, zoomChip, aheadLabel,
+        for squeezable in [accountPill, modeChip, zoomChip, tilesChip, aheadLabel,
                            behindLabel, changesLabel] as [NSView] {
             squeezable.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         }
@@ -982,6 +989,24 @@ final class StatusBarView: NSView {
         styleChips()
     }
 
+    /// Shows tile mode's count, or hides the chip when the grid is closed.
+    /// Follows the same rule as the mode chips: present only in the state
+    /// where hiding it would be wrong.
+    func setTiles(running: Int?, idle: Int) {
+        guard let running else {
+            guard !tilesChip.isHidden else { return }
+            tilesChip.isHidden = true
+            styleChips()
+            return
+        }
+        let text = idle > 0 ? " \(running) RUNNING \u{00B7} \(idle) IDLE " : " \(running) RUNNING "
+        let wasHidden = tilesChip.isHidden
+        guard tilesChip.stringValue != text || wasHidden else { return }
+        tilesChip.stringValue = text
+        tilesChip.isHidden = false
+        if wasHidden { styleChips() }
+    }
+
     /// Shows/hides the `ZOOM` chip (a pane is temporarily maximized).
     func setZoomed(_ zoomed: Bool) {
         guard zoomChip.isHidden != !zoomed else { return }
@@ -1076,7 +1101,7 @@ final class StatusBarView: NSView {
     /// rules 3/9: accent marks the active mode and glows; fills stay surfaces).
     private func styleChips() {
         let theme = ZTheme.current
-        for chip in [modeChip, zoomChip] {
+        for chip in [modeChip, zoomChip, tilesChip] {
             chip.font = ZTheme.monoFont(size: 10, weight: .semibold)
             chip.textColor = theme.accentColor
             chip.layer?.backgroundColor = theme.bg3Color.cgColor

@@ -1706,6 +1706,16 @@ Tiles carry a 1pt border and a 12pt gap — a grid of sixteen terminals needs
 separation two panes do not, and the border doubles as the focus signal
 (accent when focused) so there is one accent cue rather than two.
 
+**The running/idle count is a status-bar chip, not a grid header.** It sits in
+the LEFT cluster beside `PREFIX`/`COPY`/`ZOOM` (`StatusBarView.setTiles`),
+never in `pillStack` — the count changes on the probe's 3s tick, and anything
+in the trailing stack that changes width on a timer slides Broadcast and
+`Open ▾` out from under the pointer, which is the jitter that killed the
+cycling ambient chip. The left cluster is anchored to the leading edge with
+nothing clickable to its right, so it may vary freely. It follows the compact
+bar's rule too: shown only while the grid is up. The grid itself has no header,
+which also gives the tiles back 28pt of height.
+
 **The tab bar is hidden while the grid is up** (`rebuildSurfaceNodeView` sets
 `isHidden` and repins `topGuide` to the container). It names the ACTIVE
 project's tabs, and the grid spans every project — a strip of one project's

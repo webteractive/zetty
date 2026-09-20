@@ -3775,6 +3775,7 @@ final class TerminalViewController: NSViewController {
             startTileSpawnQueue()
         } else {
             stopTileSpawnQueue()
+            statusBarView?.setTiles(running: nil, idle: 0)
             let landing = tileFocusedSurfaceID
             tileGridView = nil
             tileOrder = []
@@ -5498,6 +5499,9 @@ final class TerminalViewController: NSViewController {
         if tileMode {
             let grid = tileGridView ?? TileGridView(
                 gridProvider: { [weak self] in self?.tilesGridProvider?() ?? .default },
+                onCounts: { [weak self] running, idle in
+                    self?.statusBarView?.setTiles(running: running, idle: idle)
+                },
                 onActivate: { [weak self] id in self?.focusTile(id) },
                 onGoToPane: { [weak self] id in
                     self?.tileFocusedSurfaceID = id

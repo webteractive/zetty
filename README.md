@@ -52,7 +52,8 @@ by the tool it's running.
   and leaving lands you in whichever tile you last typed into. Panes that have
   a session but were never opened this launch attach in the background, two
   seconds apart. `zetty-tiles-grid` (default `4x4`) sets how many tiles fill a
-  screenful before it scrolls. Needs `preserve-sessions = true`; without it the
+  screenful before it scrolls, and the status bar carries the running/idle
+  count while the grid is up. Needs `preserve-sessions = true`; without it the
   grid says so.
 - **Sessions** — `⌘J`, **View → Sessions…**, the command palette, or the
   status-bar pill. It docks to the **bottom of the window** by default; the ⤡ button in

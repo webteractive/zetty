@@ -14,8 +14,11 @@ struct TileDescriptor {
 
 // MARK: - TileGridView
 
-/// The tile grid: a header counting what is running, over a scrollable field
-/// of tiles laid out by `TileGrid`.
+/// The tile grid: a scrollable field of tiles laid out by `TileGrid`.
+///
+/// It has no header of its own. The running/idle count lives in the status
+/// bar's left cluster instead, because a strip above the grid spent 28pt of
+/// height on one line of text that the status bar was already there to carry.
 ///
 /// Tiles are frame-positioned inside the document view rather than
 /// Auto-Layout'd against it. That is deliberate and mirrors the tab strip's
@@ -26,13 +29,10 @@ struct TileDescriptor {
 @MainActor
 final class TileGridView: NSView {
 
-    private static let headerHeight: CGFloat = 28
     /// Matches `TileGrid.spacing`, so the outer margin reads as the same gap
     /// as the ones between tiles.
     private static let inset = CGFloat(TileGrid.spacing)
 
-    private let headerLabel = NSTextField(labelWithString: "")
-    private let bottomBorder = NSView()
     private let scrollView = NSScrollView()
     private let documentView = NSView()
     private let emptyLabel = NSTextField(labelWithString: "")
@@ -45,11 +45,15 @@ final class TileGridView: NSView {
     /// Supplies `zetty-tiles-grid` at layout time rather than at construction,
     /// so ⇧⌘, reload reaches an open grid without rebuilding it.
     private let gridProvider: () -> TilesGrid
+    /// Reports the running/idle split to whoever renders it — the status bar.
+    private let onCounts: (Int, Int) -> Void
 
     init(gridProvider: @escaping () -> TilesGrid,
+         onCounts: @escaping (Int, Int) -> Void,
          onActivate: @escaping (UUID) -> Void,
          onGoToPane: @escaping (UUID) -> Void) {
         self.gridProvider = gridProvider
+        self.onCounts = onCounts
         self.onActivate = onActivate
         self.onGoToPane = onGoToPane
         super.init(frame: .zero)
@@ -64,18 +68,6 @@ final class TileGridView: NSView {
     private func build() {
         let theme = ZTheme.current
         layer?.backgroundColor = theme.bg1Color.cgColor
-
-        headerLabel.font = ZTheme.chromeFont(size: 12)
-        headerLabel.textColor = theme.fg2Color
-        headerLabel.lineBreakMode = .byTruncatingTail
-        headerLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-        headerLabel.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(headerLabel)
-
-        bottomBorder.wantsLayer = true
-        bottomBorder.layer?.backgroundColor = theme.borderColor.cgColor
-        bottomBorder.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(bottomBorder)
 
         scrollView.hasVerticalScroller = true
         scrollView.hasHorizontalScroller = false
@@ -95,18 +87,7 @@ final class TileGridView: NSView {
         addSubview(emptyLabel)
 
         NSLayoutConstraint.activate([
-            headerLabel.topAnchor.constraint(equalTo: topAnchor, constant: 6),
-            headerLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 12),
-            headerLabel.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor,
-                                                  constant: -12),
-
-            bottomBorder.topAnchor.constraint(equalTo: topAnchor,
-                                              constant: Self.headerHeight),
-            bottomBorder.leadingAnchor.constraint(equalTo: leadingAnchor),
-            bottomBorder.trailingAnchor.constraint(equalTo: trailingAnchor),
-            bottomBorder.heightAnchor.constraint(equalToConstant: 1),
-
-            scrollView.topAnchor.constraint(equalTo: bottomBorder.bottomAnchor),
+            scrollView.topAnchor.constraint(equalTo: topAnchor),
             scrollView.leadingAnchor.constraint(equalTo: leadingAnchor),
             scrollView.trailingAnchor.constraint(equalTo: trailingAnchor),
             scrollView.bottomAnchor.constraint(equalTo: bottomAnchor),
@@ -133,17 +114,14 @@ final class TileGridView: NSView {
             emptyLabel.stringValue = message
             emptyLabel.isHidden = false
             scrollView.isHidden = true
-            headerLabel.stringValue = ""
+            onCounts(0, 0)
             return
         }
         emptyLabel.isHidden = true
         scrollView.isHidden = false
 
         let running = descriptors.filter { $0.status != .idle }.count
-        let idle = descriptors.count - running
-        headerLabel.stringValue = idle > 0
-            ? "\u{25A0} \(running) running \u{00B7} \(idle) idle"
-            : "\u{25A0} \(running) running"
+        onCounts(running, descriptors.count - running)
 
         for descriptor in descriptors {
             let id = descriptor.surfaceID
