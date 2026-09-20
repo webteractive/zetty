@@ -1701,15 +1701,44 @@ Eight things here will look like tidy-ups and are not:
   around. The status bar still follows the focused TILE
   (`statusBarSurface`).
 
+**A layout is a TREE, not a grid.** `TileNode` (`.slot` / `.split`) is shaped
+exactly like `SurfaceNode`, and `frames(in:)` mirrors `Layout.collectFrames`
+over the same `LayoutRect` — so `1|2/3` is two splits, and anything else is
+too. **Leaves in first-to-second order ARE the slot indices**, which is what
+lets `TileProfile.slots` stay the flat array everything else is built on.
+`TilesGrid` survives only as a CONSTRUCTOR (`TileNode.uniform`) behind the
+sheet's steppers and `zetty-tiles-grid`.
+
+- **Splitting inserts the new leaf at `index + 1`**, and `TileProfile.split`
+  inserts a hole there to match. That alignment is the invariant the whole
+  model turns on; it is tested directly.
+- **Closing the only leaf is refused** — a view with no slots has nothing to
+  show and no way back.
+- **Dividers are addressed by their own index**, not a leaf's: a leaf has many
+  ancestor splits and only one of them owns the handle being dragged.
+- **A drag persists only on mouse-up** (`mutateActiveTileProfile(persist:)`).
+  Writing through per mouse-move would save the library and rebuild the tab bar
+  dozens of times a second.
+- **Scrolling is gone, along with `TileGrid.layout`'s overflow maths.** A tree
+  subdivides the space it is given, so it always fits; capacity is the leaf
+  count. Do not reintroduce either.
+- **Old libraries migrate silently**: a stored `grid` decodes to
+  `TileNode.uniform`, and only `root` is ever written back, so a file converts
+  itself the first time it is saved.
+
 **A view is a structure before it is anything else**, so creating one opens
-`TileConfigSheet` rather than silently minting a `4x4`: a name, the layout
-presets drawn as their own shapes, and custom columns/rows clamped to the same
-1–8 `TilesGrid` enforces. `TileLayout` (pure, seeded with five built-ins into
-the same `tile-profiles.json`) is a NAMED GRID ONLY. Creating a profile
-**copies** that grid — no reference, no back-link, no "from Quad" label, since
-with copy semantics such a label cannot survive a rename and the grid is
-already the profile's own. Editing a layout therefore affects only later views,
-and nothing on screen reshapes because of an edit elsewhere.
+`TileConfigSheet` rather than silently minting a `4x4`. `TileLayout` is a NAMED
+TREE, seeded with seven built-ins into the same `tile-profiles.json`. Creating a
+profile **copies** that tree — no reference, no back-link, no "from Quad" label,
+since with copy semantics such a label cannot survive a rename and the shape is
+already the profile's own. Editing a layout therefore affects only later views.
+
+**⇧⌘G opens the CHOOSER, not a view.** `loadTileLibrary` no longer falls back
+to opening the first profile, and `rebuildSurfaceNodeView` slots
+`TileChooserView` in place of the grid whenever `openTileViews` is empty —
+which is also where you land after closing your last view. Its labels are all
+`.defaultLow` compressible, because it lives inside the main window and that is
+the exact mistake that blocked the floor at 387pt.
 
 **`newTileView` is ASYNC now** — it takes a `then:` completion, because the
 sheet returns before the view exists. `addSurfaceToTileView` has to use it: the

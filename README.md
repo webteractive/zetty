@@ -51,15 +51,20 @@ by the tool it's running.
   - **You choose what is in it.** An empty slot is a `+ Attach` cell; click it
     for a fuzzy-searchable list of every pane, drag a tab row out of the
     sidebar onto it, or use a pane's right-click → **Add to Tile View ▸**.
-    A tile's `×` detaches the slot — the pane keeps running.
+    A tile's `×` (and `⌘W`) detaches the slot — the pane keeps running; press
+    it again on the now-empty slot to remove the slot itself.
   - **Tile views are tabs.** While the grid is up the tab bar's strip carries
     tile views instead of the active project's tabs, with `+` opening your
     saved **profiles**. Several can be open at once.
-  - **A view is a structure first.** Creating one opens a sheet: name it and
-    pick a **layout** — a named grid shape drawn as its own picture (Focus,
-    Pair, Stack, Quad, Grid ship built in) — or set custom columns and rows and
-    tick **Save as layout** to keep the shape. `Configure…` reopens the same
-    sheet for an existing view; resizing never drops an attached pane.
+  - **⇧⌘G opens a chooser, not a view.** With nothing open the grid area
+    lists the **layouts** you can start from and the **profiles** you can
+    reopen, so nothing arrives uninvited. Closing your last view returns here.
+  - **A layout is a shape, and shapes are trees.** Not just columns × rows:
+    `1|2/3` — two columns with the second divided — is a layout, and so is
+    anything else you build. **Split a slot** from its right-click menu or with
+    `Ctrl+B %` / `Ctrl+B "`, exactly like splitting a pane, and **drag the
+    boundaries** to resize. **Save as layout** keeps whatever shape you made.
+    Focus, Pair, Stack, Quad, Grid, Main + Two and Two + Main ship built in.
     Editing a layout affects only views made afterwards, because creating a
     view copies the shape rather than following it.
   - **Profiles save themselves.** An open view *is* its profile: attaching,
@@ -71,10 +76,9 @@ by the tool it's running.
     is running something — the old behaviour, now one choice among several.
     It needs `preserve-sessions = true`; manual views do not. **Duplicate as
     Manual** turns it into an editable view.
-  - `zetty-tiles-grid` (default `4x4`) seeds the grid of a new view; each
-    profile keeps its own thereafter. It caps what is visible, never what can
-    be attached, so shrinking a grid cannot drop a pane. The status bar carries
-    the running/idle count while the grid is up.
+  - `zetty-tiles-grid` (default `4x4`) seeds a new view with a uniform shape;
+    each profile keeps its own tree thereafter. The status bar carries the
+    running/idle count while the grid is up.
 - **Sessions** — `⌘J`, **View → Sessions…**, the command palette, or the
   status-bar pill. It docks to the **bottom of the window** by default; the ⤡ button in
   its header detaches it into its own window, and the ⤠ button docks it back.
@@ -490,7 +494,7 @@ seeds a documented starter file on first launch. Format is plain
 | `viewer-max-bytes` | `2097152` | Largest file the viewer will render; bigger files open in their default app instead |
 | `zetty-home-path` | — | Directory the **Home** project is rooted at (`~` allowed); unset — or `off`/`~` — keeps it at your home directory |
 | `zetty-restart-recovery` | `true` | After a macOS restart/shutdown/logout, replay each preserved pane's last screen and resume the Claude/Codex session it was running |
-| `zetty-tiles-grid` | `4x4` | Grid a NEW tile view is seeded with, as `<cols>x<rows>`; each profile keeps its own thereafter. A **cap**, not a fixed cell count: fewer tiles grow to fill the window, more than fit scroll. Up to `8x8` |
+| `zetty-tiles-grid` | `4x4` | Uniform shape a NEW tile view is seeded with, as `<cols>x<rows>`; each profile keeps its own layout tree thereafter, and splitting a slot changes it. Up to `8x8` |
 | `zetty-file-tree-show-hidden` | `true` | Show dotfiles in the per-pane file tree |
 | `zetty-file-tree-respect-gitignore` | `false` | Hide anything the repo's `.gitignore` excludes |
 | `zetty-file-tree-ignore` | — | Extra names to hide, comma-separated (e.g. `node_modules, vendor`) |
