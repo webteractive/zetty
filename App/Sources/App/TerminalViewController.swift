@@ -1969,6 +1969,7 @@ final class TerminalViewController: NSViewController {
 
         // The file viewer loads off-main, so it cannot be measured in this
         // pass. It restores the frame itself, once it has been.
+        probeSessionRows()
         probeFileViewer(window: window, target: target, original: original)
     }
 
@@ -1984,6 +1985,35 @@ final class TerminalViewController: NSViewController {
         ZettyLog.chrome.log("probe(\(name)): reached=\(Int(reached.width))x\(Int(reached.height)) "
             + "-> \(Int(reached.width) <= Int(target.width) ? "OK" : "BLOCKED")")
         if !wasOpen { close() }
+    }
+
+    /// Proves the Sessions window's data path end to end: activate the
+    /// sampler, let two probe ticks land, and report what a row would say.
+    ///
+    /// Worth its own pass because every failure here is silent — an empty
+    /// `lastSessionPIDs`, a sampler that never ingests, or a CPU column stuck
+    /// on nil all render as a window that merely looks quiet.
+    private func probeSessionRows() {
+        sessionSampler.isActive = true
+        // Two ticks of the 3s foreground probe: one to seed, one to difference.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 7) { [weak self] in
+            guard let self else { return }
+            let rows = self.taskRows()
+            let rated = rows.filter { $0.load.cpuPercent != nil }.count
+            let top = rows.first.map { row -> String in
+                let cpu = row.load.cpuPercent.map { String(format: "%.1f", $0) } ?? "nil"
+                return "\(row.running)@\(row.paneLabel ?? "orphan") cpu=\(cpu) "
+                    + "rss=\(ByteFormat.short(row.load.rssBytes))"
+            } ?? "none"
+            // `active` and `cachedPIDs` are the difference between "the data
+            // path is broken" and "the foreground probe never ticked because
+            // Zetty was not the active app", which look identical at rows=0.
+            ZettyLog.chrome.log("probe(sessions): rows=\(rows.count) rated=\(rated) "
+                + "orphans=\(rows.filter(\.isOrphan).count) "
+                + "active=\(NSApp.isActive) cachedPIDs=\(self.lastSessionPIDs.count) "
+                + "owned=\(self.sessionOwnerSurfaceIDs.count) top=[\(top)]")
+            self.sessionSampler.isActive = false
+        }
     }
 
     /// The file viewer's own pass. It reads and highlights off-main, so the
