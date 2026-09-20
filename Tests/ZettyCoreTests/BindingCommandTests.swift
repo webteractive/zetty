@@ -129,3 +129,20 @@ private func copyDefault(_ chordText: String) -> BindingCommand? {
     #expect(copyDefault("escape") == .copyExit)
     #expect(copyDefault("q") == .copyExit)
 }
+
+// MARK: - Tile mode
+
+@Test func prefixGTogglesTileMode() {
+    #expect(prefixDefault("g") == .toggleTileMode)
+}
+
+@Test func tileModeRoundTripsThroughItsConfigName() {
+    #expect(BindingCommand.toggleTileMode.configName == "toggle-tile-mode")
+    #expect(BindingCommand(configName: "toggle-tile-mode") == .toggleTileMode)
+}
+
+@Test func copyModeGStillScrollsToTop() {
+    // The prefix and copy tables are separate; adding prefix `g` must not
+    // disturb copy mode's own `g`.
+    #expect(copyDefault("g") == .copyScrollTop)
+}

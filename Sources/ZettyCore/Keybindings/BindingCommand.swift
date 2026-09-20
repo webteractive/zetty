@@ -23,6 +23,7 @@ public enum BindingCommand: Hashable, Sendable {
     case selectTab(Int)
     case renameTab
     // Prefix table — modes & misc
+    case toggleTileMode
     case enterCopyMode
     case paste
     case sendPrefixLiteral
@@ -68,6 +69,7 @@ public enum BindingCommand: Hashable, Sendable {
         .zoomPane: "zoom-pane",
         .breakPane: "break-pane",
         .toggleFileTree: "toggle-file-tree",
+        .toggleTileMode: "toggle-tile-mode",
         .newTab: "new-tab",
         .nextTab: "next-tab",
         .previousTab: "previous-tab",
@@ -148,6 +150,7 @@ public enum BindingCommand: Hashable, Sendable {
         bind("z", .zoomPane)
         bind("!", .breakPane)
         bind("e", .toggleFileTree)      // "explorer"
+        bind("g", .toggleTileMode)      // "grid"
         bind("c", .newTab)
         bind("n", .nextTab)
         bind("p", .previousTab)
