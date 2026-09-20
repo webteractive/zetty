@@ -40,7 +40,7 @@ final class TileChooserView: NSView {
 
     private func build() {
         stack.orientation = .vertical
-        stack.alignment = .leading
+        stack.alignment = .centerX
         stack.spacing = 14
         stack.translatesAutoresizingMaskIntoConstraints = false
         addSubview(stack)
@@ -64,13 +64,15 @@ final class TileChooserView: NSView {
 
         NSLayoutConstraint.activate([
             stack.centerYAnchor.constraint(equalTo: centerYAnchor),
-            stack.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 28),
-            stack.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -28),
+            stack.centerXAnchor.constraint(equalTo: centerXAnchor),
+            stack.leadingAnchor.constraint(greaterThanOrEqualTo: leadingAnchor, constant: 28),
+            stack.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -28),
         ])
     }
 
     private func heading(_ text: String) -> NSTextField {
         let field = NSTextField(labelWithString: text)
+        field.alignment = .center
         field.font = ZTheme.chromeFont(size: 12)
         field.textColor = ZTheme.current.fg2Color
         field.lineBreakMode = .byTruncatingTail
@@ -103,11 +105,17 @@ final class TileChooserView: NSView {
             row.leadingAnchor.constraint(equalTo: scroll.contentView.leadingAnchor),
             scroll.heightAnchor.constraint(equalToConstant: 76),
         ])
-        // The clip is sized by the OUTER chain only — never by the strip inside
-        // it. Same rule the tab strip documents at length.
+        // Wide enough for the row when there is room, and NEVER required — the
+        // clip is sized by the outer chain, never by the strip inside it, which
+        // is the rule the tab strip documents at length. Hugging the content
+        // keeps a short row centred instead of pinned to the left of a
+        // full-width clip.
         let width = scroll.widthAnchor.constraint(equalToConstant: 900)
         width.priority = .defaultLow
         width.isActive = true
+        let hug = scroll.widthAnchor.constraint(equalTo: row.widthAnchor)
+        hug.priority = .init(240)
+        hug.isActive = true
         return scroll
     }
 

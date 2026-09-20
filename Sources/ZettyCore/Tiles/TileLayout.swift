@@ -52,7 +52,7 @@ public struct TileLayout: Codable, Equatable, Sendable, Identifiable {
     /// Seeded once into a fresh library. Editable and deletable like any
     /// other — a starting point you cannot change is just clutter.
     public static let builtIns: [TileLayout] = [
-        TileLayout(name: "Focus", grid: TilesGrid(columns: 1, rows: 1)),
+        // No 1x1: a tile view that shows one pane is just the pane.
         TileLayout(name: "Pair", grid: TilesGrid(columns: 2, rows: 1)),
         TileLayout(name: "Stack", grid: TilesGrid(columns: 1, rows: 2)),
         TileLayout(name: "Quad", grid: TilesGrid(columns: 2, rows: 2)),

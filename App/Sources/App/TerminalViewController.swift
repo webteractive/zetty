@@ -3905,10 +3905,10 @@ final class TerminalViewController: NSViewController {
         let before = tileLibrary.profiles.count
         tileLibrary.profiles.removeAll { $0.name == "All Running" && $0.slots.allSatisfy { $0 == nil } }
         if tileLibrary.profiles.count != before { seeded = true }
-        if tileLibrary.layouts.isEmpty {
-            tileLibrary.layouts = TileLayout.builtIns
-            seeded = true
-        }
+        // By name, not "is it empty": a built-in added in a later build has to
+        // reach a library that already has layouts in it, and one the user
+        // deleted must stay deleted.
+        if tileLibrary.seedMissingLayouts() { seeded = true }
         if seeded { persistTileLibrary() }
         // Only what was actually open. Toggling into tile mode opens the
         // CHOOSER, not whatever happened to be first — All Running used to

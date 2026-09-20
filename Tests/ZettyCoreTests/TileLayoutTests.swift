@@ -4,8 +4,10 @@ import Testing
 
 @Test func theBuiltInLayoutsCoverTheCommonShapes() {
     let names = TileLayout.builtIns.map(\.name)
-    #expect(names == ["Focus", "Pair", "Stack", "Quad", "Grid", "Main + Two", "Two + Main"])
-    #expect(TileLayout.builtIns.map(\.root.leafCount) == [1, 2, 2, 4, 16, 3, 3])
+    #expect(names == ["Pair", "Stack", "Quad", "Grid", "Main + Two", "Two + Main"])
+    #expect(TileLayout.builtIns.map(\.root.leafCount) == [2, 2, 4, 16, 3, 3])
+    // Never a one-slot layout: that is just the pane.
+    #expect(TileLayout.builtIns.allSatisfy { $0.root.leafCount > 1 })
 }
 
 @Test func everyBuiltInHasItsOwnIdentity() {
@@ -41,4 +43,30 @@ import Testing
     file.profiles = [TileProfile(name: "morning", grid: TilesGrid(columns: 2, rows: 2))]
     let data = try JSONEncoder().encode(file)
     #expect(try JSONDecoder().decode(TileProfileFile.self, from: data) == file)
+}
+
+// MARK: - Seeding
+
+@Test func aNewBuiltInReachesAnExistingLibrary() {
+    var file = TileProfileFile(layouts: [TileLayout(name: "Pair",
+                                                    grid: TilesGrid(columns: 2, rows: 1))],
+                               seededLayoutNames: ["Pair"])
+    #expect(file.seedMissingLayouts() == true)
+    #expect(file.layouts.contains { $0.name == "Main + Two" })
+}
+
+@Test func aDeletedBuiltInStaysDeleted() {
+    var file = TileProfileFile(layouts: [], seededLayoutNames: TileLayout.builtIns.map(\.name))
+    #expect(file.seedMissingLayouts() == false)
+    #expect(file.layouts.isEmpty)
+}
+
+@Test func aLibraryFromBeforeSeedTrackingKeepsWhatItHas() throws {
+    // No seededLayoutNames key: its current names count as already offered, so
+    // nothing the user removed comes back.
+    let json = #"{"profiles":[],"layouts":[{"id":"\#(UUID().uuidString)","name":"Pair","grid":{"columns":2,"rows":1}}]}"#
+    var decoded = try JSONDecoder().decode(TileProfileFile.self, from: Data(json.utf8))
+    #expect(decoded.seededLayoutNames == ["Pair"])
+    #expect(decoded.seedMissingLayouts() == true)
+    #expect(decoded.layouts.contains { $0.name == "Main + Two" })
 }
