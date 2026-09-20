@@ -1072,7 +1072,9 @@ final class TerminalViewController: NSViewController {
         // agents `cd` several times a second.
         setNeedsFileTreeRootRefresh()
         guard let statusBar = statusBarView else { return }
-        let focused = paneTree.focusedSurface
+        // In tile mode the bar describes the tile you are typing into, not the
+        // active project's focused pane — which is not even on screen.
+        let focused = statusBarSurface
         let rawCwd = focused.flatMap { PaneCwdStore.read($0.id) }
             ?? focused.flatMap { registry.workingDirectory(for: $0) }
             ?? focused?.workingDir
@@ -1095,7 +1097,7 @@ final class TerminalViewController: NSViewController {
         // new pane. Cached identity only — never a probe on this path.
         let accounts = accountsProvider?() ?? []
         statusBar.setAccount(
-            paneTree.focusedSurface.map { surface in
+            focused.map { surface in
                 AgentAccountResolver.resolve(
                     paneAccountID: effectiveAccountID(for: surface),
                     projectAccountID: nil,
@@ -1103,7 +1105,16 @@ final class TerminalViewController: NSViewController {
                     home: NSHomeDirectory())
             },
             hasAccounts: !accounts.isEmpty)
-        scheduleGitProbe(for: cwd, surfaceID: paneTree.focusedSurfaceID)
+        scheduleGitProbe(for: cwd, surfaceID: focused?.id)
+    }
+
+    /// The surface the status bar describes: the focused tile while the grid is
+    /// up, otherwise the active tab's focused pane.
+    private var statusBarSurface: Surface? {
+        if tileMode, let id = tileFocusedSurfaceID {
+            return workspace.surface(with: id)
+        }
+        return paneTree.focusedSurface
     }
 
     /// Fans raw bytes out to every pane in the active broadcast target set
@@ -3842,8 +3853,52 @@ final class TerminalViewController: NSViewController {
     }
 
     func focusTile(_ id: UUID) {
+        guard tileMode, tileOrder.contains(where: { $0.surfaceID == id }) else { return }
         tileFocusedSurfaceID = id
-        refreshTileGrid()
+        tileGridView?.setFocused(id)
+        focusTileFirstResponder()
+        refreshStatusBar()
+    }
+
+    /// Directional movement across the grid, using the same column count the
+    /// view laid out with so navigation matches what is on screen.
+    func moveTileFocus(_ direction: FocusDirection) {
+        guard tileMode, !tileOrder.isEmpty else { return }
+        let ids = tileOrder.map(\.surfaceID)
+        let current = tileFocusedSurfaceID.flatMap { ids.firstIndex(of: $0) } ?? 0
+        let bounds = tileGridView?.bounds.size ?? .zero
+        let columns = max(1, TileGrid.layout(count: ids.count,
+                                             width: Double(bounds.width),
+                                             height: Double(bounds.height)).columns)
+        let target: Int
+        switch direction {
+        case .left:  target = current - 1
+        case .right: target = current + 1
+        case .up:    target = current - columns
+        case .down:  target = current + columns
+        }
+        guard ids.indices.contains(target) else { return }
+        focusTile(ids[target])
+    }
+
+    func cycleTileFocus() {
+        guard tileMode, !tileOrder.isEmpty else { return }
+        let ids = tileOrder.map(\.surfaceID)
+        let current = tileFocusedSurfaceID.flatMap { ids.firstIndex(of: $0) } ?? -1
+        focusTile(ids[(current + 1) % ids.count])
+    }
+
+    func selectTile(number: Int) {
+        guard tileMode, tileOrder.indices.contains(number - 1) else { return }
+        focusTile(tileOrder[number - 1].surfaceID)
+    }
+
+    /// Closes the focused tile's pane in its own project. The tile drops out on
+    /// the next membership refresh, because its surface stops existing.
+    func closeFocusedTilePane() {
+        guard tileMode, let id = tileFocusedSurfaceID else { return }
+        closePane(surfaceID: id)
+        refreshTileMembership()
     }
 
     /// Queues every tiled pane that has no surface yet. Already-attached panes

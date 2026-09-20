@@ -194,6 +194,33 @@ extension TerminalViewController {
     /// existing action methods; copy-mode commands forward to the
     /// `CopyModeController`.
     func perform(binding command: BindingCommand, interceptor: KeyInterceptor) {
+        // Tile mode re-interprets the pane and tab bindings rather than adding
+        // a third table: the grid is a pane layout, so pane verbs keep their
+        // meaning and tab verbs have none.
+        //
+        // Esc and Enter are deliberately absent — they belong to the pty,
+        // since "esc to interrupt" is Claude's own UI and Enter submits. The
+        // toggle is the only way out.
+        if isTileModeActive {
+            switch command {
+            case .toggleTileMode:
+                setTileMode(false)
+                return
+            case .focusLeft:  moveTileFocus(.left);  return
+            case .focusRight: moveTileFocus(.right); return
+            case .focusUp:    moveTileFocus(.up);    return
+            case .focusDown:  moveTileFocus(.down);  return
+            case .cyclePanes: cycleTileFocus();      return
+            case .selectTab(let n): selectTile(number: n); return
+            case .closePane: closeFocusedTilePane(); return
+            // Tab and split operations would act on a project you cannot see.
+            case .newTab, .nextTab, .previousTab, .renameTab, .breakPane,
+                 .splitVertical, .splitHorizontal, .toggleFileTree:
+                return
+            default:
+                break   // copy mode, paste, broadcast, zoom fall through
+            }
+        }
         switch command {
         // Panes
         case .splitVertical: splitVertical(nil)
