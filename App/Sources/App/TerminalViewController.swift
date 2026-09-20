@@ -3826,7 +3826,12 @@ final class TerminalViewController: NSViewController {
     /// The ONLY place an open view is edited. Every attach path, the grid
     /// resize, the rename and the detach funnel through here, so the library on
     /// disk can never disagree with what is on screen.
-    func mutateActiveTileProfile(_ change: (inout TileProfile) -> Void) {
+    /// - Parameter persist: false while a gesture is still running — a
+    ///   divider drag would otherwise write the library to disk and rebuild the
+    ///   tab bar on every mouse-move, which is the per-event churn the chrome
+    ///   rules exist to prevent. The gesture's end calls again with true.
+    func mutateActiveTileProfile(persist: Bool = true,
+                                 _ change: (inout TileProfile) -> Void) {
         guard openTileViews.indices.contains(activeTileViewIndex) else { return }
         // The computed profile's slots come from the probe, so a write would be
         // silently lost — which would read as a bug rather than a refusal.
@@ -3840,6 +3845,11 @@ final class TerminalViewController: NSViewController {
             tileLibrary.profiles[index] = profile
         } else {
             tileLibrary.profiles.append(profile)
+        }
+        guard persist else {
+            // Mid-gesture: move the tiles, touch nothing else.
+            tileGridView?.needsLayout = true
+            return
         }
         persistTileLibrary()
         refreshTileGrid()
@@ -5974,6 +5984,11 @@ final class TerminalViewController: NSViewController {
                 onDetach: { [weak self] index in
                     self?.mutateActiveTileProfile { $0.detach(at: index) }
                 })
+            grid.onSetRatio = { [weak self] divider, ratio, isFinal in
+                self?.mutateActiveTileProfile(persist: isFinal) {
+                    $0.setRatio(atDivider: divider, to: ratio)
+                }
+            }
             grid.onDropSidebarTab = { [weak self] projectIndex, tabIndex, slot in
                 self?.attachSidebarTabToTile(projectIndex: projectIndex,
                                              tabIndex: tabIndex, slot: slot) ?? false

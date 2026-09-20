@@ -48,6 +48,12 @@ final class TileGridView: NSView {
     /// A sidebar tab row was dropped on a slot: "project:tab" indices, and the
     /// slot it landed in. Returns whether it was accepted.
     var onDropSidebarTab: ((Int, Int, Int) -> Bool)?
+    /// A divider moved: its index (as `TileNode.dividers` numbers them), the
+    /// new ratio, and whether the gesture has ended. Only the final call
+    /// persists — see `mutateActiveTileProfile(persist:)`.
+    var onSetRatio: ((Int, Double, Bool) -> Void)?
+
+    private var dividerViews: [TileDividerView] = []
     private var focusedID: UUID?
 
     /// The active profile's layout tree, read at layout time rather than at
@@ -198,6 +204,49 @@ final class TileGridView: NSView {
         return onDropSidebarTab?(project, tab, slot) ?? false
     }
 
+    // MARK: - Dividers
+
+    /// One draggable handle per split, placed on the boundary between its two
+    /// subtrees. Rebuilt per pass because the tree can change under us; they
+    /// are cheap, frame-positioned views with no constraints.
+    private func layoutDividers(root: TileNode, area: NSRect) {
+        let dividers = root.dividers(in: LayoutRect(x: 0, y: 0, width: 1, height: 1))
+        while dividerViews.count > dividers.count {
+            dividerViews.removeLast().removeFromSuperview()
+        }
+        while dividerViews.count < dividers.count {
+            let view = TileDividerView()
+            view.onDrag = { [weak self] index, ratio, isFinal in
+                self?.onSetRatio?(index, ratio, isFinal)
+            }
+            addSubview(view)
+            dividerViews.append(view)
+        }
+
+        let thickness: CGFloat = CGFloat(TileGrid.spacing)
+        for (view, divider) in zip(dividerViews, dividers) {
+            let rect = NSRect(
+                x: area.minX + CGFloat(divider.rect.x) * area.width,
+                y: area.minY + area.height
+                    - CGFloat(divider.rect.y + divider.rect.height) * area.height,
+                width: CGFloat(divider.rect.width) * area.width,
+                height: CGFloat(divider.rect.height) * area.height)
+            view.configure(index: divider.index, direction: divider.direction,
+                           splitRect: rect)
+            switch divider.direction {
+            case .vertical:
+                let x = rect.minX + rect.width * CGFloat(divider.ratio)
+                view.frame = NSRect(x: x - thickness / 2, y: rect.minY,
+                                    width: thickness, height: rect.height)
+            case .horizontal:
+                // The rect is top-left-origin; this view is not.
+                let y = rect.maxY - rect.height * CGFloat(divider.ratio)
+                view.frame = NSRect(x: rect.minX, y: y - thickness / 2,
+                                    width: rect.width, height: thickness)
+            }
+        }
+    }
+
     // MARK: - Layout
 
     override func layout() {
@@ -224,6 +273,8 @@ final class TileGridView: NSView {
                 width: CGFloat(frame.width) * area.width - gap * 2,
                 height: CGFloat(frame.height) * area.height - gap * 2)
         }
+
+        layoutDividers(root: root, area: area)
 
         ZettyLog.chrome.log("tiles: leaves=\(frames.count) depth=\(root.depth) "
             + "bounds=\(Int(bounds.width))x\(Int(bounds.height))")
