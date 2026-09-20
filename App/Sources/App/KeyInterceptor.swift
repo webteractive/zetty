@@ -223,6 +223,7 @@ extension TerminalViewController {
                 interceptor.engine.exitCopyMode()
                 keyModeDidChange(interceptor.engine.mode)
             }
+        case .toggleTileMode: toggleTileMode()
         case .paste: pasteIntoFocusedPane()
         case .sendPrefixLiteral: sendPrefixLiteral(interceptor.engine)
         case .cancelPrefix: break   // chip already cleared by the mode change

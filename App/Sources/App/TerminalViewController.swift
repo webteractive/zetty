@@ -3712,6 +3712,22 @@ final class TerminalViewController: NSViewController {
     /// `rebuildSurfaceNodeView` can re-slot the same instance rather than
     /// rebuilding its table on every structural change.
     private var sessionsDrawer: SessionsView?
+    // MARK: - Tile mode
+
+    /// Transient, like `zoomedSurfaceID` and unlike anything in the model — a
+    /// relaunch never comes back in tile mode.
+    private var tileMode = false
+
+    var isTileModeActive: Bool { tileMode }
+
+    func toggleTileMode() { setTileMode(!tileMode) }
+
+    func setTileMode(_ on: Bool) {
+        guard tileMode != on else { return }
+        tileMode = on
+        rebuildSurfaceNodeView()
+    }
+
     private var sessionsDrawerVisible = false
     /// Flips `zetty-sessions-view` and moves the view; AppDelegate owns both.
     var onToggleSessionsMode: (() -> Void)?
