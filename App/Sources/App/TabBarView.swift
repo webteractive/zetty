@@ -203,8 +203,7 @@ final class TabBarView: NSView {
         static let edgeInset: CGFloat = 8          // sidebar toggle ↔ bar edge
         static let afterSidebarButton: CGFloat = 6
         static let beforeAddButton: CGFloat = 4
-        static let addButtonInset: CGFloat = 4     // `+` ↔ bar edge
-        static let betweenChromeButtons: CGFloat = 2
+        static let betweenChromeButtons: CGFloat = 4   // `+` ↔ tile toggle
     }
 
     /// Drives the strip's width (see its creation in `init`).
@@ -213,7 +212,7 @@ final class TabBarView: NSView {
     /// Slot the clip leaves for `+` at its trailing edge. A CONSTANT, and that
     /// is the whole point — see `layout()`.
     private var addButtonSlot: CGFloat {
-        Metrics.beforeAddButton + addButton.fittingSize.width + Metrics.addButtonInset
+        Metrics.beforeAddButton + addButton.fittingSize.width + Metrics.betweenChromeButtons
     }
 
     /// Positions `+` by hand, immediately after the last tab.
@@ -288,11 +287,11 @@ final class TabBarView: NSView {
             positionalConstraints = [
                 sidebarButton.leadingAnchor.constraint(equalTo: leadingAnchor,
                                                        constant: Metrics.edgeInset),
-                tilesButton.leadingAnchor.constraint(equalTo: sidebarButton.trailingAnchor,
-                                                     constant: Metrics.betweenChromeButtons),
-                tabScrollView.leadingAnchor.constraint(equalTo: tilesButton.trailingAnchor,
+                tabScrollView.leadingAnchor.constraint(equalTo: sidebarButton.trailingAnchor,
                                                        constant: Metrics.afterSidebarButton),
-                tabScrollView.trailingAnchor.constraint(equalTo: trailingAnchor,
+                tilesButton.trailingAnchor.constraint(equalTo: trailingAnchor,
+                                                      constant: -Metrics.edgeInset),
+                tabScrollView.trailingAnchor.constraint(equalTo: tilesButton.leadingAnchor,
                                                         constant: -addButtonSlot),
             ]
         case .right:
@@ -300,10 +299,9 @@ final class TabBarView: NSView {
                 tabScrollView.leadingAnchor.constraint(equalTo: leadingAnchor,
                                                        constant: Metrics.edgeInset),
                 tabScrollView.trailingAnchor.constraint(equalTo: tilesButton.leadingAnchor,
-                                                        constant: -(Metrics.afterSidebarButton
-                                                                    + addButtonSlot)),
+                                                        constant: -addButtonSlot),
                 tilesButton.trailingAnchor.constraint(equalTo: sidebarButton.leadingAnchor,
-                                                      constant: -Metrics.betweenChromeButtons),
+                                                      constant: -Metrics.afterSidebarButton),
                 sidebarButton.trailingAnchor.constraint(equalTo: trailingAnchor,
                                                         constant: -Metrics.edgeInset),
             ]
@@ -474,6 +472,10 @@ final class TabBarView: NSView {
     /// While the grid is up the bar keeps its chrome buttons but drops the
     /// pills and `+`: they name the ACTIVE project's tabs, and the grid spans
     /// every project. Hiding the whole bar took the sidebar toggle with it.
+    ///
+    /// The tile button is CONSTRAINED to the bar's trailing chrome rather than
+    /// frame-positioned beside `+`, so it holds still when `+` disappears — a
+    /// toggle that moved between its two states would be hard to click twice.
     var isTileMode = false {
         didSet {
             guard oldValue != isTileMode else { return }

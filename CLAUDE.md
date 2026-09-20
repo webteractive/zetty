@@ -1724,12 +1724,20 @@ sixteen unrelated panes labels the wrong thing. Hiding the whole bar was tried
 first and **took the sidebar toggle with it** — that button lives in the tab
 bar, and there is nowhere else to reach it.
 
-**The tile toggle is a tab-bar button beside the sidebar one**, present in both
-states on purpose: it is how you enter the grid with a mouse as well as leave
+**The tile toggle is a tab-bar button pinned to the trailing edge, beside `+`**,
+present in both states on purpose: it is how you enter the grid with a mouse as well as leave
 it, and it goes accent while the grid is up (the rule the status bar's mode
 chips follow). Style it from `init` as well as `applyTheme` — the other chrome
 buttons do, and a button styled only on theme change renders blank until the
 first scheme switch.
+
+It is **constrained** to the trailing edge, not frame-positioned beside `+`
+the way `+` is positioned beside the strip. Two reasons: a toggle that moved
+when `+` disappeared would be hard to click twice, and the tab strip's rule
+still holds — the clip is pinned to the tile button's leading edge minus a
+CONSTANT `addButtonSlot`, so the chain from bar edge to clip is still all
+constants and never references the strip. Re-run `ZETTY_PROBE_FLOOR=1` after
+touching it.
 
 Bindings are **re-interpreted at dispatch** in `perform(binding:interceptor:)`
 rather than given a third table: `h/j/k/l`/arrows/`o` move tile focus, `1`–`9`
