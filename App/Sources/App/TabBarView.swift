@@ -39,6 +39,11 @@ final class TabBarView: NSView {
     /// Called when the user clicks the sidebar-toggle button.
     var onToggleSidebar: (() -> Void)?
 
+    /// Called with the `+` button as the anchor when set, INSTEAD of
+    /// `onNewTab` — so tile mode can hang the profile library off it as a menu
+    /// while normal mode just adds a tab.
+    var onAddTapped: ((NSView) -> Void)?
+
     /// Called when the user clicks the tile-mode toggle, which sits beside the
     /// sidebar button. Present in BOTH states deliberately — it is how you
     /// enter the grid with the mouse as well as how you leave it.
@@ -234,8 +239,6 @@ final class TabBarView: NSView {
     override func layout() {
         super.layout()
 
-        // Nothing to place while the grid is up — the strip and `+` are hidden.
-        guard !isTileMode else { return }
         let clip = tabScrollView.frame
         let stripWidth = updateStripWidth(clipWidth: clip.width)
         // The strip grows rightward from the clip's leading edge on both sides,
@@ -469,18 +472,16 @@ final class TabBarView: NSView {
 
     /// Applies theme-dependent styling to the sidebar-toggle button; the
     /// symbol mirrors the sidebar's window side.
-    /// While the grid is up the bar keeps its chrome buttons but drops the
-    /// pills and `+`: they name the ACTIVE project's tabs, and the grid spans
-    /// every project. Hiding the whole bar took the sidebar toggle with it.
+    /// While the grid is up the strip carries TILE-VIEW pills instead of the
+    /// active project's tabs, so nothing here hides any more — the owner feeds
+    /// `update(...)` a different array. Only the tile button's tint changes.
     ///
-    /// The tile button is CONSTRAINED to the bar's trailing chrome rather than
-    /// frame-positioned beside `+`, so it holds still when `+` disappears — a
-    /// toggle that moved between its two states would be hard to click twice.
+    /// That button is CONSTRAINED to the bar's trailing chrome rather than
+    /// frame-positioned beside `+`, so it holds still — a toggle that moved
+    /// between its two states would be hard to click twice.
     var isTileMode = false {
         didSet {
             guard oldValue != isTileMode else { return }
-            tabScrollView.isHidden = isTileMode
-            addButton.isHidden = isTileMode
             styleTilesButton()
             needsLayout = true
         }
@@ -567,6 +568,10 @@ final class TabBarView: NSView {
     }
 
     @objc private func addButtonClicked(_: Any?) {
+        if let onAddTapped {
+            onAddTapped(addButton)
+            return
+        }
         onNewTab?()
     }
 

@@ -995,21 +995,38 @@ final class TerminalViewController: NSViewController {
         tabBar.translatesAutoresizingMaskIntoConstraints = false
         container.addSubview(tabBar)
 
+        // While the grid is up the strip carries tile-view pills, so every
+        // one of these verbs addresses a view instead of a tab. Normal mode is
+        // untouched — the branch is the whole difference.
         tabBar.onSelect = { [weak self] index in
-            self?.selectTab(at: index)
+            guard let self else { return }
+            self.tileMode ? self.selectTileView(at: index) : self.selectTab(at: index)
         }
         tabBar.onNewTab = { [weak self] in
-            self?.newTab(nil)
+            guard let self else { return }
+            self.tileMode ? self.newTileView() : self.newTab(nil)
         }
         tabBar.onRenameTab = { [weak self] index, newName in
-            self?.renameTab(at: index, to: newName)
+            guard let self else { return }
+            if self.tileMode {
+                self.selectTileView(at: index)
+                self.renameActiveTileView(to: newName)
+            } else {
+                self.renameTab(at: index, to: newName)
+            }
         }
         tabBar.currentManualTitle = { [weak self] index in
-            let trees = self?.workspace.activeTabList.trees ?? []
+            guard let self else { return nil }
+            if self.tileMode {
+                return self.openTileViews.indices.contains(index)
+                    ? self.openTileViews[index].name : nil
+            }
+            let trees = self.workspace.activeTabList.trees
             return trees.indices.contains(index) ? trees[index].manualTitle : nil
         }
         tabBar.onCloseTab = { [weak self] index in
-            self?.closeTab(atIndex: index)
+            guard let self else { return }
+            self.tileMode ? self.closeTileView(at: index) : self.closeTab(atIndex: index)
         }
         tabBar.onToggleSidebar = { [weak self] in
             self?.toggleSidebar(nil)
@@ -1017,8 +1034,18 @@ final class TerminalViewController: NSViewController {
         tabBar.onToggleTiles = { [weak self] in
             self?.toggleTileMode()
         }
+        // In tile mode `+` IS the profile library — there is no manager window.
+        tabBar.onAddTapped = { [weak self] anchor in
+            guard let self else { return }
+            guard self.tileMode else { self.newTab(nil); return }
+            self.showTileLibraryMenu(from: anchor)
+        }
         tabBar.onMoveTab = { [weak self] source, destination in
             guard let self else { return }
+            if self.tileMode {
+                self.moveTileView(from: source, to: destination)
+                return
+            }
             self.workspace.activeTabList.moveTab(from: source, to: destination)
             // The grabbed tab becomes the active one on drop (browser-style).
             self.workspace.activeTabList.select(index: destination)
@@ -3894,6 +3921,37 @@ final class TerminalViewController: NSViewController {
 
     // MARK: Tile views
 
+    /// The profile library, as a menu off `+`.
+    private func showTileLibraryMenu(from anchor: NSView) {
+        let menu = NSMenu()
+        for profile in tileLibrary.profiles {
+            let item = NSMenuItem(title: profile.name,
+                                  action: #selector(openTileViewFromMenu(_:)),
+                                  keyEquivalent: "")
+            item.target = self
+            item.representedObject = profile.id
+            // A view already open is shown ticked rather than hidden — it is
+            // still the thing you meant to click.
+            item.state = openTileViews.contains { $0.id == profile.id } ? .on : .off
+            menu.addItem(item)
+        }
+        if !tileLibrary.profiles.isEmpty { menu.addItem(.separator()) }
+        let new = NSMenuItem(title: "New View\u{2026}",
+                             action: #selector(newTileViewFromMenu),
+                             keyEquivalent: "")
+        new.target = self
+        menu.addItem(new)
+        menu.popUp(positioning: nil,
+                   at: NSPoint(x: 0, y: anchor.bounds.height), in: anchor)
+    }
+
+    @objc private func openTileViewFromMenu(_ sender: NSMenuItem) {
+        guard let id = sender.representedObject as? UUID else { return }
+        openTileView(profileID: id)
+    }
+
+    @objc private func newTileViewFromMenu() { newTileView() }
+
     func openTileView(profileID: UUID) {
         if let existing = openTileViews.firstIndex(where: { $0.id == profileID }) {
             selectTileView(at: existing)
@@ -3955,6 +4013,9 @@ final class TerminalViewController: NSViewController {
     func setTileMode(_ on: Bool) {
         guard tileMode != on else { return }
         tileMode = on
+        // The strip's contents change with the mode, and `refreshTabBar`
+        // branches on it — without this the pills stay on the old set.
+        defer { refreshTabBar() }
         if on {
             // Seed focus from wherever you already were, so entering the grid
             // does not move you.
@@ -4369,6 +4430,16 @@ final class TerminalViewController: NSViewController {
     ///   static `Surface.workingDir` as a fallback),
     /// - and a positional fallback ("Tab N").
     func refreshTabBar() {
+        // The strip shows tile views while the grid is up. `alwaysShowClose`
+        // because a single view still wants closing — unlike a lone tab.
+        if tileMode {
+            tabBarView?.update(titles: openTileViews.map(\.name),
+                               icons: [],
+                               accountColorIDs: [],
+                               selectedIndex: activeTileViewIndex,
+                               alwaysShowClose: true)
+            return
+        }
         let tabList = workspace.activeTabList
         var icons: [NSImage?] = []
         var accountColorIDs: [String?] = []
