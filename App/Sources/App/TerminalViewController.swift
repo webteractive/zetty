@@ -53,6 +53,14 @@ final class TerminalViewController: NSViewController {
     /// and project switches.
     private let registry = SurfaceRegistry()
 
+    /// Per-session CPU and memory for the task manager. Inert until its window
+    /// opens; see `SessionSampler`.
+    let sessionSampler = SessionSampler()
+    /// The most recent session → root-pid map, cached from the foreground
+    /// probe's background hop. `ZmxRunner.sessionPIDs` blocks, so the task
+    /// manager reads this instead of calling it on the main thread.
+    private(set) var lastSessionPIDs: [String: Int32] = [:]
+
     /// Workspace model — ordered list of projects, each owning its own TabList.
     /// Read by AppDelegate (per-project settings resolution at spawn time and
     /// on settings edits); mutation stays in this class.
@@ -575,6 +583,14 @@ final class TerminalViewController: NSViewController {
         DispatchQueue.global(qos: .utility).async { [weak self] in
             let pids = ZmxRunner.sessionPIDs(zmxPath: zmx)
             guard !pids.isEmpty, let ps = ZmxRunner.psSnapshot() else { return }
+            // Its OWN main hop, deliberately. The one below returns early when
+            // foreground identities are unchanged — which is most ticks — and
+            // sampling from inside it would freeze the CPU column exactly when
+            // nothing about the tab names happened to change.
+            DispatchQueue.main.async { [weak self] in
+                self?.lastSessionPIDs = pids
+                self?.sessionSampler.ingest(psOutput: ps, sessionPIDs: pids, at: Date())
+            }
             var commands: [UUID: String] = [:]
             for id in ids {
                 guard let pid = pids[SessionPersistence.sessionName(for: id)] else { continue }
