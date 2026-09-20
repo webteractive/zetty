@@ -1990,6 +1990,14 @@ final class TerminalViewController: NSViewController {
                      isOpen: { self.isSessionsDrawerVisible },
                      close: { self.setSessionsDrawer(visible: false) })
 
+        // The grid lives inside this window too, so a floor it sets is
+        // invisible to every other measurement — which is how the command
+        // palette once shipped growing the window on ⌘K.
+        probeOverlay("tiles", window: window, target: target,
+                     open: { self.setTileMode(true) },
+                     isOpen: { self.isTileModeActive },
+                     close: { self.setTileMode(false) })
+
         probeSessionRows()
         probeFileViewer(window: window, target: target, original: original)
     }
