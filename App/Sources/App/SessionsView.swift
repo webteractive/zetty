@@ -297,10 +297,13 @@ final class SessionsView: NSView {
     private func updateInPlace(_ newRows: [TaskRow]) -> Bool {
         guard newRows.map(\.session) == rows.map(\.session) else { return false }
         rows = newRows
+        // Row order is unchanged, so the actions buttons keep the tags they
+        // were built with; only the text needs refreshing.
         for (row, entry) in rows.enumerated() {
             for (index, column) in Column.allCases.enumerated() where column != .actions {
-                guard let label = tableView.view(atColumn: index, row: row,
-                                                 makeIfNecessary: false) as? NSTextField
+                guard let cell = tableView.view(atColumn: index, row: row,
+                                                makeIfNecessary: false) as? SessionCellView,
+                      let label = cell.content as? NSTextField
                 else { continue }
                 configure(label, with: entry, column: column)
             }
@@ -393,6 +396,35 @@ final class SessionsView: NSView {
     }
 }
 
+// MARK: - SessionCellView
+
+/// One table cell: its content vertically centred, with a little horizontal
+/// breathing room.
+///
+/// A bare `NSTextField` returned from `viewFor` is sized to the full row
+/// height and draws its text at the top of that box, which reads as the rows
+/// being misaligned rather than the text.
+@MainActor
+private final class SessionCellView: NSView {
+
+    let content: NSView
+
+    init(content: NSView) {
+        self.content = content
+        super.init(frame: .zero)
+        content.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(content)
+        NSLayoutConstraint.activate([
+            content.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 6),
+            content.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -6),
+            content.centerYAnchor.constraint(equalTo: centerYAnchor),
+        ])
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError("not supported") }
+}
+
 // MARK: - Table
 
 extension SessionsView: NSTableViewDataSource, NSTableViewDelegate {
@@ -414,12 +446,12 @@ extension SessionsView: NSTableViewDataSource, NSTableViewDelegate {
             button.contentTintColor = theme.fg2Color
             button.tag = row
             button.toolTip = "Actions for this session"
-            return button
+            return SessionCellView(content: button)
         }
 
         let label = NSTextField(labelWithString: "")
         configure(label, with: entry, column: column)
-        return label
+        return SessionCellView(content: label)
     }
 
     private func text(for entry: TaskRow, column: Column) -> String {
