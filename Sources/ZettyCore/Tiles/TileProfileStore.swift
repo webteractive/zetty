@@ -2,9 +2,21 @@ import Foundation
 
 public struct TileProfileFile: Codable, Equatable, Sendable {
     public var profiles: [TileProfile]
+    /// Named grid shapes a new view can start from. Absent in libraries
+    /// written before layouts existed → empty, and seeded on load.
+    public var layouts: [TileLayout]
 
-    public init(profiles: [TileProfile] = []) {
+    public init(profiles: [TileProfile] = [], layouts: [TileLayout] = []) {
         self.profiles = profiles
+        self.layouts = layouts
+    }
+
+    private enum CodingKeys: String, CodingKey { case profiles, layouts }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        profiles = try container.decodeIfPresent([TileProfile].self, forKey: .profiles) ?? []
+        layouts = try container.decodeIfPresent([TileLayout].self, forKey: .layouts) ?? []
     }
 }
 
