@@ -92,6 +92,8 @@ public struct AppConfig: Equatable, Sendable {
     /// this, so the two forms are one setting rather than a setting plus a
     /// separate runtime state that can disagree with it.
     public var sessionsView: SessionsViewMode = .drawer
+    /// How many tiles fit one screenful of the tile grid (⇧⌘G).
+    public var tilesGrid: TilesGrid = .default
     /// Raw ghostty directives (from `ghostty.<key> = <value>` lines), forwarded
     /// to the terminal unchanged.
     /// Command the read-only file viewer pipes a file through for syntax
@@ -165,6 +167,7 @@ public struct AppConfig: Equatable, Sendable {
         sidebarPosition: SidebarPosition = .left,
         homePath: String? = nil,
         sessionsView: SessionsViewMode = .drawer,
+        tilesGrid: TilesGrid = .default,
         viewerHighlightCommand: String = AppConfig.defaultViewerHighlightCommand,
         viewerMaxBytes: Int = AppConfig.defaultViewerMaxBytes,
         fileTree: FileTreeSettings = FileTreeSettings(),
@@ -188,6 +191,7 @@ public struct AppConfig: Equatable, Sendable {
         self.sidebarPosition = sidebarPosition
         self.homePath = homePath
         self.sessionsView = sessionsView
+        self.tilesGrid = tilesGrid
         self.viewerHighlightCommand = viewerHighlightCommand
         self.viewerMaxBytes = viewerMaxBytes
         self.fileTree = fileTree
@@ -289,6 +293,10 @@ public struct AppConfig: Equatable, Sendable {
             case "zetty-sessions-view":
                 // An unrecognised value keeps the default rather than failing.
                 config.sessionsView = SessionsViewMode(rawValue: value.lowercased()) ?? .drawer
+            case "zetty-tiles-grid":
+                // Same rule: a malformed value keeps the default. Failing here
+                // would cost the whole config, and with it each pane's command.
+                config.tilesGrid = TilesGrid(parsing: value) ?? .default
             case "zetty-restart-recovery":
                 config.restartRecovery = ["true", "yes", "on", "1"].contains(value.lowercased())
             case "zetty-file-tree-show-hidden":
@@ -460,6 +468,7 @@ public struct AppConfig: Equatable, Sendable {
         # Where the Sessions view appears: docked to the bottom of the window,
         # or in its own window. The detach and dock buttons rewrite this.
         zetty-sessions-view = \(sessionsView.rawValue)
+        zetty-tiles-grid = \(tilesGrid.configValue)
 
         # Syntax highlighting for the read-only file viewer: the file is piped
         # through this command and its ANSI colors are rendered. `off` disables

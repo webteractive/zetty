@@ -1694,6 +1694,18 @@ Five things here will look like tidy-ups and are not:
   is on the rebuild renders the grid, so selecting a project and tab renders
   the grid again and spawns nothing.
 
+Grid size is `zetty-tiles-grid` (default `4x4`, max `8x8`), a **cap** rather
+than a fixed cell count — below capacity tiles grow near-square to fill the
+window, at or above it the grid is exactly that shape and scrolls, and the
+visible rows always split the height rather than sitting at `minTileHeight`
+with a dead stripe below. `TileGrid.minTileWidth` came DOWN to 120 for this:
+at 240 the column count derived from the width capped an 828pt window at three
+columns, so the default 4x4 was unreachable. It is now a last-resort clamp that
+binds only near the 320pt window floor, and the setting is what governs size.
+Tiles carry a 1pt border and a 12pt gap — a grid of sixteen terminals needs
+separation two panes do not, and the border doubles as the focus signal
+(accent when focused) so there is one accent cue rather than two.
+
 Bindings are **re-interpreted at dispatch** in `perform(binding:interceptor:)`
 rather than given a third table: `h/j/k/l`/arrows/`o` move tile focus, `1`–`9`
 select the Nth tile, `x` and ⌘W close that pane in its own project, and the tab

@@ -43,12 +43,11 @@ enum TileStatus: Equatable {
 final class TileView: NSView {
 
     static let headerHeight: CGFloat = 24
-    private static let accentBarHeight: CGFloat = 2
+    private static let borderWidth: CGFloat = 1
 
     let surfaceID: UUID
 
     private let header = NSView()
-    private let accentBar = NSView()
     private let statusDot = NSView()
     private let iconView = NSImageView()
     private let titleLabel = NSTextField(labelWithString: "")
@@ -78,6 +77,7 @@ final class TileView: NSView {
         wantsLayer = true
         layer?.cornerRadius = 8
         layer?.masksToBounds = true
+        layer?.borderWidth = Self.borderWidth
 
         buildHeader(label: label, icon: icon)
         buildBody(content: content)
@@ -90,12 +90,6 @@ final class TileView: NSView {
     // MARK: - Build
 
     private func buildHeader(label: String, icon: NSImage?) {
-        // Focus is the accent top-bar — the active tab pill's anatomy — not a
-        // border. Tiles stay borderless like panes.
-        accentBar.wantsLayer = true
-        accentBar.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(accentBar)
-
         header.wantsLayer = true
         header.translatesAutoresizingMaskIntoConstraints = false
         addSubview(header)
@@ -131,14 +125,12 @@ final class TileView: NSView {
         header.addSubview(goToPaneButton)
 
         NSLayoutConstraint.activate([
-            accentBar.topAnchor.constraint(equalTo: topAnchor),
-            accentBar.leadingAnchor.constraint(equalTo: leadingAnchor),
-            accentBar.trailingAnchor.constraint(equalTo: trailingAnchor),
-            accentBar.heightAnchor.constraint(equalToConstant: Self.accentBarHeight),
-
-            header.topAnchor.constraint(equalTo: accentBar.bottomAnchor),
-            header.leadingAnchor.constraint(equalTo: leadingAnchor),
-            header.trailingAnchor.constraint(equalTo: trailingAnchor),
+            header.topAnchor.constraint(equalTo: topAnchor,
+                                        constant: Self.borderWidth),
+            header.leadingAnchor.constraint(equalTo: leadingAnchor,
+                                            constant: Self.borderWidth),
+            header.trailingAnchor.constraint(equalTo: trailingAnchor,
+                                             constant: -Self.borderWidth),
             header.heightAnchor.constraint(equalToConstant: Self.headerHeight),
 
             statusDot.widthAnchor.constraint(equalToConstant: 7),
@@ -170,9 +162,12 @@ final class TileView: NSView {
         addSubview(body)
         NSLayoutConstraint.activate([
             body.topAnchor.constraint(equalTo: header.bottomAnchor),
-            body.leadingAnchor.constraint(equalTo: leadingAnchor),
-            body.trailingAnchor.constraint(equalTo: trailingAnchor),
-            body.bottomAnchor.constraint(equalTo: bottomAnchor),
+            body.leadingAnchor.constraint(equalTo: leadingAnchor,
+                                          constant: Self.borderWidth),
+            body.trailingAnchor.constraint(equalTo: trailingAnchor,
+                                           constant: -Self.borderWidth),
+            body.bottomAnchor.constraint(equalTo: bottomAnchor,
+                                         constant: -Self.borderWidth),
         ])
 
         switch content {
@@ -229,11 +224,12 @@ final class TileView: NSView {
     private func applyTheme() {
         let theme = ZTheme.current
         layer?.backgroundColor = theme.bg1Color.cgColor
+        // A grid of sixteen terminals needs the separation two panes do not,
+        // and borders are chrome's sanctioned depth mechanism. The border also
+        // carries focus, so there is one accent signal rather than two.
+        layer?.borderColor = (isFocused ? theme.accentColor : theme.borderColor).cgColor
         // Selection/active fills are bg3 — never a saturated accent block.
         header.layer?.backgroundColor = (isFocused ? theme.bg3Color : theme.bg0Color).cgColor
-        accentBar.layer?.backgroundColor = isFocused
-            ? theme.accentColor.cgColor
-            : NSColor.clear.cgColor
         body.layer?.backgroundColor = theme.bg1Color.cgColor
         statusDot.layer?.backgroundColor = status.color(theme).cgColor
         titleLabel.textColor = isFocused ? theme.fgColor : theme.fg2Color

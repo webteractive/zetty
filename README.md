@@ -51,7 +51,9 @@ by the tool it's running.
   that finishes stays tiled and dims rather than vanishing under your cursor,
   and leaving lands you in whichever tile you last typed into. Panes that have
   a session but were never opened this launch attach in the background, two
-  seconds apart. Needs `preserve-sessions = true`; without it the grid says so.
+  seconds apart. `zetty-tiles-grid` (default `4x4`) sets how many tiles fill a
+  screenful before it scrolls. Needs `preserve-sessions = true`; without it the
+  grid says so.
 - **Sessions** — `⌘J`, **View → Sessions…**, the command palette, or the
   status-bar pill. It docks to the **bottom of the window** by default; the ⤡ button in
   its header detaches it into its own window, and the ⤠ button docks it back.
@@ -467,6 +469,7 @@ seeds a documented starter file on first launch. Format is plain
 | `viewer-max-bytes` | `2097152` | Largest file the viewer will render; bigger files open in their default app instead |
 | `zetty-home-path` | — | Directory the **Home** project is rooted at (`~` allowed); unset — or `off`/`~` — keeps it at your home directory |
 | `zetty-restart-recovery` | `true` | After a macOS restart/shutdown/logout, replay each preserved pane's last screen and resume the Claude/Codex session it was running |
+| `zetty-tiles-grid` | `4x4` | How many tiles fill one screenful of tile mode (⇧⌘G), as `<cols>x<rows>`. A **cap**, not a fixed cell count: fewer sessions grow to fill the window, more than fit scroll. Up to `8x8` |
 | `zetty-file-tree-show-hidden` | `true` | Show dotfiles in the per-pane file tree |
 | `zetty-file-tree-respect-gitignore` | `false` | Hide anything the repo's `.gitignore` excludes |
 | `zetty-file-tree-ignore` | — | Extra names to hide, comma-separated (e.g. `node_modules, vendor`) |

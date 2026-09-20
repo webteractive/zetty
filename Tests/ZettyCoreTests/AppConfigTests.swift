@@ -215,3 +215,33 @@ import Testing
     #expect(AppConfig.parse("hibernate-after = garbage").hibernateAfter == 0)
     #expect(AppConfig.parse(AppConfig(hibernateAfter: 3600).rendered()).hibernateAfter == 3600)
 }
+
+// MARK: - zetty-tiles-grid
+
+@Test func tilesGridDefaultsToFourByFour() {
+    #expect(AppConfig.parse("").tilesGrid == TilesGrid(columns: 4, rows: 4))
+}
+
+@Test func tilesGridIsReadFromTheConfig() {
+    #expect(AppConfig.parse("zetty-tiles-grid = 3x2").tilesGrid
+        == TilesGrid(columns: 3, rows: 2))
+}
+
+@Test func aMalformedTilesGridKeepsTheDefault() {
+    // Never fail on a bad value: ghostty validates all-or-nothing, so a typo
+    // that dropped the whole config would strand preserved sessions.
+    #expect(AppConfig.parse("zetty-tiles-grid = four").tilesGrid == .default)
+}
+
+@Test func tilesGridSurvivesARuntimePersist() {
+    var config = AppConfig.parse("zetty-tiles-grid = 2x5")
+    config.tilesGrid = TilesGrid(columns: 6, rows: 3)
+    #expect(AppConfig.parse(config.rendered()).tilesGrid == TilesGrid(columns: 6, rows: 3))
+}
+
+@Test func tilesGridIsNotForwardedToGhostty() {
+    // A reserved key reaching libghostty would fail its validation and free
+    // the WHOLE config, including each pane's `command`.
+    let config = AppConfig.parse("zetty-tiles-grid = 3x3")
+    #expect(config.ghostty.contains { $0.key == "zetty-tiles-grid" } == false)
+}

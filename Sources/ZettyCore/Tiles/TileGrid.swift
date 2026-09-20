@@ -1,5 +1,41 @@
 import Foundation
 
+/// How many tiles fit on one screenful, from `zetty-tiles-grid`.
+///
+/// A **cap**, not a fixed cell count: below capacity tiles grow near-square to
+/// fill the window, and at or above it the grid is exactly this shape and
+/// scrolls. So the setting answers "never smaller than this" — which is the
+/// only thing a grid of live terminals needs it to answer.
+public struct TilesGrid: Equatable, Sendable {
+    public let columns: Int
+    public let rows: Int
+
+    public static let `default` = TilesGrid(columns: 4, rows: 4)
+    /// 8x8 is 64 tiles. Past that a tile cannot show a line of text, and the
+    /// clamp keeps a hand-edited config from producing a grid of slivers.
+    public static let maxSide = 8
+
+    public init(columns: Int, rows: Int) {
+        self.columns = min(max(columns, 1), Self.maxSide)
+        self.rows = min(max(rows, 1), Self.maxSide)
+    }
+
+    /// Parses `<cols>x<rows>`. Returns nil rather than guessing — the caller
+    /// keeps the default, because ghostty validates all-or-nothing and a typo
+    /// must never cost the whole config.
+    public init?(parsing text: String) {
+        let parts = text.lowercased().split(separator: "x", omittingEmptySubsequences: false)
+        guard parts.count == 2,
+              let columns = Int(parts[0].trimmingCharacters(in: .whitespaces)),
+              let rows = Int(parts[1].trimmingCharacters(in: .whitespaces)),
+              columns > 0, rows > 0
+        else { return nil }
+        self.init(columns: columns, rows: rows)
+    }
+
+    public var configValue: String { "\(columns)x\(rows)" }
+}
+
 /// Where every tile goes, for one grid pass.
 public struct TileGridLayout: Equatable, Sendable {
     public let columns: Int
@@ -31,15 +67,20 @@ public struct TileGridLayout: Equatable, Sendable {
 /// rendering.
 public enum TileGrid {
 
-    /// About 30 columns of mono-12 — narrow, but still a readable agent TUI.
-    public static let minTileWidth: Double = 240
+    /// A last-resort clamp, NOT the working minimum — `zetty-tiles-grid` is.
+    /// It was 240 while the column count was derived from the width, which
+    /// capped an 828pt window at three columns and made the default 4x4
+    /// unreachable. At 120 it binds only near the 320pt window floor.
+    public static let minTileWidth: Double = 120
     /// About 10 lines. Below this a tile answers nothing.
     public static let minTileHeight: Double = 160
-    public static let spacing: Double = 8
+    /// Wide enough to read as a gap between two terminals rather than a seam.
+    public static let spacing: Double = 12
 
     public static func layout(count: Int,
                               width: Double,
                               height: Double,
+                              grid: TilesGrid = .default,
                               minTileWidth: Double = TileGrid.minTileWidth,
                               minTileHeight: Double = TileGrid.minTileHeight,
                               spacing: Double = TileGrid.spacing) -> TileGridLayout {
@@ -48,22 +89,22 @@ public enum TileGrid {
                                   tileHeight: 0, scrolls: false)
         }
 
-        let maxColumns = max(1, Int((width + spacing) / (minTileWidth + spacing)))
+        let widthAllows = max(1, Int((width + spacing) / (minTileWidth + spacing)))
         let preferred = Int(ceil(Double(count).squareRoot()))
-        let columns = max(1, min(count, min(preferred, maxColumns)))
+        let columns = max(1, min(count, preferred, grid.columns, widthAllows))
         let rows = Int(ceil(Double(count) / Double(columns)))
 
         let tileWidth = (width - spacing * Double(columns - 1)) / Double(columns)
-        let fittingRows = max(1, Int((height + spacing) / (minTileHeight + spacing)))
+        let heightAllows = max(1, Int((height + spacing) / (minTileHeight + spacing)))
+        let visibleRows = max(1, min(grid.rows, heightAllows))
 
-        if rows <= fittingRows {
-            let tileHeight = (height - spacing * Double(rows - 1)) / Double(rows)
-            return TileGridLayout(columns: columns, rows: rows,
-                                  tileWidth: tileWidth, tileHeight: tileHeight,
-                                  scrolls: false)
-        }
+        // Whether it scrolls or not, the rows on screen split the height
+        // between them. Pinning a scrolling grid to `minTileHeight` instead
+        // would leave a dead stripe below the last visible row.
+        let shownRows = min(rows, visibleRows)
+        let tileHeight = (height - spacing * Double(shownRows - 1)) / Double(shownRows)
         return TileGridLayout(columns: columns, rows: rows,
-                              tileWidth: tileWidth, tileHeight: minTileHeight,
-                              scrolls: true)
+                              tileWidth: tileWidth, tileHeight: tileHeight,
+                              scrolls: rows > visibleRows)
     }
 }

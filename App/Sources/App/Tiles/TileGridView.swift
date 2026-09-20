@@ -27,7 +27,9 @@ struct TileDescriptor {
 final class TileGridView: NSView {
 
     private static let headerHeight: CGFloat = 28
-    private static let inset: CGFloat = 8
+    /// Matches `TileGrid.spacing`, so the outer margin reads as the same gap
+    /// as the ones between tiles.
+    private static let inset = CGFloat(TileGrid.spacing)
 
     private let headerLabel = NSTextField(labelWithString: "")
     private let bottomBorder = NSView()
@@ -40,8 +42,14 @@ final class TileGridView: NSView {
     private let onGoToPane: (UUID) -> Void
     private var focusedID: UUID?
 
-    init(onActivate: @escaping (UUID) -> Void,
+    /// Supplies `zetty-tiles-grid` at layout time rather than at construction,
+    /// so ⇧⌘, reload reaches an open grid without rebuilding it.
+    private let gridProvider: () -> TilesGrid
+
+    init(gridProvider: @escaping () -> TilesGrid,
+         onActivate: @escaping (UUID) -> Void,
          onGoToPane: @escaping (UUID) -> Void) {
+        self.gridProvider = gridProvider
         self.onActivate = onActivate
         self.onGoToPane = onGoToPane
         super.init(frame: .zero)
@@ -179,7 +187,8 @@ final class TileGridView: NSView {
 
         let grid = TileGrid.layout(count: tiles.count,
                                    width: Double(available.width),
-                                   height: Double(available.height))
+                                   height: Double(available.height),
+                                   grid: gridProvider())
         guard grid.columns > 0 else { return }
 
         let spacing = CGFloat(TileGrid.spacing)
@@ -203,7 +212,9 @@ final class TileGridView: NSView {
             tile.frame = NSRect(x: x, y: y, width: tileW, height: tileH)
         }
 
+        let configured = gridProvider()
         ZettyLog.chrome.log("tiles: count=\(tiles.count) cols=\(grid.columns) "
+            + "cap=\(configured.configValue) "
             + "rows=\(grid.rows) tile=\(Int(tileW))x\(Int(tileH)) "
             + "scrolls=\(grid.scrolls) clip=\(Int(clip.width))x\(Int(clip.height))")
     }

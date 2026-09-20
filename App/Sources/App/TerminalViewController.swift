@@ -3752,6 +3752,10 @@ final class TerminalViewController: NSViewController {
     /// restart recovery — the same spacing, for the same reason.
     private static let tileSpawnInterval: TimeInterval = 2
 
+    /// Resolved `zetty-tiles-grid`, supplied by `AppDelegate` — read per layout
+    /// pass, so ⇧⌘, reload reaches an open grid.
+    var tilesGridProvider: (() -> TilesGrid)?
+
     var isTileModeActive: Bool { tileMode }
 
     func toggleTileMode() { setTileMode(!tileMode) }
@@ -5487,6 +5491,7 @@ final class TerminalViewController: NSViewController {
         // surfaces the grid shows are ones `allSurfaceIDs` already retains.
         if tileMode {
             let grid = tileGridView ?? TileGridView(
+                gridProvider: { [weak self] in self?.tilesGridProvider?() ?? .default },
                 onActivate: { [weak self] id in self?.focusTile(id) },
                 onGoToPane: { [weak self] id in
                     self?.tileFocusedSurfaceID = id
