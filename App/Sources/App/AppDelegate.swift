@@ -2086,6 +2086,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             tvc.restoreSidebar(collapsed: workspace.sidebarCollapsed, width: workspace.sidebarWidth)
             tvc.loadTileLibrary(openIDs: workspace.openTileViewIDs,
                                 activeIndex: workspace.activeTileViewIndex)
+            tvc.restoreTileMode(workspace.tileModeActive)
             let runtimes = SessionSnapshot.projectRuntimes(from: workspace)
             // Empty runtimes → fall back to the default WorkspaceModel already in
             // tvc (keeps the reap-safety contract: no restored surfaces to own).
@@ -2139,6 +2140,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         workspace.sidebarWidth = sidebar.width
         workspace.openTileViewIDs = tvc.openTileViewIDs
         workspace.activeTileViewIndex = tvc.activeTileViewIndex
+        workspace.tileModeActive = tvc.isTileMode
         try? workspaceStore.save(workspace)
     }
 

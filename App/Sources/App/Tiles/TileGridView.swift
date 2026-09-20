@@ -168,6 +168,22 @@ final class TileGridView: NSView {
         needsLayout = true
     }
 
+    /// Restyle everything this view owns for the CURRENT scheme.
+    ///
+    /// The corollary the chrome-refresh rules set out: `rebuildSurfaceNodeView`
+    /// reuses this grid across a scheme change (it removes it from the
+    /// container but keeps the instance), so colours set once in `build()` —
+    /// the background and the empty label — would freeze in the old palette.
+    /// The tiles are restyled too rather than relying on the rebuild that
+    /// recreates them, so this is correct on its own.
+    func applyTheme() {
+        let theme = ZTheme.current
+        layer?.backgroundColor = theme.bg1Color.cgColor
+        emptyLabel.font = ZTheme.chromeFont(size: 12)
+        emptyLabel.textColor = theme.fg3Color
+        for tile in tiles { tile.applyTheme() }
+    }
+
     var focusedTileView: TileView? {
         tiles.first { $0.surfaceID == focusedID }
     }

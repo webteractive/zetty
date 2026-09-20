@@ -72,7 +72,9 @@ by the tool it's running.
     renaming and resizing write through immediately, with no save step.
     A slot remembers its project and tab, so it reattaches after a relaunch
     even if the tab was renamed or reordered; one whose tab is gone shows the
-    name it had, with a **Reattach…** action.
+    name it had, with a **Reattach…** action. **The mode itself is
+    remembered too** — quit while the grid is up and the next launch comes
+    back to it, with the same views open.
   - `zetty-tiles-grid` (default `4x4`) seeds a new view with a uniform shape;
     each profile keeps its own tree thereafter. The status bar carries the
     running/idle count while the grid is up.

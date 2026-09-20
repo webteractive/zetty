@@ -1361,6 +1361,18 @@ documents at length, and both are easy to undo by accident:
 
    Measured, pinned, at the minimum: `reached=320 sidebar=124 -> OK`.
 
+   **A required CEILING sits beside that low-priority equality**
+   (`sidebarWidthCeiling`, same constant, `<=`), and the two are not one
+   constraint wearing different hats: "no wider than the chosen width" is an
+   invariant, "exactly that wide" only a preference, and a maximum can never
+   become a window floor. Without it the equality was the only thing holding
+   the sidebar, and a measuring pass could resolve the leftover width onto it
+   instead of the container — observed as `sidebar=1235 container=274`, panes a
+   sliver and a COLLAPSED sidebar still mostly on screen (it slides off by its
+   REQUESTED width, not by however wide it actually got). `logGeometry` prints
+   `SIDEBAR-OVERFLOW want=…` when the frame outruns the request, so the symptom
+   names itself.
+
 **Lowering compression resistance on a STACK does not lower it on the stack's
 children**, and assuming otherwise left the measured floor at 477pt after the
 first fix looked complete. A stack pins its arranged subviews at required
@@ -1762,6 +1774,35 @@ picker replaced it rather than joining it. `TileProfileKind` and
 **Double-clicking a tile's HEADER leaves the grid for that pane.** It has to be
 the header: the body is the terminal view, which consumes its own mouse events,
 so a click there never reaches `TileView` at all.
+
+**That same swallowed click is why focus is driven by the first-responder
+KVO.** Clicking into a sibling tile never fires `TileView.mouseDown`, so
+`handleFirstResponderChange` routes to `focusTile` in tile mode (and to
+`focusChanged` otherwise, which only knows the active project's `paneTree`) —
+without it the accent border stayed on the previous tile while typing went to
+the new one. `focusTile` is therefore idempotent and skips re-asserting first
+responder when the responder is already inside that pane, or it would re-enter
+its own observation.
+
+**Pane splits are disabled in tile mode** — ⌘D / ⇧⌘D validate to disabled
+(`validateMenuItem`), the actions guard on `isTileMode` for the palette path,
+and the palette drops the two rows. There is no pane tree on screen, so the
+split would reshape the active project's layout out of sight. A SLOT still
+splits: the tile's context menu, or `Ctrl+B %` / `Ctrl+B "`, which
+`KeyInterceptor` routes to `splitFocusedTileSlot`.
+
+**The grid survives `rebuildSurfaceNodeView`** (removed from the container,
+instance kept), so a scheme change leaves everything `build()` coloured once in
+the old palette. `TileGridView.applyTheme()` exists for that and is called from
+`TerminalViewController.applyTheme()`; it forwards to each `TileView`, which is
+why that one is internal rather than private. Same corollary as
+`TabBarView.restyle()` and `SidebarView.rebuildOutline()`.
+
+**The mode itself is persisted**, as `Workspace.tileModeActive` beside the open
+view ids — not in the workspace MODEL, where a zoom would go. `restoreTileMode`
+seeds a pending flag before the view loads and `viewDidLoad` enters through
+`setTileMode(true)`, never by flipping the flag: the enter path is what seeds
+focus and runs the pane spawn queue.
 
 **Chrome.** The strip carries tile-view pills while the grid is up
 (`refreshTabBar` branches; every `tabBar.on*` callback branches with it), `+`

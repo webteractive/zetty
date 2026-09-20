@@ -19,3 +19,17 @@ import Testing
     #expect(decoded.openTileViewIDs.isEmpty)
     #expect(decoded.activeTileViewIndex == 0)
 }
+
+@Test func aWorkspaceRemembersThatTileModeWasShowing() throws {
+    var workspace = Workspace()
+    workspace.tileModeActive = true
+    let data = try JSONEncoder().encode(workspace)
+    let decoded = try JSONDecoder().decode(Workspace.self, from: data)
+    #expect(decoded.tileModeActive)
+}
+
+@Test func anOlderWorkspaceStartsOutsideTileMode() throws {
+    let json = #"{"schemaVersion":1,"projects":[]}"#
+    let decoded = try JSONDecoder().decode(Workspace.self, from: Data(json.utf8))
+    #expect(decoded.tileModeActive == false)
+}

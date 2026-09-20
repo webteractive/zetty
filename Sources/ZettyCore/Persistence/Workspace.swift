@@ -21,6 +21,9 @@ public struct Workspace: Codable, Sendable, Equatable {
     public var openTileViewIDs: [UUID]
     /// Which of them was showing. Missing → 0.
     public var activeTileViewIndex: Int
+    /// Whether the window was in tile mode when the workspace was saved, so a
+    /// relaunch comes back to the mode it was left in. Missing → false.
+    public var tileModeActive: Bool
 
     public init(
         schemaVersion: Int = 1,
@@ -30,7 +33,8 @@ public struct Workspace: Codable, Sendable, Equatable {
         sidebarCollapsed: Bool = false,
         sidebarWidth: Double = SidebarMetrics.defaultWidth,
         openTileViewIDs: [UUID] = [],
-        activeTileViewIndex: Int = 0
+        activeTileViewIndex: Int = 0,
+        tileModeActive: Bool = false
     ) {
         self.schemaVersion = schemaVersion
         self.projects = projects
@@ -40,6 +44,7 @@ public struct Workspace: Codable, Sendable, Equatable {
         self.sidebarWidth = sidebarWidth
         self.openTileViewIDs = openTileViewIDs
         self.activeTileViewIndex = activeTileViewIndex
+        self.tileModeActive = tileModeActive
     }
 
     public init(from decoder: Decoder) throws {
@@ -56,5 +61,7 @@ public struct Workspace: Codable, Sendable, Equatable {
                                                         forKey: .openTileViewIDs) ?? []
         activeTileViewIndex = try container.decodeIfPresent(Int.self,
                                                             forKey: .activeTileViewIndex) ?? 0
+        tileModeActive = try container.decodeIfPresent(Bool.self,
+                                                       forKey: .tileModeActive) ?? false
     }
 }

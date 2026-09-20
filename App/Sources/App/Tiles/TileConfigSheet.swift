@@ -1,11 +1,16 @@
 import AppKit
 import ZettyCore
 
-/// Names a tile view and picks its grid — shown when a view is created, and
-/// again when one is reconfigured.
+/// Names a tile view and picks its grid.
 ///
-/// Presets are drawn as their own shape rather than listed as "2x3", because
-/// picking a picture is the whole point of a layout having a name.
+/// It asks for columns and rows and nothing else. It used to open with the
+/// layout presets as well, which is a dead end wherever it is reached from:
+/// the chooser IS that list, so the sheet behind its "Custom…" card offered
+/// the eight shapes the user had just declined.
+///
+/// The shape is drawn as it is dialled rather than described as "3x2", for the
+/// same reason the chooser shows pictures — a grid is a thing you recognise,
+/// not a string you parse.
 @MainActor
 final class TileConfigSheet: NSViewController {
 
@@ -16,44 +21,36 @@ final class TileConfigSheet: NSViewController {
         let saveAsLayout: String?
     }
 
-    private let layouts: [TileLayout]
     private let initialName: String
-    private let initialGrid: TilesGrid
     private let confirmTitle: String
     private let onConfirm: (Result) -> Void
 
     private let nameField = NSTextField()
-    private var presetButtons: [NSButton] = []
-    private let customToggle = NSButton()
     private let columnsStepper = NSStepper()
     private let rowsStepper = NSStepper()
-    private let sizeLabel = NSTextField(labelWithString: "")
+    private let columnsValue = NSTextField(labelWithString: "")
+    private let rowsValue = NSTextField(labelWithString: "")
+    private let previewView = NSImageView()
     private let saveToggle = NSButton()
     private let saveNameField = NSTextField()
-    private let customRow = NSStackView()
-    private let saveRow = NSStackView()
 
-    /// The shape being configured. The steppers build a uniform tree; picking
-    /// a preset adopts that layout's tree whole, non-uniform included.
-    private var root: TileNode {
+    private static let previewSize: CGFloat = 84
+
+    /// The shape being configured. Always uniform here — a non-uniform tree is
+    /// made by splitting slots in the grid itself, not by dialling numbers.
+    private var grid: TilesGrid {
         didSet {
-            guard oldValue != root else { return }
+            guard oldValue != grid else { return }
             syncGridControls()
         }
     }
-    /// What the steppers show. Only meaningful while Custom is on.
-    private var customGrid: TilesGrid
 
-    init(layouts: [TileLayout],
-         name: String = "",
+    init(name: String = "",
          grid: TilesGrid = .default,
          confirmTitle: String = "Create",
          onConfirm: @escaping (Result) -> Void) {
-        self.layouts = layouts
         self.initialName = name
-        self.initialGrid = grid
-        self.root = TileNode.uniform(grid)
-        self.customGrid = grid
+        self.grid = grid
         self.confirmTitle = confirmTitle
         self.onConfirm = onConfirm
         super.init(nibName: nil, bundle: nil)
@@ -75,54 +72,36 @@ final class TileConfigSheet: NSViewController {
         nameField.placeholderString = "Tiles"
         nameField.translatesAutoresizingMaskIntoConstraints = false
 
-        let layoutLabel = label("Layout")
-        let presets = NSStackView()
-        presets.orientation = .horizontal
-        presets.spacing = 10
-        presets.translatesAutoresizingMaskIntoConstraints = false
-        for (index, layout) in layouts.enumerated() {
-            let button = presetButton(for: layout, tag: index)
-            presetButtons.append(button)
-            presets.addArrangedSubview(button)
-        }
+        let sizeLabel = label("Size")
+        previewView.imageScaling = .scaleProportionallyUpOrDown
+        previewView.contentTintColor = theme.fg2Color
+        previewView.translatesAutoresizingMaskIntoConstraints = false
 
-        customToggle.setButtonType(.switch)
-        customToggle.title = "Custom"
-        customToggle.font = ZTheme.chromeFont(size: 12)
-        customToggle.target = self
-        customToggle.action = #selector(customToggled)
-        customToggle.translatesAutoresizingMaskIntoConstraints = false
-
-        configureStepper(columnsStepper, action: #selector(stepperChanged))
-        configureStepper(rowsStepper, action: #selector(stepperChanged))
-        sizeLabel.font = ZTheme.chromeFont(size: 12)
-        sizeLabel.textColor = theme.fg2Color
-
-        customRow.orientation = .horizontal
-        customRow.spacing = 8
-        customRow.translatesAutoresizingMaskIntoConstraints = false
-        customRow.addArrangedSubview(label("Columns"))
-        customRow.addArrangedSubview(columnsStepper)
-        customRow.addArrangedSubview(label("Rows"))
-        customRow.addArrangedSubview(rowsStepper)
-        customRow.addArrangedSubview(sizeLabel)
-        customRow.isHidden = true
+        configureStepper(columnsStepper)
+        configureStepper(rowsStepper)
+        let counts = NSStackView(views: [
+            countRow(label("Columns"), columnsValue, columnsStepper),
+            countRow(label("Rows"), rowsValue, rowsStepper),
+        ])
+        counts.orientation = .vertical
+        counts.alignment = .leading
+        counts.spacing = 8
+        counts.translatesAutoresizingMaskIntoConstraints = false
 
         saveToggle.setButtonType(.switch)
         saveToggle.title = "Save as layout"
         saveToggle.font = ZTheme.chromeFont(size: 12)
         saveToggle.target = self
         saveToggle.action = #selector(saveToggled)
+        saveToggle.translatesAutoresizingMaskIntoConstraints = false
         saveNameField.placeholderString = "Layout name"
         saveNameField.font = ZTheme.chromeFont(size: 12)
         saveNameField.isEnabled = false
         saveNameField.translatesAutoresizingMaskIntoConstraints = false
+        let saveRow = NSStackView(views: [saveToggle, saveNameField])
         saveRow.orientation = .horizontal
         saveRow.spacing = 8
         saveRow.translatesAutoresizingMaskIntoConstraints = false
-        saveRow.addArrangedSubview(saveToggle)
-        saveRow.addArrangedSubview(saveNameField)
-        saveRow.isHidden = true
 
         let cancel = NSButton(title: "Cancel", target: self, action: #selector(cancelClicked))
         cancel.keyEquivalent = "\u{1b}"
@@ -133,13 +112,12 @@ final class TileConfigSheet: NSViewController {
         buttons.spacing = 10
         buttons.translatesAutoresizingMaskIntoConstraints = false
 
-        for view in [nameLabel, nameField, layoutLabel, presets, customToggle,
-                     customRow, saveRow, buttons] {
+        for view in [nameLabel, nameField, sizeLabel, previewView, counts, saveRow, buttons] {
             root.addSubview(view)
         }
 
         NSLayoutConstraint.activate([
-            root.widthAnchor.constraint(equalToConstant: 480),
+            root.widthAnchor.constraint(equalToConstant: 380),
 
             nameLabel.topAnchor.constraint(equalTo: root.topAnchor, constant: 20),
             nameLabel.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: 20),
@@ -147,22 +125,20 @@ final class TileConfigSheet: NSViewController {
             nameField.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: 20),
             nameField.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -20),
 
-            layoutLabel.topAnchor.constraint(equalTo: nameField.bottomAnchor, constant: 18),
-            layoutLabel.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: 20),
-            presets.topAnchor.constraint(equalTo: layoutLabel.bottomAnchor, constant: 8),
-            presets.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: 20),
-            presets.trailingAnchor.constraint(lessThanOrEqualTo: root.trailingAnchor,
-                                              constant: -20),
+            sizeLabel.topAnchor.constraint(equalTo: nameField.bottomAnchor, constant: 18),
+            sizeLabel.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: 20),
 
-            customToggle.topAnchor.constraint(equalTo: presets.bottomAnchor, constant: 16),
-            customToggle.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: 20),
+            previewView.topAnchor.constraint(equalTo: sizeLabel.bottomAnchor, constant: 8),
+            previewView.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: 20),
+            previewView.widthAnchor.constraint(equalToConstant: Self.previewSize),
+            previewView.heightAnchor.constraint(equalToConstant: Self.previewSize),
 
-            customRow.topAnchor.constraint(equalTo: customToggle.bottomAnchor, constant: 8),
-            customRow.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: 20),
-            customRow.trailingAnchor.constraint(lessThanOrEqualTo: root.trailingAnchor,
-                                                constant: -20),
+            counts.leadingAnchor.constraint(equalTo: previewView.trailingAnchor, constant: 18),
+            counts.centerYAnchor.constraint(equalTo: previewView.centerYAnchor),
+            counts.trailingAnchor.constraint(lessThanOrEqualTo: root.trailingAnchor,
+                                             constant: -20),
 
-            saveRow.topAnchor.constraint(equalTo: customRow.bottomAnchor, constant: 10),
+            saveRow.topAnchor.constraint(equalTo: previewView.bottomAnchor, constant: 18),
             saveRow.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: 20),
             saveRow.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -20),
 
@@ -190,7 +166,27 @@ final class TileConfigSheet: NSViewController {
         return field
     }
 
-    private func configureStepper(_ stepper: NSStepper, action: Selector) {
+    /// `Columns  3 ▲▼` — the number is spelled out beside the stepper, which
+    /// on its own shows nothing at all.
+    private func countRow(_ caption: NSTextField,
+                          _ value: NSTextField,
+                          _ stepper: NSStepper) -> NSStackView {
+        value.font = ZTheme.chromeFont(size: 12)
+        value.textColor = ZTheme.current.fgColor
+        value.alignment = .right
+        value.translatesAutoresizingMaskIntoConstraints = false
+        NSLayoutConstraint.activate([
+            caption.widthAnchor.constraint(equalToConstant: 58),
+            value.widthAnchor.constraint(equalToConstant: 16),
+        ])
+        let row = NSStackView(views: [caption, value, stepper])
+        row.orientation = .horizontal
+        row.spacing = 6
+        row.translatesAutoresizingMaskIntoConstraints = false
+        return row
+    }
+
+    private func configureStepper(_ stepper: NSStepper) {
         // The same 1...8 `TilesGrid` clamps to, so the control cannot ask for
         // something the model will silently refuse.
         stepper.minValue = 1
@@ -198,23 +194,8 @@ final class TileConfigSheet: NSViewController {
         stepper.increment = 1
         stepper.valueWraps = false
         stepper.target = self
-        stepper.action = action
+        stepper.action = #selector(stepperChanged)
         stepper.translatesAutoresizingMaskIntoConstraints = false
-    }
-
-    private func presetButton(for layout: TileLayout, tag: Int) -> NSButton {
-        let button = NSButton(title: layout.name, target: self, action: #selector(presetPicked(_:)))
-        button.tag = tag
-        button.bezelStyle = .smallSquare
-        button.imagePosition = .imageAbove
-        button.image = TileConfigSheet.shapeImage(for: layout.root)
-        button.font = ZTheme.chromeFont(size: 11)
-        button.translatesAutoresizingMaskIntoConstraints = false
-        NSLayoutConstraint.activate([
-            button.widthAnchor.constraint(equalToConstant: 64),
-            button.heightAnchor.constraint(equalToConstant: 60),
-        ])
-        return button
     }
 
     /// Draws the grid as its own shape. A picture is the point of naming a
@@ -236,36 +217,22 @@ final class TileConfigSheet: NSViewController {
             }
             return true
         }
-        image.isTemplate = false
+        // Template, so `contentTintColor` reaches it: the chooser tints a
+        // hovered card and this sheet tints its preview. The fill colour above
+        // is only the silhouette AppKit re-tints.
+        image.isTemplate = true
         return image
     }
 
     // MARK: - State
 
     private func syncGridControls() {
-        columnsStepper.integerValue = customGrid.columns
-        rowsStepper.integerValue = customGrid.rows
-        sizeLabel.stringValue = customGrid.configValue
-        for (index, button) in presetButtons.enumerated() {
-            let matches = layouts.indices.contains(index) && layouts[index].root == root
-            button.contentTintColor = matches
-                ? ZTheme.current.accentColor
-                : ZTheme.current.fg2Color
-        }
-    }
-
-    @objc private func presetPicked(_ sender: NSButton) {
-        guard layouts.indices.contains(sender.tag) else { return }
-        root = layouts[sender.tag].root
-        customToggle.state = .off
-        customRow.isHidden = true
-        saveRow.isHidden = true
-    }
-
-    @objc private func customToggled() {
-        let on = customToggle.state == .on
-        customRow.isHidden = !on
-        saveRow.isHidden = !on
+        columnsStepper.integerValue = grid.columns
+        rowsStepper.integerValue = grid.rows
+        columnsValue.stringValue = "\(grid.columns)"
+        rowsValue.stringValue = "\(grid.rows)"
+        previewView.image = Self.shapeImage(for: TileNode.uniform(grid),
+                                            size: Self.previewSize)
     }
 
     @objc private func saveToggled() {
@@ -274,9 +241,8 @@ final class TileConfigSheet: NSViewController {
     }
 
     @objc private func stepperChanged() {
-        customGrid = TilesGrid(columns: columnsStepper.integerValue,
-                               rows: rowsStepper.integerValue)
-        root = TileNode.uniform(customGrid)
+        grid = TilesGrid(columns: columnsStepper.integerValue,
+                         rows: rowsStepper.integerValue)
     }
 
     @objc private func cancelClicked() { dismiss(nil) }
@@ -286,7 +252,7 @@ final class TileConfigSheet: NSViewController {
         let saveName = saveNameField.stringValue.trimmingCharacters(in: .whitespaces)
         let result = Result(
             name: name.isEmpty ? "Tiles" : name,
-            root: root,
+            root: TileNode.uniform(grid),
             saveAsLayout: (saveToggle.state == .on && !saveName.isEmpty) ? saveName : nil)
         dismiss(nil)
         onConfirm(result)

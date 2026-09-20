@@ -228,6 +228,9 @@ final class TerminalViewController: NSViewController {
     private var sidebarWidth: CGFloat = SidebarMetrics.defaultWidth
     private var sidebarEdgeConstraint: NSLayoutConstraint?
     private var sidebarWidthConstraint: NSLayoutConstraint?
+    /// Required ceiling paired with `sidebarWidthConstraint`'s low-priority
+    /// equality — see `applySidebarLayout()` for why it is a second constraint.
+    private var sidebarWidthCeiling: NSLayoutConstraint?
     private var sidebarLayoutConstraints: [NSLayoutConstraint] = []
     private var sidebarResizeHandle: SidebarResizeHandle?
     private var sidebarCollapsed = false
@@ -543,6 +546,14 @@ final class TerminalViewController: NSViewController {
             self.injectStartupCommandIfPending(id)
         }
 
+        // Back into the mode the last quit left, now that there are views to
+        // put the grid in. `setTileMode` rather than the flag alone, so focus
+        // seeding and the pane spawn queue run as they do for ⇧⌘G.
+        if pendingTileMode {
+            pendingTileMode = false
+            setTileMode(true)
+        }
+
         startAgentEventWatcher()
         startForegroundPolling()
         startGitRefreshPolling()
@@ -693,6 +704,16 @@ final class TerminalViewController: NSViewController {
         workspace
     }
 
+    /// Seeds the mode the window was left in. Call before the view loads: the
+    /// mode is entered through `setTileMode` once the views exist, so a restored
+    /// grid seeds its focus and spawns its panes exactly as ⇧⌘G does.
+    func restoreTileMode(_ on: Bool) {
+        pendingTileMode = on
+    }
+
+    /// Whether tile mode is showing — persisted so a relaunch comes back to it.
+    var isTileMode: Bool { tileMode }
+
     /// Seeds the sidebar's restored state. Call before the view loads.
     func restoreSidebar(collapsed: Bool, width: Double) {
         sidebarCollapsed = collapsed
@@ -726,6 +747,10 @@ final class TerminalViewController: NSViewController {
         refreshTabBar()
         refreshSidebar()
         rebuildSurfaceNodeView()
+        // The grid SURVIVES that rebuild (the instance is reused), so its own
+        // surfaces — background, empty label, and each tile's focus border —
+        // have to be told about the new scheme explicitly.
+        tileGridView?.applyTheme()
         // An open overlay keeps focus — taking it back would break its Esc.
         if fileViewerOverlay == nil, let focused = focusedTerminalView() {
             view.window?.makeFirstResponder(focused)
@@ -914,10 +939,28 @@ final class TerminalViewController: NSViewController {
         width.priority = .defaultLow
         sidebarWidthConstraint = width
 
+        // …and a REQUIRED ceiling beside it, which is not the same constraint
+        // wearing a different hat. The sidebar being no wider than the width
+        // the user chose is an invariant; being exactly that wide is only a
+        // preference. Splitting them keeps the preference out of the window's
+        // minimum (a maximum can never become a floor) while making the
+        // stretch unrepresentable.
+        //
+        // Without the ceiling the equality at 250 is the ONLY thing holding
+        // the sidebar to its width, and a measuring pass — `fittingSize`,
+        // which AppKit runs on its own schedule — can resolve the leftover
+        // width onto the sidebar instead of the container. Observed: a split
+        // rebuild left `sidebar=1235 container=274`, so the panes were a
+        // sliver and a COLLAPSED sidebar was mostly on screen (it slides off
+        // by its requested 237, not by however wide it actually got).
+        let ceiling = sidebar.widthAnchor.constraint(lessThanOrEqualToConstant: resolvedWidth)
+        sidebarWidthCeiling = ceiling
+
         var constraints: [NSLayoutConstraint] = [
             sidebar.topAnchor.constraint(equalTo: view.topAnchor),
             sidebar.bottomAnchor.constraint(equalTo: view.bottomAnchor),
             width,
+            ceiling,
             container.topAnchor.constraint(equalTo: view.topAnchor),
             container.bottomAnchor.constraint(equalTo: view.bottomAnchor),
             separator.topAnchor.constraint(equalTo: view.topAnchor),
@@ -988,12 +1031,14 @@ final class TerminalViewController: NSViewController {
         guard clamped != sidebarWidth else { return }
         sidebarWidth = clamped
         sidebarWidthConstraint?.constant = clamped
+        sidebarWidthCeiling?.constant = clamped
     }
 
     /// Double-click on the handle: back to the default width.
     private func resetSidebarWidth() {
         sidebarWidth = SidebarMetrics.defaultWidth
         sidebarWidthConstraint?.constant = sidebarWidth
+        sidebarWidthCeiling?.constant = sidebarWidth
         onWorkspaceDidChange?()
     }
 
@@ -1975,7 +2020,15 @@ final class TerminalViewController: NSViewController {
         let occupants = (contentContainer?.subviews ?? [])
             .map { "\(type(of: $0)):\(Int($0.frame.width))" }
             .joined(separator: ",")
-        ZettyLog.chrome.log("geometry(\(note)) \(widths) container=[\(occupants)]")
+        // The sidebar's REQUESTED width beside its real one. A frame wider
+        // than the request means the ceiling in `applySidebarLayout()` was
+        // broken or missing, which crushes the panes and leaves a collapsed
+        // sidebar on screen — say so here rather than leaving two plausible
+        // numbers to compare by eye.
+        let want = Int(sidebarWidthConstraint?.constant ?? 0)
+        let got = Int(sidebarView?.frame.width ?? 0)
+        let overflow = got > want + 1 ? " SIDEBAR-OVERFLOW want=\(want)" : ""
+        ZettyLog.chrome.log("geometry(\(note)) \(widths) container=[\(occupants)]\(overflow)")
     }
 
     /// Measures the width the window can ACTUALLY reach, by asking for the
@@ -2496,10 +2549,16 @@ final class TerminalViewController: NSViewController {
     /// Pane lifecycle, directional focus, zoom, copy mode. The focus/zoom/copy
     /// entries are otherwise reachable only through the ⌃B prefix layer.
     private func paneCommands() -> [PaletteCommand] {
-        [
-            PaletteCommand(glyph: "+", label: "New Tab", kbd: "⌘T") { [weak self] in self?.newTab(nil) },
+        // The splits are listed only outside tile mode, for the reason
+        // `validateMenuItem` disables them there: a pane split has nothing on
+        // screen to change.
+        let splits: [PaletteCommand] = tileMode ? [] : [
             PaletteCommand(glyph: "▮", label: "Split Pane Right", kbd: "⌘D") { [weak self] in self?.splitVertical(nil) },
             PaletteCommand(glyph: "▬", label: "Split Pane Down", kbd: "⇧⌘D") { [weak self] in self?.splitHorizontal(nil) },
+        ]
+        return [
+            PaletteCommand(glyph: "+", label: "New Tab", kbd: "⌘T") { [weak self] in self?.newTab(nil) },
+        ] + splits + [
             PaletteCommand(glyph: "←", label: "Focus Pane Left", kbd: "⌃B h") { [weak self] in self?.focusPane(.left) },
             PaletteCommand(glyph: "→", label: "Focus Pane Right", kbd: "⌃B l") { [weak self] in self?.focusPane(.right) },
             PaletteCommand(glyph: "↑", label: "Focus Pane Up", kbd: "⌃B k") { [weak self] in self?.focusPane(.up) },
@@ -3824,9 +3883,12 @@ final class TerminalViewController: NSViewController {
     private var sessionsDrawer: SessionsView?
     // MARK: - Tile mode
 
-    /// Transient, like `zoomedSurfaceID` and unlike anything in the model — a
-    /// relaunch never comes back in tile mode.
+    /// Not part of the workspace MODEL (a zoom is, and this is not), but it IS
+    /// persisted beside it as `Workspace.tileModeActive`: quitting while the
+    /// grid is up comes back to the grid, with the views that were open.
     private var tileMode = false
+    /// Set by `restoreTileMode` before the view loads; entered in `viewDidLoad`.
+    private var pendingTileMode = false
     private var tileFocusedSurfaceID: UUID?
     private var tileGridView: TileGridView?
     private var tileChooserView: TileChooserView?
@@ -4159,7 +4221,7 @@ final class TerminalViewController: NSViewController {
 
     private func presentTileConfigSheet(name: String, grid: TilesGrid, confirmTitle: String,
                                         onConfirm: @escaping (TileConfigSheet.Result) -> Void) {
-        let sheet = TileConfigSheet(layouts: tileLibrary.layouts, name: name, grid: grid,
+        let sheet = TileConfigSheet(name: name, grid: grid,
                                     confirmTitle: confirmTitle, onConfirm: onConfirm)
         presentAsSheet(sheet)
     }
@@ -4309,10 +4371,20 @@ final class TerminalViewController: NSViewController {
 
     func focusTile(_ id: UUID) {
         guard tileMode, tileFocusableIDs.contains(id) else { return }
-        tileFocusedSurfaceID = id
-        tileGridView?.setFocused(id)
+        // Visiting a needs-attention pane marks it read, exactly as focusing an
+        // ordinary pane does.
+        acknowledgeAttention(for: id)
+        if tileFocusedSurfaceID != id {
+            tileFocusedSurfaceID = id
+            tileGridView?.setFocused(id)
+            refreshStatusBar()
+        }
+        // A click that landed IN the pane has already made its terminal first
+        // responder, and this is reached through the first-responder KVO — so
+        // re-asserting it would re-enter that observation for no gain.
+        if let responder = view.window?.firstResponder as? NSView,
+           registry.surfaceID(containing: responder) == id { return }
         focusTileFirstResponder()
-        refreshStatusBar()
     }
 
     /// Directional movement across the grid, using the same column count the
@@ -5851,7 +5923,16 @@ final class TerminalViewController: NSViewController {
         // Walk the superview chain of the new first responder to find which
         // registry view it belongs to (the terminal view itself, or a child of it).
         if let surfaceID = registry.surfaceID(containing: responder) {
-            focusChanged(surfaceID: surfaceID)
+            // In tile mode a tile's body IS the pane's terminal view, and it
+            // consumes its own mouse events — `TileView.mouseDown` never fires
+            // for a click inside a sibling, so this observation is the only
+            // signal that focus moved. Without it the accent border stayed on
+            // the previously active tile while typing went to the new one.
+            if tileMode {
+                focusTile(surfaceID)
+            } else {
+                focusChanged(surfaceID: surfaceID)
+            }
         }
     }
 
@@ -6315,6 +6396,13 @@ extension TerminalViewController: NSMenuItemValidation {
         }
         if menuItem.action == #selector(breakPaneIntoTab(_:)) {
             return workspace.activeTabList.activeTree.layout.surfaces.count > 1
+        }
+        // Tile mode renders no pane tree, so splitting would reshape the active
+        // project's layout out of sight. Disabled rather than silently applied;
+        // a SLOT still splits, from the tile's context menu or ⌃B % / ⌃B ".
+        if menuItem.action == #selector(splitVertical(_:))
+            || menuItem.action == #selector(splitHorizontal(_:)) {
+            return !tileMode
         }
         return true
     }

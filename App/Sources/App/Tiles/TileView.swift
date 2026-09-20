@@ -298,7 +298,9 @@ final class TileView: NSView {
         applyTheme()
     }
 
-    private func applyTheme() {
+    /// Internal, not private: a scheme change reuses the grid that owns this
+    /// tile, so `TileGridView.applyTheme()` has to be able to restyle it.
+    func applyTheme() {
         let theme = ZTheme.current
         layer?.backgroundColor = theme.bg1Color.cgColor
         // A grid of sixteen terminals needs the separation two panes do not,

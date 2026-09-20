@@ -13,7 +13,13 @@ extension TerminalViewController {
     // MARK: - Split actions
 
     /// Split the focused pane vertically (left / right).  Key equivalent: ⌘D.
+    ///
+    /// Refused in tile mode: there is no pane tree on screen, so the split
+    /// would silently reshape the active project's hidden layout. The menu
+    /// items validate to disabled there too — this guard covers the command
+    /// palette, which reaches the action directly.
     @objc func splitVertical(_ sender: Any?) {
+        guard !isTileMode else { return }
         chooseAgentThenSpawn { [weak self] command, accountID in
             self?.performSplit(direction: .vertical, startupCommand: command, accountID: accountID)
         }
@@ -21,6 +27,7 @@ extension TerminalViewController {
 
     /// Split the focused pane horizontally (top / bottom).  Key equivalent: ⇧⌘D.
     @objc func splitHorizontal(_ sender: Any?) {
+        guard !isTileMode else { return }
         chooseAgentThenSpawn { [weak self] command, accountID in
             self?.performSplit(direction: .horizontal, startupCommand: command, accountID: accountID)
         }
