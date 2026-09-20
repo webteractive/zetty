@@ -1706,6 +1706,12 @@ Tiles carry a 1pt border and a 12pt gap — a grid of sixteen terminals needs
 separation two panes do not, and the border doubles as the focus signal
 (accent when focused) so there is one accent cue rather than two.
 
+**The tab bar is hidden while the grid is up** (`rebuildSurfaceNodeView` sets
+`isHidden` and repins `topGuide` to the container). It names the ACTIVE
+project's tabs, and the grid spans every project — a strip of one project's
+tabs above sixteen unrelated panes labels the wrong thing. The grid header
+takes its place.
+
 Bindings are **re-interpreted at dispatch** in `perform(binding:interceptor:)`
 rather than given a third table: `h/j/k/l`/arrows/`o` move tile focus, `1`–`9`
 select the Nth tile, `x` and ⌘W close that pane in its own project, and the tab

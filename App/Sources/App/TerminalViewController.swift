@@ -5404,7 +5404,13 @@ final class TerminalViewController: NSViewController {
 
         // Pin below the tab bar (28 pt), or to the top if there is no tab bar yet;
         // and above the status bar (if present), else to the container bottom.
-        var topGuide: NSLayoutYAxisAnchor = tabBarView?.bottomAnchor ?? container.topAnchor
+        // The tab bar belongs to the ACTIVE project, and tile mode spans every
+        // project — so a strip of one project's tabs above a grid of sixteen
+        // unrelated panes names the wrong thing. The grid header replaces it.
+        tabBarView?.isHidden = tileMode
+        var topGuide: NSLayoutYAxisAnchor = tileMode
+            ? container.topAnchor
+            : (tabBarView?.bottomAnchor ?? container.topAnchor)
         var bottomGuide = statusBarView?.topAnchor ?? container.bottomAnchor
 
         // The Sessions drawer, mirroring how CloneWarningBanner slots in below
