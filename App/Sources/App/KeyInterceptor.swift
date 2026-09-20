@@ -206,16 +206,30 @@ extension TerminalViewController {
             case .toggleTileMode:
                 setTileMode(false)
                 return
+            // Cells.
             case .focusLeft:  moveTileFocus(.left);  return
             case .focusRight: moveTileFocus(.right); return
             case .focusUp:    moveTileFocus(.up);    return
             case .focusDown:  moveTileFocus(.down);  return
             case .cyclePanes: cycleTileFocus();      return
-            case .selectTab(let n): selectTile(number: n); return
-            case .closePane: closeFocusedTilePane(); return
-            // Tab and split operations would act on a project you cannot see.
-            case .newTab, .nextTab, .previousTab, .renameTab, .breakPane,
-                 .splitVertical, .splitHorizontal, .toggleFileTree:
+            // Views. The strip shows them, so the TAB verbs address them —
+            // which also stops `c` and `,` being silent no-ops.
+            case .selectTab(let n): selectTileView(at: n - 1); return
+            case .nextTab:
+                let count = max(1, openTileViews.count)
+                selectTileView(at: (activeTileViewIndex + 1) % count)
+                return
+            case .previousTab:
+                let count = max(1, openTileViews.count)
+                selectTileView(at: (activeTileViewIndex - 1 + count) % count)
+                return
+            case .newTab: newTileView(); return
+            case .renameTab: beginRenameActiveTileView(); return
+            // DETACH, not close: the pane keeps running in its project.
+            // Killing it stays on the tile's own menu, where it cannot happen
+            // by accident from a grid of sixteen.
+            case .closePane: detachFocusedTileSlot(); return
+            case .breakPane, .splitVertical, .splitHorizontal, .toggleFileTree:
                 return
             default:
                 break   // copy mode, paste, broadcast, zoom fall through

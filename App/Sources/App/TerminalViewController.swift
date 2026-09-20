@@ -4143,18 +4143,23 @@ final class TerminalViewController: NSViewController {
         focusTile(ids[(current + 1) % ids.count])
     }
 
-    func selectTile(number: Int) {
-        let ids = tileFocusableIDs
-        guard tileMode, ids.indices.contains(number - 1) else { return }
-        focusTile(ids[number - 1])
+    /// Removes the focused slot from the view. The pane KEEPS RUNNING — this
+    /// is the tile-mode analogue of closing a pane, and closing the real one
+    /// from a grid of sixteen is too expensive to put on ⌘W.
+    func detachFocusedTileSlot() {
+        guard tileMode, let id = tileFocusedSurfaceID else { return }
+        let resolved = tileResolution()
+        guard let index = resolved.firstIndex(where: {
+            if case .pane(_, _, let slotID) = $0 { return slotID == id }
+            return false
+        }) else { return }
+        mutateActiveTileProfile { $0.detach(at: index) }
+        tileFocusedSurfaceID = tileFocusableIDs.first
     }
 
-    /// Closes the focused tile's pane in its own project. The tile drops out on
-    /// the next membership refresh, because its surface stops existing.
-    func closeFocusedTilePane() {
-        guard tileMode, let id = tileFocusedSurfaceID else { return }
-        closePane(surfaceID: id)
-        refreshTileGrid()
+    func beginRenameActiveTileView() {
+        guard tileMode else { return }
+        tabBarView?.beginRenameProgrammatically(at: activeTileViewIndex)
     }
 
     /// Queues every tiled pane that has no surface yet. Already-attached panes
@@ -5100,6 +5105,9 @@ final class TerminalViewController: NSViewController {
 
     /// Close the active tab.  No-op if it is the only tab.  Key equivalent: ⇧⌘W.
     @objc func closeTab(_ sender: Any?) {
+        // ⇧⌘W closes the tile VIEW while the grid is up — the strip is showing
+        // views, so that is what "tab" means there.
+        if tileMode { closeTileView(at: activeTileViewIndex); return }
         closeTab(atIndex: workspace.activeTabList.activeIndex)
     }
 

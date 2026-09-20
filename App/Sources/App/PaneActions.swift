@@ -119,6 +119,10 @@ extension TerminalViewController {
     /// Close the focused pane.  If it is the only pane, this is a no-op.
     /// Asks first when something is still running in it.  Key equivalent: ⌘W.
     @objc func closePane(_ sender: Any?) {
+        // In the grid this detaches the focused slot instead. The pane keeps
+        // running: closing the real thing from a grid of sixteen is too
+        // expensive to sit on ⌘W, so it lives on the tile's own menu.
+        if isTileModeActive { detachFocusedTileSlot(); return }
         guard let focusedID = paneTree.focusedSurfaceID,
               paneTree.layout.surfaces.count > 1,
               confirmClosingBusyPanes([focusedID], what: "Pane") else { return }
