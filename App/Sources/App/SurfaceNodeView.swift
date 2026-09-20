@@ -15,6 +15,12 @@ struct PaneActionWiring {
     let accountMenu: (UUID) -> [(id: String, title: String, color: NSColor?, isCurrent: Bool)]
     /// Move this pane to that account (respawns it in place).
     let onSetAccount: (UUID, String) -> Void
+    /// Tile views this pane can be sent to, plus New View (a nil id). The
+    /// container knows only a surface id, so the entries come from the
+    /// controller — the same shape `accountMenu` uses.
+    let tileViewMenu: () -> [(title: String, profileID: UUID?)]
+    /// Attach this pane to that view, creating one when the id is nil.
+    let onAddToTileView: (UUID, UUID?) -> Void
 }
 
 // MARK: - SurfaceNodeView
@@ -488,6 +494,24 @@ final class LeafContainerView: NSView {
             menu.addItem(parent)
             menu.addItem(.separator())
         }
+
+        // Send this pane into a tile view without going hunting for it in the
+        // grid — the third attach path, alongside the picker and the drag.
+        let views = paneActions?.tileViewMenu() ?? []
+        if !views.isEmpty {
+            let submenu = NSMenu()
+            for entry in views {
+                let item = NSMenuItem(title: entry.title,
+                                      action: #selector(tileViewPicked(_:)), keyEquivalent: "")
+                item.target = self
+                item.representedObject = entry.profileID
+                submenu.addItem(item)
+            }
+            let parent = NSMenuItem(title: "Add to Tile View", action: nil, keyEquivalent: "")
+            parent.submenu = submenu
+            menu.addItem(parent)
+            menu.addItem(.separator())
+        }
         menu.addItem(makeMenuItem("Split Vertically", #selector(splitVerticalTapped)))
         menu.addItem(makeMenuItem("Split Horizontally", #selector(splitHorizontalTapped)))
         guard showsClose else { return menu }
@@ -499,6 +523,10 @@ final class LeafContainerView: NSView {
 
     /// Picking the account the pane already runs on must not tear down a
     /// working pane, so the no-op is checked before anything else.
+    @objc private func tileViewPicked(_ sender: NSMenuItem) {
+        paneActions?.onAddToTileView(surfaceID, sender.representedObject as? UUID)
+    }
+
     @objc private func accountPicked(_ sender: NSMenuItem) {
         guard let id = sender.representedObject as? String, sender.state != .on else { return }
         paneActions?.onSetAccount(surfaceID, id)

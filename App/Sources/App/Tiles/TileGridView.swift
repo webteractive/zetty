@@ -47,6 +47,9 @@ final class TileGridView: NSView {
     private let onAttach: (Int) -> Void
     /// Remove that slot from the view. The pane keeps running.
     private let onDetach: (Int) -> Void
+    /// A sidebar tab row was dropped on a slot: "project:tab" indices, and the
+    /// slot it landed in. Returns whether it was accepted.
+    var onDropSidebarTab: ((Int, Int, Int) -> Bool)?
     private var focusedID: UUID?
 
     /// Supplies `zetty-tiles-grid` at layout time rather than at construction,
@@ -70,6 +73,10 @@ final class TileGridView: NSView {
         super.init(frame: .zero)
         translatesAutoresizingMaskIntoConstraints = false
         wantsLayer = true
+        // The sidebar's own tab-row type — dropping onto the GRID, which is
+        // outside the outline view, so `validateDrop`'s refuse-everything rule
+        // (the thing protecting the pinned-first invariant) is not involved.
+        registerForDraggedTypes([SidebarView.tabDragType])
         build()
     }
 
@@ -168,6 +175,38 @@ final class TileGridView: NSView {
     func setFocused(_ id: UUID?) {
         focusedID = id
         for tile in tiles { tile.setFocused(tile.surfaceID == id) }
+    }
+
+    // MARK: - Drop target
+
+    /// Which slot a point falls in, from the geometry the last layout pass
+    /// produced. Reading the frames rather than recomputing the arithmetic is
+    /// what stops the drop target drifting away from what is drawn.
+    private func slotIndex(at windowPoint: NSPoint) -> Int? {
+        let local = documentView.convert(windowPoint, from: nil)
+        return tiles.firstIndex { $0.frame.contains(local) }
+    }
+
+    override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
+        sender.draggingPasteboard.string(forType: SidebarView.tabDragType) != nil
+            ? .copy : []
+    }
+
+    override func draggingUpdated(_ sender: NSDraggingInfo) -> NSDragOperation {
+        draggingEntered(sender)
+    }
+
+    override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
+        guard let payload = sender.draggingPasteboard.string(forType: SidebarView.tabDragType)
+        else { return false }
+        let parts = payload.split(separator: ":")
+        guard parts.count == 2,
+              let project = Int(parts[0]), let tab = Int(parts[1]),
+              // Past the last tile appends, which is what dropping into the
+              // empty area below the grid should mean.
+              let slot = slotIndex(at: sender.draggingLocation) ?? tiles.indices.last.map({ $0 + 1 })
+        else { return false }
+        return onDropSidebarTab?(project, tab, slot) ?? false
     }
 
     // MARK: - Layout

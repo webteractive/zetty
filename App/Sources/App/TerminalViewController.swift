@@ -4004,6 +4004,51 @@ final class TerminalViewController: NSViewController {
 
     @objc private func duplicateTileViewFromMenu() { duplicateActiveTileViewAsManual() }
 
+    /// A sidebar tab row dropped on a slot. Goes through the SAME mutation the
+    /// picker and the pane menu use, so three entry points cannot drift into
+    /// three behaviours.
+    @discardableResult
+    func attachSidebarTabToTile(projectIndex: Int, tabIndex: Int, slot: Int) -> Bool {
+        guard tileMode,
+              workspace.projects.indices.contains(projectIndex) else { return false }
+        let project = workspace.projects[projectIndex]
+        guard project.tabList.trees.indices.contains(tabIndex) else { return false }
+        let tree = project.tabList.trees[tabIndex]
+        let tileSlot = TileSlot(
+            projectRoot: project.rootPath, tabID: tree.id,
+            label: "\(project.name) / \(tabDisplayTitle(for: tree, at: tabIndex))")
+        mutateActiveTileProfile { $0.attach(tileSlot, at: slot) }
+        enqueueMissingTileSurfaces()
+        return true
+    }
+
+    /// Views a pane can be sent to, plus New View. Manual only — the computed
+    /// profile has no slots to write into.
+    func tileViewMenuEntries() -> [(title: String, profileID: UUID?)] {
+        tileLibrary.profiles.filter { $0.kind == .manual }.map { ($0.name, $0.id) }
+            + [("New View\u{2026}", nil)]
+    }
+
+    /// Attaches a pane's TAB to a view, opening the grid on it. Lands in the
+    /// first hole, or appended past the end — `attach(_:at:)` grows the list.
+    func addSurfaceToTileView(_ surfaceID: UUID, profileID: UUID?) {
+        guard let found = location(ofSurface: surfaceID),
+              workspace.projects.indices.contains(found.projectIndex) else { return }
+        let project = workspace.projects[found.projectIndex]
+        guard project.tabList.trees.indices.contains(found.tabIndex) else { return }
+        let tree = project.tabList.trees[found.tabIndex]
+        let slot = TileSlot(
+            projectRoot: project.rootPath, tabID: tree.id,
+            label: "\(project.name) / \(tabDisplayTitle(for: tree, at: found.tabIndex))")
+
+        setTileMode(true)
+        if let profileID { openTileView(profileID: profileID) } else { newTileView() }
+        let index = activeTileProfile?.slots.firstIndex(where: { $0 == nil })
+            ?? (activeTileProfile?.slots.count ?? 0)
+        mutateActiveTileProfile { $0.attach(slot, at: index) }
+        enqueueMissingTileSurfaces()
+    }
+
     func openTileView(profileID: UUID) {
         if let existing = openTileViews.firstIndex(where: { $0.id == profileID }) {
             selectTileView(at: existing)
@@ -5828,6 +5873,10 @@ final class TerminalViewController: NSViewController {
                 onDetach: { [weak self] index in
                     self?.mutateActiveTileProfile { $0.detach(at: index) }
                 })
+            grid.onDropSidebarTab = { [weak self] projectIndex, tabIndex, slot in
+                self?.attachSidebarTabToTile(projectIndex: projectIndex,
+                                             tabIndex: tabIndex, slot: slot) ?? false
+            }
             tileGridView = grid
             grid.removeFromSuperview()
             container.addSubview(grid)
@@ -5873,6 +5922,10 @@ final class TerminalViewController: NSViewController {
                 accountMenu: { [weak self] id in self?.accountMenuEntries(for: id) ?? [] },
                 onSetAccount: { [weak self] id, accountID in
                     self?.respawnPane(surfaceID: id, accountID: accountID)
+                },
+                tileViewMenu: { [weak self] in self?.tileViewMenuEntries() ?? [] },
+                onAddToTileView: { [weak self] surfaceID, profileID in
+                    self?.addSurfaceToTileView(surfaceID, profileID: profileID)
                 }
             ),
             onRatioChange: { [weak self] path, ratio in
