@@ -142,6 +142,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
 
         let tvc = TerminalViewController()
         tvc.sidebarPosition = appConfig.sidebarPosition
+        // BEFORE the restore: `restoreWorkspace` loads the tile library, and a
+        // nil store there silently seeds All Running in memory only — so the
+        // library never reaches disk and every launch mints a new one.
+        tvc.tileProfileStore = tileProfileStore
         let restoredFromDisk = restoreWorkspace(into: tvc)
         terminalViewController = tvc
         // Restart recovery: the manifest exists only after a power-off quit and
@@ -262,7 +266,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             self?.appConfig.fileTree ?? FileTreeSettings()
         }
         tvc.tilesGridProvider = { [weak self] in self?.appConfig.tilesGrid ?? .default }
-        tvc.tileProfileStore = tileProfileStore
         tvc.editorProvider = { [weak self] in self?.appConfig.editor }
         tvc.layoutTemplateProvider = { [weak self] project in
             ProjectFileIO.load(projectRoot: project.rootPath)?.layoutTemplate
