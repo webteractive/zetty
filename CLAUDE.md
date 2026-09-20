@@ -1658,10 +1658,19 @@ Five things here will look like tidy-ups and are not:
 
 - **The tiles are the registry's real `AppTerminalView`s**, so typing into a
   focused tile reaches its pty with no forwarding. That is the whole mechanism,
-  and it is why a tile resizes the pty and every TUI in it reflows — accepted,
-  because it is also what bounds the cost: per-pane GPU is `pane_px × 4 × 3`,
-  and N tiles partition one window's area, so the grid costs about one
-  full-window pane's worth rather than `N × 37 MB`.
+  and it is why a tile resizes the pty and every TUI in it reflows.
+- **The grid is NOT window-area-bounded, and the design argued that it was.**
+  Measured 2026-09-20 at 828x705, opening a 16-tile grid (265x160 tiles) took
+  the footprint from **87 MB at one live pane to 297 MB** — about **14 MB per
+  extra pane**, not the one-full-pane's-worth the spec predicted. Half the
+  prediction held and half did not, and the split is the useful part:
+  **`IOSurface` DID stay area-bounded** (26.7 -> 51.4 MB, 4 -> 51 regions —
+  ~1.6 MB per tile, exactly `pane_px x 4 x 3` at tile size), but
+  **`IOAccelerator (graphics)` did not** (15.0 -> 117.6 MB, 58 -> 364 regions).
+  That allocation is per-surface Metal state, not a render target, so shrinking
+  a pane does not shrink it. Any future reasoning about pane memory here has to
+  account for both, and a tile cap is the lever if this becomes a problem —
+  `TileGrid` already supports overflow scrolling.
 - **Membership is sticky.** A pane that goes idle stays tiled, dims, and keeps
   its index forever (`TileMembership`); only a surface that stops existing is
   dropped. The probe re-reports every 3s and the tiles are interactive, so a
