@@ -2455,12 +2455,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         palette.keyEquivalentModifierMask = [.command]
         viewMenu.addItem(palette)
 
-        // "Sessions…" — no key equivalent on purpose. A chord has to be proved
-        // free across four independent surfaces first, and a well-known one
-        // spent here is spent for good; this window has not earned that yet.
+        // ⌘J, audited free across all four surfaces plus the system: no other
+        // menu equivalent uses j; the prefix layer's and copy mode's `j` are
+        // BARE j (focus/cursor down), which is a different chord; and ⌘J is not
+        // a macOS shortcut. ⌘ rather than ⌃ deliberately — a native equivalent
+        // is resolved before the terminal surface sees the event, and Control
+        // chords must keep reaching the pty (⌃J is LF).
+        //
+        // It costs the Finder/VS Code muscle memory for "view options" and
+        // "toggle panel"; the latter is close to what this does.
         let sessions = NSMenuItem(title: "Sessions\u{2026}",
                                   action: #selector(showTaskManager),
-                                  keyEquivalent: "")
+                                  keyEquivalent: "j")
+        sessions.keyEquivalentModifierMask = [.command]
         sessions.target = self
         viewMenu.addItem(sessions)
 

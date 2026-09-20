@@ -2462,7 +2462,7 @@ final class TerminalViewController: NSViewController {
         var commands: [PaletteCommand] = [
             PaletteCommand(glyph: "◎", label: "Clear All Notifications", kbd: "") { [weak self] in self?.clearAllNotifications(nil) },
             PaletteCommand(glyph: "⚙", label: "Settings…", kbd: "⌘,") { [weak self] in self?.onOpenSettings?() },
-            PaletteCommand(glyph: "◱", label: "Sessions…", kbd: "") { [weak self] in self?.onShowTaskManager?() },
+            PaletteCommand(glyph: "◱", label: "Sessions…", kbd: "⌘J") { [weak self] in self?.onShowTaskManager?() },
         ]
         for tab in SettingsWindowController.Tab.allCases {
             commands.append(PaletteCommand(glyph: "⚙", label: "Settings: \(tab.rawValue)", kbd: "") { [weak self] in

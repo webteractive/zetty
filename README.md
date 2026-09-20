@@ -43,8 +43,8 @@ by the tool it's running.
   when **armed**, the CLI pill when **stale**, and an **↑ Update** button when one
   is waiting. Revealing the sidebar in a small window now splits the space it
   has instead of forcing the window wider.
-- **Sessions** — **View → Sessions…**, the command palette, or the status-bar
-  pill. It docks to the **bottom of the window** by default; the ⤡ button in
+- **Sessions** — `⌘J`, **View → Sessions…**, the command palette, or the
+  status-bar pill. It docks to the **bottom of the window** by default; the ⤡ button in
   its header detaches it into its own window, and the ⤠ button docks it back.
   Whichever form you leave it in is remembered — the buttons rewrite
   `zetty-sessions-view`. It lists
@@ -356,6 +356,7 @@ Command Line** and click install — this symlinks `zetty` into
 | `⌘W` / `⇧⌘W` | Close pane / close tab |
 | `⌘}` / `⌘{` | Next / previous tab |
 | `⌘1`–`⌘9` | Jump to tab |
+| `⌘J` | Toggle Sessions (docked drawer, or its own window) |
 | `⌘K` | Command palette (fuzzy — `go zetty` finds **Go to Project: zetty**) |
 | `⌘B` | Toggle sidebar — pinned → hidden → drawer |
 | `⇧⌘F` | Toggle the focused pane's file tree |
