@@ -11,7 +11,7 @@ final class TileConfigSheet: NSViewController {
 
     struct Result {
         let name: String
-        let grid: TilesGrid
+        let root: TileNode
         /// Non-nil when the user asked to keep this shape in the library.
         let saveAsLayout: String?
     }
@@ -33,12 +33,16 @@ final class TileConfigSheet: NSViewController {
     private let customRow = NSStackView()
     private let saveRow = NSStackView()
 
-    private var grid: TilesGrid {
+    /// The shape being configured. The steppers build a uniform tree; picking
+    /// a preset adopts that layout's tree whole, non-uniform included.
+    private var root: TileNode {
         didSet {
-            guard oldValue != grid else { return }
+            guard oldValue != root else { return }
             syncGridControls()
         }
     }
+    /// What the steppers show. Only meaningful while Custom is on.
+    private var customGrid: TilesGrid
 
     init(layouts: [TileLayout],
          name: String = "",
@@ -48,7 +52,8 @@ final class TileConfigSheet: NSViewController {
         self.layouts = layouts
         self.initialName = name
         self.initialGrid = grid
-        self.grid = grid
+        self.root = TileNode.uniform(grid)
+        self.customGrid = grid
         self.confirmTitle = confirmTitle
         self.onConfirm = onConfirm
         super.init(nibName: nil, bundle: nil)
@@ -202,7 +207,7 @@ final class TileConfigSheet: NSViewController {
         button.tag = tag
         button.bezelStyle = .smallSquare
         button.imagePosition = .imageAbove
-        button.image = TileConfigSheet.shapeImage(for: layout.grid)
+        button.image = TileConfigSheet.shapeImage(for: layout.root)
         button.font = ZTheme.chromeFont(size: 11)
         button.translatesAutoresizingMaskIntoConstraints = false
         NSLayoutConstraint.activate([
@@ -214,21 +219,20 @@ final class TileConfigSheet: NSViewController {
 
     /// Draws the grid as its own shape. A picture is the point of naming a
     /// layout — "2x3" is not something anyone reads at a glance.
-    static func shapeImage(for grid: TilesGrid, size: CGFloat = 32) -> NSImage {
+    static func shapeImage(for root: TileNode, size: CGFloat = 32) -> NSImage {
         let image = NSImage(size: NSSize(width: size, height: size), flipped: false) { rect in
-            let theme = ZTheme.current
             let gap: CGFloat = 2
-            let cellWidth = (rect.width - gap * CGFloat(grid.columns - 1)) / CGFloat(grid.columns)
-            let cellHeight = (rect.height - gap * CGFloat(grid.rows - 1)) / CGFloat(grid.rows)
-            theme.fg2Color.setFill()
-            for column in 0..<grid.columns {
-                for row in 0..<grid.rows {
-                    let cell = NSRect(x: CGFloat(column) * (cellWidth + gap),
-                                      y: rect.height - cellHeight
-                                          - CGFloat(row) * (cellHeight + gap),
-                                      width: cellWidth, height: cellHeight)
-                    NSBezierPath(roundedRect: cell, xRadius: 1.5, yRadius: 1.5).fill()
-                }
+            ZTheme.current.fg2Color.setFill()
+            // Straight from the layout engine, so a non-uniform shape draws as
+            // itself rather than as the nearest grid.
+            for frame in root.frames(in: LayoutRect(x: 0, y: 0, width: 1, height: 1)) {
+                let cell = NSRect(
+                    x: CGFloat(frame.x) * rect.width + gap / 2,
+                    // LayoutRect is top-left-origin; NSImage drawing is not.
+                    y: rect.height - CGFloat(frame.y + frame.height) * rect.height + gap / 2,
+                    width: CGFloat(frame.width) * rect.width - gap,
+                    height: CGFloat(frame.height) * rect.height - gap)
+                NSBezierPath(roundedRect: cell, xRadius: 1.5, yRadius: 1.5).fill()
             }
             return true
         }
@@ -239,11 +243,11 @@ final class TileConfigSheet: NSViewController {
     // MARK: - State
 
     private func syncGridControls() {
-        columnsStepper.integerValue = grid.columns
-        rowsStepper.integerValue = grid.rows
-        sizeLabel.stringValue = grid.configValue
+        columnsStepper.integerValue = customGrid.columns
+        rowsStepper.integerValue = customGrid.rows
+        sizeLabel.stringValue = customGrid.configValue
         for (index, button) in presetButtons.enumerated() {
-            let matches = layouts.indices.contains(index) && layouts[index].grid == grid
+            let matches = layouts.indices.contains(index) && layouts[index].root == root
             button.contentTintColor = matches
                 ? ZTheme.current.accentColor
                 : ZTheme.current.fg2Color
@@ -252,7 +256,7 @@ final class TileConfigSheet: NSViewController {
 
     @objc private func presetPicked(_ sender: NSButton) {
         guard layouts.indices.contains(sender.tag) else { return }
-        grid = layouts[sender.tag].grid
+        root = layouts[sender.tag].root
         customToggle.state = .off
         customRow.isHidden = true
         saveRow.isHidden = true
@@ -270,7 +274,9 @@ final class TileConfigSheet: NSViewController {
     }
 
     @objc private func stepperChanged() {
-        grid = TilesGrid(columns: columnsStepper.integerValue, rows: rowsStepper.integerValue)
+        customGrid = TilesGrid(columns: columnsStepper.integerValue,
+                               rows: rowsStepper.integerValue)
+        root = TileNode.uniform(customGrid)
     }
 
     @objc private func cancelClicked() { dismiss(nil) }
@@ -280,7 +286,7 @@ final class TileConfigSheet: NSViewController {
         let saveName = saveNameField.stringValue.trimmingCharacters(in: .whitespaces)
         let result = Result(
             name: name.isEmpty ? "Tiles" : name,
-            grid: grid,
+            root: root,
             saveAsLayout: (saveToggle.state == .on && !saveName.isEmpty) ? saveName : nil)
         dismiss(nil)
         onConfirm(result)

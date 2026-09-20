@@ -7,7 +7,7 @@ private func slot(_ name: String) -> TileSlot {
 }
 
 private func profile(grid: TilesGrid = TilesGrid(columns: 2, rows: 2)) -> TileProfile {
-    TileProfile(name: "morning", grid: grid)
+    TileProfile(name: "morning", root: TileNode.uniform(grid))
 }
 
 @Test func aNewProfileHasAHoleForEveryCell() {
@@ -44,22 +44,31 @@ private func profile(grid: TilesGrid = TilesGrid(columns: 2, rows: 2)) -> TilePr
     #expect(p.slots[1] != nil)
 }
 
-@Test func shrinkingTheGridNeverDropsAnAttachment() {
-    // The invariant that makes grid-as-a-cap safe.
-    var p = profile(grid: TilesGrid(columns: 4, rows: 4))
-    for index in 0..<12 { p.attach(slot("p\(index)"), at: index) }
-    p.setGrid(TilesGrid(columns: 1, rows: 1))
-    #expect(p.attachmentCount == 12)
-    #expect(p.slots.count == 12)
+@Test func splittingKeepsAttachmentsWithTheirLeaves() {
+    // THE load-bearing invariant of the tree model: split an EARLIER slot and
+    // the pane in a later one must still be in that same leaf.
+    var p = profile(grid: TilesGrid(columns: 2, rows: 1))
+    let pane = slot("zetty")
+    p.attach(pane, at: 1)
+    p.split(at: 0, direction: .horizontal)
+    #expect(p.capacity == 3)
+    #expect(p.slots[1] == nil)     // the new, empty leaf
+    #expect(p.slots[2] == pane)    // shifted along with its leaf
 }
 
-@Test func growingTheGridAddsHolesToAttachInto() {
-    var p = profile(grid: TilesGrid(columns: 1, rows: 1))
-    p.attach(slot("a"), at: 0)
-    p.setGrid(TilesGrid(columns: 2, rows: 2))
-    #expect(p.capacity == 4)
-    #expect(p.slots.count == 4)
-    #expect(p.attachmentCount == 1)
+@Test func closingASlotRemovesItsEntry() {
+    var p = profile(grid: TilesGrid(columns: 2, rows: 1))
+    let pane = slot("zetty")
+    p.attach(pane, at: 1)
+    p.close(at: 0)
+    #expect(p.capacity == 1)
+    #expect(p.slots == [pane])
+}
+
+@Test func closingTheLastSlotIsRefused() {
+    var p = TileProfile(name: "m", root: .slot)
+    p.close(at: 0)
+    #expect(p.capacity == 1)
 }
 
 @Test func aProfileRoundTripsThroughJSON() throws {
@@ -67,6 +76,14 @@ private func profile(grid: TilesGrid = TilesGrid(columns: 2, rows: 2)) -> TilePr
     p.attach(slot("zetty"), at: 1)
     let data = try JSONEncoder().encode(p)
     #expect(try JSONDecoder().decode(TileProfile.self, from: data) == p)
+}
+
+@Test func anOldLayoutWithAGridDecodesToAUniformTree() throws {
+    let json = """
+    {"id":"\(UUID().uuidString)","name":"Quad","grid":{"columns":2,"rows":2}}
+    """
+    let decoded = try JSONDecoder().decode(TileLayout.self, from: Data(json.utf8))
+    #expect(decoded.root == TileNode.uniform(columns: 2, rows: 2))
 }
 
 @Test func anUnknownKindDecodesAsManualRatherThanThrowing() throws {
@@ -85,5 +102,28 @@ private func profile(grid: TilesGrid = TilesGrid(columns: 2, rows: 2)) -> TilePr
      "grid":{"columns":99,"rows":99},"slots":[]}
     """
     let decoded = try JSONDecoder().decode(TileProfile.self, from: Data(json.utf8))
-    #expect(decoded.grid == TilesGrid(columns: 8, rows: 8))
+    #expect(decoded.capacity == 64)
+}
+
+@Test func anOldProfileWithAGridDecodesToAUniformTree() throws {
+    // Written before layouts were trees.
+    let json = """
+    {"id":"\(UUID().uuidString)","name":"m","kind":"manual",
+     "grid":{"columns":2,"rows":3},"slots":[]}
+    """
+    let decoded = try JSONDecoder().decode(TileProfile.self, from: Data(json.utf8))
+    #expect(decoded.root == TileNode.uniform(columns: 2, rows: 3))
+    #expect(decoded.capacity == 6)
+}
+
+@Test func aMigratedProfileIsSavedAsATree() throws {
+    // The legacy key is read once and never written back.
+    let json = """
+    {"id":"\(UUID().uuidString)","name":"m","kind":"manual",
+     "grid":{"columns":2,"rows":2},"slots":[]}
+    """
+    let decoded = try JSONDecoder().decode(TileProfile.self, from: Data(json.utf8))
+    let text = String(decoding: try JSONEncoder().encode(decoded), as: UTF8.self)
+    #expect(text.contains("root"))
+    #expect(!text.contains("grid"))
 }

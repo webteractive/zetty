@@ -12,12 +12,41 @@ import Foundation
 public struct TileLayout: Codable, Equatable, Sendable, Identifiable {
     public let id: UUID
     public var name: String
-    public var grid: TilesGrid
+    public var root: TileNode
 
-    public init(id: UUID = UUID(), name: String, grid: TilesGrid) {
+    public init(id: UUID = UUID(), name: String, root: TileNode) {
         self.id = id
         self.name = name
-        self.grid = grid
+        self.root = root
+    }
+
+    public init(id: UUID = UUID(), name: String, grid: TilesGrid) {
+        self.init(id: id, name: name, root: TileNode.uniform(grid))
+    }
+
+    private enum CodingKeys: String, CodingKey { case id, name, grid, root }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        let root: TileNode
+        if let stored = try container.decodeIfPresent(TileNode.self, forKey: .root) {
+            root = stored
+        } else {
+            // Written before layouts were trees.
+            root = TileNode.uniform(
+                try container.decodeIfPresent(TilesGrid.self, forKey: .grid) ?? .default)
+        }
+        self.init(id: try container.decode(UUID.self, forKey: .id),
+                  name: try container.decode(String.self, forKey: .name),
+                  root: root)
+    }
+
+    /// Writes `root` only — see the note on `TileProfile.encode`.
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(id, forKey: .id)
+        try container.encode(name, forKey: .name)
+        try container.encode(root, forKey: .root)
     }
 
     /// Seeded once into a fresh library. Editable and deletable like any
@@ -28,5 +57,14 @@ public struct TileLayout: Codable, Equatable, Sendable, Identifiable {
         TileLayout(name: "Stack", grid: TilesGrid(columns: 1, rows: 2)),
         TileLayout(name: "Quad", grid: TilesGrid(columns: 2, rows: 2)),
         TileLayout(name: "Grid", grid: TilesGrid(columns: 4, rows: 4)),
+        // Expressible only now that a layout is a tree: 1|2/3.
+        TileLayout(name: "Main + Two", root: .split(
+            direction: .vertical, ratio: 0.5,
+            first: .slot,
+            second: .split(direction: .horizontal, ratio: 0.5, first: .slot, second: .slot))),
+        TileLayout(name: "Two + Main", root: .split(
+            direction: .vertical, ratio: 0.5,
+            first: .split(direction: .horizontal, ratio: 0.5, first: .slot, second: .slot),
+            second: .slot)),
     ]
 }

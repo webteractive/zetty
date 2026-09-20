@@ -3913,7 +3913,7 @@ final class TerminalViewController: NSViewController {
                 label: "\(project.name) / \(tabDisplayTitle(for: tree, at: tabIndex))")
         }
         let copy = TileProfile(name: "\(source.name) copy", kind: .manual,
-                               grid: source.grid, slots: slots)
+                               root: source.root, slots: slots)
         tileLibrary.profiles.append(copy)
         persistTileLibrary()
         openTileViews.append(copy)
@@ -4001,12 +4001,12 @@ final class TerminalViewController: NSViewController {
         if !tileLibrary.layouts.isEmpty {
             let submenu = NSMenu()
             for layout in tileLibrary.layouts {
-                let item = NSMenuItem(title: "\(layout.name)  \(layout.grid.configValue)",
+                let item = NSMenuItem(title: layout.name,
                                       action: #selector(removeTileLayoutFromMenu(_:)),
                                       keyEquivalent: "")
                 item.target = self
                 item.representedObject = layout.id
-                item.image = TileConfigSheet.shapeImage(for: layout.grid, size: 14)
+                item.image = TileConfigSheet.shapeImage(for: layout.root, size: 14)
                 item.toolTip = "Remove this layout"
                 submenu.addItem(item)
             }
@@ -4121,7 +4121,7 @@ final class TerminalViewController: NSViewController {
         ) { [weak self] result in
             guard let self else { return }
             self.saveLayoutIfRequested(result)
-            let profile = TileProfile(name: result.name, grid: result.grid)
+            let profile = TileProfile(name: result.name, root: result.root)
             self.tileLibrary.profiles.append(profile)
             self.persistTileLibrary()
             self.openTileViews.append(profile)
@@ -4135,13 +4135,18 @@ final class TerminalViewController: NSViewController {
     /// truncates past an attachment.
     func configureActiveTileView() {
         guard let active = activeTileProfile, active.kind == .manual else { return }
-        presentTileConfigSheet(name: active.name, grid: active.grid, confirmTitle: "Apply") {
-            [weak self] result in
+        presentTileConfigSheet(name: active.name, grid: tilesGridProvider?() ?? .default,
+                               confirmTitle: "Apply") { [weak self] result in
             guard let self else { return }
             self.saveLayoutIfRequested(result)
+            // Replacing the shape drops attachments past the new leaf count —
+            // `padToCapacity` handles the grow case, and a shrink is the user
+            // explicitly asking for a smaller shape.
             self.mutateActiveTileProfile {
                 $0.name = result.name
-                $0.setGrid(result.grid)
+                $0.root = result.root
+                $0.slots = Array($0.slots.prefix($0.capacity))
+                    + Array(repeating: nil, count: max(0, $0.capacity - $0.slots.count))
             }
             self.rebuildSurfaceNodeView()
         }
@@ -4157,7 +4162,7 @@ final class TerminalViewController: NSViewController {
     /// The "Save as layout" checkbox: this is how the library grows.
     private func saveLayoutIfRequested(_ result: TileConfigSheet.Result) {
         guard let layoutName = result.saveAsLayout else { return }
-        tileLibrary.layouts.append(TileLayout(name: layoutName, grid: result.grid))
+        tileLibrary.layouts.append(TileLayout(name: layoutName, root: result.root))
         persistTileLibrary()
     }
 
@@ -5953,10 +5958,9 @@ final class TerminalViewController: NSViewController {
             let grid = tileGridView ?? TileGridView(
                 // The ACTIVE PROFILE's grid, not the global key — that one is
                 // only the default a new view is seeded with.
-                gridProvider: { [weak self] in
-                    self?.activeTileProfile?.grid
-                        ?? self?.tilesGridProvider?()
-                        ?? .default
+                rootProvider: { [weak self] in
+                    self?.activeTileProfile?.root
+                        ?? TileNode.uniform(self?.tilesGridProvider?() ?? .default)
                 },
                 onCounts: { [weak self] running, idle in
                     self?.statusBarView?.setTiles(running: running, idle: idle)

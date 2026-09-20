@@ -36,8 +36,6 @@ final class TileGridView: NSView {
     /// as the ones between tiles.
     private static let inset = CGFloat(TileGrid.spacing)
 
-    private let scrollView = NSScrollView()
-    private let documentView = NSView()
     private let emptyLabel = NSTextField(labelWithString: "")
 
     private var tiles: [TileView] = []
@@ -52,19 +50,19 @@ final class TileGridView: NSView {
     var onDropSidebarTab: ((Int, Int, Int) -> Bool)?
     private var focusedID: UUID?
 
-    /// Supplies `zetty-tiles-grid` at layout time rather than at construction,
-    /// so ⇧⌘, reload reaches an open grid without rebuilding it.
-    private let gridProvider: () -> TilesGrid
+    /// The active profile's layout tree, read at layout time rather than at
+    /// construction so an edit reaches an open grid without rebuilding it.
+    private let rootProvider: () -> TileNode
     /// Reports the running/idle split to whoever renders it — the status bar.
     private let onCounts: (Int, Int) -> Void
 
-    init(gridProvider: @escaping () -> TilesGrid,
+    init(rootProvider: @escaping () -> TileNode,
          onCounts: @escaping (Int, Int) -> Void,
          onActivate: @escaping (UUID) -> Void,
          onGoToPane: @escaping (UUID) -> Void,
          onAttach: @escaping (Int) -> Void,
          onDetach: @escaping (Int) -> Void) {
-        self.gridProvider = gridProvider
+        self.rootProvider = rootProvider
         self.onCounts = onCounts
         self.onActivate = onActivate
         self.onGoToPane = onGoToPane
@@ -87,14 +85,6 @@ final class TileGridView: NSView {
         let theme = ZTheme.current
         layer?.backgroundColor = theme.bg1Color.cgColor
 
-        scrollView.hasVerticalScroller = true
-        scrollView.hasHorizontalScroller = false
-        scrollView.drawsBackground = false
-        scrollView.translatesAutoresizingMaskIntoConstraints = false
-        documentView.translatesAutoresizingMaskIntoConstraints = true
-        scrollView.documentView = documentView
-        addSubview(scrollView)
-
         emptyLabel.font = ZTheme.chromeFont(size: 12)
         emptyLabel.textColor = theme.fg3Color
         emptyLabel.alignment = .center
@@ -109,13 +99,8 @@ final class TileGridView: NSView {
         addSubview(emptyLabel)
 
         NSLayoutConstraint.activate([
-            scrollView.topAnchor.constraint(equalTo: topAnchor),
-            scrollView.leadingAnchor.constraint(equalTo: leadingAnchor),
-            scrollView.trailingAnchor.constraint(equalTo: trailingAnchor),
-            scrollView.bottomAnchor.constraint(equalTo: bottomAnchor),
-
             emptyLabel.centerXAnchor.constraint(equalTo: centerXAnchor),
-            emptyLabel.centerYAnchor.constraint(equalTo: scrollView.centerYAnchor),
+            emptyLabel.centerYAnchor.constraint(equalTo: centerYAnchor),
             emptyLabel.leadingAnchor.constraint(greaterThanOrEqualTo: leadingAnchor,
                                                 constant: 16),
             emptyLabel.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor,
@@ -135,14 +120,12 @@ final class TileGridView: NSView {
         if let message = emptyMessage {
             emptyLabel.stringValue = message
             emptyLabel.isHidden = false
-            scrollView.isHidden = true
             onCounts(0, 0)
             return
         }
         // Cleared, not just hidden: an unset string keeps its intrinsic width.
         emptyLabel.stringValue = ""
         emptyLabel.isHidden = true
-        scrollView.isHidden = false
 
         let attached = descriptors.filter { $0.surfaceID != nil }
         let running = attached.filter { $0.status != .idle }.count
@@ -168,7 +151,7 @@ final class TileGridView: NSView {
                 onGoToPane: { [weak self] in if let id { self?.onGoToPane(id) } },
                 onDetach: { [weak self] in self?.onDetach(index) })
             tile.translatesAutoresizingMaskIntoConstraints = true
-            documentView.addSubview(tile)
+            addSubview(tile)
             tiles.append(tile)
         }
         needsLayout = true
@@ -189,7 +172,7 @@ final class TileGridView: NSView {
     /// produced. Reading the frames rather than recomputing the arithmetic is
     /// what stops the drop target drifting away from what is drawn.
     private func slotIndex(at windowPoint: NSPoint) -> Int? {
-        let local = documentView.convert(windowPoint, from: nil)
+        let local = convert(windowPoint, from: nil)
         return tiles.firstIndex { $0.frame.contains(local) }
     }
 
@@ -219,46 +202,30 @@ final class TileGridView: NSView {
 
     override func layout() {
         super.layout()
-        guard !tiles.isEmpty else {
-            documentView.frame = .zero
-            return
-        }
-        let clip = scrollView.contentView.bounds.size
-        let available = CGSize(width: clip.width - Self.inset * 2,
-                               height: clip.height - Self.inset * 2)
-        guard available.width > 0, available.height > 0 else { return }
+        guard !tiles.isEmpty else { return }
+        let inset = Self.inset
+        let area = NSRect(x: inset, y: inset,
+                          width: bounds.width - inset * 2,
+                          height: bounds.height - inset * 2)
+        guard area.width > 0, area.height > 0 else { return }
 
-        let grid = TileGrid.layout(count: tiles.count,
-                                   width: Double(available.width),
-                                   height: Double(available.height),
-                                   grid: gridProvider())
-        guard grid.columns > 0 else { return }
-
-        let spacing = CGFloat(TileGrid.spacing)
-        let tileW = CGFloat(grid.tileWidth)
-        let tileH = CGFloat(grid.tileHeight)
-        let documentHeight = CGFloat(grid.rows) * tileH
-            + CGFloat(max(0, grid.rows - 1)) * spacing
-            + Self.inset * 2
-        documentView.frame = NSRect(x: 0, y: 0,
-                                    width: clip.width,
-                                    height: max(clip.height, documentHeight))
+        let root = rootProvider()
+        let gap = CGFloat(TileGrid.spacing) / 2
+        let frames = root.frames(in: LayoutRect(x: 0, y: 0, width: 1, height: 1))
 
         for (index, tile) in tiles.enumerated() {
-            let column = index % grid.columns
-            let row = index / grid.columns
-            let x = Self.inset + CGFloat(column) * (tileW + spacing)
-            // The document view is unflipped, so y grows upward: row 0 must
-            // sit at the TOP of the document.
-            let y = documentView.frame.height - Self.inset - tileH
-                - CGFloat(row) * (tileH + spacing)
-            tile.frame = NSRect(x: x, y: y, width: tileW, height: tileH)
+            guard index < frames.count else { tile.frame = .zero; continue }
+            let frame = frames[index]
+            // LayoutRect is top-left-origin; an unflipped NSView is not.
+            tile.frame = NSRect(
+                x: area.minX + CGFloat(frame.x) * area.width + gap,
+                y: area.minY + area.height
+                    - CGFloat(frame.y + frame.height) * area.height + gap,
+                width: CGFloat(frame.width) * area.width - gap * 2,
+                height: CGFloat(frame.height) * area.height - gap * 2)
         }
 
-        let configured = gridProvider()
-        ZettyLog.chrome.log("tiles: count=\(tiles.count) cols=\(grid.columns) "
-            + "cap=\(configured.configValue) "
-            + "rows=\(grid.rows) tile=\(Int(tileW))x\(Int(tileH)) "
-            + "scrolls=\(grid.scrolls) clip=\(Int(clip.width))x\(Int(clip.height))")
+        ZettyLog.chrome.log("tiles: leaves=\(frames.count) depth=\(root.depth) "
+            + "bounds=\(Int(bounds.width))x\(Int(bounds.height))")
     }
 }

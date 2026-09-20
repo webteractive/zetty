@@ -38,23 +38,32 @@ public struct TileProfile: Codable, Equatable, Sendable {
     public var id: UUID
     public var name: String
     public var kind: TileProfileKind
-    /// Caps columns and VISIBLE rows. It does not cap attachments.
-    public var grid: TilesGrid
+    /// The layout tree. Its leaves, in first-to-second order, ARE the slot
+    /// indices below.
+    public var root: TileNode
     /// nil is a hole you can attach into. May be longer than `capacity`; the
     /// view scrolls past it.
     public var slots: [TileSlot?]
 
     public init(id: UUID = UUID(), name: String, kind: TileProfileKind = .manual,
-                grid: TilesGrid = .default, slots: [TileSlot?] = []) {
+                root: TileNode = TileNode.uniform(.default), slots: [TileSlot?] = []) {
         self.id = id
         self.name = name
         self.kind = kind
-        self.grid = grid
+        self.root = root
         self.slots = slots
         padToCapacity()
     }
 
-    public var capacity: Int { grid.columns * grid.rows }
+    /// A uniform profile — `TilesGrid` is a constructor for a tree now, not a
+    /// shape of its own.
+    public init(id: UUID = UUID(), name: String, kind: TileProfileKind = .manual,
+                grid: TilesGrid, slots: [TileSlot?] = []) {
+        self.init(id: id, name: name, kind: kind,
+                  root: TileNode.uniform(grid), slots: slots)
+    }
+
+    public var capacity: Int { root.leafCount }
     public var attachmentCount: Int { slots.compactMap { $0 }.count }
 
     /// Fills one slot, growing the list when the index is past the end.
@@ -73,20 +82,25 @@ public struct TileProfile: Codable, Equatable, Sendable {
     public mutating func detach(at index: Int) {
         guard slots.indices.contains(index) else { return }
         slots[index] = nil
-        trimTrailingHoles()
+    }
+
+    /// Divides a slot in two. The new leaf is `index + 1`, so its hole goes
+    /// there — that is what keeps every later attachment with its own leaf.
+    public mutating func split(at index: Int, direction: SplitDirection) {
+        guard root.split(at: index, direction: direction) else { return }
+        slots.insert(nil, at: min(index + 1, slots.count))
         padToCapacity()
     }
 
-    /// Resizing NEVER truncates `slots`. The grid caps what is visible and the
-    /// view scrolls past it, so shrinking a profile's grid can never silently
-    /// drop a pane.
-    public mutating func setGrid(_ grid: TilesGrid) {
-        self.grid = grid
-        // Trim first, then pad: shrinking should not leave phantom `+ Attach`
-        // cells trailing past the new capacity, but it must never reach an
-        // attachment — `trimTrailingHoles` only ever removes nils.
-        trimTrailingHoles()
+    /// Removes a slot and collapses its split.
+    public mutating func close(at index: Int) {
+        guard root.close(at: index) else { return }
+        if slots.indices.contains(index) { slots.remove(at: index) }
         padToCapacity()
+    }
+
+    public mutating func setRatio(atDivider index: Int, to ratio: Double) {
+        root.setRatio(atDivider: index, to: ratio)
     }
 
     private mutating func padToCapacity() {
@@ -95,26 +109,40 @@ public struct TileProfile: Codable, Equatable, Sendable {
         }
     }
 
-    private mutating func trimTrailingHoles() {
-        while slots.count > capacity, slots.last == .some(nil) {
-            slots.removeLast()
-        }
-    }
 }
 
 extension TileProfile {
-    private enum CodingKeys: String, CodingKey { case id, name, kind, grid, slots }
+    private enum CodingKeys: String, CodingKey { case id, name, kind, grid, root, slots }
 
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         // An unknown kind from a newer build degrades to manual rather than
         // throwing away the whole library.
         let kind = (try? container.decode(TileProfileKind.self, forKey: .kind)) ?? .manual
+        let root: TileNode
+        if let stored = try container.decodeIfPresent(TileNode.self, forKey: .root) {
+            root = stored
+        } else {
+            // Written before layouts were trees.
+            root = TileNode.uniform(
+                try container.decodeIfPresent(TilesGrid.self, forKey: .grid) ?? .default)
+        }
         self.init(
             id: try container.decode(UUID.self, forKey: .id),
             name: try container.decode(String.self, forKey: .name),
             kind: kind,
-            grid: try container.decodeIfPresent(TilesGrid.self, forKey: .grid) ?? .default,
+            root: root,
             slots: try container.decodeIfPresent([TileSlot?].self, forKey: .slots) ?? [])
+    }
+
+    /// Writes `root` only. The legacy `grid` key is read for migration and
+    /// never written back, so a file converts itself the first time it is saved.
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(id, forKey: .id)
+        try container.encode(name, forKey: .name)
+        try container.encode(kind, forKey: .kind)
+        try container.encode(root, forKey: .root)
+        try container.encode(slots, forKey: .slots)
     }
 }

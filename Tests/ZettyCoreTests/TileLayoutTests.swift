@@ -4,14 +4,8 @@ import Testing
 
 @Test func theBuiltInLayoutsCoverTheCommonShapes() {
     let names = TileLayout.builtIns.map(\.name)
-    #expect(names == ["Focus", "Pair", "Stack", "Quad", "Grid"])
-    #expect(TileLayout.builtIns.map(\.grid) == [
-        TilesGrid(columns: 1, rows: 1),
-        TilesGrid(columns: 2, rows: 1),
-        TilesGrid(columns: 1, rows: 2),
-        TilesGrid(columns: 2, rows: 2),
-        TilesGrid(columns: 4, rows: 4),
-    ])
+    #expect(names == ["Focus", "Pair", "Stack", "Quad", "Grid", "Main + Two", "Two + Main"])
+    #expect(TileLayout.builtIns.map(\.root.leafCount) == [1, 2, 2, 4, 16, 3, 3])
 }
 
 @Test func everyBuiltInHasItsOwnIdentity() {
@@ -30,7 +24,7 @@ import Testing
     {"id":"\(UUID().uuidString)","name":"huge","grid":{"columns":40,"rows":40}}
     """
     let decoded = try JSONDecoder().decode(TileLayout.self, from: Data(json.utf8))
-    #expect(decoded.grid == TilesGrid(columns: 8, rows: 8))
+    #expect(decoded.root.leafCount == 64)
 }
 
 @Test func anOlderLibraryWithoutLayoutsStillLoads() throws {
