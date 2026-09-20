@@ -1,6 +1,11 @@
 import Foundation
 
 public struct PaneTree: Codable, Sendable, Equatable {
+    /// Stable identity for this tab, so a tile-profile slot can point at it.
+    /// Decoded tolerantly and minted when absent — neither of the things that
+    /// identify a tab today will do as a key: display titles are regenerated
+    /// from the running agent every second, and indices shift on reorder.
+    public var id: UUID = UUID()
     public var layout: Layout
     public var focusedSurfaceID: UUID?
     public var manualTitle: String?
@@ -10,13 +15,26 @@ public struct PaneTree: Codable, Sendable, Equatable {
     public var zoomedSurfaceID: UUID?
 
     private enum CodingKeys: String, CodingKey {
-        case layout, focusedSurfaceID, manualTitle
+        case id, layout, focusedSurfaceID, manualTitle
     }
 
-    public init(layout: Layout, focusedSurfaceID: UUID? = nil, manualTitle: String? = nil) {
+    public init(layout: Layout, focusedSurfaceID: UUID? = nil,
+                manualTitle: String? = nil, id: UUID = UUID()) {
+        self.id = id
         self.layout = layout
         self.focusedSurfaceID = focusedSurfaceID
         self.manualTitle = manualTitle
+    }
+
+    /// Hand-written so a `workspace.json` from before tile profiles — which has
+    /// no `id` — loads and mints one instead of throwing.
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.id = try container.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
+        self.layout = try container.decode(Layout.self, forKey: .layout)
+        self.focusedSurfaceID = try container.decodeIfPresent(UUID.self,
+                                                              forKey: .focusedSurfaceID)
+        self.manualTitle = try container.decodeIfPresent(String.self, forKey: .manualTitle)
     }
 
     public var focusedSurface: Surface? {
