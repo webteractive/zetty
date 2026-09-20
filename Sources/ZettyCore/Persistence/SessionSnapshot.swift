@@ -20,7 +20,9 @@ public enum SessionSnapshot {
     /// All tabs are grouped under one default `Project` → `Session`.
     public static func workspace(from tabList: TabList) -> Workspace {
         let tabs = tabList.trees.map { tree in
-            Tab(title: tree.manualTitle ?? "", layout: tree.layout)
+            // `Tab.id` IS `PaneTree.id` — carried in both directions so a tile
+            // slot that names a tab still names it after a relaunch.
+            Tab(id: tree.id, title: tree.manualTitle ?? "", layout: tree.layout)
         }
         let session = Session(title: defaultSessionTitle, tabs: tabs)
         let project = Project(
@@ -66,7 +68,11 @@ public enum SessionSnapshot {
         let projects = persistable.enumerated().map { savedIndex, entry in
             let runtime = entry.element
             let tabs = runtime.tabList.trees.map { tree in
-                Tab(title: tree.manualTitle ?? "",
+                // `Tab.id` IS `PaneTree.id` — see the note in `workspace(from
+                // tabList:)`. Losing it here would make every tile slot resolve
+                // as missing on the next launch.
+                Tab(id: tree.id,
+                    title: tree.manualTitle ?? "",
                     layout: tree.layout,
                     focusedSurfaceID: tree.focusedSurfaceID)
             }
@@ -132,7 +138,8 @@ public enum SessionSnapshot {
             let focusID = tab.focusedSurfaceID.flatMap { surfaceIDs.contains($0) ? $0 : nil }
                 ?? surfaceIDs.first
             let manualTitle = tab.title.isEmpty ? nil : tab.title
-            return PaneTree(layout: tab.layout, focusedSurfaceID: focusID, manualTitle: manualTitle)
+            return PaneTree(layout: tab.layout, focusedSurfaceID: focusID,
+                            manualTitle: manualTitle, id: tab.id)
         }
     }
 }

@@ -34,3 +34,24 @@ import Testing
     tree.manualTitle = "renamed"
     #expect(tree.id == before)
 }
+
+// MARK: - Identity across persistence
+
+@Test func aTabIdentitySurvivesASaveAndRestore() {
+    // The whole durability promise of a tile slot: it names a tab by id, so
+    // that id must be the SAME object after a relaunch. `Tab` carries its own
+    // `id` and `PaneTree` carries one too — if the snapshot does not thread
+    // them together, every slot resolves as missing on the next launch.
+    let surface = Surface(workingDir: "/tmp/zetty")
+    let tree = PaneTree(layout: Layout(root: .leaf(surface)), focusedSurfaceID: surface.id)
+    let original = tree.id
+
+    let model = WorkspaceModel(restoring: [
+        ProjectRuntime(name: "zetty", rootPath: "/tmp/zetty",
+                       tabList: TabList(restoring: [tree], defaultWorkingDir: "/tmp/zetty")),
+    ])!
+    let saved = SessionSnapshot.workspace(from: model)
+    let restored = SessionSnapshot.projectRuntimes(from: saved)
+
+    #expect(restored.first?.tabList.trees.first?.id == original)
+}
