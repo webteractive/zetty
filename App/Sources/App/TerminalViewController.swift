@@ -2459,6 +2459,7 @@ final class TerminalViewController: NSViewController {
             PaletteCommand(glyph: "⛶", label: "Toggle Sidebar", kbd: "⌘B") { [weak self] in self?.toggleSidebar(nil) },
             PaletteCommand(glyph: "▤", label: "Toggle File Tree", kbd: "⇧⌘F") { [weak self] in self?.toggleFileTree(nil) },
             PaletteCommand(glyph: "⤓", label: "Scroll to Bottom", kbd: "⌘↓") { [weak self] in self?.scrollToBottom(nil) },
+            PaletteCommand(glyph: "▦", label: "Tile Running Sessions", kbd: "⇧⌘G") { [weak self] in self?.toggleTileMode() },
             PaletteCommand(glyph: "⇉", label: "Broadcast: Tab", kbd: "") { [weak self] in self?.setBroadcast(.currentTab) },
             PaletteCommand(glyph: "⇉", label: "Broadcast: Project", kbd: "") { [weak self] in self?.setBroadcast(.project) },
             PaletteCommand(glyph: "⇉", label: "Broadcast: Agents", kbd: "") { [weak self] in self?.setBroadcast(.agents) },

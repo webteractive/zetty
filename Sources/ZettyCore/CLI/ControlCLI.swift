@@ -117,6 +117,7 @@ public enum ControlCLI {
                                               close a pane (a tab's last pane closes
                                               the tab; --tab closes the whole tab)
       zetty reload                          reload zetty config (⇧⌘, equivalent)
+      zetty tiles [--on|--off]              toggle the grid of running sessions (⇧⌘G)
       zetty scratch [--focus]               open a project-less, ephemeral terminal
                                               (Scratch section) in the background;
                                               --focus switches to it. Prints its
@@ -162,7 +163,7 @@ public enum ControlCLI {
     public static func recognizes(_ arguments: [String]) -> Bool {
         guard let first = arguments.first else { return false }
         return ["status", "ls", "send", "capture", "view", "new-tab", "add-project", "new-project", "clone", "update-clone",
-                "remove-project", "hibernate", "wake", "split", "break", "focus", "close", "reload",
+                "remove-project", "hibernate", "wake", "split", "break", "focus", "close", "reload", "tiles",
                 "scratch", "scratch-clear", "quit", "accounts", "run",
                 "new-space", "rename-space", "remove-space", "move-to-space",
                 "help", "--help", "-h",
@@ -235,6 +236,10 @@ public enum ControlCLI {
             return runClose(arguments)
         case "reload":
             return expectOK(.reload, success: "reloaded")
+        case "tiles":
+            let on: Bool? = arguments.contains("--off") ? false
+                : (arguments.contains("--on") ? true : nil)
+            return expectOK(.tiles(on: on), success: "ok")
         case "scratch":
             return runScratch(arguments)
         case "scratch-clear":

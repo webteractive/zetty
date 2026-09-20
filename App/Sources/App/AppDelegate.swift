@@ -1341,6 +1341,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     /// a close so reopening does not rebuild the whole thing.
     private var taskManagerWindowController: TaskManagerWindowController?
 
+    /// Toggles the grid of running sessions. Menu, palette, prefix `g` and
+    /// `zetty tiles` all land here.
+    @MainActor @objc func toggleTileMode() {
+        terminalViewController?.toggleTileMode()
+    }
+
     /// Opens Sessions in whichever form `zetty-sessions-view` names, and
     /// closes the drawer again if it is already showing — the status bar pill
     /// and the menu item are both toggles.
@@ -1868,6 +1874,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             return .status(tvc.statusSnapshot())
         case .reload:
             self.reloadConfiguration(nil)
+            return .ok
+        case .tiles(let on):
+            // A fast verb: plain view-state mutation through handleOnMain,
+            // never the slow-verb path clone/capture/quit use.
+            if let on { tvc.setTileMode(on) } else { tvc.toggleTileMode() }
             return .ok
         case .viewFile(let path, let line, let column):
             if let message = tvc.presentFileViewer(path: path, line: line, column: column) {
@@ -2470,6 +2481,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         sessions.keyEquivalentModifierMask = [.command]
         sessions.target = self
         viewMenu.addItem(sessions)
+
+        // ⇧⌘G, audited free across all four surfaces on 2026-09-20. ⇧⌘G rather
+        // than ⌘G deliberately: ⌘G conventionally means find-next and the
+        // deferred find-in-file for the viewer will want it. What ⇧⌘G costs is
+        // find-previous in editors and Go to Folder in Finder, neither of
+        // which Zetty has. ⌘ rather than ⌃ so the chord never reaches the pty.
+        let tiles = NSMenuItem(title: "Tile Running Sessions",
+                               action: #selector(toggleTileMode),
+                               keyEquivalent: "G")
+        tiles.keyEquivalentModifierMask = [.command, .shift]
+        tiles.target = self
+        viewMenu.addItem(tiles)
 
         // "Toggle Sidebar"  ⌘B
         let toggleSidebar = NSMenuItem(
