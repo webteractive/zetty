@@ -2513,6 +2513,8 @@ final class TerminalViewController: NSViewController {
             PaletteCommand(glyph: "▤", label: "Toggle File Tree", kbd: "⇧⌘F") { [weak self] in self?.toggleFileTree(nil) },
             PaletteCommand(glyph: "⤓", label: "Scroll to Bottom", kbd: "⌘↓") { [weak self] in self?.scrollToBottom(nil) },
             PaletteCommand(glyph: "▦", label: "Tile Running Sessions", kbd: "⇧⌘G") { [weak self] in self?.toggleTileMode() },
+            PaletteCommand(glyph: "▦", label: "New Tile View", kbd: "") { [weak self] in self?.setTileMode(true); self?.newTileView() },
+            PaletteCommand(glyph: "⧉", label: "Duplicate Tile View as Manual", kbd: "") { [weak self] in self?.duplicateActiveTileViewAsManual() },
             PaletteCommand(glyph: "⇉", label: "Broadcast: Tab", kbd: "") { [weak self] in self?.setBroadcast(.currentTab) },
             PaletteCommand(glyph: "⇉", label: "Broadcast: Project", kbd: "") { [weak self] in self?.setBroadcast(.project) },
             PaletteCommand(glyph: "⇉", label: "Broadcast: Agents", kbd: "") { [weak self] in self?.setBroadcast(.agents) },
@@ -3869,7 +3871,46 @@ final class TerminalViewController: NSViewController {
     /// Where each slot of the active view currently points.
     func tileResolution() -> [ResolvedSlot] {
         guard let profile = activeTileProfile else { return [] }
-        return TileResolution.resolve(profile: profile, projects: workspace.projects)
+        guard profile.kind == .allRunning else {
+            return TileResolution.resolve(profile: profile, projects: workspace.projects)
+        }
+        // The computed profile's slots come from the probe via the sticky rule,
+        // not from disk — which is what keeps `TileMembership` and its
+        // ordering tests earning their place.
+        let existing = Set(allSurfaceIDs)
+        let busy = allSurfaceIDs.filter { foregroundBySurface[$0].map { !$0.isEmpty } ?? false }
+        allRunningOrder = TileMembership.update(previous: allRunningOrder,
+                                                busy: busy, existing: existing)
+        return allRunningOrder.map { entry in
+            guard let found = location(ofSurface: entry.surfaceID) else {
+                return .missing(paneLabel(for: entry.surfaceID) ?? "pane")
+            }
+            return .pane(projectIndex: found.projectIndex, tabIndex: found.tabIndex,
+                         surfaceID: entry.surfaceID)
+        }
+    }
+
+    /// Snapshots the computed view into an editable one. This is the on-ramp:
+    /// open All Running, see what is there, duplicate, delete what you do not
+    /// want — rather than building a view from nothing.
+    func duplicateActiveTileViewAsManual() {
+        guard let source = activeTileProfile else { return }
+        let slots: [TileSlot?] = tileResolution().map { resolved in
+            guard case .pane(let projectIndex, let tabIndex, _) = resolved,
+                  workspace.projects.indices.contains(projectIndex) else { return nil }
+            let project = workspace.projects[projectIndex]
+            guard project.tabList.trees.indices.contains(tabIndex) else { return nil }
+            let tree = project.tabList.trees[tabIndex]
+            return TileSlot(
+                projectRoot: project.rootPath, tabID: tree.id,
+                label: "\(project.name) / \(tabDisplayTitle(for: tree, at: tabIndex))")
+        }
+        let copy = TileProfile(name: "\(source.name) copy", kind: .manual,
+                               grid: source.grid, slots: slots)
+        tileLibrary.profiles.append(copy)
+        persistTileLibrary()
+        openTileViews.append(copy)
+        selectTileView(at: openTileViews.count - 1)
     }
 
     /// Surface ids of the attached panes, in slot order — the focus ring.
@@ -3941,6 +3982,15 @@ final class TerminalViewController: NSViewController {
                              keyEquivalent: "")
         new.target = self
         menu.addItem(new)
+        // The computed view cannot be edited in place, so offer the way across
+        // right where someone would look for it.
+        if let active = activeTileProfile, active.kind == .allRunning {
+            let duplicate = NSMenuItem(title: "Duplicate \u{201C}\(active.name)\u{201D} as Manual",
+                                       action: #selector(duplicateTileViewFromMenu),
+                                       keyEquivalent: "")
+            duplicate.target = self
+            menu.addItem(duplicate)
+        }
         menu.popUp(positioning: nil,
                    at: NSPoint(x: 0, y: anchor.bounds.height), in: anchor)
     }
@@ -3951,6 +4001,8 @@ final class TerminalViewController: NSViewController {
     }
 
     @objc private func newTileViewFromMenu() { newTileView() }
+
+    @objc private func duplicateTileViewFromMenu() { duplicateActiveTileViewAsManual() }
 
     func openTileView(profileID: UUID) {
         if let existing = openTileViews.firstIndex(where: { $0.id == profileID }) {
