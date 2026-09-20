@@ -6,7 +6,7 @@ import Foundation
 /// fill the window, and at or above it the grid is exactly this shape and
 /// scrolls. So the setting answers "never smaller than this" — which is the
 /// only thing a grid of live terminals needs it to answer.
-public struct TilesGrid: Equatable, Sendable {
+public struct TilesGrid: Equatable, Sendable, Codable {
     public let columns: Int
     public let rows: Int
 
@@ -34,6 +34,16 @@ public struct TilesGrid: Equatable, Sendable {
     }
 
     public var configValue: String { "\(columns)x\(rows)" }
+
+    private enum CodingKeys: String, CodingKey { case columns, rows }
+
+    /// Routed through the clamping initialiser — a synthesized decoder would
+    /// bypass it, and a hand-edited 99x99 must not produce a grid of slivers.
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(columns: try container.decode(Int.self, forKey: .columns),
+                  rows: try container.decode(Int.self, forKey: .rows))
+    }
 }
 
 /// Where every tile goes, for one grid pass.
