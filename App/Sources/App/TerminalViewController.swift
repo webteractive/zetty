@@ -5809,7 +5809,13 @@ final class TerminalViewController: NSViewController {
         // surfaces the grid shows are ones `allSurfaceIDs` already retains.
         if tileMode {
             let grid = tileGridView ?? TileGridView(
-                gridProvider: { [weak self] in self?.tilesGridProvider?() ?? .default },
+                // The ACTIVE PROFILE's grid, not the global key — that one is
+                // only the default a new view is seeded with.
+                gridProvider: { [weak self] in
+                    self?.activeTileProfile?.grid
+                        ?? self?.tilesGridProvider?()
+                        ?? .default
+                },
                 onCounts: { [weak self] running, idle in
                     self?.statusBarView?.setTiles(running: running, idle: idle)
                 },
