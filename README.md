@@ -43,6 +43,15 @@ by the tool it's running.
   when **armed**, the CLI pill when **stale**, and an **↑ Update** button when one
   is waiting. Revealing the sidebar in a small window now splits the space it
   has instead of forcing the window wider.
+- **Tile mode** — `⇧⌘G`, `Ctrl+B g`, **View → Tile Running Sessions**, the
+  command palette, or `zetty tiles`. A grid of **live, interactive terminals**:
+  one tile per pane that is actually running something, gathered from every
+  awake project. The tiles are the real terminals, so typing into the focused
+  one reaches its shell — answer three agents without leaving the grid. A pane
+  that finishes stays tiled and dims rather than vanishing under your cursor,
+  and leaving lands you in whichever tile you last typed into. Panes that have
+  a session but were never opened this launch attach in the background, two
+  seconds apart. Needs `preserve-sessions = true`; without it the grid says so.
 - **Sessions** — `⌘J`, **View → Sessions…**, the command palette, or the
   status-bar pill. It docks to the **bottom of the window** by default; the ⤡ button in
   its header detaches it into its own window, and the ⤠ button docks it back.
@@ -357,6 +366,7 @@ Command Line** and click install — this symlinks `zetty` into
 | `⌘}` / `⌘{` | Next / previous tab |
 | `⌘1`–`⌘9` | Jump to tab |
 | `⌘J` | Toggle Sessions (docked drawer, or its own window) |
+| `⇧⌘G` | Toggle tile mode — a grid of every running session |
 | `⌘K` | Command palette (fuzzy — `go zetty` finds **Go to Project: zetty**) |
 | `⌘B` | Toggle sidebar — pinned → hidden → drawer |
 | `⇧⌘F` | Toggle the focused pane's file tree |
@@ -405,6 +415,7 @@ Press `Ctrl+B` (the prefix, configurable), then:
 | `z` | Zoom / unzoom pane |
 | `!` | Break focused pane into a new tab |
 | `e` | Toggle the focused pane's file tree |
+| `g` | Toggle tile mode — a grid of every running session |
 | `c` | New tab |
 | `n` / `p` | Next / previous tab |
 | `1`–`9` | Jump to tab |
@@ -828,6 +839,8 @@ zetty scratch-clear                      # close and clear all scratch terminals
 zetty focus --cwd ~/work/api
 zetty close --pane 1a2b3c4d --tab
 zetty reload                             # same as ⇧⌘,
+zetty tiles                              # toggle the grid of running sessions
+zetty tiles --off                        # close it (idempotent, for scripts)
 zetty quit --kill-sessions               # full shutdown, ends preserved sessions
 zetty quit --simulate-restart            # run restart recovery, then kill sessions (testing aid)
 ```

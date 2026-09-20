@@ -1644,6 +1644,65 @@ Writing tests against these types: **arithmetic inside an `#expect` operand is
 typed as `Int` and compared against `Int64`**, which fails while printing two
 identical numbers. Precompute the expected value into a typed constant.
 
+### Tile mode
+
+⇧⌘G (also `Ctrl+B g`, **View → Tile Running Sessions**, ⌘K, and `zetty tiles`)
+replaces the pane area with a grid of **live, interactive terminals** — one
+tile per pane the foreground probe reports running a command, across every
+awake project. Design:
+`docs/superpowers/specs/2026-09-20-tile-mode-design.md`. Pure model in
+`ZettyCore/Tiles/` (`TileMembership` · `TileGrid`), both unit-tested; AppKit in
+`App/Sources/App/Tiles/` (`TileView` · `TileGridView`).
+
+Five things here will look like tidy-ups and are not:
+
+- **The tiles are the registry's real `AppTerminalView`s**, so typing into a
+  focused tile reaches its pty with no forwarding. That is the whole mechanism,
+  and it is why a tile resizes the pty and every TUI in it reflows — accepted,
+  because it is also what bounds the cost: per-pane GPU is `pane_px × 4 × 3`,
+  and N tiles partition one window's area, so the grid costs about one
+  full-window pane's worth rather than `N × 37 MB`.
+- **Membership is sticky.** A pane that goes idle stays tiled, dims, and keeps
+  its index forever (`TileMembership`); only a surface that stops existing is
+  dropped. The probe re-reports every 3s and the tiles are interactive, so a
+  grid that dropped idle panes would remove the tile being typed into at the
+  moment it went idle waiting for input.
+- **Esc and ⏎ belong to the pty, never the grid** — "esc to interrupt" is
+  Claude's own UI and ⏎ submits. So the toggle is the only exit, and **it
+  always lands on the focused tile's pane**. Touch nothing and that is where
+  you started; answer three agents and you exit into the last one.
+- **Tile mode never changes the active project.** Moving focus across tiles
+  would otherwise re-run `applyThemeForActiveProject()` per hop, and with
+  per-project appearance overrides the app would flip dark/light as you arrow
+  around. One project switch happens, on exit. The status bar still follows the
+  focused TILE (`statusBarSurface`), so its cwd, branch and account describe
+  what is being typed into.
+- **Missing surfaces are attached on a stagger** (`tileSpawnInterval`, 2s).
+  After a relaunch the probe reads session pids directly, so it reports busy
+  panes whose tabs were never viewed. `SurfaceRegistry.pair(for:)` creates the
+  pty eagerly with no window required, so this is one call per tick — and
+  deliberately NOT `ensurePaneIsLive`, which cannot work here: while `tileMode`
+  is on the rebuild renders the grid, so selecting a project and tab renders
+  the grid again and spawns nothing.
+
+Bindings are **re-interpreted at dispatch** in `perform(binding:interceptor:)`
+rather than given a third table: `h/j/k/l`/arrows/`o` move tile focus, `1`–`9`
+select the Nth tile, `x` and ⌘W close that pane in its own project, and the tab
+verbs (`c n p ,`) plus the splits are silent no-ops because they would act on a
+project you cannot see. Copy mode falls through unchanged and is
+**needs-testing, not done** — its cursor maths assumes a pane-sized viewport.
+
+With `preserve-sessions` off there is no probe and the grid is permanently
+empty — it says so rather than rendering blank, like the file viewer's `.empty`
+case. `TileGridView` is in `probeWindowFloor()`'s list: it lives inside the
+main window, so a floor it sets is invisible to every other measurement. Its
+tiles are frame-positioned inside the scroll view's document view, never
+constrained against the clip — the tab strip's rule.
+
+Deferred: a broadcast scope over tiles, drag-reordering, per-tile font
+overrides, tiling hibernated projects, persisting tile mode across relaunch,
+and a detachable Sessions-style window.
+
 ### Sidebar drawer
 
 `⌘B` cycles **pinned → hidden → drawer**. From hidden the sidebar floats over
@@ -1843,7 +1902,9 @@ has, falls back to matching every pane by `cwd`.
     conventionally means and let the user decide. Recorded precedent: ⇧⌘F is
     "find in files" in VS Code and Zed, and it is deliberately spent on Toggle
     File Tree; a future project-wide content search needs a different chord
-    rather than stealing this one back.
+    rather than stealing this one back. ⇧⌘G is spent on Toggle Tile Mode,
+    costing find-previous and Finder's Go to Folder — plain ⌘G was left free on
+    purpose, for the viewer's deferred find-in-file.
 - Do not commit debug `NSLog`/`print` statements.
 - Never commit or push without being asked; never add `Co-Authored-By` or a
   session link to commit messages.
