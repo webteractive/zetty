@@ -57,9 +57,7 @@ final class TileChooserView: NSView {
             stack.addArrangedSubview(row(profiles.enumerated().map { index, profile in
                 button(title: profile.name,
                        image: TileConfigSheet.shapeImage(for: profile.root),
-                       subtitle: profile.kind == .allRunning
-                           ? "auto"
-                           : "\(profile.attachmentCount) of \(profile.capacity)",
+                       subtitle: "\(profile.attachmentCount) of \(profile.capacity)",
                        tag: index, action: #selector(profilePicked(_:)))
             }))
         }

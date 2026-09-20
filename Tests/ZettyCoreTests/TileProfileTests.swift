@@ -87,19 +87,20 @@ private func profile(grid: TilesGrid = TilesGrid(columns: 2, rows: 2)) -> TilePr
 }
 
 @Test func anUnknownKindDecodesAsManualRatherThanThrowing() throws {
-    // Forward compatibility: an older build must not choke on a newer file.
+    // Profiles used to carry a `kind`; the computed view is gone and the key
+    // is simply not read any more.
     let json = """
-    {"id":"\(UUID().uuidString)","name":"x","kind":"someFutureKind",
+    {"id":"\(UUID().uuidString)","name":"x","kind":"allRunning",
      "grid":{"columns":2,"rows":2},"slots":[]}
     """
     let decoded = try JSONDecoder().decode(TileProfile.self, from: Data(json.utf8))
-    #expect(decoded.kind == .manual)
+    #expect(decoded.name == "x")
+    #expect(decoded.capacity == 4)
 }
 
 @Test func aHandEditedGridIsClampedOnDecode() throws {
     let json = """
-    {"id":"\(UUID().uuidString)","name":"x","kind":"manual",
-     "grid":{"columns":99,"rows":99},"slots":[]}
+    {"id":"\(UUID().uuidString)","name":"x","grid":{"columns":99,"rows":99},"slots":[]}
     """
     let decoded = try JSONDecoder().decode(TileProfile.self, from: Data(json.utf8))
     #expect(decoded.capacity == 64)
@@ -108,8 +109,7 @@ private func profile(grid: TilesGrid = TilesGrid(columns: 2, rows: 2)) -> TilePr
 @Test func anOldProfileWithAGridDecodesToAUniformTree() throws {
     // Written before layouts were trees.
     let json = """
-    {"id":"\(UUID().uuidString)","name":"m","kind":"manual",
-     "grid":{"columns":2,"rows":3},"slots":[]}
+    {"id":"\(UUID().uuidString)","name":"m","grid":{"columns":2,"rows":3},"slots":[]}
     """
     let decoded = try JSONDecoder().decode(TileProfile.self, from: Data(json.utf8))
     #expect(decoded.root == TileNode.uniform(columns: 2, rows: 3))
@@ -119,8 +119,7 @@ private func profile(grid: TilesGrid = TilesGrid(columns: 2, rows: 2)) -> TilePr
 @Test func aMigratedProfileIsSavedAsATree() throws {
     // The legacy key is read once and never written back.
     let json = """
-    {"id":"\(UUID().uuidString)","name":"m","kind":"manual",
-     "grid":{"columns":2,"rows":2},"slots":[]}
+    {"id":"\(UUID().uuidString)","name":"m","grid":{"columns":2,"rows":2},"slots":[]}
     """
     let decoded = try JSONDecoder().decode(TileProfile.self, from: Data(json.utf8))
     let text = String(decoding: try JSONEncoder().encode(decoded), as: UTF8.self)

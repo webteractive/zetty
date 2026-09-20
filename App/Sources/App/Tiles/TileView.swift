@@ -159,6 +159,13 @@ final class TileView: NSView {
         goToPaneButton.translatesAutoresizingMaskIntoConstraints = false
         header.addSubview(goToPaneButton)
 
+        // Double-clicking the HEADER leaves tile mode for this pane. It has to
+        // be the header: the body is the terminal view, which consumes its own
+        // mouse events, so a click there never reaches this view at all.
+        let jump = NSClickGestureRecognizer(target: self, action: #selector(headerDoubleClicked))
+        jump.numberOfClicksRequired = 2
+        header.addGestureRecognizer(jump)
+
         NSLayoutConstraint.activate([
             header.topAnchor.constraint(equalTo: topAnchor,
                                         constant: Self.borderWidth),
@@ -311,14 +318,16 @@ final class TileView: NSView {
     // MARK: - Interaction
 
     override func mouseDown(with event: NSEvent) {
-        // Single click focuses the tile (or opens the picker for a hole);
-        // double click leaves the grid for that pane, which is the gesture the
-        // header's arrow used to carry before × took its place.
         if event.clickCount >= 2, surfaceID != nil {
             onGoToPane()
         } else {
             onActivate()
         }
         super.mouseDown(with: event)
+    }
+
+    @objc private func headerDoubleClicked() {
+        guard surfaceID != nil else { return }
+        onGoToPane()
     }
 }

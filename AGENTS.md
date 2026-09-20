@@ -1753,12 +1753,15 @@ right-click offers `Add to Tile View ▸`. All three call
 lands on the GRID, outside the outline view, so `SidebarView.validateDrop` —
 the rule protecting the pinned-first invariant — is never consulted.
 
-**All Running is computed, not stored.** `TileProfile.kind == .allRunning`
-takes its slots from `TileMembership` at render time, which is what keeps that
-type and its sticky-ordering tests alive. `mutateActiveTileProfile` REFUSES to
-edit it (a write would be silently lost and read as a bug); **Duplicate as
-Manual** snapshots it into an editable view. It is the one thing here that
-still needs `preserve-sessions`, and it says so when empty.
+**There is no All Running view.** Toggling into tile mode opens the CHOOSER;
+an auto-filled view was what made the grid unreadable at sixteen tiles, and the
+picker replaced it rather than joining it. `TileProfileKind` and
+`TileMembership` were deleted with it, and `loadTileLibrary` drops a stored
+"All Running" profile on read so an old library cleans itself up.
+
+**Double-clicking a tile's HEADER leaves the grid for that pane.** It has to be
+the header: the body is the terminal view, which consumes its own mouse events,
+so a click there never reaches `TileView` at all.
 
 **Chrome.** The strip carries tile-view pills while the grid is up
 (`refreshTabBar` branches; every `tabBar.on*` callback branches with it), `+`

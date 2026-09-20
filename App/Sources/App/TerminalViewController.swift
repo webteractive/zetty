@@ -624,8 +624,6 @@ final class TerminalViewController: NSViewController {
                     else { continue }
                     self.updateSurfaceAnywhere(id) { $0.runningAccountID = nil }
                 }
-                // Only the computed profile's membership rides the probe.
-                if self.activeTileProfile?.kind == .allRunning { self.refreshTileGrid() }
                 self.setNeedsChromeRefresh(tabBar: true, sidebar: true)
             }
         }
@@ -2559,7 +2557,6 @@ final class TerminalViewController: NSViewController {
             PaletteCommand(glyph: "▦", label: "Tile Running Sessions", kbd: "⇧⌘G") { [weak self] in self?.toggleTileMode() },
             PaletteCommand(glyph: "▦", label: "New Tile View", kbd: "") { [weak self] in self?.setTileMode(true); self?.newTileView() },
             PaletteCommand(glyph: "▤", label: "Configure Tile View…", kbd: "") { [weak self] in self?.configureActiveTileView() },
-            PaletteCommand(glyph: "⧉", label: "Duplicate Tile View as Manual", kbd: "") { [weak self] in self?.duplicateActiveTileViewAsManual() },
             PaletteCommand(glyph: "⇉", label: "Broadcast: Tab", kbd: "") { [weak self] in self?.setBroadcast(.currentTab) },
             PaletteCommand(glyph: "⇉", label: "Broadcast: Project", kbd: "") { [weak self] in self?.setBroadcast(.project) },
             PaletteCommand(glyph: "⇉", label: "Broadcast: Agents", kbd: "") { [weak self] in self?.setBroadcast(.agents) },
@@ -3855,8 +3852,6 @@ final class TerminalViewController: NSViewController {
     /// `mutateActiveTileProfile`.
     private(set) var openTileViews: [TileProfile] = []
     private(set) var activeTileViewIndex = 0
-    /// Sticky order for the computed All Running profile only.
-    private var allRunningOrder: [TileEntry] = []
 
     var activeTileProfile: TileProfile? {
         openTileViews.indices.contains(activeTileViewIndex)
@@ -3878,12 +3873,6 @@ final class TerminalViewController: NSViewController {
     func mutateActiveTileProfile(persist: Bool = true,
                                  _ change: (inout TileProfile) -> Void) {
         guard openTileViews.indices.contains(activeTileViewIndex) else { return }
-        // The computed profile's slots come from the probe, so a write would be
-        // silently lost — which would read as a bug rather than a refusal.
-        guard openTileViews[activeTileViewIndex].kind != .allRunning else {
-            ZettyLog.chrome.log("tiles: refused an edit to the computed All Running profile")
-            return
-        }
         change(&openTileViews[activeTileViewIndex])
         let profile = openTileViews[activeTileViewIndex]
         if let index = tileLibrary.profiles.firstIndex(where: { $0.id == profile.id }) {
@@ -3911,11 +3900,11 @@ final class TerminalViewController: NSViewController {
     func loadTileLibrary(openIDs: [UUID], activeIndex: Int) {
         tileLibrary = tileProfileStore?.load() ?? TileProfileFile()
         var seeded = false
-        if !tileLibrary.profiles.contains(where: { $0.kind == .allRunning }) {
-            tileLibrary.profiles.insert(
-                TileProfile(name: "All Running", kind: .allRunning), at: 0)
-            seeded = true
-        }
+        // An "All Running" profile from before the picker replaced it. It was a
+        // computed view with no slots of its own, so there is nothing to keep.
+        let before = tileLibrary.profiles.count
+        tileLibrary.profiles.removeAll { $0.name == "All Running" && $0.slots.allSatisfy { $0 == nil } }
+        if tileLibrary.profiles.count != before { seeded = true }
         if tileLibrary.layouts.isEmpty {
             tileLibrary.layouts = TileLayout.builtIns
             seeded = true
@@ -3933,46 +3922,7 @@ final class TerminalViewController: NSViewController {
     /// Where each slot of the active view currently points.
     func tileResolution() -> [ResolvedSlot] {
         guard let profile = activeTileProfile else { return [] }
-        guard profile.kind == .allRunning else {
-            return TileResolution.resolve(profile: profile, projects: workspace.projects)
-        }
-        // The computed profile's slots come from the probe via the sticky rule,
-        // not from disk — which is what keeps `TileMembership` and its
-        // ordering tests earning their place.
-        let existing = Set(allSurfaceIDs)
-        let busy = allSurfaceIDs.filter { foregroundBySurface[$0].map { !$0.isEmpty } ?? false }
-        allRunningOrder = TileMembership.update(previous: allRunningOrder,
-                                                busy: busy, existing: existing)
-        return allRunningOrder.map { entry in
-            guard let found = location(ofSurface: entry.surfaceID) else {
-                return .missing(paneLabel(for: entry.surfaceID) ?? "pane")
-            }
-            return .pane(projectIndex: found.projectIndex, tabIndex: found.tabIndex,
-                         surfaceID: entry.surfaceID)
-        }
-    }
-
-    /// Snapshots the computed view into an editable one. This is the on-ramp:
-    /// open All Running, see what is there, duplicate, delete what you do not
-    /// want — rather than building a view from nothing.
-    func duplicateActiveTileViewAsManual() {
-        guard let source = activeTileProfile else { return }
-        let slots: [TileSlot?] = tileResolution().map { resolved in
-            guard case .pane(let projectIndex, let tabIndex, _) = resolved,
-                  workspace.projects.indices.contains(projectIndex) else { return nil }
-            let project = workspace.projects[projectIndex]
-            guard project.tabList.trees.indices.contains(tabIndex) else { return nil }
-            let tree = project.tabList.trees[tabIndex]
-            return TileSlot(
-                projectRoot: project.rootPath, tabID: tree.id,
-                label: "\(project.name) / \(tabDisplayTitle(for: tree, at: tabIndex))")
-        }
-        let copy = TileProfile(name: "\(source.name) copy", kind: .manual,
-                               root: source.root, slots: slots)
-        tileLibrary.profiles.append(copy)
-        persistTileLibrary()
-        openTileViews.append(copy)
-        selectTileView(at: openTileViews.count - 1)
+        return TileResolution.resolve(profile: profile, projects: workspace.projects)
     }
 
     /// Surface ids of the attached panes, in slot order — the focus ring.
@@ -4044,7 +3994,7 @@ final class TerminalViewController: NSViewController {
                              keyEquivalent: "")
         new.target = self
         menu.addItem(new)
-        if let active = activeTileProfile, active.kind == .manual {
+        if let active = activeTileProfile {
             let configure = NSMenuItem(title: "Configure \u{201C}\(active.name)\u{201D}\u{2026}",
                                        action: #selector(configureTileViewFromMenu),
                                        keyEquivalent: "")
@@ -4069,15 +4019,6 @@ final class TerminalViewController: NSViewController {
             parent.submenu = submenu
             menu.addItem(parent)
         }
-        // The computed view cannot be edited in place, so offer the way across
-        // right where someone would look for it.
-        if let active = activeTileProfile, active.kind == .allRunning {
-            let duplicate = NSMenuItem(title: "Duplicate \u{201C}\(active.name)\u{201D} as Manual",
-                                       action: #selector(duplicateTileViewFromMenu),
-                                       keyEquivalent: "")
-            duplicate.target = self
-            menu.addItem(duplicate)
-        }
         menu.popUp(positioning: nil,
                    at: NSPoint(x: 0, y: anchor.bounds.height), in: anchor)
     }
@@ -4088,8 +4029,6 @@ final class TerminalViewController: NSViewController {
     }
 
     @objc private func newTileViewFromMenu() { newTileView() }
-
-    @objc private func duplicateTileViewFromMenu() { duplicateActiveTileViewAsManual() }
 
     @objc private func configureTileViewFromMenu() { configureActiveTileView() }
 
@@ -4119,7 +4058,7 @@ final class TerminalViewController: NSViewController {
     /// Views a pane can be sent to, plus New View. Manual only — the computed
     /// profile has no slots to write into.
     func tileViewMenuEntries() -> [(title: String, profileID: UUID?)] {
-        tileLibrary.profiles.filter { $0.kind == .manual }.map { ($0.name, $0.id) }
+        tileLibrary.profiles.map { ($0.name, $0.id) }
             + [("New View\u{2026}", nil)]
     }
 
@@ -4200,7 +4139,7 @@ final class TerminalViewController: NSViewController {
     /// Reconfigures the open view. Safe on a populated one: `setGrid` never
     /// truncates past an attachment.
     func configureActiveTileView() {
-        guard let active = activeTileProfile, active.kind == .manual else { return }
+        guard let active = activeTileProfile else { return }
         presentTileConfigSheet(name: active.name, grid: tilesGridProvider?() ?? .default,
                                confirmTitle: "Apply") { [weak self] result in
             guard let self else { return }
@@ -4317,15 +4256,8 @@ final class TerminalViewController: NSViewController {
     /// lesson, applied here.
     private func tileEmptyMessage() -> String? {
         if openTileViews.isEmpty { return "No tile views. Press + to make one." }
-        // A manual view with holes is not empty — the holes ARE the affordance.
-        // Only the computed profile can legitimately have nothing to show.
-        guard activeTileProfile?.kind == .allRunning, tileResolution().isEmpty
-        else { return nil }
-        guard ZmxRunner.locate() != nil, !lastSessionPIDs.isEmpty else {
-            return "All Running needs preserved sessions \u{2014} "
-                + "set preserve-sessions = true, or build a view by hand."
-        }
-        return "Nothing is running right now."
+        // A view with holes is not empty — the holes ARE the affordance.
+        return nil
     }
 
     private func tileDescriptors() -> [TileDescriptor] {

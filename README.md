@@ -52,7 +52,8 @@ by the tool it's running.
     for a fuzzy-searchable list of every pane, drag a tab row out of the
     sidebar onto it, or use a pane's right-click → **Add to Tile View ▸**.
     A tile's `×` (and `⌘W`) detaches the slot — the pane keeps running; press
-    it again on the now-empty slot to remove the slot itself.
+    it again on the now-empty slot to remove the slot itself. **Double-click a
+    tile's header** to leave the grid for that pane.
   - **Tile views are tabs.** While the grid is up the tab bar's strip carries
     tile views instead of the active project's tabs, with `+` opening your
     saved **profiles**. Several can be open at once.
@@ -72,10 +73,6 @@ by the tool it's running.
     A slot remembers its project and tab, so it reattaches after a relaunch
     even if the tab was renamed or reordered; one whose tab is gone shows the
     name it had, with a **Reattach…** action.
-  - **All Running** is a built-in profile that auto-fills with every pane that
-    is running something — the old behaviour, now one choice among several.
-    It needs `preserve-sessions = true`; manual views do not. **Duplicate as
-    Manual** turns it into an editable view.
   - `zetty-tiles-grid` (default `4x4`) seeds a new view with a uniform shape;
     each profile keeps its own tree thereafter. The status bar carries the
     running/idle count while the grid is up.

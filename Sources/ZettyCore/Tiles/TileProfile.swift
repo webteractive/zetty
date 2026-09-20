@@ -24,12 +24,6 @@ public struct TileSlot: Codable, Equatable, Sendable {
 
 // MARK: - TileProfileKind
 
-public enum TileProfileKind: String, Codable, Sendable {
-    case manual
-    /// Slots are computed from `TileMembership` at render time, not stored.
-    case allRunning
-}
-
 // MARK: - TileProfile
 
 /// A tile view, saved. An OPEN view is this same object — edits write through
@@ -37,7 +31,6 @@ public enum TileProfileKind: String, Codable, Sendable {
 public struct TileProfile: Codable, Equatable, Sendable {
     public var id: UUID
     public var name: String
-    public var kind: TileProfileKind
     /// The layout tree. Its leaves, in first-to-second order, ARE the slot
     /// indices below.
     public var root: TileNode
@@ -45,11 +38,10 @@ public struct TileProfile: Codable, Equatable, Sendable {
     /// view scrolls past it.
     public var slots: [TileSlot?]
 
-    public init(id: UUID = UUID(), name: String, kind: TileProfileKind = .manual,
+    public init(id: UUID = UUID(), name: String,
                 root: TileNode = TileNode.uniform(.default), slots: [TileSlot?] = []) {
         self.id = id
         self.name = name
-        self.kind = kind
         self.root = root
         self.slots = slots
         padToCapacity()
@@ -57,10 +49,9 @@ public struct TileProfile: Codable, Equatable, Sendable {
 
     /// A uniform profile — `TilesGrid` is a constructor for a tree now, not a
     /// shape of its own.
-    public init(id: UUID = UUID(), name: String, kind: TileProfileKind = .manual,
+    public init(id: UUID = UUID(), name: String,
                 grid: TilesGrid, slots: [TileSlot?] = []) {
-        self.init(id: id, name: name, kind: kind,
-                  root: TileNode.uniform(grid), slots: slots)
+        self.init(id: id, name: name, root: TileNode.uniform(grid), slots: slots)
     }
 
     public var capacity: Int { root.leafCount }
@@ -112,13 +103,10 @@ public struct TileProfile: Codable, Equatable, Sendable {
 }
 
 extension TileProfile {
-    private enum CodingKeys: String, CodingKey { case id, name, kind, grid, root, slots }
+    private enum CodingKeys: String, CodingKey { case id, name, grid, root, slots }
 
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
-        // An unknown kind from a newer build degrades to manual rather than
-        // throwing away the whole library.
-        let kind = (try? container.decode(TileProfileKind.self, forKey: .kind)) ?? .manual
         let root: TileNode
         if let stored = try container.decodeIfPresent(TileNode.self, forKey: .root) {
             root = stored
@@ -130,7 +118,6 @@ extension TileProfile {
         self.init(
             id: try container.decode(UUID.self, forKey: .id),
             name: try container.decode(String.self, forKey: .name),
-            kind: kind,
             root: root,
             slots: try container.decodeIfPresent([TileSlot?].self, forKey: .slots) ?? [])
     }
@@ -141,7 +128,6 @@ extension TileProfile {
         var container = encoder.container(keyedBy: CodingKeys.self)
         try container.encode(id, forKey: .id)
         try container.encode(name, forKey: .name)
-        try container.encode(kind, forKey: .kind)
         try container.encode(root, forKey: .root)
         try container.encode(slots, forKey: .slots)
     }
