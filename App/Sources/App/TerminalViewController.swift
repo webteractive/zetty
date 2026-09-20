@@ -1892,7 +1892,13 @@ final class TerminalViewController: NSViewController {
         let rendered = parts.compactMap { name, candidate in
             candidate.map { "\(name)=\(Int($0.fittingSize.width))" }
         }.joined(separator: " ")
-        ZettyLog.chrome.log("floors(\(note)) min=\(Int(view.window?.contentMinSize.width ?? 0)) "
+        // Footprint rides along: it is the same reading the Sessions window
+        // shows, and comparing it against `footprint -p <pid>` is what catches
+        // a wrong Mach flavour, which compiles fine and returns a plausible
+        // wrong number.
+        let footprint = ProcessFootprint.current().map(ByteFormat.short) ?? "unknown"
+        ZettyLog.chrome.log("floors(\(note)) footprint=\(footprint) "
+            + "min=\(Int(view.window?.contentMinSize.width ?? 0)) "
             + "actual=\(Int(view.window?.frame.width ?? 0)) \(rendered)")
     }
 
