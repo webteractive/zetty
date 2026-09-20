@@ -21,6 +21,9 @@ final class StatusBarView: NSView {
     /// Shows the "Open in…" picker (editors + Finder); opening happens only
     /// when an item is selected. The anchor view positions the menu.
     var onShowEditorMenu: ((NSView) -> Void)?
+    /// The same picker as a detached menu, so the compact bar can hang it off
+    /// the `⋯` menu as a submenu rather than popping a second menu.
+    var onBuildEditorMenu: (() -> NSMenu)?
 
     private let topBorder = NSView()
 
@@ -511,15 +514,18 @@ final class StatusBarView: NSView {
     override func layout() {
         super.layout()
 
-        // Measure before deciding. A stack reports zero while hidden, so the
-        // last real measurement stands in — otherwise a compact bar would read
-        // "0 fits in anything" and snap back to wide on the very next pass.
+        // Measured only to SIZE the frame-positioned stack, never to decide
+        // the layout. A stack reports zero while hidden, so the last real
+        // measurement stands in.
         let measured = infoStack.fittingSize.width
         if measured > 0 { cachedInfoWidth = measured }
 
-        let available = infoHost.bounds.width
-        let compact = StatusBarCompaction.isCompact(available: Double(available),
-                                                    required: Double(cachedInfoWidth),
+        // The decision is the WINDOW's width. Deciding from leftover space
+        // meant the threshold moved every time an agent ran `cd`, because the
+        // left cluster holds the very path being measured against — so the bar
+        // flapped between layouts while nothing was being resized.
+        let windowWidth = Double(bounds.width)
+        let compact = StatusBarCompaction.isCompact(windowWidth: windowWidth,
                                                     wasCompact: isCompact)
         let flipped = compact != isCompact
         if flipped {
@@ -536,9 +542,8 @@ final class StatusBarView: NSView {
         // this back first.
         if flipped || !didLogFloor, let content = window?.contentView {
             didLogFloor = true
-            ZettyLog.chrome.log("statusbar: compact=\(compact) available=\(Int(available)) "
-                + "required=\(Int(cachedInfoWidth)) "
-                + "left=\(Int(leftStack.fittingSize.width)) "
+            ZettyLog.chrome.log("statusbar: compact=\(compact) width=\(Int(windowWidth)) "
+                + "threshold=\(Int(StatusBarCompaction.compactBelow)) "
                 + "pills=\(Int(pillStack.fittingSize.width)) "
                 + "bar=\(Int(fittingSize.width)) "
                 + "content=\(Int(content.fittingSize.width))")
@@ -558,20 +563,14 @@ final class StatusBarView: NSView {
     /// them expanded would leave the path unreadable, and back again once
     /// there is room.
     ///
-    /// Measured against what the cwd would be left with — not against whether
-    /// git itself fits. The cwd truncates silently, so "does it fit" is always
-    /// yes and would never fire; what matters is how much of the path survives.
+    /// Driven by the window's width. Measuring leftover space meant the
+    /// threshold moved every time an agent ran `cd` — the path being measured
+    /// is part of what it was measured against.
     private func layoutLocationCluster() {
         let measured = gitStack.fittingSize.width
         if measured > 0 { cachedGitWidth = measured }
 
-        // Everything in the left cluster that is neither the cwd nor git.
-        let fixed = [modeChip, zoomChip, accountPill]
-            .filter { !$0.isHidden }
-            .reduce(0) { $0 + $1.fittingSize.width + leftStack.spacing }
-        let space = leftStack.bounds.width - fixed - cachedGitWidth - leftStack.spacing
-
-        let collapse = LocationChip.shouldCollapse(spaceIfExpanded: Double(space),
+        let collapse = LocationChip.shouldCollapse(windowWidth: Double(bounds.width),
                                                    wasCollapsed: isLocationCollapsed)
         guard collapse != isLocationCollapsed else { return }
         isLocationCollapsed = collapse
@@ -594,8 +593,8 @@ final class StatusBarView: NSView {
         renderLocationChip()
         if changed {
             ZettyLog.chrome.log("location: collapsed=\(isLocationCollapsed) chip=\(showChip) "
-                + "floor=\(Int(LocationChip.cwdFloor)) gitWidth=\(Int(cachedGitWidth)) "
-                + "left=\(Int(leftStack.bounds.width))")
+                + "width=\(Int(bounds.width)) "
+                + "threshold=\(Int(StatusBarCompaction.collapseLeftBelow))")
         }
     }
 
@@ -738,10 +737,13 @@ final class StatusBarView: NSView {
         broadcast.target = self
         menu.addItem(broadcast)
 
-        let open = NSMenuItem(title: "Open Directory In…",
-                              action: #selector(showEditorMenuFromChip), keyEquivalent: "")
-        open.target = self
-        menu.addItem(open)
+        // A submenu, not a second popup: every other entry here opens sideways,
+        // and an item that closes this menu to open one of its own reads as a
+        // different kind of control.
+        if let editors = onBuildEditorMenu?() {
+            menu.addItem(withTitle: "Open Directory In", action: nil, keyEquivalent: "")
+                .submenu = editors
+        }
 
         menu.addItem(.separator())
         for item in [StatusInfoItem.shell, .ghostty] where !infoValues.label(for: item).isEmpty {
@@ -755,13 +757,6 @@ final class StatusBarView: NSView {
         menu.addItem(version)
 
         popUp(menu, from: infoChip)
-    }
-
-    /// Hands off to the same picker the `Open ▾` pill shows. It opens as its
-    /// own menu once this one closes — a second click, which is the whole cost
-    /// of folding a menu into a menu.
-    @objc private func showEditorMenuFromChip() {
-        onShowEditorMenu?(infoChip)
     }
 
     private func configureStack(_ stack: NSStackView, views: [NSView]) {

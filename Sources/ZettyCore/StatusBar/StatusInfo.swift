@@ -70,24 +70,56 @@ public struct StatusInfoValues: Equatable, Sendable {
 
 // MARK: - StatusBarCompaction
 
-/// Decides whether the status bar's ambient group has room to render in full,
-/// or must fold into the single cycling chip.
+/// Decides whether the status bar renders in full or folds into its two pills.
+///
+/// **Driven by the WINDOW's width, not by leftover space.** The first version
+/// compared the space left over beside the left cluster against what the
+/// ambient stats needed — but the left cluster holds the working directory and
+/// the branch, which change every time an agent runs `cd`. The threshold moved
+/// several times a second and the bar visibly flapped between layouts while
+/// nothing was being resized. A window width only changes when someone drags
+/// the window, which is the only moment either layout should change.
 public enum StatusBarCompaction {
 
-    /// How much clear space re-expanding demands beyond the bare requirement.
+    /// Below this content width the ambient stats fold into one pill.
     ///
-    /// Without a band, a window parked exactly on the threshold swaps the whole
-    /// right cluster back and forth on every pixel of a drag.
-    public static let hysteresis: Double = 24
+    /// Derived from what the wide layout actually measures rather than picked:
+    /// the ambient group needs ~411pt, the action pills ~140, margins ~50, and
+    /// the working directory and git want ~260 between them to stay readable.
+    public static let compactBelow: Double = 860
+
+    /// Below this, the working directory and git fold together too. By then
+    /// the ambient stats have already gone, so the left cluster has the bar
+    /// nearly to itself and still cannot show a readable path beside a branch.
+    public static let collapseLeftBelow: Double = 520
+
+    /// How much clear width re-expanding demands beyond the threshold.
+    ///
+    /// Small, because the threshold no longer moves on its own: this only has
+    /// to stop a window parked exactly on the edge from swapping layouts on
+    /// every pixel of a drag.
+    public static let hysteresis: Double = 16
 
     /// - Parameters:
-    ///   - available: leftover width between the left cluster and the trailing
-    ///     action pills. May arrive negative mid-resize.
-    ///   - required: the ambient group's natural width.
-    ///   - wasCompact: the state being replaced, which sets which edge of the
+    ///   - windowWidth: the status bar's own width, which spans the window's
+    ///     content. Stable across content changes, unlike leftover space.
+    ///   - wasCompact: the state being replaced, picking which edge of the
     ///     hysteresis band applies.
-    public static func isCompact(available: Double, required: Double, wasCompact: Bool) -> Bool {
-        guard required > 0 else { return false }
-        return wasCompact ? available < required + hysteresis : available < required
+    public static func isCompact(windowWidth: Double, wasCompact: Bool) -> Bool {
+        below(compactBelow, windowWidth: windowWidth, wasInside: wasCompact)
+    }
+
+    /// Whether the working directory and git should fold into one pill.
+    public static func isLeftCollapsed(windowWidth: Double, wasCollapsed: Bool) -> Bool {
+        below(collapseLeftBelow, windowWidth: windowWidth, wasInside: wasCollapsed)
+    }
+
+    private static func below(_ threshold: Double,
+                              windowWidth: Double,
+                              wasInside: Bool) -> Bool {
+        // A zero width is a view that has not been laid out yet; treat it as
+        // roomy so the bar does not flash its compact form on first paint.
+        guard windowWidth > 0 else { return wasInside }
+        return wasInside ? windowWidth < threshold + hysteresis : windowWidth < threshold
     }
 }

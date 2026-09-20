@@ -168,6 +168,18 @@ final class TaskManagerWindowController: NSWindowController, NSWindowDelegate {
     // MARK: - Content
 
     private func reload() {
+        // Captured before `rows` is replaced: `selectedRow` is an index into
+        // the list currently on screen, and reading it afterwards would look up
+        // an old index in a new list.
+        //
+        // And it is remembered BY SESSION, never by index: the list re-sorts by
+        // CPU every few seconds, so restoring the index would quietly move the
+        // selection to whichever session took that slot — and the selection is
+        // what the actions act on.
+        let previouslySelected = rows.indices.contains(tableView.selectedRow)
+            ? rows[tableView.selectedRow].session
+            : nil
+
         rows = rowsProvider()
         let footprint = footprintProvider().map(ByteFormat.short) ?? "unknown"
         let sessions = rows.count
@@ -180,7 +192,12 @@ final class TaskManagerWindowController: NSWindowController, NSWindowDelegate {
             ? "No sessions. Panes run inside zmx sessions only when preserve-sessions is on."
             : ""
         emptyLabel.isHidden = !rows.isEmpty
+
         tableView.reloadData()
+        if let previouslySelected,
+           let restored = rows.firstIndex(where: { $0.session == previouslySelected }) {
+            tableView.selectRowIndexes(IndexSet(integer: restored), byExtendingSelection: false)
+        }
     }
 
     // MARK: - Actions

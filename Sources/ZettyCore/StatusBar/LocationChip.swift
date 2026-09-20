@@ -17,11 +17,6 @@ import Foundation
 /// pinned to the trailing one, so nothing clickable moves when this text grows.
 public enum LocationChip {
 
-    /// How much room the expanded cluster is owed before it folds. Roughly a
-    /// dozen characters of mono 11 — enough for `…/some-project`, which is the
-    /// part of a path worth reading.
-    public static let cwdFloor: Double = 120
-
     /// The directory's last component — the part that identifies it. A status
     /// bar already truncates the head of the path, so the tail is what a reader
     /// is looking at anyway.
@@ -58,14 +53,14 @@ public enum LocationChip {
         return lines
     }
 
-    /// - Parameter spaceIfExpanded: what the working directory would be left
-    ///   with if the git cluster rendered in full. Negative mid-resize.
-    /// - Parameter wasCollapsed: the state being replaced, which picks the edge
-    ///   of the hysteresis band — shared with `StatusBarCompaction` so both
-    ///   halves of the bar settle at the same pace.
-    public static func shouldCollapse(spaceIfExpanded: Double, wasCollapsed: Bool) -> Bool {
-        StatusBarCompaction.isCompact(available: spaceIfExpanded,
-                                      required: cwdFloor,
-                                      wasCompact: wasCollapsed)
+    /// Whether the working directory and git should fold into one pill.
+    ///
+    /// Driven by the window's width, not by leftover space. Measuring leftover
+    /// space meant the threshold moved every time an agent ran `cd`, because
+    /// the path being measured is part of what is being measured against — so
+    /// the bar flapped between layouts while nothing was resized.
+    public static func shouldCollapse(windowWidth: Double, wasCollapsed: Bool) -> Bool {
+        StatusBarCompaction.isLeftCollapsed(windowWidth: windowWidth,
+                                            wasCollapsed: wasCollapsed)
     }
 }

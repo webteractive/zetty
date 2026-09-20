@@ -48,37 +48,54 @@ final class StatusInfoValuesTests: XCTestCase {
 
 final class StatusBarCompactionTests: XCTestCase {
 
-    func testStaysWideWhileTheAmbientGroupFits() {
-        XCTAssertFalse(StatusBarCompaction.isCompact(available: 400, required: 300, wasCompact: false))
+    private let wide = StatusBarCompaction.compactBelow + 200
+    private let narrow = StatusBarCompaction.compactBelow - 1
+
+    func testAWideWindowShowsEverything() {
+        XCTAssertFalse(StatusBarCompaction.isCompact(windowWidth: wide, wasCompact: false))
     }
 
-    func testCollapsesWhenTheAmbientGroupNoLongerFits() {
-        XCTAssertTrue(StatusBarCompaction.isCompact(available: 299, required: 300, wasCompact: false))
+    func testANarrowWindowFolds() {
+        XCTAssertTrue(StatusBarCompaction.isCompact(windowWidth: narrow, wasCompact: false))
     }
 
-    func testAnExactFitStaysWide() {
-        XCTAssertFalse(StatusBarCompaction.isCompact(available: 300, required: 300, wasCompact: false))
+    func testTheThresholdItselfStaysWide() {
+        XCTAssertFalse(StatusBarCompaction.isCompact(
+            windowWidth: StatusBarCompaction.compactBelow, wasCompact: false))
     }
 
     func testStaysCompactInsideTheHysteresisBand() {
-        // Re-expanding the moment it fits again would flap the whole right
-        // cluster back and forth while the window is dragged across the edge.
-        let justOver = 300 + StatusBarCompaction.hysteresis - 1
-        XCTAssertTrue(StatusBarCompaction.isCompact(available: justOver, required: 300, wasCompact: true))
+        // Re-expanding the moment it fits again would swap the whole bar back
+        // and forth while the window is dragged across the edge.
+        let justOver = StatusBarCompaction.compactBelow + StatusBarCompaction.hysteresis - 1
+        XCTAssertTrue(StatusBarCompaction.isCompact(windowWidth: justOver, wasCompact: true))
     }
 
-    func testExpandsOnceClearOfTheHysteresisBand() {
-        let clear = 300 + StatusBarCompaction.hysteresis
-        XCTAssertFalse(StatusBarCompaction.isCompact(available: clear, required: 300, wasCompact: true))
+    func testExpandsOnceClearOfTheBand() {
+        let clear = StatusBarCompaction.compactBelow + StatusBarCompaction.hysteresis
+        XCTAssertFalse(StatusBarCompaction.isCompact(windowWidth: clear, wasCompact: true))
     }
 
-    func testNothingToShowIsNeverCompact() {
-        // An empty ambient group needs no chip standing in for it.
-        XCTAssertFalse(StatusBarCompaction.isCompact(available: 0, required: 0, wasCompact: true))
+    func testAnUnlaidOutViewKeepsItsCurrentLayout() {
+        // Width 0 is "not laid out yet", not "as narrow as possible"; treating
+        // it as narrow flashes the compact bar on first paint.
+        XCTAssertFalse(StatusBarCompaction.isCompact(windowWidth: 0, wasCompact: false))
+        XCTAssertTrue(StatusBarCompaction.isCompact(windowWidth: 0, wasCompact: true))
     }
 
-    func testNegativeSpaceIsCompact() {
-        // Mid-resize the leftover can be reported negative; treat it as no room.
-        XCTAssertTrue(StatusBarCompaction.isCompact(available: -20, required: 300, wasCompact: false))
+    func testTheLeftClusterFoldsLaterThanTheAmbientStats() {
+        // Order matters: the ambient stats are the first thing to go, and the
+        // working directory the last.
+        XCTAssertLessThan(StatusBarCompaction.collapseLeftBelow,
+                          StatusBarCompaction.compactBelow)
+    }
+
+    func testTheLeftClusterFoldsOnlyWhenVeryNarrow() {
+        let between = (StatusBarCompaction.collapseLeftBelow
+            + StatusBarCompaction.compactBelow) / 2
+        XCTAssertFalse(StatusBarCompaction.isLeftCollapsed(windowWidth: between,
+                                                           wasCollapsed: false))
+        XCTAssertTrue(StatusBarCompaction.isLeftCollapsed(
+            windowWidth: StatusBarCompaction.collapseLeftBelow - 1, wasCollapsed: false))
     }
 }

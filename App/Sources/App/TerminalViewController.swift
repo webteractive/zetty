@@ -1045,6 +1045,7 @@ final class TerminalViewController: NSViewController {
         statusBar.onSelectAppearance = { [weak self] mode in self?.onSetAppearance?(mode) }
         statusBar.onSelectScheme = { [weak self] scheme in self?.onSelectScheme?(scheme) }
         statusBar.onShowEditorMenu = { [weak self] anchor in self?.showEditorMenu(from: anchor) }
+        statusBar.onBuildEditorMenu = { [weak self] in self?.editorMenu() ?? NSMenu() }
         statusBar.onUpdateClicked = { [weak self] in self?.onUpdatePillClicked?() }
         statusBar.onBroadcastClicked = { [weak self] in self?.cycleBroadcast() }
         statusBar.onAccountClicked = { [weak self] in self?.onOpenAccountSettings?() }
@@ -3567,6 +3568,13 @@ final class TerminalViewController: NSViewController {
     /// The "Open" picker: installed editors + Reveal in Finder. Nothing
     /// happens until an item is selected.
     private func showEditorMenu(from anchor: NSView) {
+        // Anchor above the pill (the status bar sits at the window bottom).
+        editorMenu().popUp(positioning: nil, at: NSPoint(x: 0, y: -6), in: anchor)
+    }
+
+    /// The picker as a detached menu. The compact status bar hangs this off its
+    /// `⋯` menu as a submenu, so built separately from showing it.
+    private func editorMenu() -> NSMenu {
         let menu = NSMenu()
         for app in EditorCatalog.installed() {
             let item = NSMenuItem(title: EditorCatalog.displayName(of: app),
@@ -3584,8 +3592,7 @@ final class TerminalViewController: NSViewController {
             finder.image = EditorCatalog.icon(for: finderApp, size: 16)
         }
         menu.addItem(finder)
-        // Anchor above the pill (the status bar sits at the window bottom).
-        menu.popUp(positioning: nil, at: NSPoint(x: 0, y: -6), in: anchor)
+        return menu
     }
 
     @objc private func editorMenuPicked(_ sender: NSMenuItem) {

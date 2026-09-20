@@ -78,26 +78,24 @@ final class LocationChipTests: XCTestCase {
 
     // MARK: - When it collapses
 
-    func testStaysExpandedWhileThereIsRoom() {
-        XCTAssertFalse(LocationChip.shouldCollapse(spaceIfExpanded: 200, wasCollapsed: false))
+    func testStaysExpandedWhileTheWindowIsRoomy() {
+        XCTAssertFalse(LocationChip.shouldCollapse(
+            windowWidth: StatusBarCompaction.collapseLeftBelow + 200, wasCollapsed: false))
     }
 
-    func testCollapsesWhenTheDirectoryWouldBeSqueezedTooFar() {
-        XCTAssertTrue(LocationChip.shouldCollapse(spaceIfExpanded: LocationChip.cwdFloor - 1,
-                                                  wasCollapsed: false))
+    func testCollapsesOnceTheWindowIsNarrow() {
+        XCTAssertTrue(LocationChip.shouldCollapse(
+            windowWidth: StatusBarCompaction.collapseLeftBelow - 1, wasCollapsed: false))
     }
 
     func testStaysCollapsedInsideTheHysteresisBand() {
-        let justOver = LocationChip.cwdFloor + StatusBarCompaction.hysteresis - 1
-        XCTAssertTrue(LocationChip.shouldCollapse(spaceIfExpanded: justOver, wasCollapsed: true))
+        let justOver = StatusBarCompaction.collapseLeftBelow
+            + StatusBarCompaction.hysteresis - 1
+        XCTAssertTrue(LocationChip.shouldCollapse(windowWidth: justOver, wasCollapsed: true))
     }
 
     func testExpandsOnceClearOfTheBand() {
-        let clear = LocationChip.cwdFloor + StatusBarCompaction.hysteresis
-        XCTAssertFalse(LocationChip.shouldCollapse(spaceIfExpanded: clear, wasCollapsed: true))
-    }
-
-    func testNegativeSpaceCollapses() {
-        XCTAssertTrue(LocationChip.shouldCollapse(spaceIfExpanded: -40, wasCollapsed: false))
+        let clear = StatusBarCompaction.collapseLeftBelow + StatusBarCompaction.hysteresis
+        XCTAssertFalse(LocationChip.shouldCollapse(windowWidth: clear, wasCollapsed: true))
     }
 }
