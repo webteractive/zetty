@@ -20,10 +20,12 @@ final class SessionsView: NSView {
         case pane = "PANE"
         case running = "RUNNING"
         case cpu = "CPU"
-        // Never "MEM": this is the resident set of the session's own
-        // processes, a real measurement, and explicitly NOT what the pane
-        // costs Zetty — per-pane GPU memory is unreachable from Swift.
-        case rss = "SESSION RSS"
+        // "RAM", not "SESSION RSS". The distinction it guarded is real — this
+        // measures the session's own processes, not what the pane costs Zetty
+        // — but the row IS a session, so nobody was going to read it the other
+        // way, and the header was jargon for a number every task manager calls
+        // memory. The precision lives in the column's tooltip instead.
+        case rss = "RAM"
         case actions = ""
 
         var width: CGFloat {
@@ -121,6 +123,16 @@ final class SessionsView: NSView {
             let item = NSTableColumn(identifier: NSUserInterfaceItemIdentifier(column.rawValue))
             item.title = column.rawValue
             item.width = column.width
+            if column == .cpu || column == .rss {
+                // The cells were right-aligned but the headers were not, which
+                // reads as the column itself being misaligned.
+                item.headerCell.alignment = .right
+            }
+            if column == .rss {
+                item.headerToolTip = "Resident memory of this session's own processes. "
+                    + "Not what the pane costs Zetty — per-pane GPU memory lives inside "
+                    + "libghostty and cannot be measured from here."
+            }
             // A column minimum propagates outward as width the window cannot
             // reclaim; keep it small and let cells truncate.
             item.minWidth = 34
@@ -171,10 +183,23 @@ final class SessionsView: NSView {
 
     private func styleModeButton() {
         let docked = mode == .drawer
-        let symbol = docked ? "arrow.up.left.and.arrow.down.right" : "arrow.down.right.and.arrow.up.left"
-        if let image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)?
-            .withSymbolConfiguration(NSImage.SymbolConfiguration(pointSize: 11, weight: .medium)) {
+        // Two arrows inside a square, echoing break-into-tab's
+        // `arrow.up.forward.square`: the square is the destination and the
+        // arrows say which way it is going. Tried in order because the
+        // `.square` variants are newer, and a nil image leaves a blank button.
+        let candidates = docked
+            ? ["arrow.up.left.and.arrow.down.right.square",
+               "arrow.up.left.and.arrow.down.right",
+               "arrow.up.forward.square"]
+            : ["arrow.down.right.and.arrow.up.left.square",
+               "arrow.down.right.and.arrow.up.left",
+               "arrow.down.forward.square"]
+        for symbol in candidates {
+            guard let image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)?
+                .withSymbolConfiguration(NSImage.SymbolConfiguration(pointSize: 12, weight: .medium))
+            else { continue }
             modeButton.image = image
+            break
         }
         modeButton.contentTintColor = ZTheme.current.fg2Color
         modeButton.toolTip = docked
@@ -232,7 +257,10 @@ final class SessionsView: NSView {
             ? rows[tableView.selectedRow].session
             : nil
 
-        rows = rowsProvider()
+        let newRows = rowsProvider()
+        let sameRows = updateInPlace(newRows)
+        if !sameRows { rows = newRows }
+
         let footprint = footprintProvider().map(ByteFormat.short) ?? "unknown"
         let sessions = rows.count
         let orphans = rows.filter(\.isOrphan).count
@@ -245,11 +273,51 @@ final class SessionsView: NSView {
             : ""
         emptyLabel.isHidden = !rows.isEmpty
 
+        // Cells were refreshed without disturbing the table, so the selection
+        // was never touched; nothing else to do.
+        guard !sameRows else { return }
+
         tableView.reloadData()
         if let previouslySelected,
            let restored = rows.firstIndex(where: { $0.session == previouslySelected }) {
             tableView.selectRowIndexes(IndexSet(integer: restored), byExtendingSelection: false)
         }
+    }
+
+    /// Updates the cells of an unchanged row list WITHOUT `reloadData`.
+    ///
+    /// This is what actually keeps a row selected. `reloadData` destroys and
+    /// rebuilds every row view, and saving and restoring the selection around
+    /// it is not enough: the highlight flickers off and a row can lose its view
+    /// mid-interaction. The sampler ticks every few seconds and the session
+    /// list is usually identical between ticks, so the common case should touch
+    /// nothing but the text.
+    ///
+    /// The same shape `TabBarView` uses for its pills, and for the same reason.
+    private func updateInPlace(_ newRows: [TaskRow]) -> Bool {
+        guard newRows.map(\.session) == rows.map(\.session) else { return false }
+        rows = newRows
+        for (row, entry) in rows.enumerated() {
+            for (index, column) in Column.allCases.enumerated() where column != .actions {
+                guard let label = tableView.view(atColumn: index, row: row,
+                                                 makeIfNecessary: false) as? NSTextField
+                else { continue }
+                configure(label, with: entry, column: column)
+            }
+        }
+        return true
+    }
+
+    /// One place that decides a cell's text, colour and alignment, shared by
+    /// creation and in-place update so the two cannot disagree.
+    private func configure(_ label: NSTextField, with entry: TaskRow, column: Column) {
+        let value = text(for: entry, column: column)
+        if label.stringValue != value { label.stringValue = value }
+        label.font = ZTheme.chromeFont(size: 12)
+        label.textColor = colour(for: entry, column: column, theme: ZTheme.current)
+        label.alignment = (column == .cpu || column == .rss) ? .right : .natural
+        label.lineBreakMode = .byTruncatingTail
+        label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
     }
 
     /// The busiest session's CPU, for the status bar's pill.
@@ -349,12 +417,8 @@ extension SessionsView: NSTableViewDataSource, NSTableViewDelegate {
             return button
         }
 
-        let label = NSTextField(labelWithString: text(for: entry, column: column))
-        label.font = ZTheme.chromeFont(size: 12)
-        label.textColor = colour(for: entry, column: column, theme: theme)
-        label.lineBreakMode = .byTruncatingTail
-        label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-        if column == .cpu || column == .rss { label.alignment = .right }
+        let label = NSTextField(labelWithString: "")
+        configure(label, with: entry, column: column)
         return label
     }
 

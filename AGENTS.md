@@ -1630,8 +1630,8 @@ up to three seconds ago and may have been reused.
 
 **Numbers are labelled by what they are.** The header's footprint is measured
 (`task_info` → `phys_footprint`, in-process, matching `footprint -p`). The
-per-row column is headed **SESSION RSS**, not "MEM", because it is the resident
-set of that session's processes and NOT what the pane costs Zetty — per-pane
+per-row column is headed **RAM** and measures the resident set of that
+session's own processes — NOT what the pane costs Zetty — per-pane
 GPU memory lives inside libghostty and is unreachable from Swift. There is no
 per-pane memory column because there is no per-pane memory figure to put in it.
 
