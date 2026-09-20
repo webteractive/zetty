@@ -53,8 +53,13 @@ private final class TileChooserCard: NSView {
         // The icon is centred in the space ABOVE the text block rather than
         // stacked with it, so a card with a subtitle and one without still put
         // their shapes on the same line.
+        // Below `.defaultLow`, so a narrow window compresses the cards rather
+        // than being unable to shrink. Nothing else competes for this width, so
+        // at any normal size they are simply their full size.
+        let cardWidth = widthAnchor.constraint(equalToConstant: Self.size.width)
+        cardWidth.priority = .init(249)
         NSLayoutConstraint.activate([
-            widthAnchor.constraint(equalToConstant: Self.size.width),
+            cardWidth,
             heightAnchor.constraint(equalToConstant: Self.size.height),
 
             iconView.centerXAnchor.constraint(equalTo: centerXAnchor),
@@ -187,8 +192,8 @@ final class TileChooserView: NSView {
         }
 
         NSLayoutConstraint.activate([
-            stack.centerYAnchor.constraint(equalTo: centerYAnchor),
             stack.centerXAnchor.constraint(equalTo: centerXAnchor),
+            stack.centerYAnchor.constraint(equalTo: centerYAnchor),
             stack.leadingAnchor.constraint(greaterThanOrEqualTo: leadingAnchor, constant: 24),
             stack.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -24),
         ])
@@ -206,82 +211,17 @@ final class TileChooserView: NSView {
         return field
     }
 
-    /// A centred row of cards that wraps onto further rows rather than
-    /// scrolling — a chooser you have to scroll to see is a chooser that hides
-    /// half its options.
+    /// A plain centred row.
+    ///
+    /// No wrapping, no scroll view, no measuring: an earlier version computed
+    /// its own layout from its laid-out width, which is circular — before the
+    /// first pass that width is zero, and it rendered every card in a single
+    /// column. A stack centred by its parent cannot get that wrong.
     private func row(_ cards: [NSView]) -> NSView {
-        let container = WrappingRow(cards: cards)
-        container.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-        return container
-    }
-}
-
-// MARK: - WrappingRow
-
-/// Lays cards out in centred rows, wrapping when they run out of width.
-///
-/// Frame-positioned on purpose: a stack of fixed-width cards is REQUIRED width,
-/// and this view sits inside the main window where that becomes a floor the
-/// window cannot shrink past.
-@MainActor
-private final class WrappingRow: NSView {
-
-    private static let spacing: CGFloat = 12
-    private let cards: [NSView]
-    /// Last height reported, so `layout()` only invalidates when it genuinely
-    /// changed — `intrinsicContentSize` reads `bounds.width`, and invalidating
-    /// unconditionally from `layout()` loops.
-    private var reportedHeight: CGFloat = -1
-
-    init(cards: [NSView]) {
-        self.cards = cards
-        super.init(frame: .zero)
-        translatesAutoresizingMaskIntoConstraints = false
-        for card in cards {
-            card.translatesAutoresizingMaskIntoConstraints = true
-            addSubview(card)
-        }
-    }
-
-    @available(*, unavailable)
-    required init?(coder: NSCoder) { fatalError("not supported") }
-
-    override var intrinsicContentSize: NSSize {
-        NSSize(width: NSView.noIntrinsicMetric, height: heightThatFits(width: bounds.width))
-    }
-
-    override func layout() {
-        super.layout()
-        let size = TileChooserCard.size
-        let available = max(size.width, bounds.width)
-        let perRow = max(1, Int((available + Self.spacing) / (size.width + Self.spacing)))
-
-        for (index, card) in cards.enumerated() {
-            let rowIndex = index / perRow
-            let columnIndex = index % perRow
-            // The LAST row may be short, so each row is centred on its own
-            // count rather than on the widest one.
-            let inThisRow = min(perRow, cards.count - rowIndex * perRow)
-            let rowWidth = CGFloat(inThisRow) * size.width
-                + CGFloat(inThisRow - 1) * Self.spacing
-            let originX = (bounds.width - rowWidth) / 2
-            let originY = bounds.height - CGFloat(rowIndex + 1) * size.height
-                - CGFloat(rowIndex) * Self.spacing
-            card.frame = NSRect(x: originX + CGFloat(columnIndex) * (size.width + Self.spacing),
-                                y: originY, width: size.width, height: size.height)
-        }
-        let height = heightThatFits(width: bounds.width)
-        if abs(height - reportedHeight) > 0.5 {
-            reportedHeight = height
-            invalidateIntrinsicContentSize()
-        }
-    }
-
-    private func heightThatFits(width: CGFloat) -> CGFloat {
-        let size = TileChooserCard.size
-        let available = max(size.width, width)
-        let perRow = max(1, Int((available + Self.spacing) / (size.width + Self.spacing)))
-        let rows = Int(ceil(Double(cards.count) / Double(perRow)))
-        return CGFloat(rows) * size.height + CGFloat(max(0, rows - 1)) * Self.spacing
+        let row = NSStackView(views: cards)
+        row.orientation = .horizontal
+        row.spacing = 12
+        row.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        return row
     }
 }
