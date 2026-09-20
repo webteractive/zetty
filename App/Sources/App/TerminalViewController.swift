@@ -3846,9 +3846,67 @@ final class TerminalViewController: NSViewController {
         refreshTileGrid()
     }
 
-    private func startTileSpawnQueue() {}
-    private func stopTileSpawnQueue() {}
-    private func enqueueMissingTileSurfaces() {}
+    /// Queues every tiled pane that has no surface yet. Already-attached panes
+    /// are untouched — only the missing ones cost anything.
+    private func enqueueMissingTileSurfaces() {
+        let missing = tileOrder
+            .map(\.surfaceID)
+            .filter { !registry.isLive($0) && tileSpawnFailures[$0] == nil }
+        for id in missing where !tileSpawnQueue.contains(id) {
+            tileSpawnQueue.append(id)
+        }
+        if !tileSpawnQueue.isEmpty { startTileSpawnQueue() }
+    }
+
+    private func startTileSpawnQueue() {
+        guard tileMode, tileSpawnTimer == nil, !tileSpawnQueue.isEmpty else { return }
+        // Attach the first one immediately; the rest follow on the interval.
+        attachNextTileSurface()
+        guard !tileSpawnQueue.isEmpty else { return }
+        tileSpawnTimer = Timer.scheduledTimer(
+            withTimeInterval: Self.tileSpawnInterval, repeats: true
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.attachNextTileSurface() }
+        }
+    }
+
+    private func stopTileSpawnQueue() {
+        tileSpawnTimer?.invalidate()
+        tileSpawnTimer = nil
+        tileSpawnQueue = []
+        tileSpawnFailures = [:]
+    }
+
+    /// Attaches one queued pane. `pair(for:)` creates the controller, view and
+    /// pty eagerly — no window needed — so this is the whole spawn. It is
+    /// deliberately NOT `ensurePaneIsLive`: while tile mode is on the rebuild
+    /// renders the grid, so selecting a project and tab renders the grid again
+    /// and spawns nothing.
+    private func attachNextTileSurface() {
+        guard tileMode else { return stopTileSpawnQueue() }
+        guard !tileSpawnQueue.isEmpty else {
+            tileSpawnTimer?.invalidate()
+            tileSpawnTimer = nil
+            return
+        }
+        let id = tileSpawnQueue.removeFirst()
+        guard tileOrder.contains(where: { $0.surfaceID == id }) else { return }
+        guard let surface = workspace.surface(with: id) else {
+            tileSpawnFailures[id] = "pane is gone"
+            refreshTileGrid()
+            return
+        }
+        _ = registry.terminalView(for: surface)
+        if !registry.isLive(id) {
+            // The pair exists but is not an AppTerminalView — the same guard
+            // `sendText` uses, so a tile can never claim a pty a send would
+            // miss. Say so rather than spinning on "attaching" forever.
+            tileSpawnFailures[id] = "could not attach"
+        }
+        ZettyLog.chrome.log("tiles: attached=\(id.uuidString.prefix(8)) "
+            + "live=\(registry.isLive(id)) queued=\(tileSpawnQueue.count)")
+        refreshTileGrid()
+    }
 
     private var sessionsDrawerVisible = false
     /// Flips `zetty-sessions-view` and moves the view; AppDelegate owns both.
