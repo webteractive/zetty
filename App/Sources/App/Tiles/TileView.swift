@@ -217,6 +217,7 @@ final class TileView: NSView {
         messageLabel.alignment = .center
         messageLabel.lineBreakMode = .byWordWrapping
         messageLabel.maximumNumberOfLines = 3
+        messageLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         messageLabel.translatesAutoresizingMaskIntoConstraints = false
         body.addSubview(messageLabel)
         NSLayoutConstraint.activate([

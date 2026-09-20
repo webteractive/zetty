@@ -97,6 +97,7 @@ final class TileAttachPicker: NSView {
         emptyLabel.font = ZTheme.chromeFont(size: 12)
         emptyLabel.textColor = theme.fg3Color
         emptyLabel.alignment = .center
+        emptyLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         emptyLabel.isHidden = !candidates.isEmpty
         emptyLabel.translatesAutoresizingMaskIntoConstraints = false
         panel.addSubview(emptyLabel)

@@ -101,6 +101,10 @@ final class TileGridView: NSView {
         emptyLabel.isHidden = true
         emptyLabel.lineBreakMode = .byWordWrapping
         emptyLabel.maximumNumberOfLines = 3
+        // 750 is inside the band AppKit folds into the window's minimum content
+        // size, and a HIDDEN view still participates in layout — so a long
+        // empty-state string would hold the window open even once tiles appear.
+        emptyLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         emptyLabel.translatesAutoresizingMaskIntoConstraints = false
         addSubview(emptyLabel)
 
@@ -135,6 +139,8 @@ final class TileGridView: NSView {
             onCounts(0, 0)
             return
         }
+        // Cleared, not just hidden: an unset string keeps its intrinsic width.
+        emptyLabel.stringValue = ""
         emptyLabel.isHidden = true
         scrollView.isHidden = false
 
