@@ -624,6 +624,7 @@ final class TerminalViewController: NSViewController {
                     else { continue }
                     self.updateSurfaceAnywhere(id) { $0.runningAccountID = nil }
                 }
+                self.refreshTileMembership()
                 self.setNeedsChromeRefresh(tabBar: true, sidebar: true)
             }
         }
@@ -3717,6 +3718,19 @@ final class TerminalViewController: NSViewController {
     /// Transient, like `zoomedSurfaceID` and unlike anything in the model — a
     /// relaunch never comes back in tile mode.
     private var tileMode = false
+    private var tileOrder: [TileEntry] = []
+    private var tileFocusedSurfaceID: UUID?
+    private var tileGridView: TileGridView?
+    /// Surfaces the grid asked for that had no pair yet, and why a spawn
+    /// failed when one did.
+    private var tileSpawnQueue: [UUID] = []
+    private var tileSpawnTimer: Timer?
+    private var tileSpawnFailures: [UUID: String] = [:]
+
+    /// One attach per tick. Each costs a GPU surface and a scrollback replay,
+    /// and eleven at once took the reference machine past load 35 during
+    /// restart recovery — the same spacing, for the same reason.
+    private static let tileSpawnInterval: TimeInterval = 2
 
     var isTileModeActive: Bool { tileMode }
 
@@ -3725,8 +3739,116 @@ final class TerminalViewController: NSViewController {
     func setTileMode(_ on: Bool) {
         guard tileMode != on else { return }
         tileMode = on
-        rebuildSurfaceNodeView()
+        if on {
+            // Seed focus from wherever you already were, so entering the grid
+            // does not move you.
+            refreshTileMembership(rebuild: false)
+            let current = paneTree.focusedSurfaceID
+            tileFocusedSurfaceID = tileOrder.contains { $0.surfaceID == current }
+                ? current
+                : tileOrder.first?.surfaceID
+            rebuildSurfaceNodeView()
+            startTileSpawnQueue()
+        } else {
+            stopTileSpawnQueue()
+            let landing = tileFocusedSurfaceID
+            tileGridView = nil
+            tileOrder = []
+            tileFocusedSurfaceID = nil
+            // Exiting ALWAYS lands on the focused tile's pane. Touch nothing
+            // and that is exactly where you started; answer three agents and
+            // you exit into the last one. This is the only exit rule.
+            if let landing, let found = location(ofSurface: landing) {
+                focusPane(at: found)
+            } else {
+                rebuildSurfaceNodeView()
+            }
+        }
     }
+
+    /// Recomputes membership from the foreground probe. Called on the probe's
+    /// existing 3s tick — never on a timer of its own.
+    func refreshTileMembership(rebuild: Bool = true) {
+        guard tileMode else { return }
+        let existing = Set(allSurfaceIDs)
+        let busy = allSurfaceIDs.filter { id in
+            guard let command = foregroundBySurface[id] else { return false }
+            return !command.isEmpty
+        }
+        let updated = TileMembership.update(previous: tileOrder,
+                                            busy: busy,
+                                            existing: existing)
+        guard updated != tileOrder else { return }
+        tileOrder = updated
+        if let focused = tileFocusedSurfaceID,
+           !updated.contains(where: { $0.surfaceID == focused }) {
+            tileFocusedSurfaceID = updated.first?.surfaceID
+        }
+        enqueueMissingTileSurfaces()
+        if rebuild { refreshTileGrid() }
+    }
+
+    /// Why the grid has nothing to show, or nil when it has tiles. A blank
+    /// panel is indistinguishable from a broken one — the file viewer's
+    /// lesson, applied here.
+    private func tileEmptyMessage() -> String? {
+        guard tileOrder.isEmpty else { return nil }
+        guard ZmxRunner.locate() != nil, !lastSessionPIDs.isEmpty else {
+            return "Tile mode needs preserved sessions \u{2014} "
+                + "set preserve-sessions = true and relaunch."
+        }
+        return "No sessions are running anything (\(allSurfaceIDs.count) idle)."
+    }
+
+    private func tileDescriptors() -> [TileDescriptor] {
+        tileOrder.compactMap { entry in
+            guard let surface = workspace.surface(with: entry.surfaceID) else { return nil }
+            let content: TileContent
+            if let reason = tileSpawnFailures[entry.surfaceID] {
+                content = .failed(reason)
+            } else if registry.isLive(entry.surfaceID) {
+                content = .terminal(registry.terminalView(for: surface))
+            } else {
+                content = .attaching
+            }
+            let state = agentDetector.state(for: entry.surfaceID)
+            let status: TileStatus
+            if state.status == .needsAttention {
+                status = .attention
+            } else {
+                status = entry.isBusy ? .running : .idle
+            }
+            return TileDescriptor(surfaceID: entry.surfaceID,
+                                  label: paneLabel(for: entry.surfaceID) ?? "pane",
+                                  icon: agentIcon(for: surface),
+                                  status: status,
+                                  content: content)
+        }
+    }
+
+    private func refreshTileGrid() {
+        guard tileMode, let grid = tileGridView else { return }
+        grid.update(tiles: tileDescriptors(),
+                    focused: tileFocusedSurfaceID,
+                    emptyMessage: tileEmptyMessage())
+        focusTileFirstResponder()
+    }
+
+    private func focusTileFirstResponder() {
+        guard tileMode,
+              let id = tileFocusedSurfaceID,
+              let terminal = registry.appTerminalView(for: id) else { return }
+        view.window?.makeFirstResponder(terminal)
+    }
+
+    func focusTile(_ id: UUID) {
+        tileFocusedSurfaceID = id
+        refreshTileGrid()
+    }
+
+    private func startTileSpawnQueue() {}
+    private func stopTileSpawnQueue() {}
+    private func enqueueMissingTileSurfaces() {}
 
     private var sessionsDrawerVisible = false
     /// Flips `zetty-sessions-view` and moves the view; AppDelegate owns both.
@@ -3784,16 +3906,22 @@ final class TerminalViewController: NSViewController {
     /// The task manager's rows, assembled here because everything they need is
     /// private or main-only: `location(ofSurface:)`, the workspace, and the
     /// sampler's cache. The window is a renderer and reaches for none of it.
+    /// "Project / Tab" for a pane — the label both the Sessions table and the
+    /// tile grid show. One implementation, so the two cannot disagree.
+    func paneLabel(for surfaceID: UUID) -> String? {
+        guard let found = location(ofSurface: surfaceID),
+              workspace.projects.indices.contains(found.projectIndex) else { return nil }
+        let project = workspace.projects[found.projectIndex]
+        guard project.tabList.trees.indices.contains(found.tabIndex) else { return nil }
+        let tab = tabDisplayTitle(for: project.tabList.trees[found.tabIndex],
+                                  at: found.tabIndex)
+        return "\(project.name) / \(tab)"
+    }
+
     func taskRows() -> [TaskRow] {
         var labels: [UUID: String] = [:]
         for id in sessionOwnerSurfaceIDs {
-            guard let found = location(ofSurface: id),
-                  workspace.projects.indices.contains(found.projectIndex) else { continue }
-            let project = workspace.projects[found.projectIndex]
-            guard project.tabList.trees.indices.contains(found.tabIndex) else { continue }
-            let tab = tabDisplayTitle(for: project.tabList.trees[found.tabIndex],
-                                      at: found.tabIndex)
-            labels[id] = "\(project.name) / \(tab)"
+            labels[id] = paneLabel(for: id)
         }
 
         // `foregroundBySurface` is keyed by surface id; TaskInventory keys by
@@ -5229,6 +5357,35 @@ final class TerminalViewController: NSViewController {
             placeholderView = placeholder
             registry.prune(keeping: Set(allSurfaceIDs)) // free the frozen surfaces
             onWorkspaceDidChange?()
+            return
+        }
+
+        // Tile mode replaces the pane area, exactly where the hibernation
+        // placeholder substitutes itself. Pruning needs no change: the
+        // surfaces the grid shows are ones `allSurfaceIDs` already retains.
+        if tileMode {
+            let grid = tileGridView ?? TileGridView(
+                onActivate: { [weak self] id in self?.focusTile(id) },
+                onGoToPane: { [weak self] id in
+                    self?.tileFocusedSurfaceID = id
+                    self?.setTileMode(false)
+                })
+            tileGridView = grid
+            grid.removeFromSuperview()
+            container.addSubview(grid)
+            NSLayoutConstraint.activate([
+                grid.topAnchor.constraint(equalTo: topGuide),
+                grid.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+                grid.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+                grid.bottomAnchor.constraint(equalTo: bottomGuide),
+            ])
+            grid.update(tiles: tileDescriptors(),
+                        focused: tileFocusedSurfaceID,
+                        emptyMessage: tileEmptyMessage())
+            registry.prune(keeping: Set(allSurfaceIDs))
+            refreshFileTreeRoots()
+            onWorkspaceDidChange?()
+            DispatchQueue.main.async { [weak self] in self?.focusTileFirstResponder() }
             return
         }
 
