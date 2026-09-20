@@ -1716,11 +1716,20 @@ nothing clickable to its right, so it may vary freely. It follows the compact
 bar's rule too: shown only while the grid is up. The grid itself has no header,
 which also gives the tiles back 28pt of height.
 
-**The tab bar is hidden while the grid is up** (`rebuildSurfaceNodeView` sets
-`isHidden` and repins `topGuide` to the container). It names the ACTIVE
-project's tabs, and the grid spans every project — a strip of one project's
-tabs above sixteen unrelated panes labels the wrong thing. The grid header
-takes its place.
+**The tab bar keeps its chrome buttons in tile mode but drops its PILLS**
+(`TabBarView.isTileMode` hides `tabScrollView` and `+`; `layout()` returns
+early so it never positions a hidden `+`). The pills name the ACTIVE project's
+tabs and the grid spans every project, so a strip of one project's tabs above
+sixteen unrelated panes labels the wrong thing. Hiding the whole bar was tried
+first and **took the sidebar toggle with it** — that button lives in the tab
+bar, and there is nowhere else to reach it.
+
+**The tile toggle is a tab-bar button beside the sidebar one**, present in both
+states on purpose: it is how you enter the grid with a mouse as well as leave
+it, and it goes accent while the grid is up (the rule the status bar's mode
+chips follow). Style it from `init` as well as `applyTheme` — the other chrome
+buttons do, and a button styled only on theme change renders blank until the
+first scheme switch.
 
 Bindings are **re-interpreted at dispatch** in `perform(binding:interceptor:)`
 rather than given a third table: `h/j/k/l`/arrows/`o` move tile focus, `1`–`9`

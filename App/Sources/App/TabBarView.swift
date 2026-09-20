@@ -39,12 +39,18 @@ final class TabBarView: NSView {
     /// Called when the user clicks the sidebar-toggle button.
     var onToggleSidebar: (() -> Void)?
 
+    /// Called when the user clicks the tile-mode toggle, which sits beside the
+    /// sidebar button. Present in BOTH states deliberately — it is how you
+    /// enter the grid with the mouse as well as how you leave it.
+    var onToggleTiles: (() -> Void)?
+
     /// Called when a drag-reorder finishes: move the tab at `from` to `to`.
     var onMoveTab: ((Int, Int) -> Void)?
 
     // MARK: - Private subviews
 
     private let sidebarButton: NSButton
+    private let tilesButton: NSButton
     /// Clips the pill strip so its width demand never escapes into the window.
     ///
     /// Load-bearing, not cosmetic: pinned directly in the bar, the pills' own
@@ -96,6 +102,13 @@ final class TabBarView: NSView {
         sidebarButton.imagePosition = .imageOnly
         sidebarButton.translatesAutoresizingMaskIntoConstraints = false
 
+        tilesButton = NSButton(title: "", target: nil, action: nil)
+        tilesButton.bezelStyle = .inline
+        tilesButton.isBordered = false
+        tilesButton.imagePosition = .imageOnly
+        tilesButton.toolTip = "Tile running sessions (\u{21E7}\u{2318}G)"
+        tilesButton.translatesAutoresizingMaskIntoConstraints = false
+
         stackView = NSStackView()
         stackView.orientation = .horizontal
         stackView.spacing = 0
@@ -129,13 +142,17 @@ final class TabBarView: NSView {
         layer?.backgroundColor = ZTheme.current.bg0Color.cgColor
         styleAddButton()
         styleSidebarButton()
+        styleTilesButton()
 
         sidebarButton.target = self
         sidebarButton.action = #selector(sidebarButtonClicked(_:))
+        tilesButton.target = self
+        tilesButton.action = #selector(tilesButtonClicked(_:))
         addButton.target = self
         addButton.action = #selector(addButtonClicked(_:))
 
         addSubview(sidebarButton)
+        addSubview(tilesButton)
         addSubview(tabScrollView)
         addSubview(addButton)
 
@@ -150,6 +167,9 @@ final class TabBarView: NSView {
             sidebarButton.centerYAnchor.constraint(equalTo: centerYAnchor),
             sidebarButton.widthAnchor.constraint(equalToConstant: 22),
             sidebarButton.heightAnchor.constraint(equalToConstant: 22),
+            tilesButton.centerYAnchor.constraint(equalTo: centerYAnchor),
+            tilesButton.widthAnchor.constraint(equalToConstant: 22),
+            tilesButton.heightAnchor.constraint(equalToConstant: 22),
             tabScrollView.topAnchor.constraint(equalTo: topAnchor),
             tabScrollView.bottomAnchor.constraint(equalTo: bottomAnchor),
 
@@ -184,6 +204,7 @@ final class TabBarView: NSView {
         static let afterSidebarButton: CGFloat = 6
         static let beforeAddButton: CGFloat = 4
         static let addButtonInset: CGFloat = 4     // `+` ↔ bar edge
+        static let betweenChromeButtons: CGFloat = 2
     }
 
     /// Drives the strip's width (see its creation in `init`).
@@ -214,6 +235,8 @@ final class TabBarView: NSView {
     override func layout() {
         super.layout()
 
+        // Nothing to place while the grid is up — the strip and `+` are hidden.
+        guard !isTileMode else { return }
         let clip = tabScrollView.frame
         let stripWidth = updateStripWidth(clipWidth: clip.width)
         // The strip grows rightward from the clip's leading edge on both sides,
@@ -265,7 +288,9 @@ final class TabBarView: NSView {
             positionalConstraints = [
                 sidebarButton.leadingAnchor.constraint(equalTo: leadingAnchor,
                                                        constant: Metrics.edgeInset),
-                tabScrollView.leadingAnchor.constraint(equalTo: sidebarButton.trailingAnchor,
+                tilesButton.leadingAnchor.constraint(equalTo: sidebarButton.trailingAnchor,
+                                                     constant: Metrics.betweenChromeButtons),
+                tabScrollView.leadingAnchor.constraint(equalTo: tilesButton.trailingAnchor,
                                                        constant: Metrics.afterSidebarButton),
                 tabScrollView.trailingAnchor.constraint(equalTo: trailingAnchor,
                                                         constant: -addButtonSlot),
@@ -274,9 +299,11 @@ final class TabBarView: NSView {
             positionalConstraints = [
                 tabScrollView.leadingAnchor.constraint(equalTo: leadingAnchor,
                                                        constant: Metrics.edgeInset),
-                tabScrollView.trailingAnchor.constraint(equalTo: sidebarButton.leadingAnchor,
+                tabScrollView.trailingAnchor.constraint(equalTo: tilesButton.leadingAnchor,
                                                         constant: -(Metrics.afterSidebarButton
                                                                     + addButtonSlot)),
+                tilesButton.trailingAnchor.constraint(equalTo: sidebarButton.leadingAnchor,
+                                                      constant: -Metrics.betweenChromeButtons),
                 sidebarButton.trailingAnchor.constraint(equalTo: trailingAnchor,
                                                         constant: -Metrics.edgeInset),
             ]
@@ -444,6 +471,41 @@ final class TabBarView: NSView {
 
     /// Applies theme-dependent styling to the sidebar-toggle button; the
     /// symbol mirrors the sidebar's window side.
+    /// While the grid is up the bar keeps its chrome buttons but drops the
+    /// pills and `+`: they name the ACTIVE project's tabs, and the grid spans
+    /// every project. Hiding the whole bar took the sidebar toggle with it.
+    var isTileMode = false {
+        didSet {
+            guard oldValue != isTileMode else { return }
+            tabScrollView.isHidden = isTileMode
+            addButton.isHidden = isTileMode
+            styleTilesButton()
+            needsLayout = true
+        }
+    }
+
+    private func styleTilesButton() {
+        let config = NSImage.SymbolConfiguration(pointSize: 13, weight: .medium)
+        let theme = ZTheme.current
+        // Accent marks the active mode, the same rule the status bar's mode
+        // chips follow.
+        let tint = isTileMode ? theme.accentColor : theme.fg2Color
+        if let image = NSImage(systemSymbolName: "square.grid.2x2",
+                               accessibilityDescription: "Tile running sessions")?
+            .withSymbolConfiguration(config) {
+            tilesButton.image = image
+            tilesButton.imageScaling = .scaleProportionallyUpOrDown
+            tilesButton.contentTintColor = tint
+        } else {
+            tilesButton.attributedTitle = NSAttributedString(
+                string: "\u{25A6}",
+                attributes: [
+                    .font: ZTheme.chromeFont(size: 13),
+                    .foregroundColor: tint,
+                ])
+        }
+    }
+
     private func styleSidebarButton() {
         let config = NSImage.SymbolConfiguration(pointSize: 15, weight: .medium)
         let symbol = sidebarPosition == .left ? "sidebar.left" : "sidebar.right"
@@ -484,6 +546,7 @@ final class TabBarView: NSView {
         layer?.backgroundColor = ZTheme.current.bg0Color.cgColor
         styleAddButton()
         styleSidebarButton()
+        styleTilesButton()
         // Pills cache their rendered inputs so identical reloads are skipped,
         // which means a scheme change has to recolor them here — the next
         // `update(...)` is very likely a no-op and would otherwise leave the
@@ -495,6 +558,10 @@ final class TabBarView: NSView {
 
     @objc private func sidebarButtonClicked(_: Any?) {
         onToggleSidebar?()
+    }
+
+    @objc private func tilesButtonClicked(_: Any?) {
+        onToggleTiles?()
     }
 
     @objc private func addButtonClicked(_: Any?) {

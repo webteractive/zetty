@@ -1013,6 +1013,9 @@ final class TerminalViewController: NSViewController {
         tabBar.onToggleSidebar = { [weak self] in
             self?.toggleSidebar(nil)
         }
+        tabBar.onToggleTiles = { [weak self] in
+            self?.toggleTileMode()
+        }
         tabBar.onMoveTab = { [weak self] source, destination in
             guard let self else { return }
             self.workspace.activeTabList.moveTab(from: source, to: destination)
@@ -5405,13 +5408,13 @@ final class TerminalViewController: NSViewController {
 
         // Pin below the tab bar (28 pt), or to the top if there is no tab bar yet;
         // and above the status bar (if present), else to the container bottom.
-        // The tab bar belongs to the ACTIVE project, and tile mode spans every
-        // project — so a strip of one project's tabs above a grid of sixteen
-        // unrelated panes names the wrong thing. The grid header replaces it.
-        tabBarView?.isHidden = tileMode
-        var topGuide: NSLayoutYAxisAnchor = tileMode
-            ? container.topAnchor
-            : (tabBarView?.bottomAnchor ?? container.topAnchor)
+        // The PILLS belong to the ACTIVE project and tile mode spans every
+        // project, so a strip of one project's tabs above a grid of sixteen
+        // unrelated panes names the wrong thing — they and `+` fold away. The
+        // bar itself stays, because it carries the sidebar toggle and the tile
+        // toggle, and hiding it took both with it.
+        tabBarView?.isTileMode = tileMode
+        var topGuide: NSLayoutYAxisAnchor = tabBarView?.bottomAnchor ?? container.topAnchor
         var bottomGuide = statusBarView?.topAnchor ?? container.bottomAnchor
 
         // The Sessions drawer, mirroring how CloneWarningBanner slots in below

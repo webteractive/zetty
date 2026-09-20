@@ -43,8 +43,8 @@ by the tool it's running.
   when **armed**, the CLI pill when **stale**, and an **↑ Update** button when one
   is waiting. Revealing the sidebar in a small window now splits the space it
   has instead of forcing the window wider.
-- **Tile mode** — `⇧⌘G`, `Ctrl+B g`, **View → Tile Running Sessions**, the
-  command palette, or `zetty tiles`. A grid of **live, interactive terminals**:
+- **Tile mode** — `⇧⌘G`, `Ctrl+B g`, the grid button in the tab bar, **View →
+  Tile Running Sessions**, the command palette, or `zetty tiles`. A grid of **live, interactive terminals**:
   one tile per pane that is actually running something, gathered from every
   awake project. The tiles are the real terminals, so typing into the focused
   one reaches its shell — answer three agents without leaving the grid. A pane
