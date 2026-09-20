@@ -117,7 +117,9 @@ public enum ControlCLI {
                                               close a pane (a tab's last pane closes
                                               the tab; --tab closes the whole tab)
       zetty reload                          reload zetty config (⇧⌘, equivalent)
-      zetty tiles [--on|--off]              toggle the grid of running sessions (⇧⌘G)
+      zetty tiles [--on|--off] [--profile <name>]
+                                            toggle the grid of running sessions (⇧⌘G);
+                                            --profile opens a saved tile view by name
       zetty scratch [--focus]               open a project-less, ephemeral terminal
                                               (Scratch section) in the background;
                                               --focus switches to it. Prints its
@@ -239,7 +241,12 @@ public enum ControlCLI {
         case "tiles":
             let on: Bool? = arguments.contains("--off") ? false
                 : (arguments.contains("--on") ? true : nil)
-            return expectOK(.tiles(on: on), success: "ok")
+            var profile: String?
+            if let flag = arguments.firstIndex(of: "--profile"),
+               arguments.indices.contains(flag + 1) {
+                profile = arguments[flag + 1]
+            }
+            return expectOK(.tiles(on: on, profile: profile), success: "ok")
         case "scratch":
             return runScratch(arguments)
         case "scratch-clear":

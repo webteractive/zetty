@@ -1884,9 +1884,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         case .reload:
             self.reloadConfiguration(nil)
             return .ok
-        case .tiles(let on):
+        case .tiles(let on, let profile):
             // A fast verb: plain view-state mutation through handleOnMain,
             // never the slow-verb path clone/capture/quit use.
+            if let profile {
+                // An unknown name is an ERROR listing the known ones, the rule
+                // `--account` follows: silently falling back would land you in
+                // the wrong view, which is what naming one is meant to prevent.
+                let known = tvc.tileLibraryProfiles
+                guard let match = known.first(where: {
+                    $0.name.caseInsensitiveCompare(profile) == .orderedSame
+                }) else {
+                    let names = known.map(\.name).joined(separator: ", ")
+                    return .error("unknown tile profile '\(profile)'"
+                        + (names.isEmpty ? "" : " — known: \(names)"))
+                }
+                tvc.setTileMode(true)
+                tvc.openTileView(profileID: match.id)
+                return .ok
+            }
             if let on { tvc.setTileMode(on) } else { tvc.toggleTileMode() }
             return .ok
         case .viewFile(let path, let line, let column):

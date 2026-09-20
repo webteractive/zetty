@@ -14,8 +14,10 @@ public enum ControlRequest: Equatable, Sendable {
     case accounts(probe: Bool)
     case reload
     /// Toggle the grid of running sessions. nil toggles; true/false set it
-    /// explicitly, so a script can be idempotent. Response `.ok`.
-    case tiles(on: Bool?)
+    /// explicitly, so a script can be idempotent. `profile` opens a saved tile
+    /// view by name — an unknown name is an ERROR listing the known ones, the
+    /// rule `--account` follows. Response `.ok`.
+    case tiles(on: Bool?, profile: String?)
     /// Open a project-less, ephemeral "scratch" terminal (plain shell, not
     /// persisted) in the Scratch sidebar section. Background by default; `focus`
     /// switches to it. Response `.pane` with the new pane's short id.
@@ -125,7 +127,7 @@ public enum ControlRequest: Equatable, Sendable {
 
 extension ControlRequest: Codable {
     private enum CodingKeys: String, CodingKey {
-        case command, target, text, enter, keys, project, wholeTab, killSessions, simulateRestart, vertical, lines, path, name, gitInit, focus, fetch, discard, line, column, space, newName, color, icon, account, probe, surface, on
+        case command, target, text, enter, keys, project, wholeTab, killSessions, simulateRestart, vertical, lines, path, name, gitInit, focus, fetch, discard, line, column, space, newName, color, icon, account, probe, surface, on, profile
     }
 
     public init(from decoder: Decoder) throws {
@@ -141,7 +143,9 @@ extension ControlRequest: Codable {
         case "reload": self = .reload
         // decodeIfPresent for the same reason `hibernated` and `live` use it:
         // an older standalone binary must not throw on a newer app's payload.
-        case "tiles": self = .tiles(on: try container.decodeIfPresent(Bool.self, forKey: .on))
+        case "tiles":
+            self = .tiles(on: try container.decodeIfPresent(Bool.self, forKey: .on),
+                          profile: try container.decodeIfPresent(String.self, forKey: .profile))
         case "scratch": self = .scratch(focus: try container.decodeIfPresent(Bool.self, forKey: .focus) ?? false)
         case "scratch-clear": self = .scratchClear
         case "send":
@@ -264,9 +268,10 @@ extension ControlRequest: Codable {
             try container.encode(account, forKey: .account)
         case .reload:
             try container.encode("reload", forKey: .command)
-        case .tiles(let on):
+        case .tiles(let on, let profile):
             try container.encode("tiles", forKey: .command)
             try container.encodeIfPresent(on, forKey: .on)
+            try container.encodeIfPresent(profile, forKey: .profile)
         case .scratch(let focus):
             try container.encode("scratch", forKey: .command)
             try container.encode(focus, forKey: .focus)

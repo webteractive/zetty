@@ -253,3 +253,18 @@ private let panes: [StatusSnapshot.Pane] = [
     let decoded = try ControlWire.decodeRequest(line)
     #expect(decoded == .updateClone(name: "zetty/fork-1"))
 }
+
+// MARK: - tiles
+
+@Test func tilesRequestCarriesItsProfile() throws {
+    let request = ControlRequest.tiles(on: true, profile: "morning")
+    let data = try JSONEncoder().encode(request)
+    #expect(try JSONDecoder().decode(ControlRequest.self, from: data) == request)
+}
+
+@Test func aTilesRequestWithoutAProfileStillDecodes() throws {
+    // An older standalone `zetty` sends no `profile` key at all.
+    let json = #"{"command":"tiles"}"#
+    #expect(try JSONDecoder().decode(ControlRequest.self, from: Data(json.utf8))
+        == .tiles(on: nil, profile: nil))
+}
