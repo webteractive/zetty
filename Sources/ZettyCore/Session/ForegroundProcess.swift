@@ -17,7 +17,7 @@ public enum ForegroundProcess {
     }
 
     /// The foreground command on the TTY of `sessionPID`, from the output of
-    /// `ps -axo pid=,pgid=,stat=,tty=,command=`. Returns the process-group
+    /// `ps -axo` with `ProcessTable.psFormat`. Returns the process-group
     /// leader's tool name, or nil when the pane is idle (shell in the
     /// foreground), the pid is unknown, or it has no TTY.
     public static func command(forSessionPID sessionPID: Int32, psOutput: String) -> String? {
@@ -56,17 +56,19 @@ public enum ForegroundProcess {
     // MARK: - Parsing
 
     private static func parse(_ output: String) -> [Row] {
+        // Shares `ProcessTable.psFormat` with the task manager's sampler so one
+        // `ps` sweep feeds both; only four of the eight fields matter here.
+        // Command stays last and is taken as the remainder (full argv).
         output.split(separator: "\n").compactMap { line in
-            // pid pgid stat tty command — command is the remainder (full argv).
-            let fields = line.split(separator: " ", maxSplits: 4, omittingEmptySubsequences: true)
-            guard fields.count == 5,
-                  let pid = Int32(fields[0]), let pgid = Int32(fields[1]) else { return nil }
+            let fields = line.split(separator: " ", maxSplits: 7, omittingEmptySubsequences: true)
+            guard fields.count == 8,
+                  let pid = Int32(fields[0]), let pgid = Int32(fields[2]) else { return nil }
             return Row(
                 pid: pid,
                 pgid: pgid,
-                stat: String(fields[2]),
-                tty: String(fields[3]),
-                comm: fields[4].trimmingCharacters(in: .whitespaces)
+                stat: String(fields[3]),
+                tty: String(fields[4]),
+                comm: fields[7].trimmingCharacters(in: .whitespaces)
             )
         }
     }

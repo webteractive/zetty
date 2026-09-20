@@ -46,10 +46,13 @@ enum ZmxRunner {
         return SessionPersistence.sessionPIDs(fromList: output)
     }
 
-    /// One process-table snapshot for foreground resolution (nil on failure).
-    /// Blocking — call off-main.
+    /// One process-table snapshot, feeding BOTH foreground resolution and the
+    /// task manager's session load (nil on failure). Blocking — call off-main.
+    ///
+    /// One sweep, deliberately: a second polling loop is the mistake the git
+    /// pill and synchronous chrome refresh already made here.
     static func psSnapshot() -> String? {
-        run("/bin/ps", ["-axo", "pid=,pgid=,stat=,tty=,command="])
+        run("/bin/ps", ["-axo", ProcessTable.psFormat])
     }
 
     /// `zmx history <session>` — the session's retained scrollback as plain
