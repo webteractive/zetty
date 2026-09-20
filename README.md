@@ -55,6 +55,13 @@ by the tool it's running.
   - **Tile views are tabs.** While the grid is up the tab bar's strip carries
     tile views instead of the active project's tabs, with `+` opening your
     saved **profiles**. Several can be open at once.
+  - **A view is a structure first.** Creating one opens a sheet: name it and
+    pick a **layout** — a named grid shape drawn as its own picture (Focus,
+    Pair, Stack, Quad, Grid ship built in) — or set custom columns and rows and
+    tick **Save as layout** to keep the shape. `Configure…` reopens the same
+    sheet for an existing view; resizing never drops an attached pane.
+    Editing a layout affects only views made afterwards, because creating a
+    view copies the shape rather than following it.
   - **Profiles save themselves.** An open view *is* its profile: attaching,
     renaming and resizing write through immediately, with no save step.
     A slot remembers its project and tab, so it reattaches after a relaunch

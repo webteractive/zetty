@@ -2514,6 +2514,7 @@ final class TerminalViewController: NSViewController {
             PaletteCommand(glyph: "⤓", label: "Scroll to Bottom", kbd: "⌘↓") { [weak self] in self?.scrollToBottom(nil) },
             PaletteCommand(glyph: "▦", label: "Tile Running Sessions", kbd: "⇧⌘G") { [weak self] in self?.toggleTileMode() },
             PaletteCommand(glyph: "▦", label: "New Tile View", kbd: "") { [weak self] in self?.setTileMode(true); self?.newTileView() },
+            PaletteCommand(glyph: "▤", label: "Configure Tile View…", kbd: "") { [weak self] in self?.configureActiveTileView() },
             PaletteCommand(glyph: "⧉", label: "Duplicate Tile View as Manual", kbd: "") { [weak self] in self?.duplicateActiveTileViewAsManual() },
             PaletteCommand(glyph: "⇉", label: "Broadcast: Tab", kbd: "") { [weak self] in self?.setBroadcast(.currentTab) },
             PaletteCommand(glyph: "⇉", label: "Broadcast: Project", kbd: "") { [weak self] in self?.setBroadcast(.project) },
@@ -3854,11 +3855,17 @@ final class TerminalViewController: NSViewController {
     /// Running once, so the first ⇧⌘G is never an empty grid.
     func loadTileLibrary(openIDs: [UUID], activeIndex: Int) {
         tileLibrary = tileProfileStore?.load() ?? TileProfileFile()
+        var seeded = false
         if !tileLibrary.profiles.contains(where: { $0.kind == .allRunning }) {
             tileLibrary.profiles.insert(
                 TileProfile(name: "All Running", kind: .allRunning), at: 0)
-            persistTileLibrary()
+            seeded = true
         }
+        if tileLibrary.layouts.isEmpty {
+            tileLibrary.layouts = TileLayout.builtIns
+            seeded = true
+        }
+        if seeded { persistTileLibrary() }
         openTileViews = openIDs.compactMap { id in
             tileLibrary.profiles.first { $0.id == id }
         }
@@ -3982,6 +3989,31 @@ final class TerminalViewController: NSViewController {
                              keyEquivalent: "")
         new.target = self
         menu.addItem(new)
+        if let active = activeTileProfile, active.kind == .manual {
+            let configure = NSMenuItem(title: "Configure \u{201C}\(active.name)\u{201D}\u{2026}",
+                                       action: #selector(configureTileViewFromMenu),
+                                       keyEquivalent: "")
+            configure.target = self
+            menu.addItem(configure)
+        }
+        // Layouts are managed from here rather than a window of their own — a
+        // second window for five named grids is more chrome than it deserves.
+        if !tileLibrary.layouts.isEmpty {
+            let submenu = NSMenu()
+            for layout in tileLibrary.layouts {
+                let item = NSMenuItem(title: "\(layout.name)  \(layout.grid.configValue)",
+                                      action: #selector(removeTileLayoutFromMenu(_:)),
+                                      keyEquivalent: "")
+                item.target = self
+                item.representedObject = layout.id
+                item.image = TileConfigSheet.shapeImage(for: layout.grid, size: 14)
+                item.toolTip = "Remove this layout"
+                submenu.addItem(item)
+            }
+            let parent = NSMenuItem(title: "Remove Layout", action: nil, keyEquivalent: "")
+            parent.submenu = submenu
+            menu.addItem(parent)
+        }
         // The computed view cannot be edited in place, so offer the way across
         // right where someone would look for it.
         if let active = activeTileProfile, active.kind == .allRunning {
@@ -4003,6 +4035,13 @@ final class TerminalViewController: NSViewController {
     @objc private func newTileViewFromMenu() { newTileView() }
 
     @objc private func duplicateTileViewFromMenu() { duplicateActiveTileViewAsManual() }
+
+    @objc private func configureTileViewFromMenu() { configureActiveTileView() }
+
+    @objc private func removeTileLayoutFromMenu(_ sender: NSMenuItem) {
+        guard let id = sender.representedObject as? UUID else { return }
+        removeTileLayout(id: id)
+    }
 
     /// A sidebar tab row dropped on a slot. Goes through the SAME mutation the
     /// picker and the pane menu use, so three entry points cannot drift into
@@ -4042,7 +4081,19 @@ final class TerminalViewController: NSViewController {
             label: "\(project.name) / \(tabDisplayTitle(for: tree, at: found.tabIndex))")
 
         setTileMode(true)
-        if let profileID { openTileView(profileID: profileID) } else { newTileView() }
+        guard let profileID else {
+            // New View is a SHEET now, so the attach has to wait for it —
+            // running straight on would land the pane in the old profile.
+            newTileView { [weak self] in self?.attachToActiveTileView(slot) }
+            return
+        }
+        openTileView(profileID: profileID)
+        attachToActiveTileView(slot)
+    }
+
+    /// Fills the first hole of the active view, or appends past the end —
+    /// `attach(_:at:)` grows the list.
+    private func attachToActiveTileView(_ slot: TileSlot) {
         let index = activeTileProfile?.slots.firstIndex(where: { $0 == nil })
             ?? (activeTileProfile?.slots.count ?? 0)
         mutateActiveTileProfile { $0.attach(slot, at: index) }
@@ -4060,13 +4111,59 @@ final class TerminalViewController: NSViewController {
         selectTileView(at: openTileViews.count - 1)
     }
 
-    func newTileView() {
-        let profile = TileProfile(name: "Tiles \(tileLibrary.profiles.count)",
-                                  grid: tilesGridProvider?() ?? .default)
-        tileLibrary.profiles.append(profile)
+    /// Asks for a name and a shape first. A view IS a structure before it is
+    /// anything else, so picking one is the first thing creating it should do.
+    func newTileView(then completion: (() -> Void)? = nil) {
+        presentTileConfigSheet(
+            name: "Tiles \(tileLibrary.profiles.count)",
+            grid: tilesGridProvider?() ?? .default,
+            confirmTitle: "Create"
+        ) { [weak self] result in
+            guard let self else { return }
+            self.saveLayoutIfRequested(result)
+            let profile = TileProfile(name: result.name, grid: result.grid)
+            self.tileLibrary.profiles.append(profile)
+            self.persistTileLibrary()
+            self.openTileViews.append(profile)
+            self.setTileMode(true)
+            self.selectTileView(at: self.openTileViews.count - 1)
+            completion?()
+        }
+    }
+
+    /// Reconfigures the open view. Safe on a populated one: `setGrid` never
+    /// truncates past an attachment.
+    func configureActiveTileView() {
+        guard let active = activeTileProfile, active.kind == .manual else { return }
+        presentTileConfigSheet(name: active.name, grid: active.grid, confirmTitle: "Apply") {
+            [weak self] result in
+            guard let self else { return }
+            self.saveLayoutIfRequested(result)
+            self.mutateActiveTileProfile {
+                $0.name = result.name
+                $0.setGrid(result.grid)
+            }
+            self.rebuildSurfaceNodeView()
+        }
+    }
+
+    private func presentTileConfigSheet(name: String, grid: TilesGrid, confirmTitle: String,
+                                        onConfirm: @escaping (TileConfigSheet.Result) -> Void) {
+        let sheet = TileConfigSheet(layouts: tileLibrary.layouts, name: name, grid: grid,
+                                    confirmTitle: confirmTitle, onConfirm: onConfirm)
+        presentAsSheet(sheet)
+    }
+
+    /// The "Save as layout" checkbox: this is how the library grows.
+    private func saveLayoutIfRequested(_ result: TileConfigSheet.Result) {
+        guard let layoutName = result.saveAsLayout else { return }
+        tileLibrary.layouts.append(TileLayout(name: layoutName, grid: result.grid))
         persistTileLibrary()
-        openTileViews.append(profile)
-        selectTileView(at: openTileViews.count - 1)
+    }
+
+    func removeTileLayout(id: UUID) {
+        tileLibrary.layouts.removeAll { $0.id == id }
+        persistTileLibrary()
     }
 
     /// Closes the TAB. The profile stays in the library — a closed tab must not

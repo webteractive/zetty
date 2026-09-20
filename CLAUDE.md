@@ -1701,6 +1701,21 @@ Eight things here will look like tidy-ups and are not:
   around. The status bar still follows the focused TILE
   (`statusBarSurface`).
 
+**A view is a structure before it is anything else**, so creating one opens
+`TileConfigSheet` rather than silently minting a `4x4`: a name, the layout
+presets drawn as their own shapes, and custom columns/rows clamped to the same
+1–8 `TilesGrid` enforces. `TileLayout` (pure, seeded with five built-ins into
+the same `tile-profiles.json`) is a NAMED GRID ONLY. Creating a profile
+**copies** that grid — no reference, no back-link, no "from Quad" label, since
+with copy semantics such a label cannot survive a rename and the grid is
+already the profile's own. Editing a layout therefore affects only later views,
+and nothing on screen reshapes because of an edit elsewhere.
+
+**`newTileView` is ASYNC now** — it takes a `then:` completion, because the
+sheet returns before the view exists. `addSurfaceToTileView` has to use it: the
+old straight-line version attached the pane to whichever profile was active
+*before* the sheet, which is the previous one.
+
 **Three attach paths, one mutation.** The `+ Attach` cell opens
 `TileAttachPicker` (a `CommandPaletteView`-shaped overlay reusing
 `CommandSearch.rank`); a sidebar tab row can be dropped on a slot; and a pane's
