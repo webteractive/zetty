@@ -3,7 +3,7 @@ import ProjectDescription
 // External SPM package: prebuilt libghostty-spm (ships xcframework, no zig/submodule build)
 let libghosttyPackage: Package = .remote(
     url: "https://github.com/Lakr233/libghostty-spm.git",
-    requirement: .upToNextMinor(from: "1.2.7")
+    requirement: .upToNextMinor(from: "1.6.20260922")
 )
 
 // Stamps the built app's Info.plist with the short git commit ("*" suffix when
