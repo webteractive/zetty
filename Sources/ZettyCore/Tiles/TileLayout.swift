@@ -52,7 +52,13 @@ public struct TileLayout: Codable, Equatable, Sendable, Identifiable {
     /// Seeded once into a fresh library. Editable and deletable like any
     /// other — a starting point you cannot change is just clutter.
     public static let builtIns: [TileLayout] = [
-        // No 1x1: a tile view that shows one pane is just the pane.
+        // The one layout with no shape, and the reason a single leaf is back
+        // after "Focus" was dropped for being "just the pane". That judged it
+        // as a DESTINATION; this is a STARTING POINT. You do not sit in it —
+        // you split it into whatever the work needs, which is the one thing
+        // the six preset shapes cannot offer, since each of them commits you
+        // to its shape before you know what you are arranging.
+        TileLayout(name: "Freeform", root: .slot),
         TileLayout(name: "Pair", grid: TilesGrid(columns: 2, rows: 1)),
         TileLayout(name: "Stack", grid: TilesGrid(columns: 1, rows: 2)),
         TileLayout(name: "Quad", grid: TilesGrid(columns: 2, rows: 2)),

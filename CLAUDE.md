@@ -1737,6 +1737,20 @@ sheet's steppers and `zetty-tiles-grid`.
 - **Old libraries migrate silently**: a stored `grid` decodes to
   `TileNode.uniform`, and only `root` is ever written back, so a file converts
   itself the first time it is saved.
+- **`Freeform` is the one built-in with a single leaf, and it is NOT the
+  retired `Focus` returning.** `Focus` was dropped as a DESTINATION — a view
+  showing one pane is just the pane — whereas Freeform is a STARTING POINT you
+  split into whatever the work needs, which is the one thing the six preset
+  shapes cannot offer. `close(at:)` refusing the last leaf is what makes it
+  safe to start from.
+- **`seedMissingLayouts()` clears `Focus` BY NAME, never by leaf count.** It
+  used to remove every layout with `leafCount == 1`, which deletes Freeform on
+  the load right after seeding it — and because the seed name is recorded in
+  `seededLayoutNames`, it would never come back. The failure is silent and
+  permanent, so it is regression-tested from both ends (Freeform survives two
+  consecutive loads; a user's own renamed one-slot layout is left alone).
+  Retiring another built-in means adding its name there, not widening the
+  predicate back into a shape test.
 
 **A view is a structure before it is anything else**, so creating one opens
 `TileConfigSheet` rather than silently minting a `4x4`. `TileLayout` is a NAMED

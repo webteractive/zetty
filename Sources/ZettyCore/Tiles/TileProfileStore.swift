@@ -30,14 +30,25 @@ public struct TileProfileFile: Codable, Equatable, Sendable {
             ?? layouts.map(\.name)
     }
 
+    /// A built-in that shipped once and was withdrawn. Kept as a constant
+    /// rather than inlined so it reads as retired rather than arbitrary.
+    private static let retiredLayoutName = "Focus"
+
     /// Adds built-ins this library has never been offered. Returns whether
     /// anything changed, so the caller knows to save.
     public mutating func seedMissingLayouts() -> Bool {
         var changed = false
-        // A single-slot layout is just the pane, so the 1x1 built-in was
-        // dropped; clear the one already seeded into existing libraries.
+        // Clears the retired "Focus" built-in from libraries that were already
+        // seeded with it.
+        //
+        // BY NAME, deliberately — this used to remove every layout with one
+        // leaf, and Freeform has one leaf. Left as it was, the built-in seeded
+        // three lines below would be deleted again on the very next load, with
+        // nothing to show for it: the seed name is recorded, so it would never
+        // come back either. A rename spares a layout the user made their own,
+        // which is the right answer too.
         let before = layouts.count
-        layouts.removeAll { $0.root.leafCount == 1 }
+        layouts.removeAll { $0.name == Self.retiredLayoutName }
         if layouts.count != before { changed = true }
 
         let offered = Set(seededLayoutNames)
