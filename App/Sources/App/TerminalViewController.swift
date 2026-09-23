@@ -3745,9 +3745,16 @@ final class TerminalViewController: NSViewController {
     // MARK: - Open in editor (status bar)
 
     private func focusedDirectoryURL() -> URL {
-        let focused = paneTree.focusedSurface
-        let path = focused.flatMap { registry.workingDirectory(for: $0) }
-            ?? focused?.workingDir
+        directoryURL(for: paneTree.focusedSurface?.id)
+    }
+
+    /// One pane's working directory. Tile mode needs this per tile, and the
+    /// distinction is the whole point: a tile's button must open ITS pane, not
+    /// whichever pane happens to hold focus.
+    private func directoryURL(for surfaceID: UUID?) -> URL {
+        let surface = surfaceID.flatMap { workspace.surface(with: $0) }
+        let path = surface.flatMap { registry.workingDirectory(for: $0) }
+            ?? surface?.workingDir
             ?? NSHomeDirectory()
         return URL(fileURLWithPath: path, isDirectory: true)
     }
@@ -3759,22 +3766,41 @@ final class TerminalViewController: NSViewController {
         editorMenu().popUp(positioning: nil, at: NSPoint(x: 0, y: -6), in: anchor)
     }
 
+    /// A tile's own Open button. Drops DOWN from the button, which sits in the
+    /// tile's header rather than at the window's bottom edge.
+    func showEditorMenu(from anchor: NSView, forSurface surfaceID: UUID) {
+        editorMenu(for: directoryURL(for: surfaceID))
+            .popUp(positioning: nil, at: NSPoint(x: 0, y: anchor.bounds.height + 4), in: anchor)
+    }
+
+    /// What an editor item carries: the app to open with (nil = Finder) and
+    /// the directory to open. The DIRECTORY has to travel with the item —
+    /// re-reading focus when the item fires is what made every tile's button
+    /// open the focused tile's pane instead of its own.
+    private struct EditorTarget {
+        let app: URL?
+        let directory: URL
+    }
+
     /// The picker as a detached menu. The compact status bar hangs this off its
     /// `⋯` menu as a submenu, so built separately from showing it.
-    private func editorMenu() -> NSMenu {
+    private func editorMenu() -> NSMenu { editorMenu(for: focusedDirectoryURL()) }
+
+    private func editorMenu(for directory: URL) -> NSMenu {
         let menu = NSMenu()
         for app in EditorCatalog.installed() {
             let item = NSMenuItem(title: EditorCatalog.displayName(of: app),
                                   action: #selector(editorMenuPicked(_:)), keyEquivalent: "")
             item.target = self
             item.image = EditorCatalog.icon(for: app, size: 16)
-            item.representedObject = app
+            item.representedObject = EditorTarget(app: app, directory: directory)
             menu.addItem(item)
         }
         menu.addItem(.separator())
         let finder = NSMenuItem(title: "Finder",
-                                action: #selector(revealFocusedInFinder(_:)), keyEquivalent: "")
+                                action: #selector(editorMenuPicked(_:)), keyEquivalent: "")
         finder.target = self
+        finder.representedObject = EditorTarget(app: nil, directory: directory)
         if let finderApp = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.apple.finder") {
             finder.image = EditorCatalog.icon(for: finderApp, size: 16)
         }
@@ -3783,13 +3809,12 @@ final class TerminalViewController: NSViewController {
     }
 
     @objc private func editorMenuPicked(_ sender: NSMenuItem) {
-        guard let app = sender.representedObject as? URL else { return }
-        NSWorkspace.shared.open([focusedDirectoryURL()], withApplicationAt: app,
+        guard let target = sender.representedObject as? EditorTarget else { return }
+        guard let app = target.app else {
+            return NSWorkspace.shared.activateFileViewerSelecting([target.directory])
+        }
+        NSWorkspace.shared.open([target.directory], withApplicationAt: app,
                                 configuration: NSWorkspace.OpenConfiguration())
-    }
-
-    @objc private func revealFocusedInFinder(_ sender: Any?) {
-        NSWorkspace.shared.activateFileViewerSelecting([focusedDirectoryURL()])
     }
 
     /// Surfaces already given their post-reattach repaint nudge.
@@ -4345,6 +4370,8 @@ final class TerminalViewController: NSViewController {
     func setTileMode(_ on: Bool) {
         guard tileMode != on else { return }
         tileMode = on
+        // `Open ▾` folds away while the grid is up; each tile carries its own.
+        statusBarView?.isTileMode = on
         // The strip's contents change with the mode, and `refreshTabBar`
         // branches on it — without this the pills stay on the old set.
         defer { refreshTabBar() }
@@ -6177,6 +6204,9 @@ final class TerminalViewController: NSViewController {
                 onGoToPane: { [weak self] id in
                     self?.tileFocusedSurfaceID = id
                     self?.setTileMode(false)
+                },
+                onOpen: { [weak self] id, anchor in
+                    self?.showEditorMenu(from: anchor, forSurface: id)
                 },
                 onAttach: { [weak self] index in self?.presentTileAttachPicker(slot: index) },
                 onDetach: { [weak self] index in

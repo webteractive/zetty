@@ -53,7 +53,10 @@ by the tool it's running.
     sidebar onto it, or use a pane's right-click → **Add to Tile View ▸**.
     A tile's `×` (and `⌘W`) detaches the slot — the pane keeps running; press
     it again on the now-empty slot to remove the slot itself. **Double-click a
-    tile's header** to leave the grid for that pane.
+    tile's header** to leave the grid for that pane, and use its **folder
+    button** to open that pane's own directory in an editor or Finder — the
+    status bar's `Open ▾` folds away while the grid is up, because one bar-wide
+    Open cannot say which of the panes on screen it means.
   - **Or start something new.** The same list ends each project with a
     **New session** row, so a slot can be filled without first making a tab
     somewhere else. It goes through the project's own agent chooser when one

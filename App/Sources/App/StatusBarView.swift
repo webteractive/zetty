@@ -164,6 +164,17 @@ final class StatusBarView: NSView {
     /// Whether `infoStack` has folded into `infoChip`. Flipped only by
     /// `layout()`, through `StatusBarCompaction`'s hysteresis.
     private var isCompact = false
+
+    /// While the grid is up `Open \u{25be}` folds away and each tile carries its
+    /// own button instead. One bar-wide Open across a grid of panes cannot say
+    /// WHICH directory it means, and the status bar follows whichever tile has
+    /// focus — so the answer changes under you as you move around.
+    var isTileMode = false {
+        didSet {
+            guard isTileMode != oldValue else { return }
+            updateEditorVisibility()
+        }
+    }
     /// `infoStack.fittingSize.width`, remembered across passes. A hidden stack
     /// can measure zero, and a zero requirement would read as "it fits" and
     /// bounce the bar straight back to wide.
@@ -698,7 +709,7 @@ final class StatusBarView: NSView {
         // in a state that would be wrong to hide. `Open ▾` never is — it is a
         // menu, and folding a menu into a menu costs one click and loses
         // nothing — so it always folds.
-        editorPill.isHidden = isCompact
+        updateEditorVisibility()
         // Same inputs, different labels — the cached renderers would no-op.
         renderedBroadcastScope = nil
         renderedChipToken = nil
@@ -724,6 +735,13 @@ final class StatusBarView: NSView {
     /// an account dot too, so a compact bar is not the last word on it.
     private func updateAccountVisibility() {
         accountPill.isHidden = isCompact || shownAccount == nil
+    }
+
+    /// Two inputs decide this, so it lives here rather than in the renderer —
+    /// same reason as the two above. Compact folds it into the `\u{22ef}` menu;
+    /// tile mode removes it outright, since the tiles carry their own.
+    private func updateEditorVisibility() {
+        editorPill.isHidden = isCompact || isTileMode
     }
 
     private func renderInfoChip() {
@@ -786,7 +804,10 @@ final class StatusBarView: NSView {
         // A submenu, not a second popup: every other entry here opens sideways,
         // and an item that closes this menu to open one of its own reads as a
         // different kind of control.
-        if let editors = onBuildEditorMenu?() {
+        // Not in tile mode: folding it in here would keep offering the exact
+        // control the grid just took away, and still without saying which
+        // pane it means.
+        if !isTileMode, let editors = onBuildEditorMenu?() {
             menu.addItem(withTitle: "Open Directory In", action: nil, keyEquivalent: "")
                 .submenu = editors
         }

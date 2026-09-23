@@ -58,6 +58,7 @@ final class TileView: NSView {
     private let statusDot = NSView()
     private let iconView = NSImageView()
     private let titleLabel = NSTextField(labelWithString: "")
+    private let openButton = NSButton()
     private let goToPaneButton = NSButton()
     private let body = NSView()
     private let messageLabel = NSTextField(labelWithString: "")
@@ -66,6 +67,7 @@ final class TileView: NSView {
     private var status: TileStatus
     private let onActivate: () -> Void
     private let onGoToPane: () -> Void
+    private let onOpen: (NSView) -> Void
     private let onDetach: () -> Void
     private let onSplit: (SplitDirection) -> Void
 
@@ -78,6 +80,7 @@ final class TileView: NSView {
          content: TileContent,
          onActivate: @escaping () -> Void,
          onGoToPane: @escaping () -> Void,
+         onOpen: @escaping (NSView) -> Void = { _ in },
          onDetach: @escaping () -> Void = {},
          onSplit: @escaping (SplitDirection) -> Void = { _ in }) {
         self.surfaceID = surfaceID
@@ -86,6 +89,7 @@ final class TileView: NSView {
         self.isFocused = isFocused
         self.onActivate = onActivate
         self.onGoToPane = onGoToPane
+        self.onOpen = onOpen
         self.onDetach = onDetach
         self.onSplit = onSplit
         super.init(frame: .zero)
@@ -96,7 +100,9 @@ final class TileView: NSView {
 
         // A hole has nothing to name, so it is body-only — the header would
         // be an empty strip above an empty cell.
-        if case .empty = content {} else { buildHeader(label: label, icon: icon) }
+        if case .empty = content {} else {
+            buildHeader(label: label, icon: icon, canOpen: surfaceID != nil)
+        }
         buildBody(content: content)
         // The live grid is the layout editor, so a slot splits like a pane.
         menu = {
@@ -124,7 +130,7 @@ final class TileView: NSView {
 
     // MARK: - Build
 
-    private func buildHeader(label: String, icon: NSImage?) {
+    private func buildHeader(label: String, icon: NSImage?, canOpen: Bool) {
         header.wantsLayer = true
         header.translatesAutoresizingMaskIntoConstraints = false
         addSubview(header)
@@ -147,6 +153,21 @@ final class TileView: NSView {
         titleLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
         header.addSubview(titleLabel)
+
+        // The status bar's `Open ▾` folds away in tile mode, so this is the
+        // only way to reach a pane's directory from the grid. Hidden for a
+        // `.missing` slot: there is no pane, so there is no directory.
+        openButton.isBordered = false
+        openButton.bezelStyle = .inline
+        openButton.image = NSImage(systemSymbolName: "folder",
+                                   accessibilityDescription: "Open this pane's directory")
+        openButton.imagePosition = .imageOnly
+        openButton.target = self
+        openButton.action = #selector(openClicked)
+        openButton.toolTip = "Open this pane's directory in an editor or Finder"
+        openButton.isHidden = !canOpen
+        openButton.translatesAutoresizingMaskIntoConstraints = false
+        header.addSubview(openButton)
 
         goToPaneButton.isBordered = false
         goToPaneButton.bezelStyle = .inline
@@ -188,7 +209,15 @@ final class TileView: NSView {
             titleLabel.centerYAnchor.constraint(equalTo: header.centerYAnchor),
             titleLabel.leadingAnchor.constraint(equalTo: iconView.trailingAnchor, constant: 6),
             titleLabel.trailingAnchor.constraint(
-                lessThanOrEqualTo: goToPaneButton.leadingAnchor, constant: -6),
+                lessThanOrEqualTo: openButton.leadingAnchor, constant: -6),
+
+            // Width toggles 0↔14 with visibility rather than the view being
+            // removed, so a `.missing` header lays out identically.
+            openButton.widthAnchor.constraint(equalToConstant: canOpen ? 14 : 0),
+            openButton.heightAnchor.constraint(equalToConstant: 14),
+            openButton.centerYAnchor.constraint(equalTo: header.centerYAnchor),
+            openButton.trailingAnchor.constraint(equalTo: goToPaneButton.leadingAnchor,
+                                                 constant: canOpen ? -8 : 0),
 
             goToPaneButton.widthAnchor.constraint(equalToConstant: 14),
             goToPaneButton.heightAnchor.constraint(equalToConstant: 14),
@@ -278,6 +307,8 @@ final class TileView: NSView {
 
     @objc private func reattachClicked() { onActivate() }
 
+    @objc private func openClicked() { onOpen(openButton) }
+
     @objc private func detachClicked() { onDetach() }
 
     @objc private func splitRight() { onSplit(.vertical) }
@@ -315,6 +346,7 @@ final class TileView: NSView {
         messageLabel.textColor = theme.fg3Color
         iconView.contentTintColor = isFocused ? theme.fgColor : theme.fg2Color
         goToPaneButton.contentTintColor = theme.fg3Color
+        openButton.contentTintColor = theme.fg3Color
     }
 
     // MARK: - Interaction

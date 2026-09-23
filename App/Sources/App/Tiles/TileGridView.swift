@@ -41,6 +41,9 @@ final class TileGridView: NSView {
     private var tiles: [TileView] = []
     private let onActivate: (UUID) -> Void
     private let onGoToPane: (UUID) -> Void
+    /// Open that pane's own working directory. Per tile, never the focused
+    /// one — that distinction is the point of moving it off the status bar.
+    private let onOpen: (UUID, NSView) -> Void
     /// A hole or a missing slot was clicked — open the picker for that index.
     private let onAttach: (Int) -> Void
     /// Remove that slot from the view. The pane keeps running.
@@ -68,6 +71,7 @@ final class TileGridView: NSView {
          onCounts: @escaping (Int, Int) -> Void,
          onActivate: @escaping (UUID) -> Void,
          onGoToPane: @escaping (UUID) -> Void,
+         onOpen: @escaping (UUID, NSView) -> Void,
          onAttach: @escaping (Int) -> Void,
          onDetach: @escaping (Int) -> Void,
          onSplit: @escaping (Int, SplitDirection) -> Void) {
@@ -75,6 +79,7 @@ final class TileGridView: NSView {
         self.onCounts = onCounts
         self.onActivate = onActivate
         self.onGoToPane = onGoToPane
+        self.onOpen = onOpen
         self.onAttach = onAttach
         self.onDetach = onDetach
         self.onSplit = onSplit
@@ -159,6 +164,7 @@ final class TileGridView: NSView {
                     self?.onActivate(id)
                 },
                 onGoToPane: { [weak self] in if let id { self?.onGoToPane(id) } },
+                onOpen: { [weak self] anchor in if let id { self?.onOpen(id, anchor) } },
                 onDetach: { [weak self] in self?.onDetach(index) },
                 onSplit: { [weak self] direction in self?.onSplit(index, direction) })
             tile.translatesAutoresizingMaskIntoConstraints = true

@@ -1855,6 +1855,23 @@ seeds a pending flag before the view loads and `viewDidLoad` enters through
 `setTileMode(true)`, never by flipping the flag: the enter path is what seeds
 focus and runs the pane spawn queue.
 
+**`Open ▾` leaves the status bar and arrives per tile.** `StatusBarView
+.isTileMode` folds the pill away (and drops the `⋯` menu's "Open Directory In"
+submenu with it) through `updateEditorVisibility()` — its own function beside
+`updateBroadcastVisibility`/`updateAccountVisibility`, because two inputs decide
+it and a renderer that also owned `isHidden` would fight `applyCompactState`.
+Each `TileView` header carries a `folder` button instead, hidden for a
+`.missing` slot via the same 0↔14 width toggle the account dots use.
+
+**The menu item carries its DIRECTORY, not just its app.** `editorMenuPicked`
+used to call `focusedDirectoryURL()`, which reads `paneTree.focusedSurface` —
+global focus. Wire a per-tile button to that and every one of them opens
+whichever tile currently HAS focus, so clicking tile 7's button gives you tile
+3's directory. `editorMenu(for:)` bakes the url into each item's
+`EditorTarget`, and `focusedDirectoryURL()` is now just
+`directoryURL(for:)` applied to the focused pane. Finder went through the same
+item for the same reason; it no longer has an action of its own.
+
 **Chrome.** The strip carries tile-view pills while the grid is up
 (`refreshTabBar` branches; every `tabBar.on*` callback branches with it), `+`
 raises the profile library as a menu, and the tab bar keeps its sidebar and
