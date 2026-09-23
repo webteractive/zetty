@@ -1599,6 +1599,16 @@ Four things here will look like tidy-ups and are not:
 - **Ownership is `sessionOwnerSurfaceIDs`, never `allSurfaceIDs`.** The former
   spans hibernated projects; the latter excludes them, so using it would report
   every dormant project's session as an orphan and invite the user to kill it.
+- **`zmx list` is NOT a list of Zetty's panes**, and the task manager is the one
+  place that forgot it. zmx is shared with other tools (Supacode, Tinker, a
+  hand-rolled `zmx new`), so `SessionPersistence.sessionPIDs(fromList:)` filters
+  on `namePrefix` exactly like its sibling `zettySessions(fromList:)` — which
+  always did, and documents it. Without that filter a foreign session becomes a
+  row nothing owns, i.e. an ORPHAN, and orphans are killed directly and
+  UNCONFIRMED: two clicks in Zetty's task manager would have killed another
+  tool's live session. Filtering belongs at the parse boundary rather than in
+  `TaskInventory.rows`, or the sampler still burns CPU measurement on sessions
+  that can never be shown.
 
 **Docked or detached, one view.** `zetty-sessions-view = drawer | window`
 (default `drawer`). `SessionsView` is the whole thing; the bottom drawer and

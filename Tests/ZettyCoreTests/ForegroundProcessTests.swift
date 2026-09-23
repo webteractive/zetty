@@ -63,9 +63,52 @@ private let psSample = """
 }
 
 @Test func zmxListPIDsParse() {
+    // The foreign line carries an extra `cmd=` token with spaces in it, which
+    // is what this case is really for: it must not derail the parse. It is
+    // skipped rather than kept — this used to assert supa-zzz survived, which
+    // pinned the bug that put other tools' sessions in the task manager.
     let list = "  name=zetty-abc\tpid=123\tclients=1\tcreated=1782977929\tstart_dir=/x\n"
         + "  name=supa-zzz\tpid=456\tclients=1\tcreated=1\tstart_dir=/y\tcmd=/usr/bin/login -flp u\n"
+        + "  name=zetty-def\tpid=789\tclients=0\tcreated=2\tstart_dir=/z\n"
     let pids = SessionPersistence.sessionPIDs(fromList: list)
     #expect(pids["zetty-abc"] == 123)
-    #expect(pids["supa-zzz"] == 456)
+    #expect(pids["supa-zzz"] == nil)
+    // The line AFTER the foreign one still parses.
+    #expect(pids["zetty-def"] == 789)
+}
+
+// MARK: - Foreign sessions
+
+@Test func sessionPIDsIgnoresSessionsThatAreNotOurs() {
+    // zmx is shared with other tools (Supacode, Tinker, a hand-rolled
+    // `zmx new`), so `zmx list` is NOT a list of Zetty's panes. Keeping a
+    // foreign session here puts it in the task manager, where nothing owns it
+    // and it therefore renders as an ORPHAN — the one row Zetty kills with no
+    // confirmation at all.
+    let list = """
+      name=tinker-9d5fda29\tpid=18841\tclients=1\tstart_dir=/Users/x/Tinker
+      name=zetty-2378a881\tpid=89844\tclients=1\tstart_dir=/Users/x/AI/zetty
+      name=scratch\tpid=4242\tclients=0\tstart_dir=/Users/x
+    """
+    let pids = SessionPersistence.sessionPIDs(fromList: list)
+    #expect(pids == ["zetty-2378a881": 89844])
+}
+
+@Test func sessionPIDsAgreesWithZettySessionsAboutWhatIsOurs() {
+    // The two parse the same output for different callers; a session either
+    // belongs to Zetty or it does not, and they must never disagree about
+    // which — that disagreement is exactly how a foreign session reached the
+    // task manager while the reap correctly left it alone.
+    let list = """
+      name=tinker-9d5fda29\tpid=18841\tclients=1
+      name=zetty-2378a881\tpid=89844\tclients=1
+      name=zetty-abd17d72\tpid=3224\tclients=0
+    """
+    let short = list
+        .split(separator: "\n")
+        .map { $0.trimmingCharacters(in: .whitespaces) }
+        .map { String($0.split(separator: "\t")[0].dropFirst(5)) }
+        .joined(separator: "\n")
+    #expect(Set(SessionPersistence.sessionPIDs(fromList: list).keys)
+            == Set(SessionPersistence.zettySessions(fromList: short)))
 }

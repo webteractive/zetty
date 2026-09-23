@@ -87,7 +87,8 @@ public enum SessionPersistence {
     }
 
     /// Parses full `zmx list` output into session name → root pid, for
-    /// foreground-process resolution. Unparseable lines are skipped.
+    /// foreground-process resolution. Unparseable lines are skipped, and
+    /// foreign sessions are dropped — same contract as `zettySessions`.
     public static func sessionPIDs(fromList output: String) -> [String: Int32] {
         var pids: [String: Int32] = [:]
         for line in output.split(separator: "\n") {
@@ -97,7 +98,12 @@ public enum SessionPersistence {
                 if token.hasPrefix("name=") { name = String(token.dropFirst(5)) }
                 if token.hasPrefix("pid=") { pid = Int32(token.dropFirst(4)) }
             }
-            if let name, let pid { pids[name] = pid }
+            // OURS ONLY, exactly like `zettySessions` below. zmx is shared
+            // with other tools, so `zmx list` is not a list of Zetty's panes;
+            // a foreign session kept here reaches the task manager, where
+            // nothing owns it and it renders as an ORPHAN — the one row killed
+            // with no confirmation.
+            if let name, let pid, name.hasPrefix(namePrefix) { pids[name] = pid }
         }
         return pids
     }
