@@ -1765,6 +1765,33 @@ right-click offers `Add to Tile View ▸`. All three call
 lands on the GRID, outside the outline view, so `SidebarView.validateDrop` —
 the rule protecting the pinned-first invariant — is never consulted.
 
+**A slot can also be filled with a pane that does not exist yet.** The picker
+returns a `TileAttachPicker.Action` rather than a `TileSlot`, and its second
+case mints one: `attachNewTileSession` calls `tabList.newBackgroundTab()` and
+attaches THAT through the same single mutation. Three things about it are
+deliberate:
+
+- **The agent chooser runs against the TARGET project.** `chooseAgentThenSpawn`
+  read `workspace.projects[workspace.activeIndex]`, and tile mode never changes
+  the active project — so a new session in one project would have been offered
+  another's agents and account default. It now has a
+  `chooseAgentThenSpawn(in:)` overload and the old signature is a wrapper.
+  Cancel creates no tab and leaves the slot empty, which is that method's
+  existing contract.
+- **Both stamps land before the attach.** `accountID` and any startup command
+  go onto the surface the moment `newBackgroundTab()` returns — the surface
+  environment is read once, when libghostty creates the pane, so a stamp after
+  the spawn describes a process that no longer matches.
+- **The spawn belongs to the tile queue**, via `enqueueMissingTileSurfaces()`,
+  NOT `spawnPaneInBackground`. A new session is one more pane the grid is
+  bringing up and must be staggered with the rest — same reason
+  `attachNextTileSurface` exists rather than `ensurePaneIsLive`.
+
+**The new-session row sits with its own project's tabs**, not in a block at the
+end. `CommandSearch.rank` breaks ties on the original index, so its position in
+`tileAttachCandidates()` IS where a query naming the project puts it; collecting
+them separately would strand every one of them below every tab.
+
 **There is no All Running view.** Toggling into tile mode opens the CHOOSER;
 an auto-filled view was what made the grid unreadable at sixteen tiles, and the
 picker replaced it rather than joining it. `TileProfileKind` and

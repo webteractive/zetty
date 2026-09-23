@@ -1,32 +1,41 @@
 import AppKit
 import ZettyCore
 
-/// A scrim + centred panel listing every pane, fuzzy-filtered, for attaching
-/// one into a tile slot.
+/// A scrim + centred panel listing every pane — plus a fresh session per
+/// project — fuzzy-filtered, for attaching one into a tile slot.
 ///
 /// Deliberately shaped like `CommandPaletteView` — same anatomy, same four key
 /// commands — so it behaves the way the palette already taught.
 @MainActor
 final class TileAttachPicker: NSView {
 
+    /// What picking a row does. The picker stays dumb — it ranks labels and
+    /// hands the action back; the controller owns every consequence.
+    enum Action {
+        /// Attach an existing tab.
+        case attach(TileSlot)
+        /// Mint a fresh tab in this project and attach that.
+        case newSession(projectIndex: Int)
+    }
+
     struct Candidate {
         let label: String
         let detail: String
-        let slot: TileSlot
+        let action: Action
     }
 
     private let candidates: [Candidate]
     private var filtered: [Int]
     private var selection = 0
-    private let onPick: (TileSlot?) -> Void
+    private let onPick: (Action?) -> Void
 
     private let panel = NSView()
     private let field = NSTextField()
     private let tableView = NSTableView()
     private let scrollView = NSScrollView()
-    private let emptyLabel = NSTextField(labelWithString: "No panes to attach.")
+    private let emptyLabel = NSTextField(labelWithString: "Nothing to attach.")
 
-    init(candidates: [Candidate], onPick: @escaping (TileSlot?) -> Void) {
+    init(candidates: [Candidate], onPick: @escaping (Action?) -> Void) {
         self.candidates = candidates
         self.filtered = Array(candidates.indices)
         self.onPick = onPick
@@ -65,7 +74,7 @@ final class TileAttachPicker: NSView {
         addSubview(panel)
 
         field.font = ZTheme.chromeFont(size: 13)
-        field.placeholderString = "Attach a pane\u{2026}"
+        field.placeholderString = "Attach a pane or start a new session\u{2026}"
         field.isBordered = false
         field.drawsBackground = false
         field.focusRingType = .none
@@ -160,12 +169,12 @@ final class TileAttachPicker: NSView {
 
     private func commit() {
         guard filtered.indices.contains(selection) else { return close(nil) }
-        close(candidates[filtered[selection]].slot)
+        close(candidates[filtered[selection]].action)
     }
 
-    func close(_ slot: TileSlot?) {
+    func close(_ action: Action?) {
         removeFromSuperview()
-        onPick(slot)
+        onPick(action)
     }
 
     @objc private func rowDoubleClicked() {

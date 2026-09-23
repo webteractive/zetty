@@ -1455,7 +1455,17 @@ final class TerminalViewController: NSViewController {
         guard workspace.projects.indices.contains(workspace.activeIndex) else {
             onProceed(nil, nil); return
         }
-        let project = workspace.projects[workspace.activeIndex]
+        chooseAgentThenSpawn(in: workspace.projects[workspace.activeIndex], onProceed)
+    }
+
+    /// The same chooser against an EXPLICIT project rather than the active one.
+    ///
+    /// Tile mode deliberately never changes the active project, so a new
+    /// session attached into a slot would otherwise be offered the agents and
+    /// account default of whichever project happens to be selected behind the
+    /// grid — a chooser naming the wrong project's agents is worse than none.
+    func chooseAgentThenSpawn(in project: ProjectRuntime,
+                              _ onProceed: @escaping (_ command: String?, _ accountID: String?) -> Void) {
         let config = agentsProvider?(project) ?? .disabled
         let agents = config.agents
         guard config.promptOnNewPane, !agents.isEmpty, let window = view.window else {
@@ -3998,10 +4008,16 @@ final class TerminalViewController: NSViewController {
 
     var isTileAttachPickerOpen: Bool { tileAttachPicker != nil }
 
-    /// Every pane in the workspace as an attach candidate: what it is called,
-    /// what it is running, and the durable key that identifies it.
+    /// Every pane in the workspace as an attach candidate — what it is called,
+    /// what it is running, and the durable key that identifies it — each
+    /// project's tabs followed by a row that mints a fresh one.
+    ///
+    /// The new-session row sits with its own project rather than in a block of
+    /// its own because `CommandSearch.rank` breaks ties on the original index:
+    /// keeping it here is what puts it under that project's tabs for a query
+    /// naming the project, instead of far below them.
     private func tileAttachCandidates() -> [TileAttachPicker.Candidate] {
-        workspace.projects.flatMap { project in
+        workspace.projects.enumerated().flatMap { projectIndex, project in
             project.tabList.trees.enumerated().map { index, tree in
                 let label = "\(project.name) / \(tabDisplayTitle(for: tree, at: index))"
                 let surfaceID = tree.focusedSurfaceID ?? tree.layout.surfaces.first?.id
@@ -4010,9 +4026,14 @@ final class TerminalViewController: NSViewController {
                     .flatMap { $0.isEmpty ? nil : $0 } ?? "shell"
                 return TileAttachPicker.Candidate(
                     label: label, detail: detail,
-                    slot: TileSlot(projectRoot: project.rootPath,
-                                   tabID: tree.id, label: label))
-            }
+                    action: .attach(TileSlot(projectRoot: project.rootPath,
+                                             tabID: tree.id, label: label)))
+            } + [
+                TileAttachPicker.Candidate(
+                    label: "\(project.name) / New session",
+                    detail: "new tab",
+                    action: .newSession(projectIndex: projectIndex)),
+            ]
         }
     }
 
@@ -4021,12 +4042,53 @@ final class TerminalViewController: NSViewController {
         let picker = TileAttachPicker(candidates: tileAttachCandidates()) { [weak self] chosen in
             guard let self else { return }
             self.tileAttachPicker = nil
-            guard let chosen else { return }
-            self.mutateActiveTileProfile { $0.attach(chosen, at: index) }
-            self.enqueueMissingTileSurfaces()
+            switch chosen {
+            case nil:
+                return
+            case .attach(let slot):
+                self.mutateActiveTileProfile { $0.attach(slot, at: index) }
+                self.enqueueMissingTileSurfaces()
+            case .newSession(let projectIndex):
+                self.attachNewTileSession(projectIndex: projectIndex, slot: index)
+            }
         }
         tileAttachPicker = picker
         picker.present(in: container)
+    }
+
+    /// Mints a fresh tab in `projectIndex` and attaches it to `slot`.
+    ///
+    /// The agent chooser runs against the TARGET project, not the active one —
+    /// tile mode never changes the active project, so reading it would offer
+    /// the wrong project's agents. Cancel creates no tab and leaves the slot
+    /// empty, which is `chooseAgentThenSpawn`'s existing contract.
+    private func attachNewTileSession(projectIndex: Int, slot: Int) {
+        guard workspace.projects.indices.contains(projectIndex) else { return }
+        let project = workspace.projects[projectIndex]
+        chooseAgentThenSpawn(in: project) { [weak self] command, accountID in
+            guard let self, self.tileMode else { return }
+            let tabList = project.tabList
+            let paneID = tabList.newBackgroundTab()
+            // Both stamps MUST land before anything can spawn the pane: the
+            // surface environment is read once, when libghostty creates it.
+            tabList.updateSurface(paneID) {
+                $0.accountID = self.resolvedAccountID(explicit: accountID, project: project)
+            }
+            if let command { self.pendingStartupCommands[paneID] = command }
+
+            let tabIndex = tabList.trees.count - 1
+            let tree = tabList.trees[tabIndex]
+            let tileSlot = TileSlot(
+                projectRoot: project.rootPath, tabID: tree.id,
+                label: "\(project.name) / \(self.tabDisplayTitle(for: tree, at: tabIndex))")
+            self.mutateActiveTileProfile { $0.attach(tileSlot, at: slot) }
+            self.refreshSidebar()
+            self.onWorkspaceDidChange?()
+            // The tile spawn queue owns the spawn — deliberately not
+            // `spawnPaneInBackground`, so it is staggered with every other
+            // pane the grid is bringing up.
+            self.enqueueMissingTileSurfaces()
+        }
     }
 
     func dismissTileAttachPicker() {

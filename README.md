@@ -54,6 +54,11 @@ by the tool it's running.
     A tile's `×` (and `⌘W`) detaches the slot — the pane keeps running; press
     it again on the now-empty slot to remove the slot itself. **Double-click a
     tile's header** to leave the grid for that pane.
+  - **Or start something new.** The same list ends each project with a
+    **New session** row, so a slot can be filled without first making a tab
+    somewhere else. It goes through the project's own agent chooser when one
+    is configured (Project Settings → Agents), exactly like `⌘T` does, so the
+    new tile can come up already running an agent on the account you pick.
   - **Tile views are tabs.** While the grid is up the tab bar's strip carries
     tile views instead of the active project's tabs, with `+` opening your
     saved **profiles**. Several can be open at once.
