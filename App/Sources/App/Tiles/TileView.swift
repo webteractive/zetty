@@ -58,7 +58,10 @@ final class TileView: NSView {
     private let statusDot = NSView()
     private let iconView = NSImageView()
     private let titleLabel = NSTextField(labelWithString: "")
-    private let openButton = NSButton()
+    private let openPill = NSView()
+    private let openIcon = NSImageView()
+    private let openLabel = NSTextField(labelWithString: "Open")
+    private let openChevron = NSImageView()
     private let goToPaneButton = NSButton()
     private let body = NSView()
     private let messageLabel = NSTextField(labelWithString: "")
@@ -154,20 +157,43 @@ final class TileView: NSView {
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
         header.addSubview(titleLabel)
 
-        // The status bar's `Open ▾` folds away in tile mode, so this is the
-        // only way to reach a pane's directory from the grid. Hidden for a
-        // `.missing` slot: there is no pane, so there is no directory.
-        openButton.isBordered = false
-        openButton.bezelStyle = .inline
-        openButton.image = NSImage(systemSymbolName: "folder",
-                                   accessibilityDescription: "Open this pane's directory")
-        openButton.imagePosition = .imageOnly
-        openButton.target = self
-        openButton.action = #selector(openClicked)
-        openButton.toolTip = "Open this pane's directory in an editor or Finder"
-        openButton.isHidden = !canOpen
-        openButton.translatesAutoresizingMaskIntoConstraints = false
-        header.addSubview(openButton)
+        // The status bar's `Open ▾` folds away in tile mode, so this pill is
+        // the only way to reach a pane's directory from the grid. It carries
+        // the same anatomy the bar's pill had — icon, label, chevron — so it
+        // reads as the control people already know.
+        //
+        // An NSTextField and a click recogniser rather than an NSButton with
+        // an `attributedTitle`: that setter leaks an AppKit KVO dependency
+        // quartet per assignment, which is the same reason the status bar's
+        // own chip is a text field. Hidden for a `.missing` slot, which has no
+        // pane and therefore no directory.
+        openPill.wantsLayer = true
+        openPill.layer?.cornerRadius = 8
+        openPill.layer?.borderWidth = 1
+        openPill.isHidden = !canOpen
+        openPill.toolTip = "Open this pane's directory in an editor or Finder"
+        openPill.translatesAutoresizingMaskIntoConstraints = false
+        header.addSubview(openPill)
+
+        openIcon.image = NSImage(systemSymbolName: "folder", accessibilityDescription: nil)
+        openIcon.imageScaling = .scaleProportionallyDown
+        openIcon.translatesAutoresizingMaskIntoConstraints = false
+        openPill.addSubview(openIcon)
+
+        openLabel.font = ZTheme.chromeFont(size: 10)
+        // The pill keeps its width and the TITLE truncates — a half-truncated
+        // "Op…" is not a control, whereas a shortened pane name still reads.
+        openLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
+        openLabel.translatesAutoresizingMaskIntoConstraints = false
+        openPill.addSubview(openLabel)
+
+        openChevron.image = NSImage(systemSymbolName: "chevron.down", accessibilityDescription: nil)
+        openChevron.imageScaling = .scaleProportionallyDown
+        openChevron.translatesAutoresizingMaskIntoConstraints = false
+        openPill.addSubview(openChevron)
+
+        openPill.addGestureRecognizer(
+            NSClickGestureRecognizer(target: self, action: #selector(openClicked)))
 
         goToPaneButton.isBordered = false
         goToPaneButton.bezelStyle = .inline
@@ -209,15 +235,30 @@ final class TileView: NSView {
             titleLabel.centerYAnchor.constraint(equalTo: header.centerYAnchor),
             titleLabel.leadingAnchor.constraint(equalTo: iconView.trailingAnchor, constant: 6),
             titleLabel.trailingAnchor.constraint(
-                lessThanOrEqualTo: openButton.leadingAnchor, constant: -6),
+                lessThanOrEqualTo: openPill.leadingAnchor, constant: -6),
 
-            // Width toggles 0↔14 with visibility rather than the view being
-            // removed, so a `.missing` header lays out identically.
-            openButton.widthAnchor.constraint(equalToConstant: canOpen ? 14 : 0),
-            openButton.heightAnchor.constraint(equalToConstant: 14),
-            openButton.centerYAnchor.constraint(equalTo: header.centerYAnchor),
-            openButton.trailingAnchor.constraint(equalTo: goToPaneButton.leadingAnchor,
-                                                 constant: canOpen ? -8 : 0),
+            // The pill hugs its contents; a `.missing` header collapses it to
+            // nothing rather than removing the view, so both lay out the same
+            // way — the 0↔width toggle the account dots use.
+            openPill.heightAnchor.constraint(equalToConstant: canOpen ? 16 : 0),
+            openPill.centerYAnchor.constraint(equalTo: header.centerYAnchor),
+            openPill.trailingAnchor.constraint(equalTo: goToPaneButton.leadingAnchor,
+                                               constant: canOpen ? -8 : 0),
+
+            openIcon.leadingAnchor.constraint(equalTo: openPill.leadingAnchor, constant: 6),
+            openIcon.centerYAnchor.constraint(equalTo: openPill.centerYAnchor),
+            openIcon.widthAnchor.constraint(equalToConstant: canOpen ? 9 : 0),
+            openIcon.heightAnchor.constraint(equalToConstant: 9),
+
+            openLabel.leadingAnchor.constraint(equalTo: openIcon.trailingAnchor, constant: 4),
+            openLabel.centerYAnchor.constraint(equalTo: openPill.centerYAnchor),
+
+            openChevron.leadingAnchor.constraint(equalTo: openLabel.trailingAnchor, constant: 4),
+            openChevron.centerYAnchor.constraint(equalTo: openPill.centerYAnchor),
+            openChevron.widthAnchor.constraint(equalToConstant: canOpen ? 7 : 0),
+            openChevron.heightAnchor.constraint(equalToConstant: 7),
+            openChevron.trailingAnchor.constraint(equalTo: openPill.trailingAnchor,
+                                                  constant: canOpen ? -6 : 0),
 
             goToPaneButton.widthAnchor.constraint(equalToConstant: 14),
             goToPaneButton.heightAnchor.constraint(equalToConstant: 14),
@@ -307,7 +348,7 @@ final class TileView: NSView {
 
     @objc private func reattachClicked() { onActivate() }
 
-    @objc private func openClicked() { onOpen(openButton) }
+    @objc private func openClicked() { onOpen(openPill) }
 
     @objc private func detachClicked() { onDetach() }
 
@@ -346,7 +387,12 @@ final class TileView: NSView {
         messageLabel.textColor = theme.fg3Color
         iconView.contentTintColor = isFocused ? theme.fgColor : theme.fg2Color
         goToPaneButton.contentTintColor = theme.fg3Color
-        openButton.contentTintColor = theme.fg3Color
+        // Same ramp as the status bar's pill: bg2 on bg0 chrome, bordered.
+        openPill.layer?.backgroundColor = theme.bg2Color.cgColor
+        openPill.layer?.borderColor = theme.borderColor.cgColor
+        openIcon.contentTintColor = theme.fg2Color
+        openLabel.textColor = theme.fg2Color
+        openChevron.contentTintColor = theme.fg2Color
     }
 
     // MARK: - Interaction
