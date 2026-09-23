@@ -424,6 +424,25 @@ final class TerminalViewController: NSViewController {
     /// NOT the set that owns preserved zmx sessions — a hibernated project's
     /// session must keep running. Use `sessionOwnerSurfaceIDs` for orphan
     /// diffing.
+    /// What `prune` may NOT free: every awake project's panes, plus whatever
+    /// the tile grid is currently showing.
+    ///
+    /// The tile half is load-bearing. `TileResolution` deliberately does not
+    /// check hibernation — a slot keeps pointing at its pane whatever the
+    /// project is doing — but `allSurfaceIDs` excludes hibernated projects, so
+    /// pruning against that alone frees a tile's surface the instant after
+    /// `tileDescriptors()` creates it. The tile then renders `.attaching`, the
+    /// spawn queue re-creates it, and the next rebuild frees it again: a pane
+    /// that flickers out on every structural change, which is how it was
+    /// reported (opening the Sessions drawer rebuilds, so it looked like the
+    /// drawer's fault). Attaching a pane to a tile is an explicit request to
+    /// see it, so it outranks hibernation's claim on the memory.
+    private var retainedSurfaceIDs: Set<UUID> {
+        var keep = Set(allSurfaceIDs)
+        if tileMode { keep.formUnion(tileFocusableIDs) }
+        return keep
+    }
+
     var allSurfaceIDs: [UUID] {
         workspace.projects.filter { !$0.isHibernated }.flatMap { project in
             project.tabList.trees.flatMap { tree in
@@ -6154,7 +6173,7 @@ final class TerminalViewController: NSViewController {
                 placeholder.bottomAnchor.constraint(equalTo: bottomGuide),
             ])
             placeholderView = placeholder
-            registry.prune(keeping: Set(allSurfaceIDs)) // free the frozen surfaces
+            registry.prune(keeping: retainedSurfaceIDs) // free the frozen surfaces
             onWorkspaceDidChange?()
             return
         }
@@ -6184,7 +6203,7 @@ final class TerminalViewController: NSViewController {
             ])
             tileChooserView = chooser
             statusBarView?.setTiles(running: nil, idle: 0)
-            registry.prune(keeping: Set(allSurfaceIDs))
+            registry.prune(keeping: retainedSurfaceIDs)
             onWorkspaceDidChange?()
             return
         }
@@ -6235,7 +6254,7 @@ final class TerminalViewController: NSViewController {
             grid.update(tiles: tileDescriptors(),
                         focused: tileFocusedSurfaceID,
                         emptyMessage: tileEmptyMessage())
-            registry.prune(keeping: Set(allSurfaceIDs))
+            registry.prune(keeping: retainedSurfaceIDs)
             refreshFileTreeRoots()
             onWorkspaceDidChange?()
             DispatchQueue.main.async { [weak self] in self?.focusTileFirstResponder() }
@@ -6310,7 +6329,7 @@ final class TerminalViewController: NSViewController {
         // Keep any live surface owned by an awake project so background sessions
         // survive project/tab switches. Hibernated projects' surfaces are freed
         // because allSurfaceIDs excludes them.
-        registry.prune(keeping: Set(allSurfaceIDs))
+        registry.prune(keeping: retainedSurfaceIDs)
 
         // Trees are recreated per rebuild; root them at their panes' cwds now
         // rather than waiting for the debounce, and let the expansion cache

@@ -1842,6 +1842,21 @@ split would reshape the active project's layout out of sight. A SLOT still
 splits: the tile's context menu, or `Ctrl+B %` / `Ctrl+B "`, which
 `KeyInterceptor` routes to `splitFocusedTileSlot`.
 
+**`prune` must spare the tiles, or a tile flickers out on every rebuild.**
+`TileResolution` deliberately does NOT check hibernation — a slot keeps
+pointing at its pane whatever the project is doing — but `allSurfaceIDs`
+EXCLUDES hibernated projects. Pruning against that alone frees a tile's surface
+the instant after `tileDescriptors()` created it: the tile renders
+`.attaching`, `enqueueMissingTileSurfaces` re-creates it, and the next rebuild
+frees it again. Every prune site therefore goes through
+`retainedSurfaceIDs` (`allSurfaceIDs` + `tileFocusableIDs` while tile mode is
+on) rather than `Set(allSurfaceIDs)`, so no site can forget. Attaching a pane
+to a tile is an explicit request to see it, and that outranks hibernation's
+claim on the memory — the sidebar still shows the project as dormant, which is
+the lesser inconsistency. Reported as "opening the session manager makes the
+pane say attaching", because the Sessions drawer's toggle calls
+`rebuildSurfaceNodeView` — but ANY structural change did it.
+
 **The grid survives `rebuildSurfaceNodeView`** (removed from the container,
 instance kept), so a scheme change leaves everything `build()` coloured once in
 the old palette. `TileGridView.applyTheme()` exists for that and is called from
