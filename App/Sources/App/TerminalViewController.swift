@@ -220,9 +220,11 @@ final class TerminalViewController: NSViewController {
     /// Retunes each visible pane's refresh button to its current agent state.
     private func updatePaneRefreshButtons() {
         guard let root = rootContentView else { return }
-        for leaf in Self.leafContainers(in: root) {
+        let leaves = Self.leafContainers(in: root)
+        for leaf in leaves {
             leaf.setRefreshVisible(canRefreshAgent(surfaceID: leaf.surfaceID))
         }
+        resolveMissingResumeCommands(for: leaves.map(\.surfaceID))
     }
 
     private static func leafContainers(in view: NSView) -> [LeafContainerView] {
@@ -1677,6 +1679,8 @@ final class TerminalViewController: NSViewController {
         // where both exist.
         onSurfacesClosed?([surfaceID])
         foregroundBySurface.removeValue(forKey: surfaceID)
+        lookedUpResumeCommands.removeValue(forKey: surfaceID)
+        resumeLookupAttempted.remove(surfaceID)
 
         refreshTabBar()
         refreshSidebar()
@@ -1714,10 +1718,81 @@ final class TerminalViewController: NSViewController {
         return AgentResume.command(for: AgentState(kind: kind, status: nil, session: found))
     }
 
+    /// Resume lines resolved from a harness's own store, per surface.
+    ///
+    /// Cached because `AgentSessionLookup` reads transcripts off disk, and the
+    /// visibility predicate below runs for every visible pane on each coalesced
+    /// chrome refresh — resolving inline would put a filesystem scan on the
+    /// main thread several times a second, which is the mistake the `git` pill
+    /// already made here.
+    private var lookedUpResumeCommands: [UUID: String] = [:]
+    /// Surfaces already looked up, so a pane with genuinely no session is not
+    /// rescanned on every tick.
+    private var resumeLookupAttempted: Set<UUID> = []
+
     /// Whether the gutter shows a refresh button. Exactly "a resume line can be
     /// built", so an offered button can never fail to do anything.
     func canRefreshAgent(surfaceID: UUID) -> Bool {
-        AgentResume.command(for: agentDetector.state(for: surfaceID)) != nil
+        if AgentResume.command(for: agentDetector.state(for: surfaceID)) != nil { return true }
+        return lookedUpResumeCommands[surfaceID] != nil
+    }
+
+    /// The resumable harness the probe sees in this pane, if any.
+    ///
+    /// The PROBE, never `AgentState.kind` — a pane can carry a stale kind from
+    /// the era when hook events matched by directory, which is what once
+    /// produced `codex resume <claude id>`.
+    private func probedResumableKind(for surfaceID: UUID) -> AgentKind? {
+        guard let running = foregroundBySurface[surfaceID], !running.isEmpty,
+              let kind = AgentKind(rawValue: running) else { return nil }
+        // Resumability is `resumeCommand`'s answer, not a list kept beside it.
+        guard RestartRecovery.resumeCommand(agent: kind, sessionID: "probe", cwd: "/") != nil
+        else { return nil }
+        return kind
+    }
+
+    /// Fills the cache for panes the hooks missed, off-main and once each.
+    ///
+    /// Hooks name the pane exactly but fire only when the agent acts, so on the
+    /// reference workspace they covered 2 panes in 11 — without this the button
+    /// is absent from most panes that want it.
+    private func resolveMissingResumeCommands(for surfaceIDs: [UUID]) {
+        var targets: [AgentSessionLookup.Target] = []
+        for id in surfaceIDs {
+            // A pane that stopped running an agent releases its cache entry, so
+            // the button disappears and a later agent is looked up afresh.
+            guard let kind = probedResumableKind(for: id) else {
+                lookedUpResumeCommands.removeValue(forKey: id)
+                resumeLookupAttempted.remove(id)
+                continue
+            }
+            guard lookedUpResumeCommands[id] == nil, !resumeLookupAttempted.contains(id),
+                  AgentResume.command(for: agentDetector.state(for: id)) == nil,
+                  let cwd = PaneCwdStore.read(id)
+                      ?? workspace.surface(with: id).flatMap({ registry.workingDirectory(for: $0) })
+            else { continue }
+            resumeLookupAttempted.insert(id)
+            targets.append(AgentSessionLookup.Target(surface: id, cwd: cwd, agent: kind))
+        }
+        guard !targets.isEmpty else { return }
+
+        DispatchQueue.global(qos: .utility).async { [weak self] in
+            let found = AgentSessionLookup.fallbackSessions(for: targets, claimed: [])
+            guard !found.isEmpty else { return }
+            let kinds = Dictionary(targets.map { ($0.surface, $0.agent) },
+                                   uniquingKeysWith: { first, _ in first })
+            DispatchQueue.main.async {
+                guard let self else { return }
+                for (surface, session) in found {
+                    guard let kind = kinds[surface],
+                          let command = AgentResume.command(
+                            for: AgentState(kind: kind, status: nil, session: session))
+                    else { continue }
+                    self.lookedUpResumeCommands[surface] = command
+                }
+                self.updatePaneRefreshButtons()
+            }
+        }
     }
 
     /// Restarts the pane's agent on its existing conversation.
@@ -1731,7 +1806,9 @@ final class TerminalViewController: NSViewController {
     /// The cost is a new `Surface`, hence a new zmx session: the CONVERSATION
     /// comes back through `--resume`, the pane's scrollback does not.
     func refreshAgentPane(surfaceID: UUID) {
-        guard let command = agentResumeCommand(for: surfaceID),
+        guard let command = AgentResume.command(for: agentDetector.state(for: surfaceID))
+                ?? lookedUpResumeCommands[surfaceID]
+                ?? agentResumeCommand(for: surfaceID),
               let surface = workspace.surface(with: surfaceID) else { return }
         respawnPane(surfaceID: surfaceID,
                     accountID: surface.accountID ?? AgentAccountSupport.defaultID,

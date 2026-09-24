@@ -834,12 +834,21 @@ current (the usual rebuild-and-install step) and delete/`lsregister -u` stray
   anything. There is deliberately no separate `supports(_:)` list — that would
   be a second thing to keep in step with `RestartRecovery.resumeCommand`'s
   grammar, and the two would disagree the moment a harness was added.
-- **The id comes from hooks first, then `AgentSessionLookup`.** Hooks name the
-  pane exactly but fire only when the agent acts, so hooks alone covered 2 panes
-  in 11 on the reference workspace — the button would be absent from most panes
-  that want it. The lookup's kind comes from the PROBE, never a stored
-  `AgentState.kind`, which can be stale from the era when hooks matched by
-  directory and once produced `codex resume <claude id>`.
+- **The id comes from hooks first, then `AgentSessionLookup` — and the LOOKUP
+  IS CACHED, because visibility cannot do filesystem IO.** Hooks name the pane
+  exactly but fire only when the agent acts, so hooks alone covered 2 panes in
+  11 on the reference workspace; a predicate reading hook state alone leaves the
+  button absent from most panes that want it (shipped that way in 2f57b6d and
+  fixed straight after). But the lookup reads harness transcripts off disk and
+  the predicate runs per visible pane on every coalesced refresh, so resolving
+  inline would be a main-thread filesystem scan several times a second — the
+  `git` pill's mistake. `lookedUpResumeCommands` is filled off-main, once per
+  surface (`resumeLookupAttempted` stops a pane with genuinely no session being
+  rescanned), and released when the probe stops seeing an agent there or the
+  pane is respawned, so a stale command can never outlive its process. The
+  kind comes from the PROBE, never a stored `AgentState.kind`, which can be
+  stale from the era when hooks matched by directory and once produced
+  `codex resume <claude id>`.
 - **The button's visibility updates WITHOUT a rebuild.** The gutter is built
   once per `rebuildSurfaceNodeView`, but agents start and stop between
   rebuilds, so it would otherwise appear only after some unrelated structural
