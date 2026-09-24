@@ -21,6 +21,11 @@ struct PaneActionWiring {
     let tileViewMenu: () -> [(title: String, profileID: UUID?)]
     /// Attach this pane to that view, creating one when the id is nil.
     let onAddToTileView: (UUID, UUID?) -> Void
+    /// Whether this pane runs a harness whose session can be resumed. Exactly
+    /// "a resume line can be built", so the button never fails to do anything.
+    let canRefreshAgent: (UUID) -> Bool
+    /// Restart the agent on its existing conversation.
+    let onRefreshAgent: (UUID) -> Void
 }
 
 // MARK: - SurfaceNodeView
@@ -209,6 +214,9 @@ final class LeafContainerView: NSView {
     private var fileTree: FileTreeView?
     private var terminalLeadingToContainer: NSLayoutConstraint?
     private var fileTreeWidthConstraint: NSLayoutConstraint?
+    /// Created unconditionally so visibility is a toggle rather than a rebuild
+    /// — the same reason the account dots exist at zero width.
+    private var refreshButton: NSButton?
 
     init(
         surfaceID: UUID,
@@ -251,7 +259,8 @@ final class LeafContainerView: NSView {
         ])
 
         addStatusDot()
-        addGutterButtons(showsClose: showsClose, showsFileTree: showsFileTree)
+        addGutterButtons(showsClose: showsClose, showsFileTree: showsFileTree,
+                         showsRefresh: paneActions?.canRefreshAgent(surfaceID) ?? false)
         menu = makePaneMenu(showsClose: showsClose, showsFileTree: showsFileTree)
 
         if showsFileTree, let wiring = fileTree {
@@ -372,7 +381,8 @@ final class LeafContainerView: NSView {
     /// closable. Scroll-to-bottom is deliberately NOT here — its button did
     /// nothing in panes running an agent CLI and the cause is unfound, so the
     /// action stays on the pane's right-click menu and ⌘↓ until it's diagnosed.
-    private func addGutterButtons(showsClose: Bool, showsFileTree: Bool) {
+    private func addGutterButtons(showsClose: Bool, showsFileTree: Bool,
+                                  showsRefresh: Bool) {
         let stack = NSStackView()
         stack.orientation = .horizontal
         stack.spacing = 4
@@ -382,6 +392,16 @@ final class LeafContainerView: NSView {
             stack.topAnchor.constraint(equalTo: topAnchor, constant: 4),
             stack.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -4),
         ])
+
+        // Leading in the gutter, away from × — a refresh ends the running
+        // agent, so it should not sit under the pointer that just missed close.
+        let refresh = makeGutterButton(
+            symbol: "arrow.clockwise", fallback: "⟳",
+            toolTip: "Restart the agent on its existing conversation",
+            action: #selector(refreshAgentTapped))
+        refresh.isHidden = !showsRefresh
+        refreshButton = refresh
+        stack.addArrangedSubview(refresh)
 
         if fileTreeWiring != nil {
             stack.addArrangedSubview(makeGutterButton(
@@ -462,6 +482,23 @@ final class LeafContainerView: NSView {
 
     @objc private func toggleFileTreeTapped() {
         fileTreeWiring?.onToggle(surfaceID)
+    }
+
+    @objc private func refreshAgentTapped() {
+        paneActions?.onRefreshAgent(surfaceID)
+    }
+
+    /// Shows or hides the refresh button WITHOUT a rebuild.
+    ///
+    /// The gutter is built once per `rebuildSurfaceNodeView`, but an agent
+    /// starts and stops between rebuilds — so without this the button would
+    /// appear only after some unrelated structural change, which reads as it
+    /// not working. A hidden arranged subview costs nothing and keeps this to
+    /// one boolean, staying inside the pane's own view exactly as the file tree
+    /// does rather than reaching for a chrome refresh.
+    func setRefreshVisible(_ visible: Bool) {
+        guard let refreshButton, refreshButton.isHidden == visible else { return }
+        refreshButton.isHidden = !visible
     }
 
     /// Right-click menu for the pane chrome (gutter). The terminal view fills

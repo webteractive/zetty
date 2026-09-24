@@ -489,7 +489,14 @@ bind = ctrl+a broadcast-cycle
 copy-bind = n copy-cursor-down
 ```
 
-### Configuration
+#- **Refresh an agent** — a pane running **Claude** or **Codex** grows a `⟳`
+  button in its gutter. It restarts the agent on its *existing* conversation
+  (`claude --resume` / `codex resume`), for when the CLI has wedged or you want
+  it back on a clean process. The conversation returns; the pane's scrollback
+  does not, because the pane is respawned. Harnesses with no verified resume
+  grammar never show the button.
+
+## Configuration
 
 Zetty reads `~/.config/zetty/config` (or `$XDG_CONFIG_HOME/zetty/config`) and
 seeds a documented starter file on first launch. Format is plain

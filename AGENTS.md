@@ -817,6 +817,36 @@ old strays lose instead of tying at the default `1.0`. Keep `/Applications`
 current (the usual rebuild-and-install step) and delete/`lsregister -u` stray
 `.app` products if an external open lands in the wrong copy.
 
+### Refreshing an agent pane
+
+`⟳` in a pane's gutter restarts Claude or Codex on its existing conversation.
+
+- **It RESPAWNS the pane; it does not type an exit sequence.** Each harness
+  quits differently and the timing is unknowable, whereas `respawnPane` already
+  ends the process cleanly, keeps slot/siblings/ratios, carries the cwd and
+  file-tree state, and injects a startup command. It gained a
+  `startupCommand:` override for this; the account is carried across unchanged,
+  since this restarts an agent rather than moving one. The cost is a new
+  `Surface`, hence a new zmx session: `--resume` brings the CONVERSATION back,
+  not the pane's scrollback.
+- **`AgentResume.command(for:)` is the ONLY predicate.** Visibility is exactly
+  "a resume line can be built", so an offered button can never fail to do
+  anything. There is deliberately no separate `supports(_:)` list — that would
+  be a second thing to keep in step with `RestartRecovery.resumeCommand`'s
+  grammar, and the two would disagree the moment a harness was added.
+- **The id comes from hooks first, then `AgentSessionLookup`.** Hooks name the
+  pane exactly but fire only when the agent acts, so hooks alone covered 2 panes
+  in 11 on the reference workspace — the button would be absent from most panes
+  that want it. The lookup's kind comes from the PROBE, never a stored
+  `AgentState.kind`, which can be stale from the era when hooks matched by
+  directory and once produced `codex resume <claude id>`.
+- **The button's visibility updates WITHOUT a rebuild.** The gutter is built
+  once per `rebuildSurfaceNodeView`, but agents start and stop between
+  rebuilds, so it would otherwise appear only after some unrelated structural
+  change. `LeafContainerView.setRefreshVisible` is one boolean per visible
+  pane, driven from the coalesced chrome refresh — it stays inside the pane's
+  own view, exactly as the file tree does, rather than forcing a rebuild.
+
 ## Per-pane file tree
 
 `⇧⌘F`, `Ctrl+B e`, a gutter button, or the pane context menu toggles a file tree

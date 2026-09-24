@@ -210,7 +210,24 @@ final class TerminalViewController: NSViewController {
             // refreshTabBar refreshes the status bar too, so don't double up.
             if needs.tabBar { self.refreshTabBar() }
             if needs.sidebar { self.refreshSidebar() }
+            // Agent presence decides the gutter's refresh button, and it
+            // changes between rebuilds. One boolean per visible pane, never a
+            // rebuild — tree updates stay inside the pane's own view.
+            self.updatePaneRefreshButtons()
         }
+    }
+
+    /// Retunes each visible pane's refresh button to its current agent state.
+    private func updatePaneRefreshButtons() {
+        guard let root = rootContentView else { return }
+        for leaf in Self.leafContainers(in: root) {
+            leaf.setRefreshVisible(canRefreshAgent(surfaceID: leaf.surfaceID))
+        }
+    }
+
+    private static func leafContainers(in view: NSView) -> [LeafContainerView] {
+        if let leaf = view as? LeafContainerView { return [leaf] }
+        return view.subviews.flatMap { leafContainers(in: $0) }
     }
 
     /// The container that wraps the tab-bar + pane area (right side of the split).
@@ -1616,9 +1633,12 @@ final class TerminalViewController: NSViewController {
     /// (`SurfaceRegistry.pair(for:)` returns early for a known id) and reattach
     /// the old session with the old environment: the chip would change and
     /// nothing else would. Hence a brand-new `Surface` in the same slot.
-    func respawnPane(surfaceID: UUID, accountID: String) {
+    /// - Parameter startupCommand: replaces the relaunch line the pane would
+    ///   otherwise get. The agent refresh passes a `--resume` here; an account
+    ///   move passes nil and the running agent is relaunched bare.
+    func respawnPane(surfaceID: UUID, accountID: String, startupCommand: String? = nil) {
         guard let old = workspace.surface(with: surfaceID),
-              old.accountID != accountID,
+              old.accountID != accountID || startupCommand != nil,
               let project = workspace.project(containing: surfaceID),
               let treeIndex = project.tabList.trees.firstIndex(where: {
                   $0.layout.surfaces.contains { $0.id == surfaceID }
@@ -1638,9 +1658,11 @@ final class TerminalViewController: NSViewController {
         replacement.fileTreeVisible = old.fileTreeVisible
         replacement.fileTreeWidth = old.fileTreeWidth
 
-        // Relaunch whatever was running, on the new account.
-        if let running = foregroundBySurface[surfaceID], !running.isEmpty,
-           SpawnableAgent.catalog.contains(where: { $0.defaultCommand == running || $0.id == running }) {
+        // An explicit command wins; otherwise relaunch whatever was running.
+        if let startupCommand {
+            pendingStartupCommands[replacement.id] = startupCommand
+        } else if let running = foregroundBySurface[surfaceID], !running.isEmpty,
+                  SpawnableAgent.catalog.contains(where: { $0.defaultCommand == running || $0.id == running }) {
             pendingStartupCommands[replacement.id] = running
         }
 
@@ -1663,6 +1685,57 @@ final class TerminalViewController: NSViewController {
             self.view.window?.makeFirstResponder(view)
         }
         onWorkspaceDidChange?()
+    }
+
+    /// The resume line for a pane, or nil when it has none.
+    ///
+    /// Hooks first, then each harness's own store. Hooks name the pane exactly
+    /// but only fire when the agent acts, so a long-running Claude or a Codex
+    /// pane that never finished a turn would have no id — on the reference
+    /// workspace hooks alone covered 2 panes in 11, which would leave this
+    /// button absent from most of the panes that want it.
+    func agentResumeCommand(for surfaceID: UUID) -> String? {
+        let state = agentDetector.state(for: surfaceID)
+        if let command = AgentResume.command(for: state) { return command }
+
+        // The probe outranks the stored kind: a pane can carry a stale kind
+        // from the era when hook events matched by directory, which is what
+        // once produced `codex resume <claude id>`.
+        guard let running = foregroundBySurface[surfaceID], !running.isEmpty,
+              let kind = AgentKind(rawValue: running)
+                  ?? AgentKind.allCases.first(where: { $0.rawValue == running }),
+              let cwd = PaneCwdStore.read(surfaceID)
+                  ?? workspace.surface(with: surfaceID).flatMap({ registry.workingDirectory(for: $0) })
+        else { return nil }
+
+        let target = AgentSessionLookup.Target(surface: surfaceID, cwd: cwd, agent: kind)
+        guard let found = AgentSessionLookup.fallbackSessions(for: [target], claimed: [])[surfaceID]
+        else { return nil }
+        return AgentResume.command(for: AgentState(kind: kind, status: nil, session: found))
+    }
+
+    /// Whether the gutter shows a refresh button. Exactly "a resume line can be
+    /// built", so an offered button can never fail to do anything.
+    func canRefreshAgent(surfaceID: UUID) -> Bool {
+        AgentResume.command(for: agentDetector.state(for: surfaceID)) != nil
+    }
+
+    /// Restarts the pane's agent on its existing conversation.
+    ///
+    /// A respawn rather than typing an exit sequence into the live pty: each
+    /// harness quits differently and the timing is unknowable, whereas
+    /// `respawnPane` already ends the process cleanly, keeps the slot, siblings
+    /// and ratios, and injects a startup command. The account is carried across
+    /// unchanged — this restarts the agent, it does not move it.
+    ///
+    /// The cost is a new `Surface`, hence a new zmx session: the CONVERSATION
+    /// comes back through `--resume`, the pane's scrollback does not.
+    func refreshAgentPane(surfaceID: UUID) {
+        guard let command = agentResumeCommand(for: surfaceID),
+              let surface = workspace.surface(with: surfaceID) else { return }
+        respawnPane(surfaceID: surfaceID,
+                    accountID: surface.accountID ?? AgentAccountSupport.defaultID,
+                    startupCommand: command)
     }
 
     /// The `Account ▸` menu for a pane: every account plus the default, with the
@@ -6220,7 +6293,9 @@ final class TerminalViewController: NSViewController {
                 tileViewMenu: { [weak self] in self?.tileViewMenuEntries() ?? [] },
                 onAddToTileView: { [weak self] surfaceID, profileID in
                     self?.addSurfaceToTileView(surfaceID, profileID: profileID)
-                }
+                },
+                canRefreshAgent: { [weak self] id in self?.canRefreshAgent(surfaceID: id) ?? false },
+                onRefreshAgent: { [weak self] id in self?.refreshAgentPane(surfaceID: id) }
             ),
             onRatioChange: { [weak self] path, ratio in
                 // Write the dragged divider position back to the model (no
