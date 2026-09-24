@@ -359,6 +359,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         // window assigned to another Space — and none of it reproduces from a
         // screenshot. Sampled at creation and again once AppKit has settled.
         logWindowState(window, "create", restored: restored)
+        // Fill the Open picker's roster and icons now, off the click. Lazily,
+        // the first Open of every session pays ~330ms of lookups plus a 60ms
+        // rasterisation of 32-representation app icons, under the pointer.
+        EditorCatalog.prime()
         for delay in [0.0, 0.5, 2.0] {
             DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self, weak window] in
                 guard let window else { return }

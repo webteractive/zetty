@@ -24,18 +24,36 @@ enum EditorCatalog {
         "com.apple.TextEdit",                // TextEdit
     ]
 
-    /// Cached because BOTH halves of building the menu are LaunchServices and
-    /// IconServices round trips, and the menu is rebuilt on every click of
-    /// every tile's Open button. Measured cold on a 12-entry roster with 3
-    /// installed: 9.5 ms of bundle-id lookups and **138 ms of icon loading**,
-    /// all on the main thread, all of it repeated per click. The icons are the
-    /// cost, so caching only the URL list would fix almost nothing.
+    /// Cached because BOTH halves of building the menu are system round
+    /// trips, and the menu is rebuilt on every click of every tile's Open
+    /// button. Measured on this machine: 9.5ms of LaunchServices bundle-id
+    /// lookups and ~90-138ms of IconServices loading, all on the main thread,
+    /// all repeated per click.
+    ///
+    /// **The icon objects are lazy, and that is the larger half.**
+    /// `NSWorkspace.icon(forFile:)` returns a multi-representation icns —
+    /// measured at **32 representations** per app — and nothing rasterises
+    /// until something DRAWS it. For a menu that is when it appears, which is
+    /// after the build returns: measured 60ms for the first draw of three
+    /// icons and 0.2ms for every draw after. So a build-time measurement
+    /// understates the click, and caching the URLs alone would fix almost
+    /// nothing.
     ///
     /// Main-actor isolated rather than locked: every caller is AppKit menu
     /// construction (the tile header, the status bar, the viewer footer, the
     /// Settings popup), so there is no second thread to protect against.
     @MainActor private static var installedCache: [URL]?
     @MainActor private static var iconCache: [IconKey: NSImage] = [:]
+    /// Double optional: the outer nil means "not looked up", the inner one
+    /// means "looked up and genuinely absent" — without it a missing Finder
+    /// would be re-queried on every click.
+    @MainActor private static var finderCache: URL??
+    @MainActor private static var priming = false
+
+    /// The sizes the UI actually asks for: 16pt in the menus, 14pt in the
+    /// viewer footer. `size` is set ON the image, so one instance cannot serve
+    /// both and each size needs its own.
+    static let iconSizes: [CGFloat] = [14, 16]
 
     private struct IconKey: Hashable {
         let url: URL
@@ -45,21 +63,87 @@ enum EditorCatalog {
     /// The installed subset of the roster, deduped by display name.
     @MainActor static func installed() -> [URL] {
         if let installedCache { return installedCache }
-        var seen = Set<String>()
-        let found = knownBundleIDs
-            .compactMap { NSWorkspace.shared.urlForApplication(withBundleIdentifier: $0) }
-            .filter { seen.insert(displayName(of: $0).lowercased()).inserted }
+        let found = resolveInstalled()
         installedCache = found
         return found
     }
 
-    /// Drops both caches, so an editor installed while Zetty runs appears
+    /// The roster lookup with no cache and no actor requirement, so `prime`
+    /// can run it off the main thread.
+    private static func resolveInstalled() -> [URL] {
+        var seen = Set<String>()
+        return knownBundleIDs
+            .compactMap { NSWorkspace.shared.urlForApplication(withBundleIdentifier: $0) }
+            .filter { seen.insert(displayName(of: $0).lowercased()).inserted }
+    }
+
+    /// Finder, cached — it was the one LaunchServices call still made per
+    /// click after the roster was cached.
+    @MainActor static func finderApp() -> URL? {
+        if let finderCache { return finderCache }
+        let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.apple.finder")
+        finderCache = .some(url)
+        return url
+    }
+
+    /// Fills the caches OFF the click, because doing this work lazily means
+    /// the first Open of every session pays for all of it at once.
+    ///
+    /// The lookups and the icon fetches are LaunchServices/IconServices IPC
+    /// and run on a background queue (verified: a cold pass entirely off-main
+    /// returns valid, correctly sized images). The warming draw has to be on
+    /// main — it needs a graphics context — but that is the cheap half, and
+    /// it happens once at launch rather than under a pointer.
+    @MainActor static func prime() {
+        guard installedCache == nil, !priming else { return }
+        priming = true
+        DispatchQueue.global(qos: .utility).async {
+            let urls = resolveInstalled()
+            let finder = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.apple.finder")
+            // One image PER SIZE: `size` is a property of the instance.
+            var fetched: [(IconKey, NSImage)] = []
+            for url in urls + (finder.map { [$0] } ?? []) {
+                for size in iconSizes {
+                    let image = NSWorkspace.shared.icon(forFile: url.path)
+                    image.size = NSSize(width: size, height: size)
+                    fetched.append((IconKey(url: url, size: size), image))
+                }
+            }
+            DispatchQueue.main.async {
+                installedCache = urls
+                finderCache = .some(finder)
+                for (key, image) in fetched {
+                    warm(image, size: key.size)
+                    iconCache[key] = image
+                }
+                priming = false
+            }
+        }
+    }
+
+    /// Forces the 32-representation icns to rasterise now, by drawing it once
+    /// into a scratch bitmap. The image caches that internally, so the menu's
+    /// own draw is the 0.2ms case instead of the 60ms one. The scratch bitmap
+    /// is discarded — the point is the side effect, and keeping the original
+    /// image means no representation is lost and nothing renders soft on a
+    /// Retina display.
+    @MainActor private static func warm(_ image: NSImage, size: CGFloat) {
+        let box = NSSize(width: size, height: size)
+        let scratch = NSImage(size: box)
+        scratch.lockFocus()
+        image.draw(in: NSRect(origin: .zero, size: box))
+        scratch.unlockFocus()
+    }
+
+    /// Drops every cache, so an editor installed while Zetty runs appears
     /// without a relaunch. Wired to the config reload (⇧⌘,) because that is
     /// already the "pick up what changed underneath me" gesture — polling for
     /// newly installed apps would be the `git`-pill mistake again.
     @MainActor static func invalidate() {
         installedCache = nil
         iconCache.removeAll()
+        finderCache = nil
+        prime()
     }
 
     static func displayName(of url: URL) -> String {
@@ -92,14 +176,16 @@ enum EditorCatalog {
         return nil
     }
 
-    /// The app's real icon, sized for inline UI. Keyed by size as well as URL
-    /// — the menus ask for 16pt and the viewer footer for 14pt, and `size` is
-    /// set on the returned image, so one cached instance cannot serve both.
+    /// The app's real icon, sized for inline UI. Keyed by size as well as URL,
+    /// and warmed on the way into the cache so the caller's first draw is not
+    /// the one that rasterises it. `prime` normally fills this first; this
+    /// path is the fallback when something asks before priming finishes.
     @MainActor static func icon(for url: URL, size: CGFloat) -> NSImage {
         let key = IconKey(url: url, size: size)
         if let cached = iconCache[key] { return cached }
         let icon = NSWorkspace.shared.icon(forFile: url.path)
         icon.size = NSSize(width: size, height: size)
+        warm(icon, size: size)
         iconCache[key] = icon
         return icon
     }

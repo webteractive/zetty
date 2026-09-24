@@ -4152,7 +4152,7 @@ final class TerminalViewController: NSViewController {
                                 action: #selector(editorMenuPicked(_:)), keyEquivalent: "")
         finder.target = self
         finder.representedObject = EditorTarget(app: nil, directory: directory)
-        if let finderApp = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.apple.finder") {
+        if let finderApp = EditorCatalog.finderApp() {
             finder.image = EditorCatalog.icon(for: finderApp, size: 16)
         }
         menu.addItem(finder)
