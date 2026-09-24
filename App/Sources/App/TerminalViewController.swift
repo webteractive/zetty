@@ -219,6 +219,16 @@ final class TerminalViewController: NSViewController {
 
     /// Retunes each visible pane's refresh button to its current agent state.
     private func updatePaneRefreshButtons() {
+        // Tile mode replaces the pane area, so `rootContentView` holds no leaf
+        // containers at all while the grid is up — walking only it is why the
+        // button never appeared for a workspace that lives in tile mode.
+        if tileMode, let grid = tileGridView {
+            grid.updateRefreshButtons { [weak self] id in
+                self?.canRefreshAgent(surfaceID: id) ?? false
+            }
+            resolveMissingResumeCommands(for: tileFocusableIDs)
+            return
+        }
         guard let root = rootContentView else { return }
         let leaves = Self.leafContainers(in: root)
         for leaf in leaves {
@@ -4519,11 +4529,11 @@ final class TerminalViewController: NSViewController {
             case .empty:
                 return TileDescriptor(slotIndex: index, surfaceID: nil, label: "",
                                       icon: nil, status: .idle, content: .empty,
-                                      canRemove: canRemove)
+                                      canRemove: canRemove, canRefresh: false)
             case .missing(let label):
                 return TileDescriptor(slotIndex: index, surfaceID: nil, label: label,
                                       icon: nil, status: .idle, content: .missing(label),
-                                      canRemove: canRemove)
+                                      canRemove: canRemove, canRefresh: false)
             case .pane(_, _, let id):
                 let surface = workspace.surface(with: id)
                 let content: TileContent
@@ -4543,7 +4553,8 @@ final class TerminalViewController: NSViewController {
                                       label: paneLabel(for: id) ?? "pane",
                                       icon: surface.flatMap { agentIcon(for: $0) },
                                       status: status, content: content,
-                                      canRemove: canRemove)
+                                      canRemove: canRemove,
+                                      canRefresh: canRefreshAgent(surfaceID: id))
             }
         }
     }
@@ -6306,6 +6317,7 @@ final class TerminalViewController: NSViewController {
                 onOpen: { [weak self] id, anchor in
                     self?.showEditorMenu(from: anchor, forSurface: id)
                 },
+                onRefresh: { [weak self] id in self?.refreshAgentPane(surfaceID: id) },
                 onAttach: { [weak self] index in self?.presentTileAttachPicker(slot: index) },
                 onDetach: { [weak self] index in
                     self?.removeTileSlot(at: index)

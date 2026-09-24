@@ -17,6 +17,9 @@ struct TileDescriptor {
     /// leaf, so without this the controls would offer a no-op in the one view
     /// where it is most likely to be tried — a fresh single-slot Freeform.
     let canRemove: Bool
+    /// Whether this pane's agent can be restarted on its existing
+    /// conversation — exactly "a resume line can be built".
+    let canRefresh: Bool
 }
 
 // MARK: - TileGridView
@@ -48,6 +51,8 @@ final class TileGridView: NSView {
     /// Open that pane's own working directory. Per tile, never the focused
     /// one — that distinction is the point of moving it off the status bar.
     private let onOpen: (UUID, NSView) -> Void
+    /// Restart that pane's agent on its existing conversation.
+    private let onRefresh: (UUID) -> Void
     /// A hole or a missing slot was clicked — open the picker for that index.
     private let onAttach: (Int) -> Void
     /// Remove that slot from the view. The pane keeps running.
@@ -61,6 +66,19 @@ final class TileGridView: NSView {
     /// new ratio, and whether the gesture has ended. Only the final call
     /// persists — see `mutateActiveTileProfile(persist:)`.
     var onSetRatio: ((Int, Double, Bool) -> Void)?
+
+    /// Retunes each tile's refresh button without rebuilding the grid.
+    ///
+    /// Tiles are recreated only on structural changes, but an agent starts and
+    /// stops between them — so without this the button appears only after an
+    /// unrelated change, which is the same staleness the pane gutter has to
+    /// avoid.
+    func updateRefreshButtons(_ canRefresh: (UUID) -> Bool) {
+        for tile in tiles {
+            guard let id = tile.surfaceID else { continue }
+            tile.setRefreshVisible(canRefresh(id))
+        }
+    }
 
     private var dividerViews: [TileDividerView] = []
     private var focusedID: UUID?
@@ -76,6 +94,7 @@ final class TileGridView: NSView {
          onActivate: @escaping (UUID) -> Void,
          onGoToPane: @escaping (UUID) -> Void,
          onOpen: @escaping (UUID, NSView) -> Void,
+         onRefresh: @escaping (UUID) -> Void,
          onAttach: @escaping (Int) -> Void,
          onDetach: @escaping (Int) -> Void,
          onSplit: @escaping (Int, SplitDirection) -> Void) {
@@ -84,6 +103,7 @@ final class TileGridView: NSView {
         self.onActivate = onActivate
         self.onGoToPane = onGoToPane
         self.onOpen = onOpen
+        self.onRefresh = onRefresh
         self.onAttach = onAttach
         self.onDetach = onDetach
         self.onSplit = onSplit
@@ -162,6 +182,7 @@ final class TileGridView: NSView {
                 isFocused: id != nil && id == focused,
                 content: descriptor.content,
                 canRemove: descriptor.canRemove,
+                canRefresh: descriptor.canRefresh,
                 // A hole or a missing slot activates the picker; a live tile
                 // takes focus. Reattach on a missing tile lands here too.
                 onActivate: { [weak self] in
@@ -170,6 +191,7 @@ final class TileGridView: NSView {
                 },
                 onGoToPane: { [weak self] in if let id { self?.onGoToPane(id) } },
                 onOpen: { [weak self] anchor in if let id { self?.onOpen(id, anchor) } },
+                onRefresh: { [weak self] in if let id { self?.onRefresh(id) } },
                 onDetach: { [weak self] in self?.onDetach(index) },
                 onSplit: { [weak self] direction in self?.onSplit(index, direction) })
             tile.translatesAutoresizingMaskIntoConstraints = true

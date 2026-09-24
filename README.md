@@ -490,7 +490,7 @@ copy-bind = n copy-cursor-down
 ```
 
 #- **Refresh an agent** — a pane running **Claude** or **Codex** grows a `⟳`
-  button in its gutter. It restarts the agent on its *existing* conversation
+  button in its gutter, and in its tile header when the grid is up. It restarts the agent on its *existing* conversation
   (`claude --resume` / `codex resume`), for when the CLI has wedged or you want
   it back on a clean process. The conversation returns; the pane's scrollback
   does not, because the pane is respawned. Harnesses with no verified resume

@@ -849,6 +849,15 @@ current (the usual rebuild-and-install step) and delete/`lsregister -u` stray
   kind comes from the PROBE, never a stored `AgentState.kind`, which can be
   stale from the era when hooks matched by directory and once produced
   `codex resume <claude id>`.
+- **It is on the TILE HEADER as well as the pane gutter, and the tile half is
+  the one that matters here.** Tile mode replaces the pane area outright, so
+  while the grid is up `rootContentView` holds no `LeafContainerView` at all —
+  a pass that walks only it finds nothing, which is exactly why the button
+  never appeared for a workspace that lives in tile mode (shipped that way in
+  72aeb00). `updatePaneRefreshButtons` branches on `tileMode` and drives
+  `TileGridView.updateRefreshButtons` instead. In the header it sits leftmost
+  of the control cluster, away from `×`: a refresh ends the running agent and
+  must not sit under a pointer that just missed close.
 - **The button's visibility updates WITHOUT a rebuild.** The gutter is built
   once per `rebuildSurfaceNodeView`, but agents start and stop between
   rebuilds, so it would otherwise appear only after some unrelated structural

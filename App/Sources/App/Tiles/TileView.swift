@@ -75,6 +75,7 @@ final class TileView: NSView {
     private let statusDot = NSView()
     private let iconView = NSImageView()
     private let titleLabel = NSTextField(labelWithString: "")
+    private let refreshButton = NSButton()
     private let splitButton = NSButton()
     private let openPill = NSView()
     private let openIcon = NSImageView()
@@ -90,6 +91,7 @@ final class TileView: NSView {
     private let onActivate: () -> Void
     private let onGoToPane: () -> Void
     private let onOpen: (NSView) -> Void
+    private let onRefresh: () -> Void
     private let onDetach: () -> Void
     private let onSplit: (SplitDirection) -> Void
 
@@ -101,9 +103,11 @@ final class TileView: NSView {
          isFocused: Bool,
          content: TileContent,
          canRemove: Bool = false,
+         canRefresh: Bool = false,
          onActivate: @escaping () -> Void,
          onGoToPane: @escaping () -> Void,
          onOpen: @escaping (NSView) -> Void = { _ in },
+         onRefresh: @escaping () -> Void = {},
          onDetach: @escaping () -> Void = {},
          onSplit: @escaping (SplitDirection) -> Void = { _ in }) {
         self.surfaceID = surfaceID
@@ -113,6 +117,7 @@ final class TileView: NSView {
         self.onActivate = onActivate
         self.onGoToPane = onGoToPane
         self.onOpen = onOpen
+        self.onRefresh = onRefresh
         self.onDetach = onDetach
         self.onSplit = onSplit
         self.canRemove = canRemove
@@ -125,7 +130,8 @@ final class TileView: NSView {
         // A hole has nothing to name, so it is body-only — the header would
         // be an empty strip above an empty cell.
         if case .empty = content {} else {
-            buildHeader(label: label, icon: icon, canOpen: surfaceID != nil)
+            buildHeader(label: label, icon: icon, canOpen: surfaceID != nil,
+                        canRefresh: canRefresh)
         }
         buildBody(content: content)
         // The live grid is the layout editor, so a slot splits like a pane.
@@ -165,7 +171,8 @@ final class TileView: NSView {
 
     // MARK: - Build
 
-    private func buildHeader(label: String, icon: NSImage?, canOpen: Bool) {
+    private func buildHeader(label: String, icon: NSImage?, canOpen: Bool,
+                             canRefresh: Bool) {
         header.wantsLayer = true
         header.translatesAutoresizingMaskIntoConstraints = false
         addSubview(header)
@@ -199,6 +206,22 @@ final class TileView: NSView {
         // quartet per assignment, which is the same reason the status bar's
         // own chip is a text field. Hidden for a `.missing` slot, which has no
         // pane and therefore no directory.
+        // Leftmost of the control cluster, away from ×: a refresh ends the
+        // running agent, so it must not sit under a pointer that just missed
+        // close. Created unconditionally at 0 width when absent, so showing it
+        // later is a toggle rather than a rebuild.
+        refreshButton.isBordered = false
+        refreshButton.bezelStyle = .inline
+        refreshButton.image = NSImage(systemSymbolName: "arrow.clockwise",
+                                      accessibilityDescription: "Restart this agent")
+        refreshButton.imagePosition = .imageOnly
+        refreshButton.target = self
+        refreshButton.action = #selector(refreshClicked)
+        refreshButton.toolTip = "Restart the agent on its existing conversation"
+        refreshButton.isHidden = !canRefresh
+        refreshButton.translatesAutoresizingMaskIntoConstraints = false
+        header.addSubview(refreshButton)
+
         // ONE button popping the slot menu this view already builds, rather
         // than a Split Right and a Split Down of its own: the header is at
         // capacity with the Open pill, and two more glyphs would be paid for
@@ -283,7 +306,13 @@ final class TileView: NSView {
             titleLabel.centerYAnchor.constraint(equalTo: header.centerYAnchor),
             titleLabel.leadingAnchor.constraint(equalTo: iconView.trailingAnchor, constant: 6),
             titleLabel.trailingAnchor.constraint(
-                lessThanOrEqualTo: openPill.leadingAnchor, constant: -6),
+                lessThanOrEqualTo: refreshButton.leadingAnchor, constant: -6),
+
+            refreshButton.widthAnchor.constraint(equalToConstant: 13),
+            refreshButton.heightAnchor.constraint(equalToConstant: 13),
+            refreshButton.centerYAnchor.constraint(equalTo: header.centerYAnchor),
+            refreshButton.trailingAnchor.constraint(equalTo: openPill.leadingAnchor,
+                                                    constant: -7),
 
             // After the pill, before the ×: the two icon-only buttons sit
             // together on the trailing edge rather than sandwiching the pill.
@@ -502,6 +531,15 @@ final class TileView: NSView {
 
     @objc private func openClicked() { onOpen(openPill) }
 
+    @objc private func refreshClicked() { onRefresh() }
+
+    /// Shows or hides the refresh button WITHOUT rebuilding the grid — agents
+    /// start and stop between structural changes.
+    func setRefreshVisible(_ visible: Bool) {
+        guard refreshButton.isHidden == visible else { return }
+        refreshButton.isHidden = !visible
+    }
+
     /// Pops the slot menu built in `init`, so Split Right / Split Down /
     /// Remove Slot have exactly one definition and the button cannot drift
     /// from the right-click that offers the same three things.
@@ -549,6 +587,7 @@ final class TileView: NSView {
         iconView.contentTintColor = isFocused ? theme.fgColor : theme.fg2Color
         goToPaneButton.contentTintColor = theme.fg3Color
         splitButton.contentTintColor = theme.fg3Color
+        refreshButton.contentTintColor = theme.fg3Color
         for (icon, label) in emptyActionViews {
             icon.contentTintColor = theme.fg2Color
             label.textColor = theme.fg2Color
