@@ -856,6 +856,15 @@ current (the usual rebuild-and-install step) and delete/`lsregister -u` stray
   a resume landing in a still-running agent is not a restart, it posts as a
   chat message, the same rule restart recovery follows for a cancelled
   shutdown.
+- **A process existing is NOT a harness that has finished resuming**, and
+  conflating the two is what made the cover look broken. The probe sees
+  `claude` the instant it is exec'd — measured at 0.93s after the resume was
+  sent — so uncovering on first sight put the shell still echoing
+  `cd … && claude --resume …`, and then the harness's own boot screen, back on
+  screen: precisely the churn the cover exists to hide. `agentReadySightings`
+  (5 polls, 2.5s of CONTINUOUS presence) is what it waits for instead, which
+  also makes it flap-proof. The settle branch returns before the deadline
+  check, so it is bounded by its own count rather than able to hang.
 - **The exit poll is 0.5s and BOUNDED (20s), deliberately faster than the 3s
   foreground probe.** This is a user-initiated wait, not a standing loop: one
   `ps` per tick until the agent goes, then it stops. Riding the probe instead

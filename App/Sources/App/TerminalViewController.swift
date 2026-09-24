@@ -1817,6 +1817,15 @@ final class TerminalViewController: NSViewController {
     private static let agentExitPollInterval: TimeInterval = 0.5
     /// Give up after this. The resume is NOT typed on a timeout.
     private static let agentExitTimeout: TimeInterval = 30
+    /// Consecutive sightings of the NEW agent before the cover lifts.
+    ///
+    /// A process existing is not a harness that has finished resuming. The
+    /// probe sees `claude` the instant it is exec'd, which was ~0.9s after the
+    /// resume was sent — so the cover came off onto the shell still echoing
+    /// `cd … && claude --resume …` and then the harness's own boot screen,
+    /// which is the churn the cover exists to hide. Five polls is 2.5s of the
+    /// agent being continuously present, which also makes it flap-proof.
+    private static let agentReadySightings = 5
 
     private var agentRestartTimers: [UUID: Timer] = [:]
 
@@ -1886,6 +1895,7 @@ final class TerminalViewController: NSViewController {
                                   session: String, resume: String, zmx: String,
                                   deadline: Date) {
         var resumeSent = false
+        var readySightings = 0
         let timer = Timer.scheduledTimer(withTimeInterval: Self.agentExitPollInterval,
                                          repeats: true) { [weak self] timer in
             MainActor.assumeIsolated {
@@ -1895,13 +1905,18 @@ final class TerminalViewController: NSViewController {
                         ForegroundProcess.command(forSessionPID: sessionPID, psOutput: $0)
                     }
                     let isAgent = running == agent.rawValue
-                    // Phase 2: the resume is away and the agent is back, so the
-                    // pane has something worth showing again.
+                    // Phase 2: the resume is away and an agent is visible. Wait
+                    // for it to STAY visible before uncovering — see
+                    // `agentReadySightings`.
                     if resumeSent, isAgent {
+                        readySightings += 1
+                        guard readySightings >= Self.agentReadySightings else { return }
                         return DispatchQueue.main.async {
                             self?.finishAgentRestart(surfaceID, success: true)
                         }
                     }
+                    // It vanished again mid-settle; start counting over.
+                    if resumeSent { readySightings = 0 }
                     // Phase 1: still the OLD agent — keep waiting.
                     if !resumeSent, isAgent {
                         guard Date() >= deadline else { return }
