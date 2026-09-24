@@ -876,6 +876,18 @@ current (the usual rebuild-and-install step) and delete/`lsregister -u` stray
   `TileGridView.updateRefreshButtons` instead. In the header it sits leftmost
   of the control cluster, away from `×`: a refresh ends the running agent and
   must not sit under a pointer that just missed close.
+- **The button spins while a restart is in flight, then flashes the outcome.**
+  `RefreshSpinner` (one helper, not a copy per host) turns the `⟳` glyph
+  accent and rotates it, then flashes semantic green on a resume that landed or
+  red on a timeout. Accent because accent means ACTIVE; the flash because the
+  outcome belongs on the control that was pressed, not only in a dialog. A
+  covering placeholder was rejected: the pane stays live through the whole
+  restart, so a panel over it would hide the agent quitting, the resume being
+  typed, AND the scrollback that going in-place exists to preserve.
+- **A spinning button is pinned visible.** The probe stops reporting the agent
+  the instant it quits — which is mid-restart — so the ordinary visibility rule
+  would hide the control halfway through its own animation. Both the gutter and
+  the tile pass therefore OR in `agentRestartTimers[id] != nil`.
 - **The button's visibility updates WITHOUT a rebuild.** The gutter is built
   once per `rebuildSurfaceNodeView`, but agents start and stop between
   rebuilds, so it would otherwise appear only after some unrelated structural

@@ -540,6 +540,14 @@ final class TileView: NSView {
         refreshButton.isHidden = !visible
     }
 
+    func setRefreshSpinning(_ spinning: Bool, success: Bool? = nil) {
+        // Visible regardless while it spins: the probe stops seeing the agent
+        // the moment it quits, which would otherwise hide the very control
+        // that is mid-animation.
+        if spinning { refreshButton.isHidden = false; RefreshSpinner.start(on: refreshButton) }
+        else { RefreshSpinner.stop(on: refreshButton, success: success) }
+    }
+
     /// Pops the slot menu built in `init`, so Split Right / Split Down /
     /// Remove Slot have exactly one definition and the button cannot drift
     /// from the right-click that offers the same three things.

@@ -501,6 +501,14 @@ final class LeafContainerView: NSView {
         refreshButton.isHidden = !visible
     }
 
+    func setRefreshSpinning(_ spinning: Bool, success: Bool? = nil) {
+        guard let refreshButton else { return }
+        // Kept visible while spinning — the probe stops reporting the agent as
+        // soon as it quits, which would hide the control mid-animation.
+        if spinning { refreshButton.isHidden = false; RefreshSpinner.start(on: refreshButton) }
+        else { RefreshSpinner.stop(on: refreshButton, success: success) }
+    }
+
     /// Right-click menu for the pane chrome (gutter). The terminal view fills
     /// the container below the gutter and handles its own right-click, so this
     /// menu appears only on the pane chrome — not over the terminal content.

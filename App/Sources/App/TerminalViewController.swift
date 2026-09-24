@@ -224,7 +224,11 @@ final class TerminalViewController: NSViewController {
         // button never appeared for a workspace that lives in tile mode.
         if tileMode, let grid = tileGridView {
             grid.updateRefreshButtons { [weak self] id in
-                self?.canRefreshAgent(surfaceID: id) ?? false
+                guard let self else { return false }
+                // A restart in flight keeps its button: the probe stops seeing
+                // the agent the instant it quits, which would otherwise hide
+                // the spinner halfway through its own animation.
+                return self.agentRestartTimers[id] != nil || self.canRefreshAgent(surfaceID: id)
             }
             resolveMissingResumeCommands(for: tileFocusableIDs)
             return
@@ -232,7 +236,8 @@ final class TerminalViewController: NSViewController {
         guard let root = rootContentView else { return }
         let leaves = Self.leafContainers(in: root)
         for leaf in leaves {
-            leaf.setRefreshVisible(canRefreshAgent(surfaceID: leaf.surfaceID))
+            leaf.setRefreshVisible(agentRestartTimers[leaf.surfaceID] != nil
+                                   || canRefreshAgent(surfaceID: leaf.surfaceID))
         }
         resolveMissingResumeCommands(for: leaves.map(\.surfaceID))
     }
@@ -1857,6 +1862,7 @@ final class TerminalViewController: NSViewController {
             return
         }
         ZettyLog.lifecycle.log("restart: \(surfaceID.uuidString.prefix(8)) sent \(exit)")
+        setRefreshSpinning(true, for: surfaceID)
         waitForAgentExit(surfaceID: surfaceID, sessionPID: sessionPID,
                          agent: kind, resume: resume, deadline: Date() + Self.agentExitTimeout)
     }
@@ -1882,13 +1888,13 @@ final class TerminalViewController: NSViewController {
                         guard let self, self.agentRestartTimers[surfaceID] != nil else { return }
                         if still == agent.rawValue {
                             if Date() >= deadline {
-                                self.finishAgentRestart(surfaceID)
+                                self.finishAgentRestart(surfaceID, success: false)
                                 self.presentAgentRestartFailure(
                                     "\(agent.displayName) did not quit, so nothing was resumed.")
                             }
                             return
                         }
-                        self.finishAgentRestart(surfaceID)
+                        self.finishAgentRestart(surfaceID, success: true)
                         guard let surface = self.workspace.surface(with: surfaceID) else { return }
                         _ = self.registry.sendText(resume + "\r", to: surface)
                         ZettyLog.lifecycle.log(
@@ -1900,8 +1906,24 @@ final class TerminalViewController: NSViewController {
         agentRestartTimers[surfaceID] = timer
     }
 
-    private func finishAgentRestart(_ surfaceID: UUID) {
+    private func finishAgentRestart(_ surfaceID: UUID, success: Bool) {
         agentRestartTimers.removeValue(forKey: surfaceID)?.invalidate()
+        setRefreshSpinning(false, for: surfaceID, success: success)
+    }
+
+    /// Drives the button's animation in whichever host is on screen. Tile mode
+    /// replaces the pane area, so the gutter's containers do not exist there —
+    /// the same split `updatePaneRefreshButtons` makes.
+    private func setRefreshSpinning(_ spinning: Bool, for surfaceID: UUID,
+                                    success: Bool? = nil) {
+        if tileMode, let grid = tileGridView {
+            grid.setRefreshSpinning(spinning, for: surfaceID, success: success)
+            return
+        }
+        guard let root = rootContentView else { return }
+        Self.leafContainers(in: root)
+            .first { $0.surfaceID == surfaceID }?
+            .setRefreshSpinning(spinning, success: success)
     }
 
     private func presentAgentRestartFailure(_ message: String) {

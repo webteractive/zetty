@@ -49,7 +49,8 @@ by the tool it's running.
   actually go, then runs `claude --resume` / `codex resume` in the same pane —
   so the conversation comes back and **the scrollback is kept**. If the agent
   does not quit within 20 seconds nothing is typed, rather than posting the
-  resume into its prompt. Needs `preserve-sessions`, which is how Zetty can
+  resume into its prompt. The button spins while it works and flashes green
+  when the agent is back (red if it gave up). Needs `preserve-sessions`, which is how Zetty can
   tell the agent has exited; harnesses with no known quit line never show the
   button.
 - **Tile mode** — `⇧⌘G`, `Ctrl+B g`, the grid button in the tab bar, **View →
