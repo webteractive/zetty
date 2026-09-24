@@ -84,6 +84,7 @@ final class TileView: NSView {
     private let body = NSView()
     private let messageLabel = NSTextField(labelWithString: "")
 
+    private let canRemove: Bool
     private var isFocused: Bool
     private var status: TileStatus
     private let onActivate: () -> Void
@@ -99,6 +100,7 @@ final class TileView: NSView {
          status: TileStatus,
          isFocused: Bool,
          content: TileContent,
+         canRemove: Bool = false,
          onActivate: @escaping () -> Void,
          onGoToPane: @escaping () -> Void,
          onOpen: @escaping (NSView) -> Void = { _ in },
@@ -113,6 +115,7 @@ final class TileView: NSView {
         self.onOpen = onOpen
         self.onDetach = onDetach
         self.onSplit = onSplit
+        self.canRemove = canRemove
         super.init(frame: .zero)
         wantsLayer = true
         layer?.cornerRadius = 8
@@ -136,11 +139,22 @@ final class TileView: NSView {
                                   keyEquivalent: "")
             down.target = self
             menu.addItem(down)
-            menu.addItem(.separator())
-            let detach = NSMenuItem(title: "Remove Slot", action: #selector(detachClicked),
-                                    keyEquivalent: "")
-            detach.target = self
-            menu.addItem(detach)
+            // Named after what it WILL do. One selector drives both, because
+            // `removeTileSlot` branches on whether the slot is filled — but
+            // calling both "Remove Slot" said the wrong thing for a filled
+            // one, which only empties it and leaves the pane running.
+            //
+            // The empty case is omitted when there is no split to collapse:
+            // `TileNode.close` refuses the last leaf, so on a fresh
+            // single-slot view the item would do nothing at all.
+            if surfaceID != nil || canRemove {
+                menu.addItem(.separator())
+                let detach = NSMenuItem(
+                    title: surfaceID != nil ? "Detach Pane" : "Remove Split",
+                    action: #selector(detachClicked), keyEquivalent: "")
+                detach.target = self
+                menu.addItem(detach)
+            }
             return menu
         }()
         applyTheme()
@@ -380,6 +394,17 @@ final class TileView: NSView {
             makeActionRow(symbol: "rectangle.split.1x2", title: "Split Down") { [weak self] in
                 self?.onSplit(.horizontal)
             })
+        // Only when there IS one. An empty cell is the only place a split can
+        // be collapsed from — a filled slot detaches first — and it has no
+        // header, so without this row removal is right-click-only, which is
+        // the gap splitting itself had.
+        if canRemove {
+            stack.addArrangedSubview(
+                makeActionRow(symbol: "rectangle.split.2x1.slash",
+                              title: "Remove Split") { [weak self] in
+                    self?.onDetach()
+                })
+        }
 
         NSLayoutConstraint.activate([
             stack.centerXAnchor.constraint(equalTo: body.centerXAnchor),

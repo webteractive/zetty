@@ -13,6 +13,10 @@ struct TileDescriptor {
     let icon: NSImage?
     let status: TileStatus
     let content: TileContent
+    /// Whether a split exists to collapse. `TileNode.close` refuses the last
+    /// leaf, so without this the controls would offer a no-op in the one view
+    /// where it is most likely to be tried — a fresh single-slot Freeform.
+    let canRemove: Bool
 }
 
 // MARK: - TileGridView
@@ -157,6 +161,7 @@ final class TileGridView: NSView {
                 status: descriptor.status,
                 isFocused: id != nil && id == focused,
                 content: descriptor.content,
+                canRemove: descriptor.canRemove,
                 // A hole or a missing slot activates the picker; a live tile
                 // takes focus. Reattach on a missing tile lands here too.
                 onActivate: { [weak self] in

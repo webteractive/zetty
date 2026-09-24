@@ -51,9 +51,11 @@ by the tool it's running.
   - **You choose what is in it.** An empty slot is a `+ Attach` cell; click it
     for a fuzzy-searchable list of every pane, drag a tab row out of the
     sidebar onto it, or use a pane's right-click → **Add to Tile View ▸**.
-    An empty slot also offers **Split Right** and **Split Down** outright, and
-    a filled one carries a split button in its header, so a **Freeform** view
-    grows without needing the right-click menu or `Ctrl+B %`.
+    An empty slot also offers **Split Right**, **Split Down** and **Remove
+    Split** outright, and a filled one carries a split button in its header,
+    so a **Freeform** view grows and shrinks without needing the right-click
+    menu or `Ctrl+B %`. Removing is offered only when there is a split to
+    collapse — a one-slot view has nothing to remove.
     A tile's `×` (and `⌘W`) detaches the slot — the pane keeps running; press
     it again on the now-empty slot to remove the slot itself. **Double-click a
     tile's header** to leave the grid for that pane, and use its **folder

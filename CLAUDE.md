@@ -1892,6 +1892,17 @@ Rows are stacked and labelled because two labels in a row need ~180pt and clip
 in a 4x4 grid, and because a bare split glyph is not self-evident in the one
 place a first-time user is looking for the answer.
 
+**Removing a split is offered only when one exists, and only an EMPTY cell
+can do it.** `TileNode.close` refuses the last leaf, so a fresh single-slot
+Freeform view has nothing to collapse — `TileDescriptor.canRemove`
+(`capacity > 1`) gates both the row and the menu item rather than letting
+either sit there doing nothing. And because `removeTileSlot` branches on
+whether the slot is filled (filled → detach the pane, leaving a hole; empty →
+collapse the split), removal is inherently two-step from a filled tile. The
+menu item is therefore titled for what it will actually do — **Detach Pane**
+vs **Remove Split** — where both cases used to read "Remove Slot", which was
+wrong for a filled tile: it does not remove the slot, it empties it.
+
 **The empty cell's rows are `ClickRowView`, which CONSUMES its `mouseDown`.**
 A plain `NSView` forwards it up the responder chain, so a row would reach
 `TileView.mouseDown` as well and open the attach picker on top of the split. A

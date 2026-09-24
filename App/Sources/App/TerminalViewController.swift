@@ -4462,14 +4462,19 @@ final class TerminalViewController: NSViewController {
     }
 
     private func tileDescriptors() -> [TileDescriptor] {
-        tileResolution().enumerated().map { index, slot in
+        // One split to collapse means at least two leaves; `TileNode.close`
+        // refuses the last one.
+        let canRemove = (activeTileProfile?.capacity ?? 0) > 1
+        return tileResolution().enumerated().map { index, slot in
             switch slot {
             case .empty:
                 return TileDescriptor(slotIndex: index, surfaceID: nil, label: "",
-                                      icon: nil, status: .idle, content: .empty)
+                                      icon: nil, status: .idle, content: .empty,
+                                      canRemove: canRemove)
             case .missing(let label):
                 return TileDescriptor(slotIndex: index, surfaceID: nil, label: label,
-                                      icon: nil, status: .idle, content: .missing(label))
+                                      icon: nil, status: .idle, content: .missing(label),
+                                      canRemove: canRemove)
             case .pane(_, _, let id):
                 let surface = workspace.surface(with: id)
                 let content: TileContent
@@ -4488,7 +4493,8 @@ final class TerminalViewController: NSViewController {
                 return TileDescriptor(slotIndex: index, surfaceID: id,
                                       label: paneLabel(for: id) ?? "pane",
                                       icon: surface.flatMap { agentIcon(for: $0) },
-                                      status: status, content: content)
+                                      status: status, content: content,
+                                      canRemove: canRemove)
             }
         }
     }
