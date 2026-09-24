@@ -283,12 +283,16 @@ final class TileView: NSView {
             titleLabel.centerYAnchor.constraint(equalTo: header.centerYAnchor),
             titleLabel.leadingAnchor.constraint(equalTo: iconView.trailingAnchor, constant: 6),
             titleLabel.trailingAnchor.constraint(
-                lessThanOrEqualTo: splitButton.leadingAnchor, constant: -6),
+                lessThanOrEqualTo: openPill.leadingAnchor, constant: -6),
 
+            // After the pill, before the ×: the two icon-only buttons sit
+            // together on the trailing edge rather than sandwiching the pill.
             splitButton.widthAnchor.constraint(equalToConstant: 13),
             splitButton.heightAnchor.constraint(equalToConstant: 13),
             splitButton.centerYAnchor.constraint(equalTo: header.centerYAnchor),
-            splitButton.trailingAnchor.constraint(equalTo: openPill.leadingAnchor,
+            splitButton.leadingAnchor.constraint(equalTo: openPill.trailingAnchor,
+                                                 constant: 7),
+            splitButton.trailingAnchor.constraint(equalTo: goToPaneButton.leadingAnchor,
                                                   constant: -7),
 
             // The pill hugs its contents; a `.missing` header collapses it to
@@ -296,8 +300,7 @@ final class TileView: NSView {
             // way — the 0↔width toggle the account dots use.
             openPill.heightAnchor.constraint(equalToConstant: canOpen ? 16 : 0),
             openPill.centerYAnchor.constraint(equalTo: header.centerYAnchor),
-            openPill.trailingAnchor.constraint(equalTo: goToPaneButton.leadingAnchor,
-                                               constant: canOpen ? -8 : 0),
+
 
             openIcon.leadingAnchor.constraint(equalTo: openPill.leadingAnchor, constant: 6),
             openIcon.centerYAnchor.constraint(equalTo: openPill.centerYAnchor),

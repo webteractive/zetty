@@ -1747,48 +1747,28 @@ sheet's steppers and `zetty-tiles-grid`.
 - **Old libraries migrate silently**: a stored `grid` decodes to
   `TileNode.uniform`, and only `root` is ever written back, so a file converts
   itself the first time it is saved.
-- **`Freeform` is the ONLY built-in.** The six presets were withdrawn because
-  every one of them was reachable by splitting it, so shipping them was seven
-  ways of offering a shape you could make in two clicks. The layout MECHANISM
-  stays — `Save as layout`, the chooser, `New View from Layout ▸` — it is
-  only the presets that are gone, so a shape you build yourself is still
-  keepable.
-- **`retiredBuiltIns` carries each withdrawn layout's NAME AND ROOT, and
-  `seedMissingLayouts` requires BOTH to match before removing one.** By shape
-  alone the cleanup takes Freeform too, which is `.slot` exactly as the retired
-  `Focus` was — and because the seed name is recorded, Freeform would be
-  deleted on the load after it was seeded and never return. By name alone it
-  takes a preset the user EDITED, which is their work and an irreversible
-  deletion. Retiring a future built-in means adding its name and shape there.
-- **`Freeform` is NOT the retired `Focus` returning.** `Focus` was dropped as a DESTINATION — a view
-  showing one pane is just the pane — whereas Freeform is a STARTING POINT you
-  split into whatever the work needs, which is the one thing the six preset
-  shapes cannot offer. `close(at:)` refusing the last leaf is what makes it
-  safe to start from.
-- **`seedMissingLayouts()` clears `Focus` BY NAME, never by leaf count.** It
-  used to remove every layout with `leafCount == 1`, which deletes Freeform on
-  the load right after seeding it — and because the seed name is recorded in
-  `seededLayoutNames`, it would never come back. The failure is silent and
-  permanent, so it is regression-tested from both ends (Freeform survives two
-  consecutive loads; a user's own renamed one-slot layout is left alone).
-  Retiring another built-in means adding its name there, not widening the
-  predicate back into a shape test.
+- **Named layouts are GONE, and so is `zetty-tiles-grid`.** Every preset was
+  reachable by splitting one slot, and once a tile could be split and removed
+  from its own face there was nothing left for a saved shape to save. A view is
+  created directly by `+` as a single `.slot`; `TileLayout`, the chooser's
+  layout cards, `New View from Layout`, `Remove Layout`, `Save as layout` and
+  the columns-by-rows sheet are all deleted. `TileProfileFile` simply stops
+  READING `layouts`/`seededLayoutNames`, so an old library converts itself on
+  the next write — the same one-way migration the legacy `grid` key gets, and
+  profiles in that file are untouched.
+- **Deleting the `zetty-tiles-grid` case needed no `retiredReservedKeys`
+  entry**, because the key is in the `zetty-` namespace and
+  `isReservedButUnsupported` swallows that whole prefix. This is precisely why
+  new keys must use it: the retired list exists for the grandfathered
+  unprefixed ones. Regression-tested from both ends — the key is swallowed
+  rather than forwarded, and it is dropped from `rendered()`.
+- **`TileShapeImage` is all that survives of `TileConfigSheet`.** The chooser
+  still draws an arrangement as its silhouette; it just no longer asks for one.
 
-**A named layout is reachable from `+` as well as the chooser.** The chooser
-renders only while NO view is open, so a layout was unreachable exactly
-mid-session — worst for `Freeform`, whose whole purpose is "give me a blank one
-to grow" while you are already working. `TileConfigSheet` deliberately does not
-list layouts (its own header says the chooser IS that list), so `+` → **New
-View from Layout ▸** is the second entry point rather than a third list.
-Items look their layout up by id at click time, so one removed while the menu
-was open cannot open a stale shape.
-
-**A view is a structure before it is anything else**, so creating one opens
-`TileConfigSheet` rather than silently minting a `4x4`. `TileLayout` is a NAMED
-TREE, seeded with seven built-ins into the same `tile-profiles.json`. Creating a
-profile **copies** that tree — no reference, no back-link, no "from Quad" label,
-since with copy semantics such a label cannot survive a rename and the shape is
-already the profile's own. Editing a layout therefore affects only later views.
+**A view is not a structure you choose, it is one you build.** Creating one
+mints a single `.slot` and shows it; the shape comes from splitting the tiles
+themselves. This replaced a sheet asking for columns and rows, which was asking
+a question the first two clicks would change the answer to.
 
 **⇧⌘G opens the CHOOSER, not a view.** `loadTileLibrary` no longer falls back
 to opening the first profile, and `rebuildSurfaceNodeView` slots
@@ -1797,8 +1777,8 @@ which is also where you land after closing your last view. Its labels are all
 `.defaultLow` compressible, because it lives inside the main window and that is
 the exact mistake that blocked the floor at 387pt.
 
-**`newTileView` is ASYNC now** — it takes a `then:` completion, because the
-sheet returns before the view exists. `addSurfaceToTileView` has to use it: the
+**`newTileView` still takes a `then:` completion** even though it no longer
+waits on a sheet, because `addSurfaceToTileView` composes with it: the
 old straight-line version attached the pane to whichever profile was active
 *before* the sheet, which is the previous one.
 

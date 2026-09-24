@@ -2,64 +2,23 @@ import Foundation
 
 public struct TileProfileFile: Codable, Equatable, Sendable {
     public var profiles: [TileProfile]
-    /// Named shapes a new view can start from. Absent in libraries written
-    /// before layouts existed → empty, and seeded on load.
-    public var layouts: [TileLayout]
-    /// Built-in names already offered once. Seeding by name against THIS rather
-    /// than "is the list empty" means a new built-in reaches an existing
-    /// library — while one the user deleted stays deleted.
-    public var seededLayoutNames: [String]
 
-    public init(profiles: [TileProfile] = [], layouts: [TileLayout] = [],
-                seededLayoutNames: [String] = []) {
+    public init(profiles: [TileProfile] = []) {
         self.profiles = profiles
-        self.layouts = layouts
-        self.seededLayoutNames = seededLayoutNames
     }
 
-    private enum CodingKeys: String, CodingKey { case profiles, layouts, seededLayoutNames }
+    private enum CodingKeys: String, CodingKey { case profiles }
 
+    /// `layouts` and `seededLayoutNames` are simply not read.
+    ///
+    /// Named shapes are gone: every preset was reachable by splitting a single
+    /// slot, and once a tile could be split and removed from its own face there
+    /// was nothing left for a saved shape to save. A library still holding the
+    /// old keys drops them the first time it is written — the same one-way
+    /// conversion the legacy `grid` key gets.
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         profiles = try container.decodeIfPresent([TileProfile].self, forKey: .profiles) ?? []
-        layouts = try container.decodeIfPresent([TileLayout].self, forKey: .layouts) ?? []
-        seededLayoutNames = try container.decodeIfPresent([String].self,
-                                                          forKey: .seededLayoutNames)
-            // A library from before this existed has already been offered
-            // whatever it holds, so treat its current names as seeded.
-            ?? layouts.map(\.name)
-    }
-
-
-
-    /// Adds built-ins this library has never been offered. Returns whether
-    /// anything changed, so the caller knows to save.
-    public mutating func seedMissingLayouts() -> Bool {
-        var changed = false
-        // Clears withdrawn built-ins from libraries already seeded with them.
-        //
-        // Matched on NAME AND SHAPE, never on either alone. By shape alone it
-        // would take Freeform too, which is `.slot` exactly as the retired
-        // Focus was — and since the seed name is recorded, Freeform would be
-        // deleted on the load after it was seeded and never come back. By name
-        // alone it would take a preset the user had edited, which is their
-        // work and not ours to remove.
-        let before = layouts.count
-        layouts.removeAll { layout in
-            TileLayout.retiredBuiltIns.contains {
-                $0.name == layout.name && $0.root == layout.root
-            }
-        }
-        if layouts.count != before { changed = true }
-
-        let offered = Set(seededLayoutNames)
-        let missing = TileLayout.builtIns.filter { !offered.contains($0.name) }
-        if !missing.isEmpty {
-            layouts.append(contentsOf: missing)
-            seededLayoutNames.append(contentsOf: missing.map(\.name))
-            changed = true
-        }
-        return changed
     }
 }
 

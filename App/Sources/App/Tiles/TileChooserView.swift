@@ -192,8 +192,12 @@ private final class TileChooserContentView: NSView {
 
 // MARK: - TileChooserView
 
-/// What tile mode shows when no view is open: the layouts you can start from
-/// and the views you can reopen.
+/// What tile mode shows when no view is open: a New View action and the views
+/// you can reopen.
+///
+/// There are no layouts to start from any more — a view begins as one slot you
+/// split into whatever you need, so the only starting choice left is whether
+/// this is a new arrangement or one you already made.
 ///
 /// It is the empty state rather than a separate screen, so the choice lives
 /// where the result will appear.
@@ -203,16 +207,12 @@ final class TileChooserView: NSView {
     private let scrollView = NSScrollView()
     private let content = TileChooserContentView()
 
-    private let onPickLayout: (TileLayout) -> Void
     private let onPickProfile: (TileProfile) -> Void
     private let onCustom: () -> Void
 
-    init(layouts: [TileLayout],
-         profiles: [TileProfile],
-         onPickLayout: @escaping (TileLayout) -> Void,
+    init(profiles: [TileProfile],
          onPickProfile: @escaping (TileProfile) -> Void,
          onCustom: @escaping () -> Void) {
-        self.onPickLayout = onPickLayout
         self.onPickProfile = onPickProfile
         self.onCustom = onCustom
         super.init(frame: .zero)
@@ -235,15 +235,13 @@ final class TileChooserView: NSView {
             scrollView.bottomAnchor.constraint(equalTo: bottomAnchor),
         ])
 
-        var starters: [NSView] = layouts.map { layout in
-            card(for: layout.root, title: layout.name, subtitle: nil) { [weak self] in
-                self?.onPickLayout(layout)
-            }
-        }
-        starters.append(TileChooserCard(image: nil, title: "Custom\u{2026}", subtitle: nil) {
-            [weak self] in self?.onCustom()
-        })
-        add(ChooserSection(heading: heading("Start from layout"), cards: starters))
+        let starters: [NSView] = [
+            card(for: .slot, title: "New View",
+                 subtitle: "one slot \u{2014} split it into what you need") {
+                [weak self] in self?.onCustom()
+            },
+        ]
+        add(ChooserSection(heading: heading("Start"), cards: starters))
 
         if !profiles.isEmpty {
             let reopen = profiles.map { profile in
@@ -253,7 +251,7 @@ final class TileChooserView: NSView {
                     [weak self] in self?.onPickProfile(profile)
                 }
             }
-            add(ChooserSection(heading: heading("Or reopen view"), cards: reopen))
+            add(ChooserSection(heading: heading("Or reopen"), cards: reopen))
         }
     }
 
@@ -284,7 +282,7 @@ final class TileChooserView: NSView {
                       title: String,
                       subtitle: String?,
                       onPick: @escaping () -> Void) -> TileChooserCard {
-        TileChooserCard(image: TileConfigSheet.shapeImage(for: root,
+        TileChooserCard(image: TileShapeImage.make(for: root,
                                                           size: TileChooserCard.iconSize),
                         title: title,
                         subtitle: subtitle,

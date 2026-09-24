@@ -78,14 +78,6 @@ private func profile(grid: TilesGrid = TilesGrid(columns: 2, rows: 2)) -> TilePr
     #expect(try JSONDecoder().decode(TileProfile.self, from: data) == p)
 }
 
-@Test func anOldLayoutWithAGridDecodesToAUniformTree() throws {
-    let json = """
-    {"id":"\(UUID().uuidString)","name":"Quad","grid":{"columns":2,"rows":2}}
-    """
-    let decoded = try JSONDecoder().decode(TileLayout.self, from: Data(json.utf8))
-    #expect(decoded.root == TileNode.uniform(columns: 2, rows: 2))
-}
-
 @Test func anUnknownKindDecodesAsManualRatherThanThrowing() throws {
     // Profiles used to carry a `kind`; the computed view is gone and the key
     // is simply not read any more.

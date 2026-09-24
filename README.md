@@ -71,19 +71,17 @@ by the tool it's running.
     tile views instead of the active project's tabs, with `+` opening your
     saved **profiles**. Several can be open at once.
   - **⇧⌘G opens a chooser, not a view.** With nothing open the grid area
-    lists the **layouts** you can start from and the **profiles** you can
-    reopen, so nothing arrives uninvited. Closing your last view returns here.
-    With views already open, `+` → **New View from Layout ▸** offers the same
-    layouts without having to close anything first.
+    offers **New View** and lists the views you can reopen, so nothing arrives
+    uninvited. Closing your last view returns here.
   - **A layout is a shape, and shapes are trees.** Not just columns × rows:
     `1|2/3` — two columns with the second divided — is a layout, and so is
     anything else you build. **Split a slot** from its right-click menu or with
     `Ctrl+B %` / `Ctrl+B "`, exactly like splitting a pane, and **drag the
     boundaries** to resize. **Save as layout** keeps whatever shape you made.
-    **Freeform** — a single slot you split into whatever the work turns out to
-    need — is the only shape that ships. Every preset was reachable by
-    splitting it, so it is the starting point and you build the rest. Shapes
-    you make yourself are kept with **Save as layout**.
+    Every view starts as **one slot** you split into whatever the work turns
+    out to need — there are no preset shapes, because each one was reachable
+    by splitting. `+` makes a new view straight away; **Rename View…** names
+    it.
     Editing a layout affects only views made afterwards, because creating a
     view copies the shape rather than following it.
   - **Profiles save themselves.** An open view *is* its profile: attaching,

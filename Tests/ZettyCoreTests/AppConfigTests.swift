@@ -216,32 +216,27 @@ import Testing
     #expect(AppConfig.parse(AppConfig(hibernateAfter: 3600).rendered()).hibernateAfter == 3600)
 }
 
-// MARK: - zetty-tiles-grid
+// MARK: - zetty-tiles-grid (withdrawn)
 
-@Test func tilesGridDefaultsToFourByFour() {
-    #expect(AppConfig.parse("").tilesGrid == TilesGrid(columns: 4, rows: 4))
-}
-
-@Test func tilesGridIsReadFromTheConfig() {
-    #expect(AppConfig.parse("zetty-tiles-grid = 3x2").tilesGrid
-        == TilesGrid(columns: 3, rows: 2))
-}
-
-@Test func aMalformedTilesGridKeepsTheDefault() {
-    // Never fail on a bad value: ghostty validates all-or-nothing, so a typo
-    // that dropped the whole config would strand preserved sessions.
-    #expect(AppConfig.parse("zetty-tiles-grid = four").tilesGrid == .default)
-}
-
-@Test func tilesGridSurvivesARuntimePersist() {
-    var config = AppConfig.parse("zetty-tiles-grid = 2x5")
-    config.tilesGrid = TilesGrid(columns: 6, rows: 3)
-    #expect(AppConfig.parse(config.rendered()).tilesGrid == TilesGrid(columns: 6, rows: 3))
-}
-
-@Test func tilesGridIsNotForwardedToGhostty() {
-    // A reserved key reaching libghostty would fail its validation and free
-    // the WHOLE config, including each pane's `command`.
+@Test func theWithdrawnTilesGridKeyIsStillNotForwardedToGhostty() {
+    // The key is gone — a view starts as one slot and is split, so there is no
+    // default shape to seed — but an existing config still carries the line.
+    // It must be SWALLOWED, never forwarded: libghostty validates
+    // all-or-nothing, so one unknown key frees the WHOLE config including each
+    // pane's `command`, which strands preserved sessions in plain shells.
+    //
+    // Nothing had to be added to `retiredReservedKeys` for that: the key is in
+    // the `zetty-` namespace, and `isReservedButUnsupported` swallows the whole
+    // prefix. That is exactly why new keys must use it.
     let config = AppConfig.parse("zetty-tiles-grid = 3x3")
     #expect(config.ghostty.contains { $0.key == "zetty-tiles-grid" } == false)
+    #expect(AppConfig.isReservedButUnsupported("zetty-tiles-grid"))
+    #expect(config.unsupportedKeys.contains("zetty-tiles-grid"))
+}
+
+@Test func theWithdrawnTilesGridKeyIsDroppedOnAPersist() {
+    // Rendered output no longer carries it, so the line disappears the first
+    // time the config is written back.
+    let config = AppConfig.parse("zetty-tiles-grid = 3x3")
+    #expect(!config.rendered().contains("zetty-tiles-grid"))
 }

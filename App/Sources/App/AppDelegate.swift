@@ -265,7 +265,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         tvc.fileTreeSettingsProvider = { [weak self] in
             self?.appConfig.fileTree ?? FileTreeSettings()
         }
-        tvc.tilesGridProvider = { [weak self] in self?.appConfig.tilesGrid ?? .default }
         tvc.editorProvider = { [weak self] in self?.appConfig.editor }
         tvc.layoutTemplateProvider = { [weak self] project in
             ProjectFileIO.load(projectRoot: project.rootPath)?.layoutTemplate

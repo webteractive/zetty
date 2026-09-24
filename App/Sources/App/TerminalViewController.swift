@@ -2644,7 +2644,7 @@ final class TerminalViewController: NSViewController {
             PaletteCommand(glyph: "⤓", label: "Scroll to Bottom", kbd: "⌘↓") { [weak self] in self?.scrollToBottom(nil) },
             PaletteCommand(glyph: "▦", label: "Tile Running Sessions", kbd: "⇧⌘G") { [weak self] in self?.toggleTileMode() },
             PaletteCommand(glyph: "▦", label: "New Tile View", kbd: "") { [weak self] in self?.setTileMode(true); self?.newTileView() },
-            PaletteCommand(glyph: "▤", label: "Configure Tile View…", kbd: "") { [weak self] in self?.configureActiveTileView() },
+            PaletteCommand(glyph: "✎", label: "Rename Tile View…", kbd: "") { [weak self] in self?.configureActiveTileView() },
             PaletteCommand(glyph: "⇉", label: "Broadcast: Tab", kbd: "") { [weak self] in self?.setBroadcast(.currentTab) },
             PaletteCommand(glyph: "⇉", label: "Broadcast: Project", kbd: "") { [weak self] in self?.setBroadcast(.project) },
             PaletteCommand(glyph: "⇉", label: "Broadcast: Agents", kbd: "") { [weak self] in self?.setBroadcast(.agents) },
@@ -3957,10 +3957,6 @@ final class TerminalViewController: NSViewController {
     /// restart recovery — the same spacing, for the same reason.
     private static let tileSpawnInterval: TimeInterval = 2
 
-    /// Resolved `zetty-tiles-grid`, supplied by `AppDelegate` — the DEFAULT
-    /// grid for a new view; each profile carries its own thereafter.
-    var tilesGridProvider: (() -> TilesGrid)?
-
     /// The profile library, loaded once by `AppDelegate`.
     var tileProfileStore: TileProfileStore?
     private var tileLibrary = TileProfileFile()
@@ -4024,7 +4020,6 @@ final class TerminalViewController: NSViewController {
         // By name, not "is it empty": a built-in added in a later build has to
         // reach a library that already has layouts in it, and one the user
         // deleted must stay deleted.
-        if tileLibrary.seedMissingLayouts() { seeded = true }
         if seeded { persistTileLibrary() }
         // Only what was actually open. Toggling into tile mode opens the
         // CHOOSER, not whatever happened to be first — All Running used to
@@ -4163,53 +4158,6 @@ final class TerminalViewController: NSViewController {
         new.target = self
         menu.addItem(new)
 
-        // Starting a view from a NAMED layout used to be possible only from
-        // the chooser, which renders only while no view is open — so the one
-        // layout you most want mid-session, the single slot you grow yourself,
-        // was unreachable exactly when you wanted it. `TileConfigSheet`
-        // deliberately does not list layouts (the chooser IS that list), so
-        // the entry point belongs here instead.
-        if !tileLibrary.layouts.isEmpty {
-            let submenu = NSMenu()
-            for layout in tileLibrary.layouts {
-                let item = NSMenuItem(title: layout.name,
-                                      action: #selector(newTileViewFromLayout(_:)),
-                                      keyEquivalent: "")
-                item.target = self
-                item.representedObject = layout.id
-                item.image = TileConfigSheet.shapeImage(for: layout.root, size: 14)
-                submenu.addItem(item)
-            }
-            let parent = NSMenuItem(title: "New View from Layout", action: nil,
-                                    keyEquivalent: "")
-            parent.submenu = submenu
-            menu.addItem(parent)
-        }
-        if let active = activeTileProfile {
-            let configure = NSMenuItem(title: "Configure \u{201C}\(active.name)\u{201D}\u{2026}",
-                                       action: #selector(configureTileViewFromMenu),
-                                       keyEquivalent: "")
-            configure.target = self
-            menu.addItem(configure)
-        }
-        // Layouts are managed from here rather than a window of their own — a
-        // second window for five named grids is more chrome than it deserves.
-        if !tileLibrary.layouts.isEmpty {
-            let submenu = NSMenu()
-            for layout in tileLibrary.layouts {
-                let item = NSMenuItem(title: layout.name,
-                                      action: #selector(removeTileLayoutFromMenu(_:)),
-                                      keyEquivalent: "")
-                item.target = self
-                item.representedObject = layout.id
-                item.image = TileConfigSheet.shapeImage(for: layout.root, size: 14)
-                item.toolTip = "Remove this layout"
-                submenu.addItem(item)
-            }
-            let parent = NSMenuItem(title: "Remove Layout", action: nil, keyEquivalent: "")
-            parent.submenu = submenu
-            menu.addItem(parent)
-        }
         menu.popUp(positioning: nil,
                    at: NSPoint(x: 0, y: anchor.bounds.height), in: anchor)
     }
@@ -4221,20 +4169,7 @@ final class TerminalViewController: NSViewController {
 
     @objc private func newTileViewFromMenu() { newTileView() }
 
-    /// Looked up by id at click time rather than captured, so a layout removed
-    /// while the menu was open cannot open a stale shape.
-    @objc private func newTileViewFromLayout(_ sender: NSMenuItem) {
-        guard let id = sender.representedObject as? UUID,
-              let layout = tileLibrary.layouts.first(where: { $0.id == id }) else { return }
-        openTileView(fromLayout: layout)
-    }
-
     @objc private func configureTileViewFromMenu() { configureActiveTileView() }
-
-    @objc private func removeTileLayoutFromMenu(_ sender: NSMenuItem) {
-        guard let id = sender.representedObject as? UUID else { return }
-        removeTileLayout(id: id)
-    }
 
     /// A sidebar tab row dropped on a slot. Goes through the SAME mutation the
     /// picker and the pane menu use, so three entry points cannot drift into
@@ -4304,75 +4239,39 @@ final class TerminalViewController: NSViewController {
         selectTileView(at: openTileViews.count - 1)
     }
 
-    /// Asks for a name and a shape first. A view IS a structure before it is
-    /// anything else, so picking one is the first thing creating it should do.
-    /// Starts a view from a layout — the chooser's primary action. Named
-    /// after the layout, which is almost always what you would have typed.
-    func openTileView(fromLayout layout: TileLayout) {
-        let profile = TileProfile(name: layout.name, root: layout.root)
+    /// Every new view is ONE slot you split into what you need.
+    ///
+    /// No sheet, and no shape to choose: a tile splits and removes from its own
+    /// face now, so asking for columns and rows up front was asking a question
+    /// whose answer the first two clicks would change anyway. The name is
+    /// generated and editable afterwards from `Rename View\u{2026}`.
+    func newTileView(then completion: (() -> Void)? = nil) {
+        let profile = TileProfile(name: "Tiles \(tileLibrary.profiles.count + 1)", root: .slot)
         tileLibrary.profiles.append(profile)
         persistTileLibrary()
         openTileViews.append(profile)
         setTileMode(true)
         selectTileView(at: openTileViews.count - 1)
+        completion?()
     }
 
-    func newTileView(then completion: (() -> Void)? = nil) {
-        presentTileConfigSheet(
-            name: "Tiles \(tileLibrary.profiles.count)",
-            grid: tilesGridProvider?() ?? .default,
-            confirmTitle: "Create"
-        ) { [weak self] result in
-            guard let self else { return }
-            self.saveLayoutIfRequested(result)
-            let profile = TileProfile(name: result.name, root: result.root)
-            self.tileLibrary.profiles.append(profile)
-            self.persistTileLibrary()
-            self.openTileViews.append(profile)
-            self.setTileMode(true)
-            self.selectTileView(at: self.openTileViews.count - 1)
-            completion?()
-        }
-    }
-
-    /// Reconfigures the open view. Safe on a populated one: `setGrid` never
-    /// truncates past an attachment.
+    /// Renames the open view. All that is left of the old configure sheet:
+    /// the shape is edited by splitting the tiles themselves.
     func configureActiveTileView() {
-        guard let active = activeTileProfile else { return }
-        presentTileConfigSheet(name: active.name, grid: tilesGridProvider?() ?? .default,
-                               confirmTitle: "Apply") { [weak self] result in
-            guard let self else { return }
-            self.saveLayoutIfRequested(result)
-            // Replacing the shape drops attachments past the new leaf count —
-            // `padToCapacity` handles the grow case, and a shrink is the user
-            // explicitly asking for a smaller shape.
-            self.mutateActiveTileProfile {
-                $0.name = result.name
-                $0.root = result.root
-                $0.slots = Array($0.slots.prefix($0.capacity))
-                    + Array(repeating: nil, count: max(0, $0.capacity - $0.slots.count))
-            }
-            self.rebuildSurfaceNodeView()
+        guard let active = activeTileProfile, let window = view.window else { return }
+        let alert = NSAlert()
+        alert.messageText = "Rename View"
+        alert.addButton(withTitle: "Rename")
+        alert.addButton(withTitle: "Cancel")
+        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 220, height: 24))
+        field.stringValue = active.name
+        alert.accessoryView = field
+        alert.beginSheetModal(for: window) { [weak self] response in
+            guard response == .alertFirstButtonReturn else { return }
+            let name = field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !name.isEmpty else { return }
+            self?.mutateActiveTileProfile { $0.name = name }
         }
-    }
-
-    private func presentTileConfigSheet(name: String, grid: TilesGrid, confirmTitle: String,
-                                        onConfirm: @escaping (TileConfigSheet.Result) -> Void) {
-        let sheet = TileConfigSheet(name: name, grid: grid,
-                                    confirmTitle: confirmTitle, onConfirm: onConfirm)
-        presentAsSheet(sheet)
-    }
-
-    /// The "Save as layout" checkbox: this is how the library grows.
-    private func saveLayoutIfRequested(_ result: TileConfigSheet.Result) {
-        guard let layoutName = result.saveAsLayout else { return }
-        tileLibrary.layouts.append(TileLayout(name: layoutName, root: result.root))
-        persistTileLibrary()
-    }
-
-    func removeTileLayout(id: UUID) {
-        tileLibrary.layouts.removeAll { $0.id == id }
-        persistTileLibrary()
     }
 
     /// Closes the TAB. The profile stays in the library — a closed tab must not
@@ -6220,11 +6119,7 @@ final class TerminalViewController: NSViewController {
         // surfaces the grid shows are ones `allSurfaceIDs` already retains.
         if tileMode, openTileViews.isEmpty {
             let chooser = TileChooserView(
-                layouts: tileLibrary.layouts,
                 profiles: tileLibrary.profiles,
-                onPickLayout: { [weak self] layout in
-                    self?.openTileView(fromLayout: layout)
-                },
                 onPickProfile: { [weak self] profile in
                     self?.openTileView(profileID: profile.id)
                 },
@@ -6249,10 +6144,7 @@ final class TerminalViewController: NSViewController {
             let grid = tileGridView ?? TileGridView(
                 // The ACTIVE PROFILE's grid, not the global key — that one is
                 // only the default a new view is seeded with.
-                rootProvider: { [weak self] in
-                    self?.activeTileProfile?.root
-                        ?? TileNode.uniform(self?.tilesGridProvider?() ?? .default)
-                },
+                rootProvider: { [weak self] in self?.activeTileProfile?.root ?? .slot },
                 onCounts: { [weak self] running, idle in
                     self?.statusBarView?.setTiles(running: running, idle: idle)
                 },
