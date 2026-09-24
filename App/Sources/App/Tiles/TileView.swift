@@ -236,6 +236,16 @@ final class TileView: NSView, AgentRestartPresenting {
         buildHeaderButton(splitRightButton, symbol: "rectangle.split.2x1", fallback: "⊞",
                           tip: "Split this slot to the right (⌘D)",
                           action: #selector(splitRight), hidden: false)
+        // × detaches; it does NOT close the pane. It must go through the same
+        // helper as the rest: its constraints below reference `header`, and a
+        // button that is never added to one has no common ancestor with its
+        // neighbours — which raises NSGenericException out of `viewDidLoad`,
+        // past `applicationDidFinishLaunching`, so the window is created and
+        // then never ordered on screen. That shipped in 2f57b6d’s successor
+        // and read as "Zetty launches invisibly".
+        buildHeaderButton(goToPaneButton, symbol: "xmark", fallback: "×",
+                          tip: "Detach from this view (the pane keeps running)",
+                          action: #selector(detachClicked), hidden: false)
 
         // Double-clicking the HEADER leaves tile mode for this pane. It has to
         // be the header: the body is the terminal view, which consumes its own
