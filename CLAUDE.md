@@ -1762,6 +1762,15 @@ sheet's steppers and `zetty-tiles-grid`.
   Retiring another built-in means adding its name there, not widening the
   predicate back into a shape test.
 
+**A named layout is reachable from `+` as well as the chooser.** The chooser
+renders only while NO view is open, so a layout was unreachable exactly
+mid-session — worst for `Freeform`, whose whole purpose is "give me a blank one
+to grow" while you are already working. `TileConfigSheet` deliberately does not
+list layouts (its own header says the chooser IS that list), so `+` → **New
+View from Layout ▸** is the second entry point rather than a third list.
+Items look their layout up by id at click time, so one removed while the menu
+was open cannot open a stale shape.
+
 **A view is a structure before it is anything else**, so creating one opens
 `TileConfigSheet` rather than silently minting a `4x4`. `TileLayout` is a NAMED
 TREE, seeded with seven built-ins into the same `tile-profiles.json`. Creating a

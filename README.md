@@ -68,6 +68,8 @@ by the tool it's running.
   - **⇧⌘G opens a chooser, not a view.** With nothing open the grid area
     lists the **layouts** you can start from and the **profiles** you can
     reopen, so nothing arrives uninvited. Closing your last view returns here.
+    With views already open, `+` → **New View from Layout ▸** offers the same
+    layouts without having to close anything first.
   - **A layout is a shape, and shapes are trees.** Not just columns × rows:
     `1|2/3` — two columns with the second divided — is a layout, and so is
     anything else you build. **Split a slot** from its right-click menu or with

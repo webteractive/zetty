@@ -4162,6 +4162,29 @@ final class TerminalViewController: NSViewController {
                              keyEquivalent: "")
         new.target = self
         menu.addItem(new)
+
+        // Starting a view from a NAMED layout used to be possible only from
+        // the chooser, which renders only while no view is open — so the one
+        // layout you most want mid-session, the single slot you grow yourself,
+        // was unreachable exactly when you wanted it. `TileConfigSheet`
+        // deliberately does not list layouts (the chooser IS that list), so
+        // the entry point belongs here instead.
+        if !tileLibrary.layouts.isEmpty {
+            let submenu = NSMenu()
+            for layout in tileLibrary.layouts {
+                let item = NSMenuItem(title: layout.name,
+                                      action: #selector(newTileViewFromLayout(_:)),
+                                      keyEquivalent: "")
+                item.target = self
+                item.representedObject = layout.id
+                item.image = TileConfigSheet.shapeImage(for: layout.root, size: 14)
+                submenu.addItem(item)
+            }
+            let parent = NSMenuItem(title: "New View from Layout", action: nil,
+                                    keyEquivalent: "")
+            parent.submenu = submenu
+            menu.addItem(parent)
+        }
         if let active = activeTileProfile {
             let configure = NSMenuItem(title: "Configure \u{201C}\(active.name)\u{201D}\u{2026}",
                                        action: #selector(configureTileViewFromMenu),
@@ -4197,6 +4220,14 @@ final class TerminalViewController: NSViewController {
     }
 
     @objc private func newTileViewFromMenu() { newTileView() }
+
+    /// Looked up by id at click time rather than captured, so a layout removed
+    /// while the menu was open cannot open a stale shape.
+    @objc private func newTileViewFromLayout(_ sender: NSMenuItem) {
+        guard let id = sender.representedObject as? UUID,
+              let layout = tileLibrary.layouts.first(where: { $0.id == id }) else { return }
+        openTileView(fromLayout: layout)
+    }
 
     @objc private func configureTileViewFromMenu() { configureActiveTileView() }
 
