@@ -20,4 +20,26 @@ public enum AgentResume {
         return RestartRecovery.resumeCommand(agent: kind, sessionID: session.id,
                                              cwd: session.cwd)
     }
+
+    /// What to type to make this harness quit cleanly, or nil when it has no
+    /// known one.
+    ///
+    /// A restart types this into the LIVE pane and waits for the agent to go,
+    /// rather than killing the pane — so the zmx session, and with it the
+    /// pane's scrollback, survives. nil is a refusal, never a guess: sending
+    /// the wrong line to an agent leaves it running with a stray message typed
+    /// into its prompt.
+    public static func exitCommand(for kind: AgentKind) -> String? {
+        switch kind {
+        case .claude: return "/exit"
+        case .codex:  return "/quit"
+        default:      return nil
+        }
+    }
+
+    /// Whether a restart can be driven end to end: a way out AND a way back.
+    public static func canRestart(_ kind: AgentKind) -> Bool {
+        exitCommand(for: kind) != nil
+            && RestartRecovery.resumeCommand(agent: kind, sessionID: "probe", cwd: "/") != nil
+    }
 }

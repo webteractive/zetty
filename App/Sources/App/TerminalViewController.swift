@@ -1645,12 +1645,9 @@ final class TerminalViewController: NSViewController {
     /// (`SurfaceRegistry.pair(for:)` returns early for a known id) and reattach
     /// the old session with the old environment: the chip would change and
     /// nothing else would. Hence a brand-new `Surface` in the same slot.
-    /// - Parameter startupCommand: replaces the relaunch line the pane would
-    ///   otherwise get. The agent refresh passes a `--resume` here; an account
-    ///   move passes nil and the running agent is relaunched bare.
-    func respawnPane(surfaceID: UUID, accountID: String, startupCommand: String? = nil) {
+    func respawnPane(surfaceID: UUID, accountID: String) {
         guard let old = workspace.surface(with: surfaceID),
-              old.accountID != accountID || startupCommand != nil,
+              old.accountID != accountID,
               let project = workspace.project(containing: surfaceID),
               let treeIndex = project.tabList.trees.firstIndex(where: {
                   $0.layout.surfaces.contains { $0.id == surfaceID }
@@ -1670,11 +1667,9 @@ final class TerminalViewController: NSViewController {
         replacement.fileTreeVisible = old.fileTreeVisible
         replacement.fileTreeWidth = old.fileTreeWidth
 
-        // An explicit command wins; otherwise relaunch whatever was running.
-        if let startupCommand {
-            pendingStartupCommands[replacement.id] = startupCommand
-        } else if let running = foregroundBySurface[surfaceID], !running.isEmpty,
-                  SpawnableAgent.catalog.contains(where: { $0.defaultCommand == running || $0.id == running }) {
+        // Relaunch whatever was running, on the new account.
+        if let running = foregroundBySurface[surfaceID], !running.isEmpty,
+           SpawnableAgent.catalog.contains(where: { $0.defaultCommand == running || $0.id == running }) {
             pendingStartupCommands[replacement.id] = running
         }
 
@@ -1740,11 +1735,17 @@ final class TerminalViewController: NSViewController {
     /// rescanned on every tick.
     private var resumeLookupAttempted: Set<UUID> = []
 
-    /// Whether the gutter shows a refresh button. Exactly "a resume line can be
-    /// built", so an offered button can never fail to do anything.
+    /// Whether the pane shows a restart button.
+    ///
+    /// BOTH halves, because the restart now types into the live agent: there
+    /// has to be an agent running to quit (the probe), and an id to come back
+    /// to. Requiring only the id would offer the button on a pane sitting at a
+    /// shell, where `/exit` goes nowhere.
     func canRefreshAgent(surfaceID: UUID) -> Bool {
-        if AgentResume.command(for: agentDetector.state(for: surfaceID)) != nil { return true }
-        return lookedUpResumeCommands[surfaceID] != nil
+        guard let kind = probedResumableKind(for: surfaceID),
+              AgentResume.canRestart(kind) else { return false }
+        return AgentResume.command(for: agentDetector.state(for: surfaceID)) != nil
+            || lookedUpResumeCommands[surfaceID] != nil
     }
 
     /// The resumable harness the probe sees in this pane, if any.
@@ -1755,9 +1756,8 @@ final class TerminalViewController: NSViewController {
     private func probedResumableKind(for surfaceID: UUID) -> AgentKind? {
         guard let running = foregroundBySurface[surfaceID], !running.isEmpty,
               let kind = AgentKind(rawValue: running) else { return nil }
-        // Resumability is `resumeCommand`'s answer, not a list kept beside it.
-        guard RestartRecovery.resumeCommand(agent: kind, sessionID: "probe", cwd: "/") != nil
-        else { return nil }
+        // Resumability is `AgentResume`'s answer, not a list kept beside it.
+        guard AgentResume.canRestart(kind) else { return nil }
         return kind
     }
 
@@ -1805,24 +1805,112 @@ final class TerminalViewController: NSViewController {
         }
     }
 
-    /// Restarts the pane's agent on its existing conversation.
+    /// Poll interval while waiting for an agent to quit. Deliberately faster
+    /// than the 3s foreground probe: this is a bounded, user-initiated wait,
+    /// and riding the probe would leave up to three seconds of dead time
+    /// between the agent going and the resume being typed.
+    private static let agentExitPollInterval: TimeInterval = 0.5
+    /// Give up after this. The resume is NOT typed on a timeout.
+    private static let agentExitTimeout: TimeInterval = 20
+
+    private var agentRestartTimers: [UUID: Timer] = [:]
+
+    /// Restarts the pane's agent on its existing conversation, IN PLACE.
     ///
-    /// A respawn rather than typing an exit sequence into the live pty: each
-    /// harness quits differently and the timing is unknowable, whereas
-    /// `respawnPane` already ends the process cleanly, keeps the slot, siblings
-    /// and ratios, and injects a startup command. The account is carried across
-    /// unchanged — this restarts the agent, it does not move it.
-    ///
-    /// The cost is a new `Surface`, hence a new zmx session: the CONVERSATION
-    /// comes back through `--resume`, the pane's scrollback does not.
+    /// Types the harness's quit line into the live pane, waits for the agent to
+    /// actually go, then types the resume. The pane, its pty and its zmx
+    /// session are all untouched, so the scrollback above survives — which is
+    /// the whole reason this is not a respawn.
     func refreshAgentPane(surfaceID: UUID) {
-        guard let command = AgentResume.command(for: agentDetector.state(for: surfaceID))
+        guard agentRestartTimers[surfaceID] == nil,
+              let surface = workspace.surface(with: surfaceID),
+              let kind = probedResumableKind(for: surfaceID),
+              let exit = AgentResume.exitCommand(for: kind) else { return }
+
+        // BEFORE anything is typed. A harness may clear its hook state as it
+        // exits, and the resume is worthless without the id.
+        guard let resume = AgentResume.command(for: agentDetector.state(for: surfaceID))
                 ?? lookedUpResumeCommands[surfaceID]
-                ?? agentResumeCommand(for: surfaceID),
-              let surface = workspace.surface(with: surfaceID) else { return }
-        respawnPane(surfaceID: surfaceID,
-                    accountID: surface.accountID ?? AgentAccountSupport.defaultID,
-                    startupCommand: command)
+                ?? agentResumeCommand(for: surfaceID) else {
+            presentAgentRestartFailure("No session to resume was found for this pane.")
+            return
+        }
+
+        // Exit is detected by watching the pane's foreground process, which
+        // needs a zmx session. Without one there is no way to know the agent
+        // has gone, and typing a resume into a live agent just posts it as a
+        // chat message — so refuse rather than guess.
+        guard let zmx = ZmxRunner.locate(),
+              let sessionPID = lastSessionPIDs[SessionPersistence.sessionName(for: surfaceID)]
+                ?? ZmxRunner.sessionPIDs(zmxPath: zmx)[SessionPersistence.sessionName(for: surfaceID)]
+        else {
+            presentAgentRestartFailure(
+                "Restarting an agent needs preserve-sessions, so Zetty can tell when it has quit.")
+            return
+        }
+
+        if agentDetector.state(for: surfaceID).status == .running,
+           !confirmClosingBusyPanes([surfaceID], what: "Agent") { return }
+
+        guard registry.sendText(exit + "\r", to: surface) else {
+            presentAgentRestartFailure("This pane has no live terminal yet.")
+            return
+        }
+        ZettyLog.lifecycle.log("restart: \(surfaceID.uuidString.prefix(8)) sent \(exit)")
+        waitForAgentExit(surfaceID: surfaceID, sessionPID: sessionPID,
+                         agent: kind, resume: resume, deadline: Date() + Self.agentExitTimeout)
+    }
+
+    /// Polls the pane's foreground process until the agent is gone, then types
+    /// the resume. On timeout it types NOTHING — the resume would land in the
+    /// agent's prompt as a message, which is the same rule restart recovery
+    /// follows for a cancelled shutdown.
+    private func waitForAgentExit(surfaceID: UUID, sessionPID: Int32, agent: AgentKind,
+                                  resume: String, deadline: Date) {
+        let timer = Timer.scheduledTimer(withTimeInterval: Self.agentExitPollInterval,
+                                         repeats: true) { [weak self] timer in
+            MainActor.assumeIsolated {
+                guard let self else { return timer.invalidate() }
+                DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+                    // One `ps` per tick, for at most the timeout above — a
+                    // bounded wait for something the user just asked for, not a
+                    // standing poll loop.
+                    let still = ZmxRunner.psSnapshot().flatMap {
+                        ForegroundProcess.command(forSessionPID: sessionPID, psOutput: $0)
+                    }
+                    DispatchQueue.main.async {
+                        guard let self, self.agentRestartTimers[surfaceID] != nil else { return }
+                        if still == agent.rawValue {
+                            if Date() >= deadline {
+                                self.finishAgentRestart(surfaceID)
+                                self.presentAgentRestartFailure(
+                                    "\(agent.displayName) did not quit, so nothing was resumed.")
+                            }
+                            return
+                        }
+                        self.finishAgentRestart(surfaceID)
+                        guard let surface = self.workspace.surface(with: surfaceID) else { return }
+                        _ = self.registry.sendText(resume + "\r", to: surface)
+                        ZettyLog.lifecycle.log(
+                            "restart: \(surfaceID.uuidString.prefix(8)) resumed")
+                    }
+                }
+            }
+        }
+        agentRestartTimers[surfaceID] = timer
+    }
+
+    private func finishAgentRestart(_ surfaceID: UUID) {
+        agentRestartTimers.removeValue(forKey: surfaceID)?.invalidate()
+    }
+
+    private func presentAgentRestartFailure(_ message: String) {
+        guard let window = view.window else { return }
+        let alert = NSAlert()
+        alert.messageText = "Could not restart the agent"
+        alert.informativeText = message
+        alert.addButton(withTitle: "OK")
+        alert.beginSheetModal(for: window, completionHandler: nil)
     }
 
     /// The `Account ▸` menu for a pane: every account plus the default, with the

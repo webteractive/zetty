@@ -821,19 +821,37 @@ current (the usual rebuild-and-install step) and delete/`lsregister -u` stray
 
 `⟳` in a pane's gutter restarts Claude or Codex on its existing conversation.
 
-- **It RESPAWNS the pane; it does not type an exit sequence.** Each harness
-  quits differently and the timing is unknowable, whereas `respawnPane` already
-  ends the process cleanly, keeps slot/siblings/ratios, carries the cwd and
-  file-tree state, and injects a startup command. It gained a
-  `startupCommand:` override for this; the account is carried across unchanged,
-  since this restarts an agent rather than moving one. The cost is a new
-  `Surface`, hence a new zmx session: `--resume` brings the CONVERSATION back,
-  not the pane's scrollback.
-- **`AgentResume.command(for:)` is the ONLY predicate.** Visibility is exactly
-  "a resume line can be built", so an offered button can never fail to do
-  anything. There is deliberately no separate `supports(_:)` list — that would
-  be a second thing to keep in step with `RestartRecovery.resumeCommand`'s
-  grammar, and the two would disagree the moment a harness was added.
+- **It types into the LIVE pane; it does NOT respawn it.** The quit line
+  (`/exit` for Claude, `/quit` for Codex — `AgentResume.exitCommand`) goes in
+  through `registry.sendText`, the pane is watched until the agent is gone, and
+  only then does the resume follow. The pty and the zmx session are untouched,
+  so the scrollback above survives. An earlier version respawned the pane,
+  which was simpler and lost the scrollback, because a new `Surface` means a
+  new session.
+- **On timeout NOTHING is typed.** A resume landing in a still-running agent is
+  not a restart — it posts as a chat message. Same rule restart recovery
+  follows for a cancelled shutdown, and the reason the wait watches the
+  foreground process rather than sleeping a fixed interval.
+- **The exit poll is 0.5s and BOUNDED (20s), deliberately faster than the 3s
+  foreground probe.** This is a user-initiated wait, not a standing loop: one
+  `ps` per tick until the agent goes, then it stops. Riding the probe instead
+  would leave up to three seconds of dead air between the agent quitting and
+  the resume being typed.
+- **It refuses without preserve-sessions.** Exit is detected from the pane's
+  foreground process via its zmx session; with no session there is no way to
+  know the agent has gone, and guessing would type the resume into a live
+  agent. An alert says so rather than failing silently.
+- **`exitCommand` returns nil rather than guessing** for opencode, aider,
+  gemini and hermes. A wrong line leaves the agent running with a stray message
+  in its prompt — worse than no button.
+- **The button needs BOTH halves**: an agent the probe currently sees (something
+  to quit) and an id (something to come back to). Requiring only the id would
+  offer it on a pane sitting at a shell, where the quit line goes nowhere.
+- **`AgentResume` is the ONLY place the grammar lives** — `exitCommand` for the
+  way out, `RestartRecovery.resumeCommand` for the way back, and `canRestart`
+  requiring both. No separate `supports(_:)` list beside them, which would be a
+  second thing to keep in step and would disagree the moment a harness was
+  added.
 - **The id comes from hooks first, then `AgentSessionLookup` — and the LOOKUP
   IS CACHED, because visibility cannot do filesystem IO.** Hooks name the pane
   exactly but fire only when the agent acts, so hooks alone covered 2 panes in

@@ -42,3 +42,22 @@ private func state(_ kind: AgentKind?, id: String?, cwd: String = "/w/proj") -> 
     let command = AgentResume.command(for: state(.claude, id: "abc", cwd: "/w/my proj"))
     #expect(command == "cd '/w/my proj' && claude --resume 'abc'")
 }
+
+@Test func eachResumableHarnessHasItsOwnQuitLine() {
+    #expect(AgentResume.exitCommand(for: .claude) == "/exit")
+    #expect(AgentResume.exitCommand(for: .codex) == "/quit")
+}
+
+@Test func aHarnessWithNoKnownQuitLineRefusesRatherThanGuessing() {
+    // The line is typed into a LIVE agent. A guess leaves it running with a
+    // stray message sitting in its prompt.
+    for kind in [AgentKind.opencode, .aider, .gemini, .hermes] {
+        #expect(AgentResume.exitCommand(for: kind) == nil)
+        #expect(AgentResume.canRestart(kind) == false)
+    }
+}
+
+@Test func restartNeedsBothAWayOutAndAWayBack() {
+    #expect(AgentResume.canRestart(.claude))
+    #expect(AgentResume.canRestart(.codex))
+}
