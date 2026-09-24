@@ -68,6 +68,9 @@ by the tool it's running.
     so a **Freeform** view grows and shrinks without needing the right-click
     menu or `Ctrl+B %`. Removing is offered only when there is a split to
     collapse — a one-slot view has nothing to remove.
+    Each tile's header carries **open · refresh · split down · split right ·
+    close**, and `⌘D` / `⇧⌘D` split the focused slot too. Attaching focuses
+    what you just attached.
     A tile's `×` (and `⌘W`) detaches the slot — the pane keeps running; press
     it again on the now-empty slot to remove the slot itself. **Double-click a
     tile's header** to leave the grid for that pane, and use its **folder

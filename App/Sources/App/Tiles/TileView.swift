@@ -61,7 +61,16 @@ private final class ClickRowView: NSView {
 /// the normal pane layout hosts — so typing into a focused tile reaches the pty
 /// with no forwarding of any kind. That is the whole mechanism.
 @MainActor
-final class TileView: NSView {
+final class TileView: NSView, AgentRestartPresenting {
+
+    // MARK: - AgentRestartPresenting
+
+    // Always present — a tile with no pane simply keeps it hidden, which is
+    // what `setRefreshVisible(false)` does anyway.
+    var restartButton: NSButton? { refreshButton }
+    var restartCoverHost: NSView { terminalView ?? body }
+    var restartCover: ReloadingOverlay?
+
 
     static let headerHeight: CGFloat = 24
     private static let borderWidth: CGFloat = 1
@@ -75,15 +84,12 @@ final class TileView: NSView {
     private let statusDot = NSView()
     private let iconView = NSImageView()
     private let titleLabel = NSTextField(labelWithString: "")
+    private let openButton = NSButton()
     private let refreshButton = NSButton()
-    private let splitButton = NSButton()
-    private let openPill = NSView()
-    private let openIcon = NSImageView()
-    private let openLabel = NSTextField(labelWithString: "Open")
-    private let openChevron = NSImageView()
+    private let splitDownButton = NSButton()
+    private let splitRightButton = NSButton()
     private let goToPaneButton = NSButton()
     private let body = NSView()
-    private var reloadingOverlay: ReloadingOverlay?
     /// The registry's terminal view for this tile, when it has one — the
     /// overlay must be parented onto it, not beside it.
     private weak var terminalView: NSView?
@@ -210,76 +216,26 @@ final class TileView: NSView {
         // quartet per assignment, which is the same reason the status bar's
         // own chip is a text field. Hidden for a `.missing` slot, which has no
         // pane and therefore no directory.
-        // Leftmost of the control cluster, away from ×: a refresh ends the
-        // running agent, so it must not sit under a pointer that just missed
-        // close. Created unconditionally at 0 width when absent, so showing it
-        // later is a toggle rather than a rebuild.
-        refreshButton.isBordered = false
-        refreshButton.bezelStyle = .inline
-        refreshButton.image = NSImage(systemSymbolName: "arrow.clockwise",
-                                      accessibilityDescription: "Restart this agent")
-        refreshButton.imagePosition = .imageOnly
-        refreshButton.target = self
-        refreshButton.action = #selector(refreshClicked)
-        refreshButton.toolTip = "Restart the agent on its existing conversation"
-        refreshButton.isHidden = !canRefresh
-        refreshButton.translatesAutoresizingMaskIntoConstraints = false
-        header.addSubview(refreshButton)
-
-        // ONE button popping the slot menu this view already builds, rather
-        // than a Split Right and a Split Down of its own: the header is at
-        // capacity with the Open pill, and two more glyphs would be paid for
-        // out of the title. Splitting is not a per-second action, so the extra
-        // click is cheaper than a truncated pane name.
-        splitButton.isBordered = false
-        splitButton.bezelStyle = .inline
-        splitButton.image = NSImage(systemSymbolName: "square.split.2x1",
-                                    accessibilityDescription: "Split or remove this slot")
-        splitButton.imagePosition = .imageOnly
-        splitButton.target = self
-        splitButton.action = #selector(splitMenuClicked)
-        splitButton.toolTip = "Split or remove this slot"
-        splitButton.translatesAutoresizingMaskIntoConstraints = false
-        header.addSubview(splitButton)
-
-        openPill.wantsLayer = true
-        openPill.layer?.cornerRadius = 8
-        openPill.layer?.borderWidth = 1
-        openPill.isHidden = !canOpen
-        openPill.toolTip = "Open this pane's directory in an editor or Finder"
-        openPill.translatesAutoresizingMaskIntoConstraints = false
-        header.addSubview(openPill)
-
-        openIcon.image = NSImage(systemSymbolName: "folder", accessibilityDescription: nil)
-        openIcon.imageScaling = .scaleProportionallyDown
-        openIcon.translatesAutoresizingMaskIntoConstraints = false
-        openPill.addSubview(openIcon)
-
-        openLabel.font = ZTheme.chromeFont(size: 10)
-        // The pill keeps its width and the TITLE truncates — a half-truncated
-        // "Op…" is not a control, whereas a shortened pane name still reads.
-        openLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
-        openLabel.translatesAutoresizingMaskIntoConstraints = false
-        openPill.addSubview(openLabel)
-
-        openChevron.image = NSImage(systemSymbolName: "chevron.down", accessibilityDescription: nil)
-        openChevron.imageScaling = .scaleProportionallyDown
-        openChevron.translatesAutoresizingMaskIntoConstraints = false
-        openPill.addSubview(openChevron)
-
-        openPill.addGestureRecognizer(
-            NSClickGestureRecognizer(target: self, action: #selector(openClicked)))
-
-        goToPaneButton.isBordered = false
-        goToPaneButton.bezelStyle = .inline
-        goToPaneButton.image = NSImage(systemSymbolName: "xmark",
-                                       accessibilityDescription: "Detach from this view")
-        goToPaneButton.imagePosition = .imageOnly
-        goToPaneButton.target = self
-        goToPaneButton.action = #selector(detachClicked)
-        goToPaneButton.toolTip = "Detach from this view (the pane keeps running)"
-        goToPaneButton.translatesAutoresizingMaskIntoConstraints = false
-        header.addSubview(goToPaneButton)
+        // Five uniform 13pt icons rather than a labelled pill and a menu:
+        // `Open ▾`'s label and the split MENU together ran ~160pt of a 24pt
+        // header, which is most of a tile in a 4x4 grid. Icons keep the pane's
+        // name readable, which is the thing you actually navigate by.
+        //
+        // Order is open · refresh · split-down · split-right · ×, and the two
+        // destructive-ish ones sit apart: a refresh ends the running agent, so
+        // it must not neighbour close.
+        buildHeaderButton(openButton, symbol: "folder", fallback: "▤",
+                          tip: "Open this pane's directory in an editor or Finder",
+                          action: #selector(openClicked), hidden: !canOpen)
+        buildHeaderButton(refreshButton, symbol: "arrow.clockwise", fallback: "⟳",
+                          tip: "Restart the agent on its existing conversation",
+                          action: #selector(refreshClicked), hidden: !canRefresh)
+        buildHeaderButton(splitDownButton, symbol: "rectangle.split.1x2", fallback: "⊟",
+                          tip: "Split this slot downwards (⇧⌘D)",
+                          action: #selector(splitDown), hidden: false)
+        buildHeaderButton(splitRightButton, symbol: "rectangle.split.2x1", fallback: "⊞",
+                          tip: "Split this slot to the right (⌘D)",
+                          action: #selector(splitRight), hidden: false)
 
         // Double-clicking the HEADER leaves tile mode for this pane. It has to
         // be the header: the body is the terminal view, which consumes its own
@@ -310,45 +266,25 @@ final class TileView: NSView {
             titleLabel.centerYAnchor.constraint(equalTo: header.centerYAnchor),
             titleLabel.leadingAnchor.constraint(equalTo: iconView.trailingAnchor, constant: 6),
             titleLabel.trailingAnchor.constraint(
-                lessThanOrEqualTo: refreshButton.leadingAnchor, constant: -6),
+                lessThanOrEqualTo: openButton.leadingAnchor, constant: -6),
 
+            openButton.widthAnchor.constraint(equalToConstant: 13),
+            openButton.heightAnchor.constraint(equalToConstant: 13),
+            openButton.centerYAnchor.constraint(equalTo: header.centerYAnchor),
             refreshButton.widthAnchor.constraint(equalToConstant: 13),
             refreshButton.heightAnchor.constraint(equalToConstant: 13),
             refreshButton.centerYAnchor.constraint(equalTo: header.centerYAnchor),
-            refreshButton.trailingAnchor.constraint(equalTo: openPill.leadingAnchor,
-                                                    constant: -7),
-
-            // After the pill, before the ×: the two icon-only buttons sit
-            // together on the trailing edge rather than sandwiching the pill.
-            splitButton.widthAnchor.constraint(equalToConstant: 13),
-            splitButton.heightAnchor.constraint(equalToConstant: 13),
-            splitButton.centerYAnchor.constraint(equalTo: header.centerYAnchor),
-            splitButton.leadingAnchor.constraint(equalTo: openPill.trailingAnchor,
-                                                 constant: 7),
-            splitButton.trailingAnchor.constraint(equalTo: goToPaneButton.leadingAnchor,
-                                                  constant: -7),
-
-            // The pill hugs its contents; a `.missing` header collapses it to
-            // nothing rather than removing the view, so both lay out the same
-            // way — the 0↔width toggle the account dots use.
-            openPill.heightAnchor.constraint(equalToConstant: canOpen ? 16 : 0),
-            openPill.centerYAnchor.constraint(equalTo: header.centerYAnchor),
-
-
-            openIcon.leadingAnchor.constraint(equalTo: openPill.leadingAnchor, constant: 6),
-            openIcon.centerYAnchor.constraint(equalTo: openPill.centerYAnchor),
-            openIcon.widthAnchor.constraint(equalToConstant: canOpen ? 9 : 0),
-            openIcon.heightAnchor.constraint(equalToConstant: 9),
-
-            openLabel.leadingAnchor.constraint(equalTo: openIcon.trailingAnchor, constant: 4),
-            openLabel.centerYAnchor.constraint(equalTo: openPill.centerYAnchor),
-
-            openChevron.leadingAnchor.constraint(equalTo: openLabel.trailingAnchor, constant: 4),
-            openChevron.centerYAnchor.constraint(equalTo: openPill.centerYAnchor),
-            openChevron.widthAnchor.constraint(equalToConstant: canOpen ? 7 : 0),
-            openChevron.heightAnchor.constraint(equalToConstant: 7),
-            openChevron.trailingAnchor.constraint(equalTo: openPill.trailingAnchor,
-                                                  constant: canOpen ? -6 : 0),
+            refreshButton.leadingAnchor.constraint(equalTo: openButton.trailingAnchor, constant: 7),
+            splitDownButton.widthAnchor.constraint(equalToConstant: 13),
+            splitDownButton.heightAnchor.constraint(equalToConstant: 13),
+            splitDownButton.centerYAnchor.constraint(equalTo: header.centerYAnchor),
+            splitDownButton.leadingAnchor.constraint(equalTo: refreshButton.trailingAnchor, constant: 7),
+            splitRightButton.widthAnchor.constraint(equalToConstant: 13),
+            splitRightButton.heightAnchor.constraint(equalToConstant: 13),
+            splitRightButton.centerYAnchor.constraint(equalTo: header.centerYAnchor),
+            splitRightButton.leadingAnchor.constraint(equalTo: splitDownButton.trailingAnchor, constant: 7),
+            splitRightButton.trailingAnchor.constraint(
+                equalTo: goToPaneButton.leadingAnchor, constant: -7),
 
             goToPaneButton.widthAnchor.constraint(equalToConstant: 14),
             goToPaneButton.heightAnchor.constraint(equalToConstant: 14),
@@ -356,6 +292,26 @@ final class TileView: NSView {
             goToPaneButton.trailingAnchor.constraint(equalTo: header.trailingAnchor,
                                                      constant: -8),
         ])
+    }
+
+    /// One 13pt icon button in the header. Four near-identical configuration
+    /// blocks were the alternative.
+    private func buildHeaderButton(_ button: NSButton, symbol: String, fallback: String,
+                                   tip: String, action: Selector, hidden: Bool) {
+        button.isBordered = false
+        button.bezelStyle = .inline
+        if let image = NSImage(systemSymbolName: symbol, accessibilityDescription: tip) {
+            button.image = image
+            button.imagePosition = .imageOnly
+        } else {
+            button.title = fallback          // pre-SF-Symbols fallback, as the gutter does
+        }
+        button.target = self
+        button.action = action
+        button.toolTip = tip
+        button.isHidden = hidden
+        button.translatesAutoresizingMaskIntoConstraints = false
+        header.addSubview(button)
     }
 
     private func buildBody(content: TileContent) {
@@ -534,47 +490,12 @@ final class TileView: NSView {
 
     @objc private func reattachClicked() { onActivate() }
 
-    @objc private func openClicked() { onOpen(openPill) }
+    @objc private func openClicked() { onOpen(openButton) }
 
     @objc private func refreshClicked() { onRefresh() }
 
-    /// Shows or hides the refresh button WITHOUT rebuilding the grid — agents
-    /// start and stop between structural changes.
-    func setRefreshVisible(_ visible: Bool) {
-        guard refreshButton.isHidden == visible else { return }
-        refreshButton.isHidden = !visible
-    }
-
-    /// Covers the terminal while its agent is quit and resumed. The surface is
-    /// untouched — only hidden.
-    func setReloading(_ reloading: Bool) {
-        if reloading {
-            guard reloadingOverlay == nil else { return }
-            let overlay = ReloadingOverlay()
-            overlay.cover(terminalView ?? body)
-            reloadingOverlay = overlay
-        } else {
-            reloadingOverlay?.dismiss()
-            reloadingOverlay = nil
-        }
-    }
-
-    func setRefreshSpinning(_ spinning: Bool, success: Bool? = nil) {
-        // Visible regardless while it spins: the probe stops seeing the agent
-        // the moment it quits, which would otherwise hide the very control
-        // that is mid-animation.
-        if spinning { refreshButton.isHidden = false; RefreshSpinner.start(on: refreshButton) }
-        else { RefreshSpinner.stop(on: refreshButton, success: success) }
-    }
-
-    /// Pops the slot menu built in `init`, so Split Right / Split Down /
-    /// Remove Slot have exactly one definition and the button cannot drift
-    /// from the right-click that offers the same three things.
-    @objc private func splitMenuClicked() {
-        guard let menu else { return }
-        menu.popUp(positioning: nil,
-                   at: NSPoint(x: 0, y: splitButton.bounds.height + 4), in: splitButton)
-    }
+    // Restart chrome (button visibility, spinner, cover) comes from
+    // `AgentRestartPresenting` — see the conformance below.
 
     @objc private func detachClicked() { onDetach() }
 
@@ -613,19 +534,14 @@ final class TileView: NSView {
         messageLabel.textColor = theme.fg3Color
         iconView.contentTintColor = isFocused ? theme.fgColor : theme.fg2Color
         goToPaneButton.contentTintColor = theme.fg3Color
-        splitButton.contentTintColor = theme.fg3Color
-        refreshButton.contentTintColor = theme.fg3Color
-        reloadingOverlay?.applyTheme()
+        for button in [openButton, refreshButton, splitDownButton, splitRightButton] {
+            button.contentTintColor = theme.fg3Color
+        }
+        restartCover?.applyTheme()
         for (icon, label) in emptyActionViews {
             icon.contentTintColor = theme.fg2Color
             label.textColor = theme.fg2Color
         }
-        // Same ramp as the status bar's pill: bg2 on bg0 chrome, bordered.
-        openPill.layer?.backgroundColor = theme.bg2Color.cgColor
-        openPill.layer?.borderColor = theme.borderColor.cgColor
-        openIcon.contentTintColor = theme.fg2Color
-        openLabel.textColor = theme.fg2Color
-        openChevron.contentTintColor = theme.fg2Color
     }
 
     // MARK: - Interaction

@@ -194,7 +194,7 @@ final class SurfaceNodeView: NSView {
 /// additionally reveals the break-into-tab and × buttons, which are no-ops on a
 /// single pane.
 @MainActor
-final class LeafContainerView: NSView {
+final class LeafContainerView: NSView, AgentRestartPresenting {
 
     private static let borderWidth: CGFloat = 2
     /// Top strip reserved for the chrome buttons, so they never overlap the
@@ -217,7 +217,11 @@ final class LeafContainerView: NSView {
     /// Created unconditionally so visibility is a toggle rather than a rebuild
     /// — the same reason the account dots exist at zero width.
     private var refreshButton: NSButton?
-    private var reloadingOverlay: ReloadingOverlay?
+    // MARK: - AgentRestartPresenting
+
+    var restartButton: NSButton? { refreshButton }
+    var restartCoverHost: NSView { hostedTerminalView ?? self }
+    var restartCover: ReloadingOverlay?
     /// The registry's terminal view — the overlay is parented onto it, since a
     /// Metal-backed surface composites over anything merely beside it.
     private weak var hostedTerminalView: NSView?
@@ -501,33 +505,6 @@ final class LeafContainerView: NSView {
     /// not working. A hidden arranged subview costs nothing and keeps this to
     /// one boolean, staying inside the pane's own view exactly as the file tree
     /// does rather than reaching for a chrome refresh.
-    func setRefreshVisible(_ visible: Bool) {
-        guard let refreshButton, refreshButton.isHidden == visible else { return }
-        refreshButton.isHidden = !visible
-    }
-
-    /// Covers the terminal while its agent is quit and resumed. The surface is
-    /// untouched — only hidden.
-    func setReloading(_ reloading: Bool) {
-        if reloading {
-            guard reloadingOverlay == nil else { return }
-            let overlay = ReloadingOverlay()
-            overlay.cover(hostedTerminalView ?? self)
-            reloadingOverlay = overlay
-        } else {
-            reloadingOverlay?.dismiss()
-            reloadingOverlay = nil
-        }
-    }
-
-    func setRefreshSpinning(_ spinning: Bool, success: Bool? = nil) {
-        guard let refreshButton else { return }
-        // Kept visible while spinning — the probe stops reporting the agent as
-        // soon as it quits, which would hide the control mid-animation.
-        if spinning { refreshButton.isHidden = false; RefreshSpinner.start(on: refreshButton) }
-        else { RefreshSpinner.stop(on: refreshButton, success: success) }
-    }
-
     /// Right-click menu for the pane chrome (gutter). The terminal view fills
     /// the container below the gutter and handles its own right-click, so this
     /// menu appears only on the pane chrome — not over the terminal content.

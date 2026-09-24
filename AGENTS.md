@@ -1893,6 +1893,14 @@ waits on a sheet, because `addSurfaceToTileView` composes with it: the
 old straight-line version attached the pane to whichever profile was active
 *before* the sheet, which is the previous one.
 
+**Attaching FOCUSES what it attached**, through `attachAndFocus(_:at:)` —
+the single owner of attach + focus + spawn. All four paths did those steps by
+hand and none focused, so an attach left the keyboard on whatever tile was
+selected before. Focus is read from the resolution AFTER the mutation (that is
+what turns a slot into a surface id) and is set even though the pane has no pty
+yet, because `focusTileFirstResponder` claims first responder once the spawn
+queue brings it up.
+
 **Three attach paths, one mutation.** The `+ Attach` cell opens
 `TileAttachPicker` (a `CommandPaletteView`-shaped overlay reusing
 `CommandSearch.rank`); a sidebar tab row can be dropped on a slot; and a pane's
@@ -1947,12 +1955,15 @@ the new one. `focusTile` is therefore idempotent and skips re-asserting first
 responder when the responder is already inside that pane, or it would re-enter
 its own observation.
 
-**Pane splits are disabled in tile mode** — ⌘D / ⇧⌘D validate to disabled
-(`validateMenuItem`), the actions guard on `isTileMode` for the palette path,
-and the palette drops the two rows. There is no pane tree on screen, so the
-split would reshape the active project's layout out of sight. A SLOT still
-splits: the tile's context menu, or `Ctrl+B %` / `Ctrl+B "`, which
-`KeyInterceptor` routes to `splitFocusedTileSlot`.
+**⌘D / ⇧⌘D split the SLOT in tile mode**, they are not disabled there. The
+reason they once were still holds — no pane tree is on screen, so splitting a
+PANE would reshape the active project's layout out of sight — and splitting the
+slot is precisely the thing that does not, so `splitVertical`/`splitHorizontal`
+route to `splitFocusedTileSlot` rather than returning. `validateMenuItem` no
+longer greys them, and the palette lists them in both modes named for what they
+divide (`Split Slot Right` vs `Split Pane Right`) — "Split Pane" in a grid with
+no pane tree would be a lie. The header icons and `Ctrl+B %` / `Ctrl+B "` reach
+the same place.
 
 **`prune` must spare the tiles, or a tile flickers out on every rebuild.**
 `TileResolution` deliberately does NOT check hibernation — a slot keeps
@@ -2018,13 +2029,22 @@ its layout tree with no back-link, so there is no way to ask which layout a
 view came from — and the tree is a tree everywhere, so the affordance is right
 everywhere.
 
-**`Open ▾` leaves the status bar and arrives per tile.** `StatusBarView
+**The tile header is FIVE uniform icons**: open · refresh · split-down ·
+split-right · ×. `Open ▾`'s label plus a menu-popping split button ran ~160pt
+of a 24pt header, which is most of a tile in a 4x4 grid; icons cost ~90pt and
+keep the pane's NAME readable, which is what you navigate by. Refresh sits away
+from × deliberately — it ends the running agent and must not neighbour close.
+`buildHeaderButton` configures all five, because four near-identical blocks is
+how they drift apart. The slot menu stays on right-click, so **Remove Split**
+keeps a home.
+
+**`Open ▾` left the status bar and arrives per tile.** `StatusBarView
 .isTileMode` folds the pill away (and drops the `⋯` menu's "Open Directory In"
 submenu with it) through `updateEditorVisibility()` — its own function beside
 `updateBroadcastVisibility`/`updateAccountVisibility`, because two inputs decide
 it and a renderer that also owned `isHidden` would fight `applyCompactState`.
-Each `TileView` header carries a `folder` button instead, hidden for a
-`.missing` slot via the same 0↔14 width toggle the account dots use.
+Each `TileView` header carries a `folder` icon instead, hidden for a
+`.missing` slot.
 
 **The menu item carries its DIRECTORY, not just its app.** `editorMenuPicked`
 used to call `focusedDirectoryURL()`, which reads `paneTree.focusedSurface` —

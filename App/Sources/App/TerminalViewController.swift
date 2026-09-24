@@ -1955,31 +1955,26 @@ final class TerminalViewController: NSViewController {
             "restart: \(surfaceID.uuidString.prefix(8)) finished ok=\(success)")
     }
 
-    /// Covers or uncovers the pane, in whichever host is on screen.
-    private func setPaneReloading(_ reloading: Bool, for surfaceID: UUID) {
-        if tileMode, let grid = tileGridView {
-            grid.setReloading(reloading, for: surfaceID)
-            return
-        }
-        guard let root = rootContentView else { return }
-        Self.leafContainers(in: root)
-            .first { $0.surfaceID == surfaceID }?
-            .setReloading(reloading)
+    /// The chrome host for a pane, in whichever view is on screen.
+    ///
+    /// Tile mode replaces the pane area outright, so while the grid is up
+    /// `rootContentView` holds no `LeafContainerView` at all — a lookup walking
+    /// only it finds nothing, which is why the restart button never appeared
+    /// for a workspace living in tile mode. One lookup rather than a tileMode
+    /// branch per action, so a new action cannot forget the grid.
+    private func restartPresenter(for surfaceID: UUID) -> (any AgentRestartPresenting)? {
+        if tileMode { return tileGridView?.tile(for: surfaceID) }
+        guard let root = rootContentView else { return nil }
+        return Self.leafContainers(in: root).first { $0.surfaceID == surfaceID }
     }
 
-    /// Drives the button's animation in whichever host is on screen. Tile mode
-    /// replaces the pane area, so the gutter's containers do not exist there —
-    /// the same split `updatePaneRefreshButtons` makes.
+    private func setPaneReloading(_ reloading: Bool, for surfaceID: UUID) {
+        restartPresenter(for: surfaceID)?.setReloading(reloading)
+    }
+
     private func setRefreshSpinning(_ spinning: Bool, for surfaceID: UUID,
                                     success: Bool? = nil) {
-        if tileMode, let grid = tileGridView {
-            grid.setRefreshSpinning(spinning, for: surfaceID, success: success)
-            return
-        }
-        guard let root = rootContentView else { return }
-        Self.leafContainers(in: root)
-            .first { $0.surfaceID == surfaceID }?
-            .setRefreshSpinning(spinning, success: success)
+        restartPresenter(for: surfaceID)?.setRefreshSpinning(spinning, success: success)
     }
 
     private func presentAgentRestartFailure(_ message: String) {
@@ -2904,12 +2899,13 @@ final class TerminalViewController: NSViewController {
     /// Pane lifecycle, directional focus, zoom, copy mode. The focus/zoom/copy
     /// entries are otherwise reachable only through the ⌃B prefix layer.
     private func paneCommands() -> [PaletteCommand] {
-        // The splits are listed only outside tile mode, for the reason
-        // `validateMenuItem` disables them there: a pane split has nothing on
-        // screen to change.
-        let splits: [PaletteCommand] = tileMode ? [] : [
-            PaletteCommand(glyph: "▮", label: "Split Pane Right", kbd: "⌘D") { [weak self] in self?.splitVertical(nil) },
-            PaletteCommand(glyph: "▬", label: "Split Pane Down", kbd: "⇧⌘D") { [weak self] in self?.splitHorizontal(nil) },
+        // Listed in BOTH modes now that the chords work in both — named for
+        // what they actually divide, since "Split Pane" in a grid with no pane
+        // tree on screen would be a lie.
+        let what = tileMode ? "Slot" : "Pane"
+        let splits: [PaletteCommand] = [
+            PaletteCommand(glyph: "▮", label: "Split \(what) Right", kbd: "⌘D") { [weak self] in self?.splitVertical(nil) },
+            PaletteCommand(glyph: "▬", label: "Split \(what) Down", kbd: "⇧⌘D") { [weak self] in self?.splitHorizontal(nil) },
         ]
         return [
             PaletteCommand(glyph: "+", label: "New Tab", kbd: "⌘T") { [weak self] in self?.newTab(nil) },
@@ -4356,6 +4352,29 @@ final class TerminalViewController: NSViewController {
         activeTileViewIndex = min(max(activeIndex, 0), max(0, openTileViews.count - 1))
     }
 
+    /// Attaches a slot, focuses the pane it names, and queues its spawn.
+    ///
+    /// All four attach paths (picker, new session, sidebar drop, pane menu) did
+    /// these steps by hand and none of them focused, so an attach left the
+    /// keyboard on whatever tile was selected before. Folding them together is
+    /// the same reason `restartPresenter` exists: a sequence copied four times
+    /// is a sequence three of the copies will eventually stop matching.
+    ///
+    /// Focus is set from the resolution AFTER the mutation, since that is what
+    /// turns a slot into a surface id — and it is set even though the pane has
+    /// no pty yet, because `focusTileFirstResponder` claims first responder
+    /// once the spawn queue brings it up.
+    private func attachAndFocus(_ slot: TileSlot, at index: Int) {
+        mutateActiveTileProfile { $0.attach(slot, at: index) }
+        let resolved = tileResolution()
+        if resolved.indices.contains(index),
+           case .pane(_, _, let surfaceID) = resolved[index] {
+            tileFocusedSurfaceID = surfaceID
+            refreshTileGrid()
+        }
+        enqueueMissingTileSurfaces()
+    }
+
     /// Where each slot of the active view currently points.
     func tileResolution() -> [ResolvedSlot] {
         guard let profile = activeTileProfile else { return [] }
@@ -4411,8 +4430,7 @@ final class TerminalViewController: NSViewController {
             case nil:
                 return
             case .attach(let slot):
-                self.mutateActiveTileProfile { $0.attach(slot, at: index) }
-                self.enqueueMissingTileSurfaces()
+                self.attachAndFocus(slot, at: index)
             case .newSession(let projectIndex):
                 self.attachNewTileSession(projectIndex: projectIndex, slot: index)
             }
@@ -4446,13 +4464,12 @@ final class TerminalViewController: NSViewController {
             let tileSlot = TileSlot(
                 projectRoot: project.rootPath, tabID: tree.id,
                 label: "\(project.name) / \(self.tabDisplayTitle(for: tree, at: tabIndex))")
-            self.mutateActiveTileProfile { $0.attach(tileSlot, at: slot) }
+            // `attachAndFocus` owns the spawn too — deliberately the tile
+            // queue rather than `spawnPaneInBackground`, so a new session is
+            // staggered with every other pane the grid is bringing up.
+            self.attachAndFocus(tileSlot, at: slot)
             self.refreshSidebar()
             self.onWorkspaceDidChange?()
-            // The tile spawn queue owns the spawn — deliberately not
-            // `spawnPaneInBackground`, so it is staggered with every other
-            // pane the grid is bringing up.
-            self.enqueueMissingTileSurfaces()
         }
     }
 
@@ -4510,8 +4527,7 @@ final class TerminalViewController: NSViewController {
         let tileSlot = TileSlot(
             projectRoot: project.rootPath, tabID: tree.id,
             label: "\(project.name) / \(tabDisplayTitle(for: tree, at: tabIndex))")
-        mutateActiveTileProfile { $0.attach(tileSlot, at: slot) }
-        enqueueMissingTileSurfaces()
+        attachAndFocus(tileSlot, at: slot)
         return true
     }
 
@@ -4550,8 +4566,7 @@ final class TerminalViewController: NSViewController {
     private func attachToActiveTileView(_ slot: TileSlot) {
         let index = activeTileProfile?.slots.firstIndex(where: { $0 == nil })
             ?? (activeTileProfile?.slots.count ?? 0)
-        mutateActiveTileProfile { $0.attach(slot, at: index) }
-        enqueueMissingTileSurfaces()
+        attachAndFocus(slot, at: index)
     }
 
     func openTileView(profileID: UUID) {
@@ -6766,13 +6781,6 @@ extension TerminalViewController: NSMenuItemValidation {
         }
         if menuItem.action == #selector(breakPaneIntoTab(_:)) {
             return workspace.activeTabList.activeTree.layout.surfaces.count > 1
-        }
-        // Tile mode renders no pane tree, so splitting would reshape the active
-        // project's layout out of sight. Disabled rather than silently applied;
-        // a SLOT still splits, from the tile's context menu or ⌃B % / ⌃B ".
-        if menuItem.action == #selector(splitVertical(_:))
-            || menuItem.action == #selector(splitHorizontal(_:)) {
-            return !tileMode
         }
         return true
     }

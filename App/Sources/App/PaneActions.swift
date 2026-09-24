@@ -19,7 +19,11 @@ extension TerminalViewController {
     /// items validate to disabled there too — this guard covers the command
     /// palette, which reaches the action directly.
     @objc func splitVertical(_ sender: Any?) {
-        guard !isTileMode else { return }
+        // In tile mode the same chord splits the focused SLOT. The reason these
+        // were disabled there still holds — there is no pane tree on screen, so
+        // splitting a PANE would reshape the active project's layout out of
+        // sight — and splitting the slot is precisely the thing that does not.
+        if isTileMode { return splitFocusedTileSlot(.vertical) }
         chooseAgentThenSpawn { [weak self] command, accountID in
             self?.performSplit(direction: .vertical, startupCommand: command, accountID: accountID)
         }
@@ -27,7 +31,7 @@ extension TerminalViewController {
 
     /// Split the focused pane horizontally (top / bottom).  Key equivalent: ⇧⌘D.
     @objc func splitHorizontal(_ sender: Any?) {
-        guard !isTileMode else { return }
+        if isTileMode { return splitFocusedTileSlot(.horizontal) }
         chooseAgentThenSpawn { [weak self] command, accountID in
             self?.performSplit(direction: .horizontal, startupCommand: command, accountID: accountID)
         }
