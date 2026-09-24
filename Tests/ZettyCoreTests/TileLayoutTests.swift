@@ -2,30 +2,26 @@ import Foundation
 import Testing
 @testable import ZettyCore
 
-@Test func theBuiltInLayoutsCoverTheCommonShapes() {
-    let names = TileLayout.builtIns.map(\.name)
-    #expect(names == ["Freeform", "Pair", "Stack", "Quad", "Grid",
-                      "Main + Two", "Two + Main"])
-    #expect(TileLayout.builtIns.map(\.root.leafCount) == [1, 2, 2, 4, 16, 3, 3])
-}
-
-@Test func freeformIsTheOnlySingleSlotBuiltIn() {
-    // Every other built-in commits you to a shape; this one is the canvas you
-    // split into whatever the work turns out to need.
-    let single = TileLayout.builtIns.filter { $0.root.leafCount == 1 }
-    #expect(single.map(\.name) == ["Freeform"])
-    #expect(single.first?.root == .slot)
+@Test func freeformIsTheOnlyBuiltIn() {
+    // Every preset was reachable by splitting this one, so shipping seven
+    // cards was seven ways of offering a shape you could make in two clicks.
+    #expect(TileLayout.builtIns.map(\.name) == ["Freeform"])
+    #expect(TileLayout.builtIns.first?.root == .slot)
 }
 
 @Test func splittingFreeformTwiceBuildsMainPlusTwo() {
-    // The shape the request named — 1|2/3 — reached by splitting rather than
-    // by picking a preset.
+    // 1|2/3 by splitting rather than by picking a preset — which is the whole
+    // argument for dropping the presets, so it is asserted against a literal
+    // shape rather than against a built-in that no longer ships.
     var profile = TileProfile(name: "scratch", root: .slot)
     #expect(profile.capacity == 1)
     profile.split(at: 0, direction: .vertical)
     profile.split(at: 1, direction: .horizontal)
     #expect(profile.capacity == 3)
-    #expect(profile.root == TileLayout.builtIns.first { $0.name == "Main + Two" }?.root)
+    #expect(profile.root == .split(
+        direction: .vertical, ratio: 0.5,
+        first: .slot,
+        second: .split(direction: .horizontal, ratio: 0.5, first: .slot, second: .slot)))
 }
 
 @Test func freeformCannotBeClosedDownToNothing() {
@@ -74,11 +70,10 @@ import Testing
 // MARK: - Seeding
 
 @Test func aNewBuiltInReachesAnExistingLibrary() {
-    var file = TileProfileFile(layouts: [TileLayout(name: "Pair",
-                                                    grid: TilesGrid(columns: 2, rows: 1))],
-                               seededLayoutNames: ["Pair"])
+    var file = TileProfileFile(layouts: [TileLayout(name: "Mine", root: .slot)],
+                               seededLayoutNames: ["Mine"])
     #expect(file.seedMissingLayouts() == true)
-    #expect(file.layouts.contains { $0.name == "Main + Two" })
+    #expect(file.layouts.contains { $0.name == "Freeform" })
 }
 
 @Test func aDeletedBuiltInStaysDeleted() {
@@ -90,11 +85,13 @@ import Testing
 @Test func aLibraryFromBeforeSeedTrackingKeepsWhatItHas() throws {
     // No seededLayoutNames key: its current names count as already offered, so
     // nothing the user removed comes back.
-    let json = #"{"profiles":[],"layouts":[{"id":"\#(UUID().uuidString)","name":"Pair","grid":{"columns":2,"rows":1}}]}"#
+    let json = #"{"profiles":[],"layouts":[{"id":"\#(UUID().uuidString)","name":"Mine","grid":{"columns":3,"rows":1}}]}"#
     var decoded = try JSONDecoder().decode(TileProfileFile.self, from: Data(json.utf8))
-    #expect(decoded.seededLayoutNames == ["Pair"])
+    #expect(decoded.seededLayoutNames == ["Mine"])
     #expect(decoded.seedMissingLayouts() == true)
-    #expect(decoded.layouts.contains { $0.name == "Main + Two" })
+    #expect(decoded.layouts.contains { $0.name == "Freeform" })
+    // The user's own layout is untouched by seeding.
+    #expect(decoded.layouts.contains { $0.name == "Mine" })
 }
 
 @Test func theRetiredFocusLayoutIsClearedFromAnExistingLibrary() {
@@ -133,4 +130,30 @@ import Testing
                                seededLayoutNames: TileLayout.builtIns.map(\.name))
     #expect(file.seedMissingLayouts() == false)
     #expect(file.layouts.map(\.name) == ["Scratchpad"])
+}
+
+@Test func theWithdrawnPresetsAreClearedFromAnExistingLibrary() {
+    var file = TileProfileFile(
+        layouts: TileLayout.retiredBuiltIns.map { TileLayout(name: $0.name, root: $0.root) },
+        seededLayoutNames: TileLayout.retiredBuiltIns.map(\.name))
+    #expect(file.seedMissingLayouts() == true)
+    #expect(file.layouts.map(\.name) == ["Freeform"])
+}
+
+@Test func aPresetTheUserEditedSurvivesTheCleanup() {
+    // Same NAME as a withdrawn built-in, different shape — so it is their
+    // work, not ours, and removing it would be an irreversible deletion of
+    // something they deliberately changed.
+    let edited = TileLayout(name: "Quad", grid: TilesGrid(columns: 3, rows: 3))
+    var file = TileProfileFile(layouts: [edited], seededLayoutNames: ["Quad"])
+    _ = file.seedMissingLayouts()
+    #expect(file.layouts.contains { $0.name == "Quad" && $0.root.leafCount == 9 })
+}
+
+@Test func aUserLayoutWithNoBuiltInNameIsNeverTouched() {
+    let mine = TileLayout(name: "3x3", grid: TilesGrid(columns: 3, rows: 3))
+    var file = TileProfileFile(layouts: [mine],
+                               seededLayoutNames: ["3x3", "Freeform"])
+    #expect(file.seedMissingLayouts() == false)
+    #expect(file.layouts.map(\.name) == ["3x3"])
 }

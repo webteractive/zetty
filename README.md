@@ -80,10 +80,10 @@ by the tool it's running.
     anything else you build. **Split a slot** from its right-click menu or with
     `Ctrl+B %` / `Ctrl+B "`, exactly like splitting a pane, and **drag the
     boundaries** to resize. **Save as layout** keeps whatever shape you made.
-    Pair, Stack, Quad, Grid, Main + Two and Two + Main ship built in, plus
     **Freeform** — a single slot you split into whatever the work turns out to
-    need, rather than committing to a shape up front. It is one card among the
-    others, never the default.
+    need — is the only shape that ships. Every preset was reachable by
+    splitting it, so it is the starting point and you build the rest. Shapes
+    you make yourself are kept with **Save as layout**.
     Editing a layout affects only views made afterwards, because creating a
     view copies the shape rather than following it.
   - **Profiles save themselves.** An open view *is* its profile: attaching,

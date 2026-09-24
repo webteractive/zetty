@@ -51,24 +51,33 @@ public struct TileLayout: Codable, Equatable, Sendable, Identifiable {
 
     /// Seeded once into a fresh library. Editable and deletable like any
     /// other — a starting point you cannot change is just clutter.
+    ///
+    /// Only Freeform ships now. Every preset below was expressible by
+    /// splitting it, so seven cards were seven ways of saying "here is a shape
+    /// you could have made in two clicks"; the tree model is what made them
+    /// redundant rather than convenient.
     public static let builtIns: [TileLayout] = [
-        // The one layout with no shape, and the reason a single leaf is back
-        // after "Focus" was dropped for being "just the pane". That judged it
-        // as a DESTINATION; this is a STARTING POINT. You do not sit in it —
-        // you split it into whatever the work needs, which is the one thing
-        // the six preset shapes cannot offer, since each of them commits you
-        // to its shape before you know what you are arranging.
         TileLayout(name: "Freeform", root: .slot),
-        TileLayout(name: "Pair", grid: TilesGrid(columns: 2, rows: 1)),
-        TileLayout(name: "Stack", grid: TilesGrid(columns: 1, rows: 2)),
-        TileLayout(name: "Quad", grid: TilesGrid(columns: 2, rows: 2)),
-        TileLayout(name: "Grid", grid: TilesGrid(columns: 4, rows: 4)),
-        // Expressible only now that a layout is a tree: 1|2/3.
-        TileLayout(name: "Main + Two", root: .split(
+    ]
+
+    /// Built-ins that shipped once and were withdrawn, kept so a library that
+    /// already has them can be cleaned up.
+    ///
+    /// Carries the ROOT as well as the name, and `seedMissingLayouts` requires
+    /// both to match before removing one. A layout the user edited keeps their
+    /// name but not the shipped shape, and deleting that would be deleting
+    /// their work — irreversibly, since nothing here is undoable.
+    public static let retiredBuiltIns: [(name: String, root: TileNode)] = [
+        ("Focus", .slot),
+        ("Pair", TileNode.uniform(TilesGrid(columns: 2, rows: 1))),
+        ("Stack", TileNode.uniform(TilesGrid(columns: 1, rows: 2))),
+        ("Quad", TileNode.uniform(TilesGrid(columns: 2, rows: 2))),
+        ("Grid", TileNode.uniform(TilesGrid(columns: 4, rows: 4))),
+        ("Main + Two", .split(
             direction: .vertical, ratio: 0.5,
             first: .slot,
             second: .split(direction: .horizontal, ratio: 0.5, first: .slot, second: .slot))),
-        TileLayout(name: "Two + Main", root: .split(
+        ("Two + Main", .split(
             direction: .vertical, ratio: 0.5,
             first: .split(direction: .horizontal, ratio: 0.5, first: .slot, second: .slot),
             second: .slot)),

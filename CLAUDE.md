@@ -1747,8 +1747,20 @@ sheet's steppers and `zetty-tiles-grid`.
 - **Old libraries migrate silently**: a stored `grid` decodes to
   `TileNode.uniform`, and only `root` is ever written back, so a file converts
   itself the first time it is saved.
-- **`Freeform` is the one built-in with a single leaf, and it is NOT the
-  retired `Focus` returning.** `Focus` was dropped as a DESTINATION — a view
+- **`Freeform` is the ONLY built-in.** The six presets were withdrawn because
+  every one of them was reachable by splitting it, so shipping them was seven
+  ways of offering a shape you could make in two clicks. The layout MECHANISM
+  stays — `Save as layout`, the chooser, `New View from Layout ▸` — it is
+  only the presets that are gone, so a shape you build yourself is still
+  keepable.
+- **`retiredBuiltIns` carries each withdrawn layout's NAME AND ROOT, and
+  `seedMissingLayouts` requires BOTH to match before removing one.** By shape
+  alone the cleanup takes Freeform too, which is `.slot` exactly as the retired
+  `Focus` was — and because the seed name is recorded, Freeform would be
+  deleted on the load after it was seeded and never return. By name alone it
+  takes a preset the user EDITED, which is their work and an irreversible
+  deletion. Retiring a future built-in means adding its name and shape there.
+- **`Freeform` is NOT the retired `Focus` returning.** `Focus` was dropped as a DESTINATION — a view
   showing one pane is just the pane — whereas Freeform is a STARTING POINT you
   split into whatever the work needs, which is the one thing the six preset
   shapes cannot offer. `close(at:)` refusing the last leaf is what makes it
