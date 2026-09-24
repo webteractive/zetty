@@ -45,12 +45,14 @@ by the tool it's running.
   has instead of forcing the window wider.
 - **Restart an agent, keeping its conversation** — a pane running **Claude** or
   **Codex** grows a `⟳` button in its gutter, and in its tile header while the
-  grid is up. It quits the agent in place (`/exit`, `/quit`), waits for it to
-  actually go, then runs `claude --resume` / `codex resume` in the same pane —
-  so the conversation comes back and **the scrollback is kept**. If the agent
-  does not quit within 20 seconds nothing is typed, rather than posting the
-  resume into its prompt. The button spins while it works and flashes green
-  when the agent is back (red if it gave up). Needs `preserve-sessions`, which is how Zetty can
+  grid is up. The pane is covered with a **Reloading session…** placeholder
+  while Zetty quits the agent (`/exit`, `/quit`) and runs `claude --resume` /
+  `codex resume` in its session, then uncovers once the agent is back — so the
+  conversation returns and **the scrollback is kept**. Nothing is torn down;
+  the session is driven from outside. If the agent does not quit, or does not
+  come back, nothing further is sent rather than posting a resume into its
+  prompt. The button spins throughout and flashes green on success, red if it
+  gave up. Needs `preserve-sessions`, which is how Zetty can
   tell the agent has exited; harnesses with no known quit line never show the
   button.
 - **Tile mode** — `⇧⌘G`, `Ctrl+B g`, the grid button in the tab bar, **View →

@@ -217,6 +217,7 @@ final class LeafContainerView: NSView {
     /// Created unconditionally so visibility is a toggle rather than a rebuild
     /// — the same reason the account dots exist at zero width.
     private var refreshButton: NSButton?
+    private var reloadingOverlay: ReloadingOverlay?
 
     init(
         surfaceID: UUID,
@@ -499,6 +500,20 @@ final class LeafContainerView: NSView {
     func setRefreshVisible(_ visible: Bool) {
         guard let refreshButton, refreshButton.isHidden == visible else { return }
         refreshButton.isHidden = !visible
+    }
+
+    /// Covers the terminal while its agent is quit and resumed. The surface is
+    /// untouched — only hidden.
+    func setReloading(_ reloading: Bool) {
+        if reloading {
+            guard reloadingOverlay == nil else { return }
+            let overlay = ReloadingOverlay()
+            overlay.cover(self)
+            reloadingOverlay = overlay
+        } else {
+            reloadingOverlay?.dismiss()
+            reloadingOverlay = nil
+        }
     }
 
     func setRefreshSpinning(_ spinning: Bool, success: Bool? = nil) {

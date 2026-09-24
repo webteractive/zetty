@@ -83,6 +83,7 @@ final class TileView: NSView {
     private let openChevron = NSImageView()
     private let goToPaneButton = NSButton()
     private let body = NSView()
+    private var reloadingOverlay: ReloadingOverlay?
     private let messageLabel = NSTextField(labelWithString: "")
 
     private let canRemove: Bool
@@ -540,6 +541,20 @@ final class TileView: NSView {
         refreshButton.isHidden = !visible
     }
 
+    /// Covers the terminal while its agent is quit and resumed. The surface is
+    /// untouched — only hidden.
+    func setReloading(_ reloading: Bool) {
+        if reloading {
+            guard reloadingOverlay == nil else { return }
+            let overlay = ReloadingOverlay()
+            overlay.cover(body)
+            reloadingOverlay = overlay
+        } else {
+            reloadingOverlay?.dismiss()
+            reloadingOverlay = nil
+        }
+    }
+
     func setRefreshSpinning(_ spinning: Bool, success: Bool? = nil) {
         // Visible regardless while it spins: the probe stops seeing the agent
         // the moment it quits, which would otherwise hide the very control
@@ -596,6 +611,7 @@ final class TileView: NSView {
         goToPaneButton.contentTintColor = theme.fg3Color
         splitButton.contentTintColor = theme.fg3Color
         refreshButton.contentTintColor = theme.fg3Color
+        reloadingOverlay?.applyTheme()
         for (icon, label) in emptyActionViews {
             icon.contentTintColor = theme.fg2Color
             label.textColor = theme.fg2Color

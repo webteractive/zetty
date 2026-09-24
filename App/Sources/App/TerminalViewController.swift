@@ -1816,23 +1816,25 @@ final class TerminalViewController: NSViewController {
     /// between the agent going and the resume being typed.
     private static let agentExitPollInterval: TimeInterval = 0.5
     /// Give up after this. The resume is NOT typed on a timeout.
-    private static let agentExitTimeout: TimeInterval = 20
+    private static let agentExitTimeout: TimeInterval = 30
 
     private var agentRestartTimers: [UUID: Timer] = [:]
 
-    /// Restarts the pane's agent on its existing conversation, IN PLACE.
+    /// Restarts the pane's agent on its existing conversation.
     ///
-    /// Types the harness's quit line into the live pane, waits for the agent to
-    /// actually go, then types the resume. The pane, its pty and its zmx
-    /// session are all untouched, so the scrollback above survives — which is
-    /// the whole reason this is not a respawn.
+    /// The pane is COVERED, never detached: `zmx send` writes to the session's
+    /// PTY whether or not a client is attached, so the quit and the resume are
+    /// driven from outside while a placeholder hides the churn, and the pane is
+    /// simply uncovered once the agent is back. Nothing is freed —
+    /// `ghostty_surface_free` on a live preserved surface is the call that
+    /// disabled `free-background-panes-after` because it can block the main
+    /// thread, and driving the session externally avoids the question entirely.
     func refreshAgentPane(surfaceID: UUID) {
         guard agentRestartTimers[surfaceID] == nil,
-              let surface = workspace.surface(with: surfaceID),
               let kind = probedResumableKind(for: surfaceID),
               let exit = AgentResume.exitCommand(for: kind) else { return }
 
-        // BEFORE anything is typed. A harness may clear its hook state as it
+        // BEFORE anything is sent: a harness may clear its hook state as it
         // exits, and the resume is worthless without the id.
         guard let resume = AgentResume.command(for: agentDetector.state(for: surfaceID))
                 ?? lookedUpResumeCommands[surfaceID]
@@ -1841,64 +1843,82 @@ final class TerminalViewController: NSViewController {
             return
         }
 
-        // Exit is detected by watching the pane's foreground process, which
-        // needs a zmx session. Without one there is no way to know the agent
-        // has gone, and typing a resume into a live agent just posts it as a
-        // chat message — so refuse rather than guess.
+        let session = SessionPersistence.sessionName(for: surfaceID)
         guard let zmx = ZmxRunner.locate(),
-              let sessionPID = lastSessionPIDs[SessionPersistence.sessionName(for: surfaceID)]
-                ?? ZmxRunner.sessionPIDs(zmxPath: zmx)[SessionPersistence.sessionName(for: surfaceID)]
+              let sessionPID = lastSessionPIDs[session]
+                ?? ZmxRunner.sessionPIDs(zmxPath: zmx)[session]
         else {
             presentAgentRestartFailure(
-                "Restarting an agent needs preserve-sessions, so Zetty can tell when it has quit.")
+                "Restarting an agent needs preserve-sessions, so Zetty can drive and watch it.")
             return
         }
 
         if agentDetector.state(for: surfaceID).status == .running,
            !confirmClosingBusyPanes([surfaceID], what: "Agent") { return }
 
-        guard registry.sendText(exit + "\r", to: surface) else {
-            presentAgentRestartFailure("This pane has no live terminal yet.")
-            return
-        }
-        ZettyLog.lifecycle.log("restart: \(surfaceID.uuidString.prefix(8)) sent \(exit)")
         setRefreshSpinning(true, for: surfaceID)
-        waitForAgentExit(surfaceID: surfaceID, sessionPID: sessionPID,
-                         agent: kind, resume: resume, deadline: Date() + Self.agentExitTimeout)
+        setPaneReloading(true, for: surfaceID)
+        ZettyLog.lifecycle.log("restart: \(surfaceID.uuidString.prefix(8)) sending \(exit)")
+
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            ZmxRunner.send(session: session, text: exit + "\r", zmxPath: zmx)
+            DispatchQueue.main.async {
+                self?.waitForAgentExit(surfaceID: surfaceID, sessionPID: sessionPID,
+                                       agent: kind, session: session, resume: resume,
+                                       zmx: zmx, deadline: Date() + Self.agentExitTimeout)
+            }
+        }
     }
 
-    /// Polls the pane's foreground process until the agent is gone, then types
-    /// the resume. On timeout it types NOTHING — the resume would land in the
-    /// agent's prompt as a message, which is the same rule restart recovery
-    /// follows for a cancelled shutdown.
+    /// Polls the pane's foreground process until the agent is gone, sends the
+    /// resume, then waits for it to come BACK before uncovering the pane.
+    ///
+    /// On timeout nothing is typed: a resume landing in a still-running agent
+    /// posts as a chat message rather than restarting anything — the same rule
+    /// restart recovery follows for a cancelled shutdown.
     private func waitForAgentExit(surfaceID: UUID, sessionPID: Int32, agent: AgentKind,
-                                  resume: String, deadline: Date) {
+                                  session: String, resume: String, zmx: String,
+                                  deadline: Date) {
+        var resumeSent = false
         let timer = Timer.scheduledTimer(withTimeInterval: Self.agentExitPollInterval,
                                          repeats: true) { [weak self] timer in
             MainActor.assumeIsolated {
                 guard let self else { return timer.invalidate() }
                 DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-                    // One `ps` per tick, for at most the timeout above — a
-                    // bounded wait for something the user just asked for, not a
-                    // standing poll loop.
-                    let still = ZmxRunner.psSnapshot().flatMap {
+                    let running = ZmxRunner.psSnapshot().flatMap {
                         ForegroundProcess.command(forSessionPID: sessionPID, psOutput: $0)
                     }
-                    DispatchQueue.main.async {
-                        guard let self, self.agentRestartTimers[surfaceID] != nil else { return }
-                        if still == agent.rawValue {
-                            if Date() >= deadline {
-                                self.finishAgentRestart(surfaceID, success: false)
-                                self.presentAgentRestartFailure(
-                                    "\(agent.displayName) did not quit, so nothing was resumed.")
-                            }
-                            return
+                    let isAgent = running == agent.rawValue
+                    // Phase 2: the resume is away and the agent is back, so the
+                    // pane has something worth showing again.
+                    if resumeSent, isAgent {
+                        return DispatchQueue.main.async {
+                            self?.finishAgentRestart(surfaceID, success: true)
                         }
-                        self.finishAgentRestart(surfaceID, success: true)
-                        guard let surface = self.workspace.surface(with: surfaceID) else { return }
-                        _ = self.registry.sendText(resume + "\r", to: surface)
+                    }
+                    // Phase 1: still the OLD agent — keep waiting.
+                    if !resumeSent, isAgent {
+                        guard Date() >= deadline else { return }
+                        return DispatchQueue.main.async {
+                            self?.finishAgentRestart(surfaceID, success: false)
+                            self?.presentAgentRestartFailure(
+                                "\(agent.displayName) did not quit, so nothing was resumed.")
+                        }
+                    }
+                    if !resumeSent {
+                        resumeSent = true
+                        ZmxRunner.send(session: session, text: resume + "\r", zmxPath: zmx)
                         ZettyLog.lifecycle.log(
-                            "restart: \(surfaceID.uuidString.prefix(8)) resumed")
+                            "restart: \(surfaceID.uuidString.prefix(8)) resume sent")
+                        return
+                    }
+                    // Resume sent but the agent has not appeared yet. Give it
+                    // the same budget rather than uncovering onto a bare shell.
+                    guard Date() >= deadline else { return }
+                    DispatchQueue.main.async {
+                        self?.finishAgentRestart(surfaceID, success: false)
+                        self?.presentAgentRestartFailure(
+                            "\(agent.displayName) was resumed but has not come back yet.")
                     }
                 }
             }
@@ -1909,6 +1929,21 @@ final class TerminalViewController: NSViewController {
     private func finishAgentRestart(_ surfaceID: UUID, success: Bool) {
         agentRestartTimers.removeValue(forKey: surfaceID)?.invalidate()
         setRefreshSpinning(false, for: surfaceID, success: success)
+        setPaneReloading(false, for: surfaceID)
+        ZettyLog.lifecycle.log(
+            "restart: \(surfaceID.uuidString.prefix(8)) finished ok=\(success)")
+    }
+
+    /// Covers or uncovers the pane, in whichever host is on screen.
+    private func setPaneReloading(_ reloading: Bool, for surfaceID: UUID) {
+        if tileMode, let grid = tileGridView {
+            grid.setReloading(reloading, for: surfaceID)
+            return
+        }
+        guard let root = rootContentView else { return }
+        Self.leafContainers(in: root)
+            .first { $0.surfaceID == surfaceID }?
+            .setReloading(reloading)
     }
 
     /// Drives the button's animation in whichever host is on screen. Tile mode

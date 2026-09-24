@@ -73,6 +73,10 @@ final class TileGridView: NSView {
     /// stops between them — so without this the button appears only after an
     /// unrelated change, which is the same staleness the pane gutter has to
     /// avoid.
+    func setReloading(_ reloading: Bool, for surfaceID: UUID) {
+        tiles.first { $0.surfaceID == surfaceID }?.setReloading(reloading)
+    }
+
     func setRefreshSpinning(_ spinning: Bool, for surfaceID: UUID, success: Bool? = nil) {
         tiles.first { $0.surfaceID == surfaceID }?
             .setRefreshSpinning(spinning, success: success)

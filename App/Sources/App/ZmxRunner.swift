@@ -140,6 +140,22 @@ enum ZmxRunner {
         return nil
     }
 
+    /// `zmx send <session> <text>` — raw input into the session's PTY.
+    ///
+    /// Works whether or not a client is attached, which is what lets a pane be
+    /// hidden behind a placeholder while its agent is quit and resumed: nothing
+    /// has to be detached, and crucially nothing has to be FREED. Tearing a
+    /// live preserved surface down is `ghostty_surface_free`, the call that
+    /// disabled `free-background-panes-after` because it can block the main
+    /// thread — see that section. Driving the session from outside sidesteps
+    /// the whole question.
+    ///
+    /// Blocking — call off-main.
+    @discardableResult
+    static func send(session: String, text: String, zmxPath: String) -> Bool {
+        run(zmxPath, ["send", session, text]) != nil
+    }
+
     // MARK: - Private
 
     /// Runs a binary, returning stdout on exit 0 (nil otherwise). Blocking —

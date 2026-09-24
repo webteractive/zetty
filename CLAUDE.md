@@ -821,17 +821,29 @@ current (the usual rebuild-and-install step) and delete/`lsregister -u` stray
 
 `⟳` in a pane's gutter restarts Claude or Codex on its existing conversation.
 
-- **It types into the LIVE pane; it does NOT respawn it.** The quit line
-  (`/exit` for Claude, `/quit` for Codex — `AgentResume.exitCommand`) goes in
-  through `registry.sendText`, the pane is watched until the agent is gone, and
-  only then does the resume follow. The pty and the zmx session are untouched,
-  so the scrollback above survives. An earlier version respawned the pane,
-  which was simpler and lost the scrollback, because a new `Surface` means a
-  new session.
-- **On timeout NOTHING is typed.** A resume landing in a still-running agent is
-  not a restart — it posts as a chat message. Same rule restart recovery
-  follows for a cancelled shutdown, and the reason the wait watches the
-  foreground process rather than sleeping a fixed interval.
+- **The pane is COVERED and the session is driven from OUTSIDE.** `zmx send`
+  writes to a session's PTY whether or not a client is attached, so the quit
+  line (`/exit` / `/quit`, `AgentResume.exitCommand`) and then the resume go in
+  through `ZmxRunner.send` while a `ReloadingOverlay` hides the churn; the pane
+  is uncovered once the agent is back. Two earlier versions were wrong in
+  opposite directions: one RESPAWNED the pane, which lost the scrollback
+  because a new `Surface` means a new session; the other typed into the visible
+  pane with `registry.sendText`, which kept the scrollback but made you watch
+  a TUI die.
+- **Nothing is detached and nothing is FREED, and that distinction is the whole
+  reason this shape works.** Tearing a live preserved surface down is
+  `ghostty_surface_free`, the call that disabled `free-background-panes-after`
+  because it can block the main thread — see that section. Hiding a view costs
+  nothing and `zmx send` does not care whether a client is attached, so the
+  "detach, restart, reattach" behaviour is reachable without ever calling it.
+  Do not "simplify" this into a prune-and-respawn.
+- **The wait has TWO phases, and the second is why the overlay can be trusted.**
+  Phase one polls until the OLD agent is gone, then sends the resume; phase two
+  polls until an agent is back BEFORE uncovering, so the placeholder never
+  lifts onto a bare shell. On timeout in either phase nothing further is sent —
+  a resume landing in a still-running agent is not a restart, it posts as a
+  chat message, the same rule restart recovery follows for a cancelled
+  shutdown.
 - **The exit poll is 0.5s and BOUNDED (20s), deliberately faster than the 3s
   foreground probe.** This is a user-initiated wait, not a standing loop: one
   `ps` per tick until the agent goes, then it stops. Riding the probe instead
