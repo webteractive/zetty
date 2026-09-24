@@ -4128,6 +4128,16 @@ final class TerminalViewController: NSViewController {
     private func editorMenu() -> NSMenu { editorMenu(for: focusedDirectoryURL()) }
 
     private func editorMenu(for directory: URL) -> NSMenu {
+        // This is built on EVERY click, so it logs what it cost. The editor
+        // roster and its icons are LaunchServices/IconServices round trips
+        // (measured at ~148 ms cold, 138 ms of it icons) and `EditorCatalog`
+        // caches both — a line reading in the tens of milliseconds twice in a
+        // row means that cache stopped working, which is otherwise invisible.
+        let startedAt = DispatchTime.now().uptimeNanoseconds
+        defer {
+            let ms = Double(DispatchTime.now().uptimeNanoseconds - startedAt) / 1_000_000
+            ZettyLog.chrome.log(String(format: "editorMenu: build=%.1fms", ms))
+        }
         let menu = NSMenu()
         for app in EditorCatalog.installed() {
             let item = NSMenuItem(title: EditorCatalog.displayName(of: app),

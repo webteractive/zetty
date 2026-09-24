@@ -777,6 +777,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     /// the theme + terminal overrides to every live pane — no relaunch needed.
     @objc func reloadConfiguration(_ sender: Any?) {
         appConfig = configStore.load()
+        // A menu action, so this always runs on main — but the delegate itself
+        // is nonisolated, hence the explicit assumption rather than an await.
+        MainActor.assumeIsolated { EditorCatalog.invalidate() }  // pick up an editor installed since launch
         applyChromeFontFromConfig()             // hand-edited font directives drive chrome too
         // Theme + appearance pinning route through the per-project decision
         // point (active project's overrides win over the reloaded global).
