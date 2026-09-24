@@ -1879,6 +1879,31 @@ seeds a pending flag before the view loads and `viewDidLoad` enters through
 `setTileMode(true)`, never by flipping the flag: the enter path is what seeds
 focus and runs the pane spawn queue.
 
+**Splitting has to be VISIBLE, because an empty cell is a whole Freeform
+view.** A fresh Freeform view is one `.empty` cell, which builds no header —
+so its only affordance was a `+ Attach` label, and splitting lived in a
+right-click or `Ctrl+B %`. The empty cell now stacks Attach / Split Right /
+Split Down, and a headered tile carries ONE button popping the slot menu it
+already builds (not two of its own — the header is at capacity with the Open
+pill, and two more glyphs come out of the title). Headered tiles need it as
+much as empty ones: once both cells of a 2-slot view hold panes there are no
+empty cells left, so empty-cell buttons alone dead-end after the first split.
+Rows are stacked and labelled because two labels in a row need ~180pt and clip
+in a 4x4 grid, and because a bare split glyph is not self-evident in the one
+place a first-time user is looking for the answer.
+
+**The empty cell's rows are `ClickRowView`, which CONSUMES its `mouseDown`.**
+A plain `NSView` forwards it up the responder chain, so a row would reach
+`TileView.mouseDown` as well and open the attach picker on top of the split. A
+gesture recogniser was rejected for the same job: whether it swallows the
+underlying event depends on `delaysPrimaryMouseButtonEvents`, and "Split Down
+also opened the picker" must not rest on that.
+
+**These controls are on EVERY tile, not just Freeform ones.** A profile COPIES
+its layout tree with no back-link, so there is no way to ask which layout a
+view came from — and the tree is a tree everywhere, so the affordance is right
+everywhere.
+
 **`Open ▾` leaves the status bar and arrives per tile.** `StatusBarView
 .isTileMode` folds the pill away (and drops the `⋯` menu's "Open Directory In"
 submenu with it) through `updateEditorVisibility()` — its own function beside

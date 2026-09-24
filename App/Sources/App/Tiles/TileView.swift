@@ -35,6 +35,23 @@ enum TileStatus: Equatable {
     }
 }
 
+// MARK: - ClickRowView
+
+/// A row that CONSUMES its own click.
+///
+/// A plain `NSView`'s `mouseDown` forwards up the responder chain, so a row
+/// inside the empty cell would reach `TileView.mouseDown` as well and open the
+/// attach picker on top of whatever the row did. Deliberately not a gesture
+/// recogniser: whether one swallows the underlying `mouseDown` depends on
+/// `delaysPrimaryMouseButtonEvents`, and "Split Down also opened the picker"
+/// is not a thing to leave to that.
+@MainActor
+private final class ClickRowView: NSView {
+    var onClick: (() -> Void)?
+
+    override func mouseDown(with event: NSEvent) { onClick?() }
+}
+
 // MARK: - TileView
 
 /// One cell of the tile grid: a header strip naming the pane, above the pane's
@@ -58,6 +75,7 @@ final class TileView: NSView {
     private let statusDot = NSView()
     private let iconView = NSImageView()
     private let titleLabel = NSTextField(labelWithString: "")
+    private let splitButton = NSButton()
     private let openPill = NSView()
     private let openIcon = NSImageView()
     private let openLabel = NSTextField(labelWithString: "Open")
@@ -167,6 +185,22 @@ final class TileView: NSView {
         // quartet per assignment, which is the same reason the status bar's
         // own chip is a text field. Hidden for a `.missing` slot, which has no
         // pane and therefore no directory.
+        // ONE button popping the slot menu this view already builds, rather
+        // than a Split Right and a Split Down of its own: the header is at
+        // capacity with the Open pill, and two more glyphs would be paid for
+        // out of the title. Splitting is not a per-second action, so the extra
+        // click is cheaper than a truncated pane name.
+        splitButton.isBordered = false
+        splitButton.bezelStyle = .inline
+        splitButton.image = NSImage(systemSymbolName: "square.split.2x1",
+                                    accessibilityDescription: "Split or remove this slot")
+        splitButton.imagePosition = .imageOnly
+        splitButton.target = self
+        splitButton.action = #selector(splitMenuClicked)
+        splitButton.toolTip = "Split or remove this slot"
+        splitButton.translatesAutoresizingMaskIntoConstraints = false
+        header.addSubview(splitButton)
+
         openPill.wantsLayer = true
         openPill.layer?.cornerRadius = 8
         openPill.layer?.borderWidth = 1
@@ -235,7 +269,13 @@ final class TileView: NSView {
             titleLabel.centerYAnchor.constraint(equalTo: header.centerYAnchor),
             titleLabel.leadingAnchor.constraint(equalTo: iconView.trailingAnchor, constant: 6),
             titleLabel.trailingAnchor.constraint(
-                lessThanOrEqualTo: openPill.leadingAnchor, constant: -6),
+                lessThanOrEqualTo: splitButton.leadingAnchor, constant: -6),
+
+            splitButton.widthAnchor.constraint(equalToConstant: 13),
+            splitButton.heightAnchor.constraint(equalToConstant: 13),
+            splitButton.centerYAnchor.constraint(equalTo: header.centerYAnchor),
+            splitButton.trailingAnchor.constraint(equalTo: openPill.leadingAnchor,
+                                                  constant: -7),
 
             // The pill hugs its contents; a `.missing` header collapses it to
             // nothing rather than removing the view, so both lay out the same
@@ -299,11 +339,95 @@ final class TileView: NSView {
         case .failed(let reason):
             addMessage(reason)
         case .empty:
-            addMessage("+ Attach")
+            buildEmptyActions()
         case .missing(let label):
             addMessage("\(label)\nnot found")
             addReattachButton()
         }
+    }
+
+    /// Rows themed in `applyTheme` — icon and label per action row.
+    private var emptyActionViews: [(NSImageView, NSTextField)] = []
+
+    /// The empty cell's three choices, stacked.
+    ///
+    /// This is the whole of a fresh Freeform view, so it is where someone looks
+    /// to find out what a tile view can do — and until now it offered a single
+    /// `+ Attach` label, leaving splitting to a right-click or `Ctrl+B %`.
+    ///
+    /// Stacked rather than side by side, and labelled rather than icon-only:
+    /// two labels in a row need about 180pt and clip in a 4x4 grid, whereas one
+    /// per row needs about 90pt and survives; and a bare split glyph is not
+    /// self-evident, which is the wrong bet in the one place a first-time user
+    /// is looking for the answer.
+    private func buildEmptyActions() {
+        let stack = NSStackView()
+        stack.orientation = .vertical
+        stack.alignment = .centerX
+        stack.spacing = 8
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        body.addSubview(stack)
+
+        stack.addArrangedSubview(
+            makeActionRow(symbol: "plus", title: "Attach") { [weak self] in
+                self?.onActivate()
+            })
+        stack.addArrangedSubview(
+            makeActionRow(symbol: "rectangle.split.2x1", title: "Split Right") { [weak self] in
+                self?.onSplit(.vertical)
+            })
+        stack.addArrangedSubview(
+            makeActionRow(symbol: "rectangle.split.1x2", title: "Split Down") { [weak self] in
+                self?.onSplit(.horizontal)
+            })
+
+        NSLayoutConstraint.activate([
+            stack.centerXAnchor.constraint(equalTo: body.centerXAnchor),
+            stack.centerYAnchor.constraint(equalTo: body.centerYAnchor),
+            stack.leadingAnchor.constraint(greaterThanOrEqualTo: body.leadingAnchor,
+                                           constant: 6),
+            stack.trailingAnchor.constraint(lessThanOrEqualTo: body.trailingAnchor,
+                                            constant: -6),
+        ])
+    }
+
+    /// An icon+label row that behaves as a button. A text field and a click
+    /// recogniser rather than an `NSButton` with an `attributedTitle`, for the
+    /// same reason the Open pill is one — that setter leaks an AppKit KVO
+    /// dependency quartet per assignment.
+    private func makeActionRow(symbol: String, title: String,
+                               _ onClick: @escaping () -> Void) -> NSView {
+        let row = ClickRowView()
+        row.onClick = onClick
+        row.translatesAutoresizingMaskIntoConstraints = false
+
+        let icon = NSImageView()
+        icon.image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)
+        icon.imageScaling = .scaleProportionallyDown
+        icon.translatesAutoresizingMaskIntoConstraints = false
+        row.addSubview(icon)
+
+        let label = NSTextField(labelWithString: title)
+        label.font = ZTheme.chromeFont(size: 11)
+        label.lineBreakMode = .byTruncatingTail
+        // Yields before the cell does: a clipped row is still better than a
+        // constraint that fights the tile's own width in a dense grid.
+        label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        label.translatesAutoresizingMaskIntoConstraints = false
+        row.addSubview(label)
+
+        NSLayoutConstraint.activate([
+            icon.leadingAnchor.constraint(equalTo: row.leadingAnchor),
+            icon.centerYAnchor.constraint(equalTo: row.centerYAnchor),
+            icon.widthAnchor.constraint(equalToConstant: 11),
+            icon.heightAnchor.constraint(equalToConstant: 11),
+            label.leadingAnchor.constraint(equalTo: icon.trailingAnchor, constant: 6),
+            label.trailingAnchor.constraint(equalTo: row.trailingAnchor),
+            label.centerYAnchor.constraint(equalTo: row.centerYAnchor),
+            row.heightAnchor.constraint(equalToConstant: 16),
+        ])
+        emptyActionViews.append((icon, label))
+        return row
     }
 
     /// A tile with nothing to draw must say why. An empty body is
@@ -350,6 +474,15 @@ final class TileView: NSView {
 
     @objc private func openClicked() { onOpen(openPill) }
 
+    /// Pops the slot menu built in `init`, so Split Right / Split Down /
+    /// Remove Slot have exactly one definition and the button cannot drift
+    /// from the right-click that offers the same three things.
+    @objc private func splitMenuClicked() {
+        guard let menu else { return }
+        menu.popUp(positioning: nil,
+                   at: NSPoint(x: 0, y: splitButton.bounds.height + 4), in: splitButton)
+    }
+
     @objc private func detachClicked() { onDetach() }
 
     @objc private func splitRight() { onSplit(.vertical) }
@@ -387,6 +520,11 @@ final class TileView: NSView {
         messageLabel.textColor = theme.fg3Color
         iconView.contentTintColor = isFocused ? theme.fgColor : theme.fg2Color
         goToPaneButton.contentTintColor = theme.fg3Color
+        splitButton.contentTintColor = theme.fg3Color
+        for (icon, label) in emptyActionViews {
+            icon.contentTintColor = theme.fg2Color
+            label.textColor = theme.fg2Color
+        }
         // Same ramp as the status bar's pill: bg2 on bg0 chrome, bordered.
         openPill.layer?.backgroundColor = theme.bg2Color.cgColor
         openPill.layer?.borderColor = theme.borderColor.cgColor
