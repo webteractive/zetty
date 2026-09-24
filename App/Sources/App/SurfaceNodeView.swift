@@ -218,6 +218,9 @@ final class LeafContainerView: NSView {
     /// — the same reason the account dots exist at zero width.
     private var refreshButton: NSButton?
     private var reloadingOverlay: ReloadingOverlay?
+    /// The registry's terminal view — the overlay is parented onto it, since a
+    /// Metal-backed surface composites over anything merely beside it.
+    private weak var hostedTerminalView: NSView?
 
     init(
         surfaceID: UUID,
@@ -230,6 +233,7 @@ final class LeafContainerView: NSView {
         paneActions: PaneActionWiring? = nil
     ) {
         self.surfaceID = surfaceID
+        self.hostedTerminalView = terminalView
         self.isFocused = isFocused
         self.paneActions = paneActions
         self.fileTreeWiring = fileTree
@@ -508,7 +512,7 @@ final class LeafContainerView: NSView {
         if reloading {
             guard reloadingOverlay == nil else { return }
             let overlay = ReloadingOverlay()
-            overlay.cover(self)
+            overlay.cover(hostedTerminalView ?? self)
             reloadingOverlay = overlay
         } else {
             reloadingOverlay?.dismiss()

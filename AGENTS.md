@@ -830,6 +830,18 @@ current (the usual rebuild-and-install step) and delete/`lsregister -u` stray
   because a new `Surface` means a new session; the other typed into the visible
   pane with `registry.sendText`, which kept the scrollback but made you watch
   a TUI die.
+- **The cover is a CHILD of the terminal view, never a sibling.** libghostty's
+  surface is Metal/IOSurface-backed and composites over anything merely beside
+  it, whatever the subview order says — the first version added the overlay to
+  the pane container and it was simply not seen, so the `/exit` was watched
+  being typed while the log reported a clean restart. A child of the surface
+  does draw on top; it is the same trick `PathHoverTracker` uses for its
+  ⌘-hover underline, which is the one other thing in the app that draws over a
+  pane.
+- **A frame must draw before anything is sent.** Adding the cover and sending
+  in the same run-loop turn races the compositor, and losing that race looks
+  identical to having no cover at all. `refreshAgentPane` forces layout and
+  hops once through main before the first `zmx send`.
 - **Nothing is detached and nothing is FREED, and that distinction is the whole
   reason this shape works.** Tearing a live preserved surface down is
   `ghostty_surface_free`, the call that disabled `free-background-panes-after`

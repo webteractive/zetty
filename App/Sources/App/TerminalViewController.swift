@@ -1860,12 +1860,18 @@ final class TerminalViewController: NSViewController {
         setPaneReloading(true, for: surfaceID)
         ZettyLog.lifecycle.log("restart: \(surfaceID.uuidString.prefix(8)) sending \(exit)")
 
-        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            ZmxRunner.send(session: session, text: exit + "\r", zmxPath: zmx)
-            DispatchQueue.main.async {
-                self?.waitForAgentExit(surfaceID: surfaceID, sessionPID: sessionPID,
-                                       agent: kind, session: session, resume: resume,
-                                       zmx: zmx, deadline: Date() + Self.agentExitTimeout)
+        // Let the cover actually draw before a keystroke reaches the pty.
+        // Adding a view and sending in the same turn races the compositor, and
+        // losing that race is exactly "it still showed the send".
+        view.layoutSubtreeIfNeeded()
+        DispatchQueue.main.async { [weak self] in
+            DispatchQueue.global(qos: .userInitiated).async {
+                ZmxRunner.send(session: session, text: exit + "\r", zmxPath: zmx)
+                DispatchQueue.main.async {
+                    self?.waitForAgentExit(surfaceID: surfaceID, sessionPID: sessionPID,
+                                           agent: kind, session: session, resume: resume,
+                                           zmx: zmx, deadline: Date() + Self.agentExitTimeout)
+                }
             }
         }
     }

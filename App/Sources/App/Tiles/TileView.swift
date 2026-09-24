@@ -84,6 +84,9 @@ final class TileView: NSView {
     private let goToPaneButton = NSButton()
     private let body = NSView()
     private var reloadingOverlay: ReloadingOverlay?
+    /// The registry's terminal view for this tile, when it has one — the
+    /// overlay must be parented onto it, not beside it.
+    private weak var terminalView: NSView?
     private let messageLabel = NSTextField(labelWithString: "")
 
     private let canRemove: Bool
@@ -373,6 +376,7 @@ final class TileView: NSView {
 
         switch content {
         case .terminal(let terminal):
+            terminalView = terminal
             terminal.translatesAutoresizingMaskIntoConstraints = false
             body.addSubview(terminal)
             NSLayoutConstraint.activate([
@@ -547,7 +551,7 @@ final class TileView: NSView {
         if reloading {
             guard reloadingOverlay == nil else { return }
             let overlay = ReloadingOverlay()
-            overlay.cover(body)
+            overlay.cover(terminalView ?? body)
             reloadingOverlay = overlay
         } else {
             reloadingOverlay?.dismiss()

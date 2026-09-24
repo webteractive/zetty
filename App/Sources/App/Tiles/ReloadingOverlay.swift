@@ -61,9 +61,16 @@ final class ReloadingOverlay: NSView {
     }
 
     /// Pins into `host`, covering it entirely.
+    ///
+    /// `host` must be the TERMINAL view, not its container. libghostty's
+    /// surface is Metal/IOSurface-backed and composites over its siblings
+    /// whatever the subview order says, so a cover added beside it is simply
+    /// not seen — which is how the first version let you watch `/exit` being
+    /// typed. A CHILD of the surface does draw on top; that is the same trick
+    /// `PathHoverTracker` uses for its ⌘-hover underline.
     func cover(_ host: NSView) {
         removeFromSuperview()
-        host.addSubview(self)
+        host.addSubview(self, positioned: .above, relativeTo: nil)
         NSLayoutConstraint.activate([
             topAnchor.constraint(equalTo: host.topAnchor),
             leadingAnchor.constraint(equalTo: host.leadingAnchor),
