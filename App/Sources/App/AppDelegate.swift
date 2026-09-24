@@ -347,13 +347,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         // Persist and restore the window frame across launches. On first launch
         // (no saved frame) fall back to centering the default size.
         window.setFrameAutosaveName("ZettyMainWindow")
-        if !window.setFrameUsingName("ZettyMainWindow") {
-            window.center()
-        }
+        let restored = window.setFrameUsingName("ZettyMainWindow")
+        if !restored { window.center() }
         window.makeKeyAndOrderFront(nil)
         repairRestoredWindowSizeIfNeeded(window)
         NSApp.activate(ignoringOtherApps: true)
         self.window = window
+        // Window visibility narrates itself. A window that exists, is on a sane
+        // frame and still never reaches the screen is the same picture for an
+        // app that is hidden, a window ordered out by something later, and a
+        // window assigned to another Space — and none of it reproduces from a
+        // screenshot. Sampled at creation and again once AppKit has settled.
+        logWindowState(window, "create", restored: restored)
+        for delay in [0.0, 0.5, 2.0] {
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self, weak window] in
+                guard let window else { return }
+                self?.logWindowState(window, "t+\(delay)", restored: restored)
+            }
+        }
 
         // tmux-style prefix-key layer (Ctrl+B by default; prefix/bind/copy-bind
         // config lines remap it). Installed after the window exists so the
@@ -2149,6 +2160,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
 
     func applicationShouldTerminateAfterLastWindowClosed(_: NSApplication) -> Bool {
         false
+    }
+
+    /// One line naming every reason a window can be invisible, so the report
+    /// stops being a guess between hidden / ordered-out / off-Space.
+    private func logWindowState(_ window: NSWindow, _ phase: String, restored: Bool) {
+        let screen = window.screen ?? NSScreen.main
+        ZettyLog.chrome.log(
+            "window(\(phase)) restored=\(restored) visible=\(window.isVisible) "
+            + "key=\(window.isKeyWindow) miniaturized=\(window.isMiniaturized) "
+            + "appHidden=\(NSApp.isHidden) active=\(NSApp.isActive) "
+            + "policy=\(NSApp.activationPolicy().rawValue) "
+            + "occlusion=\(window.occlusionState.contains(.visible)) "
+            + "collection=\(window.collectionBehavior.rawValue) "
+            + "level=\(window.level.rawValue) alpha=\(window.alphaValue) "
+            + "frame=\(window.frame) screen=\(screen?.visibleFrame.debugDescription ?? "nil") "
+            + "onActiveSpace=\(window.isOnActiveSpace)")
     }
 
     private func repairRestoredWindowSizeIfNeeded(_ window: NSWindow) {
