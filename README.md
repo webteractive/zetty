@@ -51,8 +51,8 @@ by the tool it's running.
   conversation returns and **the scrollback is kept**. Nothing is torn down;
   the session is driven from outside. If the agent does not quit, or does not
   come back, nothing further is sent rather than posting a resume into its
-  prompt. The button spins throughout and flashes green on success, red if it
-  gave up. Needs `preserve-sessions`, which is how Zetty can
+  prompt. The button turns accent throughout and flashes green on success, red if
+  it gave up. Needs `preserve-sessions`, which is how Zetty can
   tell the agent has exited; harnesses with no known quit line never show the
   button.
 - **Tile mode** — `⇧⌘G`, `Ctrl+B g`, the grid button in the tab bar, **View →

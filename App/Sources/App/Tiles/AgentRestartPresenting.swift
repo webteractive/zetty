@@ -29,12 +29,12 @@ extension AgentRestartPresenting {
         restartButton.isHidden = !visible
     }
 
-    /// Spins the glyph, then flashes the outcome.
+    /// Tints the glyph accent while in flight, then flashes the outcome.
     ///
-    /// Forces the button visible while it spins: the foreground probe stops
+    /// Forces the button visible while in flight: the foreground probe stops
     /// reporting the agent the instant it quits — which is mid-restart — so the
     /// ordinary visibility rule would hide the control halfway through its own
-    /// animation.
+    /// restart.
     func setRefreshSpinning(_ spinning: Bool, success: Bool? = nil) {
         guard let restartButton else { return }
         if spinning {
