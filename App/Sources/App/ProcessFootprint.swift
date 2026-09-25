@@ -4,7 +4,8 @@ import Foundation
 /// Zetty's own memory footprint — the same quantity `footprint -p <pid>`
 /// reports, read in-process so the task manager needs no subprocess for it.
 ///
-/// This is a MEASUREMENT. The per-pane figures recorded in CLAUDE.md
+/// This is a MEASUREMENT. The per-pane figures recorded in
+/// `.hydra/rules/surfaces-and-memory.md`
 /// (~110 MB fixed plus ~37 MB per live pane) are a MODEL, because per-pane GPU
 /// buffers live inside libghostty and are unreachable from Swift. Do not
 /// present the two as the same kind of number.

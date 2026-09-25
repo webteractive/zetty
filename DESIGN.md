@@ -215,7 +215,7 @@ are authoritative.
 - **File viewer overlay** — a transient read-only panel (14pt radius) over the
   content area: header with the file name and a ✕, the syntax-highlighted body
   in a plain `NSTextView`/`NSScrollView`, and a footer with `Open in ▾`. The
-  referenced line is marked with `bg3`. See CLAUDE.md for why this must **not**
+  referenced line is marked with `bg3`. See `.hydra/rules/file-viewer.md` for why this must **not**
   be rebuilt on a hand-rolled TextKit stack.
 - **Sheets** — Project Settings, the agent chooser, the clone sheet, and the
   file copy-back modal are `NSWindow` panels styled from the same tokens.

@@ -34,7 +34,7 @@ struct TileDescriptor {
 /// Auto-Layout'd against it. That is deliberate and mirrors the tab strip's
 /// `+` button: nothing here may constrain the clip's size to its content, or
 /// the grid's intrinsic size becomes a window minimum. See the tab-strip note
-/// in CLAUDE.md — this window's 320pt floor has been broken three times that
+/// in `.hydra/rules/chrome-layout.md` — this window's 320pt floor has been broken three times that
 /// way.
 @MainActor
 final class TileGridView: NSView {
