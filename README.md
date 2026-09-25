@@ -106,6 +106,21 @@ by the tool it's running.
     name it had, with a **Reattach…** action. **The mode itself is
     remembered too** — quit while the grid is up and the next launch comes
     back to it, with the same views open.
+  - **Manage your views** in **View → Manage Tile Views…** (also the command
+    palette, and `+` → **Manage Views…** in the strip). It lists every saved
+    view with its shape, how many of its slots are filled, and whether it is
+    open or showing. From there you can open, rename, duplicate or delete one:
+    double-click or Return opens it, Delete deletes it after asking. Deleting a
+    view never touches its panes, which keep running. Closing a view's pill
+    only closes it; deleting is the one way a view leaves the library.
+  - **Scriptable.** `zetty status` reports the grid while it is up (slots are
+    numbered from 1, in reading order), and while it is up the default CLI
+    target is the focused *tile*. `zetty focus --pane <id>` with the grid up
+    focuses that pane's tile. If the pane's tab is not in the view it attaches
+    it first, filling an empty slot or else splitting the focused tile. Either
+    way you stay in the grid. `zetty tiles attach / detach / split` edit a view
+    without bringing the grid up. `zetty tiles list / new / open / rename /
+    duplicate / delete` manage the library.
   - `zetty-tiles-grid` (default `4x4`) seeds a new view with a uniform shape;
     each profile keeps its own tree thereafter. The status bar carries the
     running/idle count while the grid is up.
@@ -900,6 +915,14 @@ zetty reload                             # same as ⇧⌘,
 zetty tiles                              # toggle the grid
 zetty tiles --off                        # close it (idempotent, for scripts)
 zetty tiles --profile morning            # open a saved tile view by name
+zetty tiles list                         # saved views: ● showing, ○ open, filled/slots
+zetty tiles new "Deep Work"              # make a one-slot view and show it
+zetty tiles rename "Deep Work" --to Review
+zetty tiles duplicate Review             # copy it, slots and all → "Review copy"
+zetty tiles delete "Review copy"         # remove a view (its panes keep running)
+zetty tiles attach --pane 1a2b3c4d       # show a pane's tab in the active view; prints the slot
+zetty tiles split --slot 2 --horizontal  # divide slot 2 top/bottom; prints the new slot
+zetty tiles detach --slot 3 --collapse   # empty slot 3 and merge its split away
 zetty quit --kill-sessions               # full shutdown, ends preserved sessions
 zetty quit --simulate-restart            # run restart recovery, then kill sessions (testing aid)
 ```

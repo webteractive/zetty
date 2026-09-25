@@ -18,6 +18,30 @@ public enum ControlRequest: Equatable, Sendable {
     /// view by name — an unknown name is an ERROR listing the known ones, the
     /// rule `--account` follows. Response `.ok`.
     case tiles(on: Bool?, profile: String?)
+    /// Create a tile view (nil → the next free `Tiles N`), open it and bring
+    /// the grid up. Response `.text` with the name it got.
+    case tileNew(name: String?)
+    /// Rename a saved view (case-insensitive lookup). `.ok`, or an error on a
+    /// blank name or a collision.
+    case tileRename(name: String, newName: String)
+    /// Delete a saved view, closing it first if it is open. No confirmation —
+    /// the CLI call IS the confirmation. The panes it showed are untouched. `.ok`.
+    case tileDelete(name: String)
+    /// Copy a saved view, slots and all. `newName` nil → `<name> copy`.
+    /// Response `.text` with the copy's name.
+    case tileDuplicate(name: String, newName: String?)
+    /// Show the targeted pane's TAB in a tile. `slot` (1-based) fills that one;
+    /// nil keeps a tab already in the view where it is, else fills the first
+    /// hole, else splits the focused slot. `view` names the view to edit (it is
+    /// opened); nil → the active view, or a new one when none is open. Does not
+    /// bring the grid up. Response `.text` with the slot number.
+    case tileAttach(target: PaneSelector, slot: Int?, view: String?)
+    /// Empty a slot (1-based; nil → the focused tile's) — the pane keeps
+    /// running. `collapse` also removes the slot and merges its split. `.ok`.
+    case tileDetach(slot: Int?, collapse: Bool, view: String?)
+    /// Split a slot (1-based; nil → the focused one) side by side, or stacked
+    /// when `vertical` is false. Response `.text` with the new slot's number.
+    case tileSplit(slot: Int?, vertical: Bool, view: String?)
     /// Open a project-less, ephemeral "scratch" terminal (plain shell, not
     /// persisted) in the Scratch sidebar section. Background by default; `focus`
     /// switches to it. Response `.pane` with the new pane's short id.
@@ -108,7 +132,10 @@ public enum ControlRequest: Equatable, Sendable {
     /// switches to it. The response is `.pane` with the moved pane's short id.
     /// Fails when the pane is the only one in its tab.
     case breakPane(target: PaneSelector, focus: Bool)
-    /// Focus the targeted pane (selecting its project/tab).
+    /// Focus the targeted pane (selecting its project/tab). While the grid is
+    /// up it focuses the pane's tile instead and never leaves the grid: a pane
+    /// whose tab is not in the shown view is attached to it first (the
+    /// `TilePlacement` rule).
     case focus(target: PaneSelector)
     /// The targeted pane's recent output (`lines` from the end; nil → all
     /// retained scrollback). Requires the pane's preserved zmx session.
@@ -127,7 +154,7 @@ public enum ControlRequest: Equatable, Sendable {
 
 extension ControlRequest: Codable {
     private enum CodingKeys: String, CodingKey {
-        case command, target, text, enter, keys, project, wholeTab, killSessions, simulateRestart, vertical, lines, path, name, gitInit, focus, fetch, discard, line, column, space, newName, color, icon, account, probe, surface, on, profile
+        case command, target, text, enter, keys, project, wholeTab, killSessions, simulateRestart, vertical, lines, path, name, gitInit, focus, fetch, discard, line, column, space, newName, color, icon, account, probe, surface, on, profile, slot, collapse, view
     }
 
     public init(from decoder: Decoder) throws {
@@ -146,6 +173,31 @@ extension ControlRequest: Codable {
         case "tiles":
             self = .tiles(on: try container.decodeIfPresent(Bool.self, forKey: .on),
                           profile: try container.decodeIfPresent(String.self, forKey: .profile))
+        case "tile-new":
+            self = .tileNew(name: try container.decodeIfPresent(String.self, forKey: .name))
+        case "tile-rename":
+            self = .tileRename(name: try container.decode(String.self, forKey: .name),
+                               newName: try container.decode(String.self, forKey: .newName))
+        case "tile-delete":
+            self = .tileDelete(name: try container.decode(String.self, forKey: .name))
+        case "tile-duplicate":
+            self = .tileDuplicate(name: try container.decode(String.self, forKey: .name),
+                                  newName: try container.decodeIfPresent(String.self, forKey: .newName))
+        case "tile-attach":
+            self = .tileAttach(
+                target: try container.decodeIfPresent(PaneSelector.self, forKey: .target) ?? .focused,
+                slot: try container.decodeIfPresent(Int.self, forKey: .slot),
+                view: try container.decodeIfPresent(String.self, forKey: .view))
+        case "tile-detach":
+            self = .tileDetach(
+                slot: try container.decodeIfPresent(Int.self, forKey: .slot),
+                collapse: try container.decodeIfPresent(Bool.self, forKey: .collapse) ?? false,
+                view: try container.decodeIfPresent(String.self, forKey: .view))
+        case "tile-split":
+            self = .tileSplit(
+                slot: try container.decodeIfPresent(Int.self, forKey: .slot),
+                vertical: try container.decodeIfPresent(Bool.self, forKey: .vertical) ?? true,
+                view: try container.decodeIfPresent(String.self, forKey: .view))
         case "scratch": self = .scratch(focus: try container.decodeIfPresent(Bool.self, forKey: .focus) ?? false)
         case "scratch-clear": self = .scratchClear
         case "send":
@@ -272,6 +324,35 @@ extension ControlRequest: Codable {
             try container.encode("tiles", forKey: .command)
             try container.encodeIfPresent(on, forKey: .on)
             try container.encodeIfPresent(profile, forKey: .profile)
+        case .tileNew(let name):
+            try container.encode("tile-new", forKey: .command)
+            try container.encodeIfPresent(name, forKey: .name)
+        case .tileRename(let name, let newName):
+            try container.encode("tile-rename", forKey: .command)
+            try container.encode(name, forKey: .name)
+            try container.encode(newName, forKey: .newName)
+        case .tileDelete(let name):
+            try container.encode("tile-delete", forKey: .command)
+            try container.encode(name, forKey: .name)
+        case .tileDuplicate(let name, let newName):
+            try container.encode("tile-duplicate", forKey: .command)
+            try container.encode(name, forKey: .name)
+            try container.encodeIfPresent(newName, forKey: .newName)
+        case .tileAttach(let target, let slot, let view):
+            try container.encode("tile-attach", forKey: .command)
+            try container.encode(target, forKey: .target)
+            try container.encodeIfPresent(slot, forKey: .slot)
+            try container.encodeIfPresent(view, forKey: .view)
+        case .tileDetach(let slot, let collapse, let view):
+            try container.encode("tile-detach", forKey: .command)
+            try container.encodeIfPresent(slot, forKey: .slot)
+            try container.encode(collapse, forKey: .collapse)
+            try container.encodeIfPresent(view, forKey: .view)
+        case .tileSplit(let slot, let vertical, let view):
+            try container.encode("tile-split", forKey: .command)
+            try container.encodeIfPresent(slot, forKey: .slot)
+            try container.encode(vertical, forKey: .vertical)
+            try container.encodeIfPresent(view, forKey: .view)
         case .scratch(let focus):
             try container.encode("scratch", forKey: .command)
             try container.encode(focus, forKey: .focus)
@@ -504,7 +585,9 @@ public struct StatusSnapshot: Codable, Equatable, Sendable {
         public let cwd: String?
         public let tool: String?         // probed foreground command
         public let agentStatus: String?  // running / idle / needsAttention
-        public let isFocused: Bool       // focused pane of the active tab
+        /// The focused pane of the active tab — or, while the grid is up, the
+        /// pane the focused TILE shows, since that is where typing goes.
+        public let isFocused: Bool
         /// Whether the pane has a live terminal behind it right now. False for a
         /// background pane whose shell hasn't spawned yet and for every pane of a
         /// hibernated project. `send` materializes a non-live pane on demand, so
@@ -619,23 +702,117 @@ public struct StatusSnapshot: Codable, Equatable, Sendable {
         }
     }
 
+    /// Tile mode: whether the grid is up, what the active view holds, and every
+    /// saved view. Slot numbers are 1-based here and everywhere the CLI takes
+    /// one, because they are counted by people reading the grid.
+    public struct Tiles: Codable, Equatable, Sendable {
+        public struct Slot: Codable, Equatable, Sendable {
+            public let slot: Int
+            /// `pane`, `empty`, or `missing` (its project or tab is gone).
+            public let state: String
+            /// Short id of the pane the tile shows — its tab's focused pane.
+            public let pane: String?
+            public let label: String?
+            public let isFocused: Bool
+
+            public init(slot: Int, state: String, pane: String? = nil,
+                        label: String? = nil, isFocused: Bool = false) {
+                self.slot = slot
+                self.state = state
+                self.pane = pane
+                self.label = label
+                self.isFocused = isFocused
+            }
+
+            private enum CodingKeys: String, CodingKey { case slot, state, pane, label, isFocused }
+
+            public init(from decoder: Decoder) throws {
+                let c = try decoder.container(keyedBy: CodingKeys.self)
+                slot = try c.decode(Int.self, forKey: .slot)
+                state = try c.decodeIfPresent(String.self, forKey: .state) ?? "empty"
+                pane = try c.decodeIfPresent(String.self, forKey: .pane)
+                label = try c.decodeIfPresent(String.self, forKey: .label)
+                isFocused = try c.decodeIfPresent(Bool.self, forKey: .isFocused) ?? false
+            }
+        }
+
+        public struct View: Codable, Equatable, Sendable {
+            public let name: String
+            /// Open as a pill in the strip.
+            public let isOpen: Bool
+            /// The open view the grid shows (or would, when the grid is down).
+            public let isActive: Bool
+            public let slots: Int
+            public let attached: Int
+
+            public init(name: String, isOpen: Bool, isActive: Bool, slots: Int, attached: Int) {
+                self.name = name
+                self.isOpen = isOpen
+                self.isActive = isActive
+                self.slots = slots
+                self.attached = attached
+            }
+
+            private enum CodingKeys: String, CodingKey { case name, isOpen, isActive, slots, attached }
+
+            public init(from decoder: Decoder) throws {
+                let c = try decoder.container(keyedBy: CodingKeys.self)
+                name = try c.decode(String.self, forKey: .name)
+                isOpen = try c.decodeIfPresent(Bool.self, forKey: .isOpen) ?? false
+                isActive = try c.decodeIfPresent(Bool.self, forKey: .isActive) ?? false
+                slots = try c.decodeIfPresent(Int.self, forKey: .slots) ?? 0
+                attached = try c.decodeIfPresent(Int.self, forKey: .attached) ?? 0
+            }
+        }
+
+        /// The grid is on screen.
+        public let active: Bool
+        /// The active view's name, nil when no view is open.
+        public let view: String?
+        /// The active view's slots, in order.
+        public let slots: [Slot]
+        /// Every saved view, in library order.
+        public let views: [View]
+
+        public init(active: Bool, view: String?, slots: [Slot], views: [View]) {
+            self.active = active
+            self.view = view
+            self.slots = slots
+            self.views = views
+        }
+
+        private enum CodingKeys: String, CodingKey { case active, view, slots, views }
+
+        public init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            active = try c.decodeIfPresent(Bool.self, forKey: .active) ?? false
+            view = try c.decodeIfPresent(String.self, forKey: .view)
+            slots = try c.decodeIfPresent([Slot].self, forKey: .slots) ?? []
+            views = try c.decodeIfPresent([View].self, forKey: .views) ?? []
+        }
+    }
+
     public let projects: [Project]
     /// Every Space in sidebar order, including empty ones.
     public let spaces: [Space]
+    /// nil from an app too old to report tile mode.
+    public let tiles: Tiles?
 
-    public init(projects: [Project], spaces: [Space] = []) {
+    public init(projects: [Project], spaces: [Space] = [], tiles: Tiles? = nil) {
         self.projects = projects
         self.spaces = spaces
+        self.tiles = tiles
     }
 
-    private enum CodingKeys: String, CodingKey { case projects, spaces }
+    private enum CodingKeys: String, CodingKey { case projects, spaces, tiles }
 
-    /// Hand-written so `spaces` defaults instead of throwing when an older app
-    /// omits it.
+    /// Hand-written so `spaces` and `tiles` default instead of throwing when an
+    /// older app omits them.
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         projects = try c.decode([Project].self, forKey: .projects)
         spaces = try c.decodeIfPresent([Space].self, forKey: .spaces) ?? []
+        tiles = try c.decodeIfPresent(Tiles.self, forKey: .tiles)
     }
 
     /// Every pane across all projects/tabs, in display order.

@@ -191,6 +191,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         tvc.ghosttyConfiguration = makeTerminalConfiguration()
         tvc.onReloadConfig = { [weak self] in self?.reloadConfiguration(nil) }
         tvc.onShowTaskManager = { [weak self] in self?.showTaskManager() }
+        tvc.onShowTileManager = { [weak self] in self?.showTileManager() }
         tvc.onToggleSessionsMode = { [weak self] in self?.toggleSessionsMode() }
         tvc.onOpenSettings = { [weak self] in self?.openSettings(nil) }
         tvc.onOpenSettingsTab = { [weak self] tab in self?.openSettings(tab: tab) }
@@ -1367,6 +1368,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     /// a close so reopening does not rebuild the whole thing.
     private var taskManagerWindowController: TaskManagerWindowController?
 
+    /// Built once and kept, like the Sessions window.
+    private var tileManagerWindowController: TileManagerWindowController?
+
+    /// Opens the tile manager: every saved tile view, with open, rename,
+    /// duplicate and delete. View menu, the palette and the `+` library menu.
+    @MainActor @objc func showTileManager() {
+        guard let tvc = terminalViewController else { return }
+        if tileManagerWindowController == nil {
+            tileManagerWindowController = TileManagerWindowController(manager: tvc.makeTileManagerView())
+        }
+        tileManagerWindowController?.show()
+    }
+
     /// Toggles the grid of running sessions. Menu, palette, prefix `g` and
     /// `zetty tiles` all land here.
     @MainActor @objc func toggleTileMode() {
@@ -1922,6 +1936,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             }
             if let on { tvc.setTileMode(on) } else { tvc.toggleTileMode() }
             return .ok
+        case .tileNew, .tileRename, .tileDelete, .tileDuplicate,
+             .tileAttach, .tileDetach, .tileSplit:
+            return tvc.handleTileRequest(request)
         case .viewFile(let path, let line, let column):
             if let message = tvc.presentFileViewer(path: path, line: line, column: column) {
                 return .error(message)
@@ -2560,6 +2577,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         tiles.keyEquivalentModifierMask = [.command, .shift]
         tiles.target = self
         viewMenu.addItem(tiles)
+
+        // No key equivalent: a library editor is visited, not toggled.
+        let manageTiles = NSMenuItem(title: "Manage Tile Views\u{2026}",
+                                     action: #selector(showTileManager),
+                                     keyEquivalent: "")
+        manageTiles.target = self
+        viewMenu.addItem(manageTiles)
 
         // "Toggle Sidebar"  ⌘B
         let toggleSidebar = NSMenuItem(

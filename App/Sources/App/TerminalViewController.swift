@@ -804,6 +804,7 @@ final class TerminalViewController: NSViewController {
         // surfaces — background, empty label, and each tile's focus border —
         // have to be told about the new scheme explicitly.
         tileGridView?.applyTheme()
+        tileManagerView?.applyTheme()
         // An open overlay keeps focus — taking it back would break its Esc.
         if fileViewerOverlay == nil, let focused = focusedTerminalView() {
             view.window?.makeFirstResponder(focused)
@@ -2967,6 +2968,7 @@ final class TerminalViewController: NSViewController {
             PaletteCommand(glyph: "▦", label: "Tile Running Sessions", kbd: "⇧⌘G") { [weak self] in self?.toggleTileMode() },
             PaletteCommand(glyph: "▦", label: "New Tile View", kbd: "") { [weak self] in self?.setTileMode(true); self?.newTileView() },
             PaletteCommand(glyph: "✎", label: "Rename Tile View…", kbd: "") { [weak self] in self?.configureActiveTileView() },
+            PaletteCommand(glyph: "▦", label: "Manage Tile Views…", kbd: "") { [weak self] in self?.onShowTileManager?() },
             PaletteCommand(glyph: "⇉", label: "Broadcast: Tab", kbd: "") { [weak self] in self?.setBroadcast(.currentTab) },
             PaletteCommand(glyph: "⇉", label: "Broadcast: Project", kbd: "") { [weak self] in self?.setBroadcast(.project) },
             PaletteCommand(glyph: "⇉", label: "Broadcast: Agents", kbd: "") { [weak self] in self?.setBroadcast(.agents) },
@@ -3170,6 +3172,12 @@ final class TerminalViewController: NSViewController {
         // which DOES need to tolerate a hand-edited/duplicated rootPath, lives
         // in `WorkspaceModel.effectiveSpaceID(of:)` below.)
         let spaceNames = Dictionary(uniqueKeysWithValues: workspace.spaces.map { ($0.id, $0.name) })
+        // While the grid is up, typing goes to the focused TILE, so that is the
+        // pane `isFocused` names — and therefore the default CLI target. With no
+        // tile focused (the chooser) it falls back to the ordinary rule rather
+        // than naming nothing, which would send the default target to whatever
+        // pane happened to be listed first.
+        let tileFocus = tileMode ? tileFocusedSurfaceID : nil
         let projects = workspace.projects.enumerated().map { pIdx, project -> StatusSnapshot.Project in
             let isActiveProject = pIdx == workspace.activeIndex
             let tabs = project.tabList.trees.enumerated().map { tIdx, tree -> StatusSnapshot.Tab in
@@ -3181,7 +3189,8 @@ final class TerminalViewController: NSViewController {
                         cwd: PaneCwdStore.read(surface.id) ?? registry.workingDirectory(for: surface) ?? surface.workingDir,
                         tool: foregroundBySurface[surface.id].flatMap { $0.isEmpty ? nil : $0 },
                         agentStatus: agentDetector.state(for: surface.id).status?.rawValue,
-                        isFocused: isActiveTab && surface.id == tree.focusedSurfaceID,
+                        isFocused: tileFocus.map { $0 == surface.id }
+                            ?? (isActiveTab && surface.id == tree.focusedSurfaceID),
                         live: registry.isLive(surface.id),
                         // Named, not id'd — and only when it isn't the default
                         // login, so the field stays absent for anyone who
@@ -3204,7 +3213,8 @@ final class TerminalViewController: NSViewController {
                                          space: effectiveSpaceID.flatMap { spaceNames[$0] }, tabs: tabs)
         }
         return StatusSnapshot(projects: projects,
-                               spaces: workspace.spaces.map { .init(name: $0.name, collapsed: $0.isCollapsed) })
+                               spaces: workspace.spaces.map { .init(name: $0.name, collapsed: $0.isCollapsed) },
+                               tiles: tileStatus())
     }
 
     /// Injects text/keys into the targeted pane (CLI `send`). Returns an error
@@ -3777,6 +3787,9 @@ final class TerminalViewController: NSViewController {
             }
             refreshTabBar()
             refreshSidebar()
+            // A tile showing the closed pane now shows its tab's next one, or
+            // reads as missing when the whole tab went.
+            refreshTilesAfterWorkspaceEdit()
             onWorkspaceDidChange?()
             return nil
         } catch {
@@ -3809,7 +3822,17 @@ final class TerminalViewController: NSViewController {
                 return .failure(.noSuchPane("split failed"))
             }
 
-            if focus {
+            if tileMode {
+                // No pane tree is on screen, so the split lands in the model
+                // and the grid re-resolves. The tile keeps showing whichever
+                // pane its tab focuses — the original, unless `--focus` moved it.
+                if focus {
+                    focusPaneInTiles(at: (location.projectIndex, location.tabIndex, newID))
+                } else {
+                    refreshTilesAfterWorkspaceEdit()
+                }
+                refreshSidebar()
+            } else if focus {
                 focusPane(at: (location.projectIndex, location.tabIndex, newID))
             } else if location.projectIndex == workspace.activeIndex,
                       tabList.activeIndex == location.tabIndex {
@@ -3850,7 +3873,18 @@ final class TerminalViewController: NSViewController {
             }
             let newTabIndex = location.tabIndex + 1
 
-            if focus {
+            if tileMode {
+                // Switching tabs behind the grid would change the active project,
+                // which tile mode never does. `--focus` shows the new tab in the
+                // grid instead.
+                refreshSidebar()
+                if focus {
+                    focusPaneInTiles(at: (location.projectIndex, newTabIndex, movedID))
+                } else {
+                    refreshTilesAfterWorkspaceEdit()
+                    spawnPaneInBackground((location.projectIndex, newTabIndex, movedID))
+                }
+            } else if focus {
                 tabList.select(index: newTabIndex)
                 revealProject(at: location.projectIndex)
                 refreshTabBar()
@@ -3886,7 +3920,11 @@ final class TerminalViewController: NSViewController {
         do {
             let pane = try target.resolve(in: statusSnapshot().panes)
             guard let location = locate(shortID: pane.id) else { return "pane \(pane.id) not found" }
-            focusPane(at: location)
+            if tileMode {
+                focusPaneInTiles(at: location)
+            } else {
+                focusPane(at: location)
+            }
             return nil
         } catch {
             return error.localizedDescription
@@ -4337,7 +4375,12 @@ final class TerminalViewController: NSViewController {
     private func persistTileLibrary() {
         do { try tileProfileStore?.save(tileLibrary) }
         catch { ZettyLog.chrome.log("tiles: profile save failed — \(error)") }
+        tileManagerView?.reload()
     }
+
+    /// The manager window's table, while it exists. Weak: the window
+    /// controller owns it, and a closed window is not worth reloading.
+    weak var tileManagerView: TileManagerView?
 
     /// Loads the library and restores the views that were open. Seeds All
     /// Running once, so the first ⇧⌘G is never an empty grid.
@@ -4383,6 +4426,341 @@ final class TerminalViewController: NSViewController {
             refreshTileGrid()
         }
         enqueueMissingTileSurfaces()
+    }
+
+    // MARK: Tile control — shared by `zetty tiles` and the manager window
+
+    /// A slot naming the tab at `projectIndex`/`tabIndex`, labelled the way
+    /// every attach path labels it.
+    private func tileSlot(forTabAt projectIndex: Int, _ tabIndex: Int) -> TileSlot? {
+        guard workspace.projects.indices.contains(projectIndex) else { return nil }
+        let project = workspace.projects[projectIndex]
+        guard project.tabList.trees.indices.contains(tabIndex) else { return nil }
+        let tree = project.tabList.trees[tabIndex]
+        return TileSlot(projectRoot: project.rootPath, tabID: tree.id,
+                        label: "\(project.name) / \(tabDisplayTitle(for: tree, at: tabIndex))")
+    }
+
+    /// Makes `surfaceID` the pane its tab focuses. A tile shows its TAB's
+    /// focused pane, so this is what makes a tile show one particular pane of a
+    /// split tab — without selecting the tab, which would change the active
+    /// project behind the grid.
+    private func setTabFocus(_ location: (projectIndex: Int, tabIndex: Int, surfaceID: UUID)) {
+        guard workspace.projects.indices.contains(location.projectIndex) else { return }
+        let tabList = workspace.projects[location.projectIndex].tabList
+        guard tabList.trees.indices.contains(location.tabIndex) else { return }
+        var tree = tabList.trees[location.tabIndex]
+        guard tree.focusedSurfaceID != location.surfaceID else { return }
+        tree.focus(location.surfaceID)
+        tabList.replaceTree(at: location.tabIndex, with: tree)
+    }
+
+    /// `zetty focus` while the grid is up: focus the pane's TILE, attaching its
+    /// tab to the shown view first when it is not there (`TilePlacement`: the
+    /// first hole, else a split of the focused tile). Never leaves the grid and
+    /// never changes the active project — a script driving the grid must not
+    /// knock you out of it.
+    private func focusPaneInTiles(at location: (projectIndex: Int, tabIndex: Int, surfaceID: UUID)) {
+        guard let slot = tileSlot(forTabAt: location.projectIndex, location.tabIndex) else { return }
+        setTabFocus(location)
+        if activeTileProfile == nil {
+            // The chooser is up: there is no view to attach into, so make one.
+            selectTileView(at: createTileView(named: nil))
+        }
+        let focused = tileFocusedSlot
+        mutateActiveTileProfile { $0.place(slot, focusedSlot: focused) }
+        enqueueMissingTileSurfaces()
+        refreshSidebar()
+        focusTile(location.surfaceID)
+        onWorkspaceDidChange?()
+    }
+
+    /// Re-resolves the grid after the workspace changed underneath it — a pane
+    /// split, closed or broken out by the CLI. A tile follows its TAB, so the
+    /// grid only has to look again; focus moves on only if its pane is gone.
+    private func refreshTilesAfterWorkspaceEdit() {
+        guard tileMode else { return }
+        let focusable = tileFocusableIDs
+        if let id = tileFocusedSurfaceID, !focusable.contains(id) {
+            tileFocusedSurfaceID = focusable.first
+        }
+        rebuildSurfaceNodeView()
+        enqueueMissingTileSurfaces()
+    }
+
+    /// The focused tile's slot, or nil when no tile is focused.
+    private var tileFocusedSlot: Int? {
+        guard let id = tileFocusedSurfaceID else { return nil }
+        return tileResolution().firstIndex {
+            if case .pane(_, _, let slotID) = $0 { return slotID == id }
+            return false
+        }
+    }
+
+    /// Adds a view to the library and the strip, returning its strip index.
+    /// Selecting it is the caller's call: the CLI edits views the grid is not
+    /// showing, and a rebuild for a grid nobody is looking at is churn.
+    @discardableResult
+    private func createTileView(named name: String?) -> Int {
+        let resolved = name.flatMap { try? tileLibrary.validatedName($0) }
+            ?? tileLibrary.nextDefaultName()
+        let profile = TileProfile(name: resolved, root: .slot)
+        tileLibrary.profiles.append(profile)
+        persistTileLibrary()
+        openTileViews.append(profile)
+        return openTileViews.count - 1
+    }
+
+    /// Selects a strip view — through the full `selectTileView` while the grid
+    /// is up, or by moving the index alone while it is down.
+    private func showTileView(at index: Int) {
+        if tileMode {
+            selectTileView(at: index)
+        } else if openTileViews.indices.contains(index) {
+            activeTileViewIndex = index
+        }
+    }
+
+    /// The view a CLI slot verb edits: the named one (opened if it was not),
+    /// else the active one — or a fresh one when none is open and the verb can
+    /// build from nothing.
+    private func activateTileView(named name: String?, createIfNone: Bool) throws {
+        if let name {
+            let profile = try tileLibrary.requireProfile(named: name)
+            if let open = openTileViews.firstIndex(where: { $0.id == profile.id }) {
+                if open != activeTileViewIndex { showTileView(at: open) }
+            } else {
+                openTileViews.append(profile)
+                showTileView(at: openTileViews.count - 1)
+            }
+            return
+        }
+        guard activeTileProfile == nil else { return }
+        guard createIfNone else {
+            throw TileCommandFailure("no tile view is open — pass --view <name>, or zetty tiles new")
+        }
+        showTileView(at: createTileView(named: nil))
+    }
+
+    /// A 1-based CLI slot number as an index into the active view, checked
+    /// against its layout. nil → the focused tile, then `fallbackToLast`.
+    private func tileSlotIndex(_ slot: Int?, fallbackToLast: Bool) throws -> Int {
+        guard let profile = activeTileProfile else {
+            throw TileCommandFailure("no tile view is open")
+        }
+        if let slot {
+            guard (1...max(1, profile.capacity)).contains(slot), profile.capacity > 0 else {
+                throw TileCommandFailure("'\(profile.name)' has \(profile.capacity) slot"
+                    + (profile.capacity == 1 ? "" : "s") + " — no slot \(slot)")
+            }
+            return slot - 1
+        }
+        if let focused = tileFocusedSlot { return focused }
+        guard fallbackToLast else {
+            throw TileCommandFailure("no tile is focused — pass --slot <n>")
+        }
+        return max(0, profile.capacity - 1)
+    }
+
+    /// Moves tile focus on when the focused pane is no longer in the view.
+    private func reseedTileFocusIfGone() {
+        guard let id = tileFocusedSurfaceID, !tileFocusableIDs.contains(id) else { return }
+        tileFocusedSurfaceID = tileFocusableIDs.first
+        refreshTileGrid()
+    }
+
+    func renameTileProfile(id: UUID, to name: String) throws {
+        guard let renamed = try tileLibrary.rename(id: id, to: name) else { return }
+        for index in openTileViews.indices where openTileViews[index].id == id {
+            openTileViews[index].name = renamed.name
+        }
+        persistTileLibrary()
+        refreshTabBar()
+    }
+
+    @discardableResult
+    func duplicateTileProfile(id: UUID, name: String? = nil) throws -> TileProfile {
+        guard let copy = try tileLibrary.duplicate(id: id, name: name) else {
+            throw TileCommandFailure("that tile view no longer exists")
+        }
+        persistTileLibrary()
+        return copy
+    }
+
+    /// Deletes a view from the library, closing it first if it is open. The
+    /// panes it showed are untouched — a view only ever pointed at them.
+    func deleteTileProfile(id: UUID) {
+        guard tileLibrary.delete(id: id) != nil else { return }
+        if let open = openTileViews.firstIndex(where: { $0.id == id }) {
+            let wasActive = open == activeTileViewIndex
+            openTileViews.remove(at: open)
+            // Closing another view must not switch the one on screen.
+            if open < activeTileViewIndex { activeTileViewIndex -= 1 }
+            activeTileViewIndex = min(max(0, activeTileViewIndex), max(0, openTileViews.count - 1))
+            if tileMode {
+                if wasActive, !openTileViews.isEmpty {
+                    selectTileView(at: activeTileViewIndex)
+                } else {
+                    if wasActive { tileFocusedSurfaceID = nil }
+                    rebuildSurfaceNodeView()
+                    refreshTabBar()
+                }
+            }
+        }
+        persistTileLibrary()
+        onWorkspaceDidChange?()
+    }
+
+    /// Opens a saved view and brings the grid up — the manager's Open.
+    func openTileProfile(_ id: UUID) {
+        setTileMode(true)
+        openTileView(profileID: id)
+        view.window?.makeKeyAndOrderFront(nil)
+    }
+
+    /// Makes a fresh view, opens it, and returns its id — the manager's New.
+    @discardableResult
+    func newTileViewFromManager() -> UUID? {
+        newTileView()
+        return activeTileProfile?.id
+    }
+
+    /// What the manager window lists, in library order.
+    var tileManagerRows: [TileManagerRow] {
+        tileLibrary.profiles.map { profile in
+            TileManagerRow(
+                id: profile.id, name: profile.name, root: profile.root,
+                capacity: profile.capacity,
+                attached: profile.slots.prefix(profile.capacity).compactMap { $0 }.count,
+                isOpen: openTileViews.contains { $0.id == profile.id },
+                isShowing: tileMode && activeTileProfile?.id == profile.id)
+        }
+    }
+
+    /// The `tiles` block of `zetty status`. Slots are reported up to the
+    /// layout's capacity only — that is what the grid draws, and what slot
+    /// numbers index.
+    private func tileStatus() -> StatusSnapshot.Tiles {
+        var slots: [StatusSnapshot.Tiles.Slot] = []
+        if let profile = activeTileProfile {
+            for (index, resolved) in tileResolution().prefix(profile.capacity).enumerated() {
+                switch resolved {
+                case .empty:
+                    slots.append(.init(slot: index + 1, state: "empty"))
+                case .missing(let label):
+                    slots.append(.init(slot: index + 1, state: "missing", label: label))
+                case .pane(_, _, let id):
+                    slots.append(.init(
+                        slot: index + 1, state: "pane",
+                        pane: SessionPersistence.shortID(for: id),
+                        label: paneLabel(for: id),
+                        isFocused: tileMode && id == tileFocusedSurfaceID))
+                }
+            }
+        }
+        let views = tileLibrary.profiles.map { profile in
+            StatusSnapshot.Tiles.View(
+                name: profile.name,
+                isOpen: openTileViews.contains { $0.id == profile.id },
+                isActive: activeTileProfile?.id == profile.id,
+                slots: profile.capacity,
+                attached: profile.slots.prefix(profile.capacity).compactMap { $0 }.count)
+        }
+        return StatusSnapshot.Tiles(active: tileMode, view: activeTileProfile?.name,
+                                    slots: slots, views: views)
+    }
+
+    /// Every `zetty tiles …` verb past the toggle. Main thread, like the
+    /// rest of `handleOnMain`; errors come back as `.error` with the message
+    /// the CLI prints.
+    func handleTileRequest(_ request: ControlRequest) -> ControlResponse {
+        let response = performTileRequest(request)
+        // Any of them can change which views are open, which `Workspace`
+        // persists beside the layout.
+        if case .error = response {} else { onWorkspaceDidChange?() }
+        return response
+    }
+
+    private func performTileRequest(_ request: ControlRequest) -> ControlResponse {
+        do {
+            switch request {
+            case .tileNew(let name):
+                if let name { _ = try tileLibrary.validatedName(name) }
+                let index = createTileView(named: name)
+                setTileMode(true)
+                selectTileView(at: index)
+                return .text(openTileViews[index].name)
+
+            case .tileRename(let name, let newName):
+                try renameTileProfile(id: try tileLibrary.requireProfile(named: name).id, to: newName)
+                return .ok
+
+            case .tileDelete(let name):
+                deleteTileProfile(id: try tileLibrary.requireProfile(named: name).id)
+                return .ok
+
+            case .tileDuplicate(let name, let newName):
+                let source = try tileLibrary.requireProfile(named: name)
+                return .text(try duplicateTileProfile(id: source.id, name: newName).name)
+
+            case .tileAttach(let target, let slot, let view):
+                let pane = try target.resolve(in: statusSnapshot().panes)
+                guard let location = locate(shortID: pane.id),
+                      let tileSlot = tileSlot(forTabAt: location.projectIndex, location.tabIndex)
+                else { throw TileCommandFailure("pane \(pane.id) not found") }
+                try activateTileView(named: view, createIfNone: true)
+                // Show the pane that was named — unless its tab is the one on
+                // screen outside the grid, where moving its focus would move
+                // the caret out from under whoever is typing.
+                let onScreen = !tileMode
+                    && location.projectIndex == workspace.activeIndex
+                    && workspace.activeTabList.activeIndex == location.tabIndex
+                if !onScreen { setTabFocus(location) }
+                var landed = 0
+                if let slot {
+                    let index = try tileSlotIndex(slot, fallbackToLast: false)
+                    mutateActiveTileProfile { $0.attach(tileSlot, at: index) }
+                    landed = index
+                } else {
+                    let focused = tileFocusedSlot
+                    mutateActiveTileProfile { landed = $0.place(tileSlot, focusedSlot: focused).slot }
+                }
+                // Background, like every other CLI verb: the tile appears, focus
+                // stays where it was.
+                reseedTileFocusIfGone()
+                enqueueMissingTileSurfaces()
+                return .text("\(landed + 1)")
+
+            case .tileDetach(let slot, let collapse, let view):
+                try activateTileView(named: view, createIfNone: false)
+                let index = try tileSlotIndex(slot, fallbackToLast: false)
+                guard let profile = activeTileProfile else { return .ok }
+                if collapse {
+                    guard profile.capacity > 1 else {
+                        throw TileCommandFailure("slot \(index + 1) is the only slot in '\(profile.name)'")
+                    }
+                    mutateActiveTileProfile { $0.close(at: index) }
+                } else {
+                    guard profile.slots.indices.contains(index), profile.slots[index] != nil else {
+                        throw TileCommandFailure("slot \(index + 1) is already empty — --collapse removes it")
+                    }
+                    mutateActiveTileProfile { $0.detach(at: index) }
+                }
+                reseedTileFocusIfGone()
+                return .ok
+
+            case .tileSplit(let slot, let vertical, let view):
+                try activateTileView(named: view, createIfNone: true)
+                let index = try tileSlotIndex(slot, fallbackToLast: true)
+                mutateActiveTileProfile { $0.split(at: index, direction: vertical ? .vertical : .horizontal) }
+                return .text("\(index + 2)")
+
+            default:
+                return .error("internal: not a tile verb")
+            }
+        } catch {
+            return .error(error.localizedDescription)
+        }
     }
 
     /// Where each slot of the active view currently points.
@@ -4510,6 +4888,11 @@ final class TerminalViewController: NSViewController {
                              keyEquivalent: "")
         new.target = self
         menu.addItem(new)
+        let manage = NSMenuItem(title: "Manage Views\u{2026}",
+                                action: #selector(manageTileViewsFromMenu),
+                                keyEquivalent: "")
+        manage.target = self
+        menu.addItem(manage)
 
         menu.popUp(positioning: nil,
                    at: NSPoint(x: 0, y: anchor.bounds.height), in: anchor)
@@ -4522,6 +4905,8 @@ final class TerminalViewController: NSViewController {
 
     @objc private func newTileViewFromMenu() { newTileView() }
 
+    @objc private func manageTileViewsFromMenu() { onShowTileManager?() }
+
     @objc private func configureTileViewFromMenu() { configureActiveTileView() }
 
     /// A sidebar tab row dropped on a slot. Goes through the SAME mutation the
@@ -4529,14 +4914,7 @@ final class TerminalViewController: NSViewController {
     /// three behaviours.
     @discardableResult
     func attachSidebarTabToTile(projectIndex: Int, tabIndex: Int, slot: Int) -> Bool {
-        guard tileMode,
-              workspace.projects.indices.contains(projectIndex) else { return false }
-        let project = workspace.projects[projectIndex]
-        guard project.tabList.trees.indices.contains(tabIndex) else { return false }
-        let tree = project.tabList.trees[tabIndex]
-        let tileSlot = TileSlot(
-            projectRoot: project.rootPath, tabID: tree.id,
-            label: "\(project.name) / \(tabDisplayTitle(for: tree, at: tabIndex))")
+        guard tileMode, let tileSlot = tileSlot(forTabAt: projectIndex, tabIndex) else { return false }
         attachAndFocus(tileSlot, at: slot)
         return true
     }
@@ -4552,13 +4930,7 @@ final class TerminalViewController: NSViewController {
     /// first hole, or appended past the end — `attach(_:at:)` grows the list.
     func addSurfaceToTileView(_ surfaceID: UUID, profileID: UUID?) {
         guard let found = location(ofSurface: surfaceID),
-              workspace.projects.indices.contains(found.projectIndex) else { return }
-        let project = workspace.projects[found.projectIndex]
-        guard project.tabList.trees.indices.contains(found.tabIndex) else { return }
-        let tree = project.tabList.trees[found.tabIndex]
-        let slot = TileSlot(
-            projectRoot: project.rootPath, tabID: tree.id,
-            label: "\(project.name) / \(tabDisplayTitle(for: tree, at: found.tabIndex))")
+              let slot = tileSlot(forTabAt: found.projectIndex, found.tabIndex) else { return }
 
         setTileMode(true)
         guard let profileID else {
@@ -4597,12 +4969,9 @@ final class TerminalViewController: NSViewController {
     /// whose answer the first two clicks would change anyway. The name is
     /// generated and editable afterwards from `Rename View\u{2026}`.
     func newTileView(then completion: (() -> Void)? = nil) {
-        let profile = TileProfile(name: "Tiles \(tileLibrary.profiles.count + 1)", root: .slot)
-        tileLibrary.profiles.append(profile)
-        persistTileLibrary()
-        openTileViews.append(profile)
+        let index = createTileView(named: nil)
         setTileMode(true)
-        selectTileView(at: openTileViews.count - 1)
+        selectTileView(at: index)
         completion?()
     }
 
@@ -4619,9 +4988,9 @@ final class TerminalViewController: NSViewController {
         alert.accessoryView = field
         alert.beginSheetModal(for: window) { [weak self] response in
             guard response == .alertFirstButtonReturn else { return }
-            let name = field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !name.isEmpty else { return }
-            self?.mutateActiveTileProfile { $0.name = name }
+            guard let self else { return }
+            do { try self.renameTileProfile(id: active.id, to: field.stringValue) }
+            catch { self.presentTileRenameError(error) }
         }
     }
 
@@ -4636,6 +5005,7 @@ final class TerminalViewController: NSViewController {
             activeTileViewIndex = 0
             rebuildSurfaceNodeView()
             refreshTabBar()
+            tileManagerView?.reload()
             return
         }
         selectTileView(at: min(index, openTileViews.count - 1))
@@ -4648,10 +5018,27 @@ final class TerminalViewController: NSViewController {
         enqueueMissingTileSurfaces()
         rebuildSurfaceNodeView()
         refreshTabBar()
+        tileManagerView?.reload()
     }
 
+    /// The strip's inline rename. A clash is refused rather than allowed:
+    /// two views with one name could not be told apart by `zetty tiles`.
     func renameActiveTileView(to name: String) {
-        mutateActiveTileProfile { $0.name = name }
+        guard let active = activeTileProfile else { return }
+        do { try renameTileProfile(id: active.id, to: name) }
+        catch {
+            refreshTabBar()
+            presentTileRenameError(error)
+        }
+    }
+
+    func presentTileRenameError(_ error: Error) {
+        guard let window = view.window else { return }
+        let alert = NSAlert()
+        alert.messageText = "Couldn\u{2019}t rename the view"
+        alert.informativeText = error.localizedDescription.prefix(1).uppercased()
+            + error.localizedDescription.dropFirst() + "."
+        alert.beginSheetModal(for: window)
     }
 
     func moveTileView(from source: Int, to destination: Int) {
@@ -4670,6 +5057,7 @@ final class TerminalViewController: NSViewController {
     func setTileMode(_ on: Bool) {
         guard tileMode != on else { return }
         tileMode = on
+        defer { tileManagerView?.reload() }
         // `Open ▾` folds away while the grid is up; each tile carries its own.
         statusBarView?.isTileMode = on
         // The strip's contents change with the mode, and `refreshTabBar`
@@ -4843,15 +5231,7 @@ final class TerminalViewController: NSViewController {
     /// The slot the focus ring is on, or the first empty one when nothing is
     /// focused — so splitting works in a view you have not typed into yet.
     private var focusedTileSlotIndex: Int? {
-        let resolved = tileResolution()
-        if let id = tileFocusedSurfaceID {
-            let match = resolved.firstIndex {
-                if case .pane(_, _, let slotID) = $0 { return slotID == id }
-                return false
-            }
-            if let match { return match }
-        }
-        return resolved.indices.first
+        tileFocusedSlot ?? tileResolution().indices.first
     }
 
     func beginRenameActiveTileView() {
@@ -4926,6 +5306,20 @@ final class TerminalViewController: NSViewController {
 
     /// Builds a Sessions view wired to this controller's data and actions.
     /// Both hosts use it, so the drawer and the window cannot diverge.
+    /// The tile manager's content. The controller keeps a weak reference so
+    /// every library change reloads it.
+    func makeTileManagerView() -> TileManagerView {
+        let manager = TileManagerView(
+            rows: { [weak self] in self?.tileManagerRows ?? [] },
+            onOpen: { [weak self] id in self?.openTileProfile(id) },
+            onRename: { [weak self] id, name in try self?.renameTileProfile(id: id, to: name) },
+            onDuplicate: { [weak self] id in try self?.duplicateTileProfile(id: id).id },
+            onDelete: { [weak self] id in self?.deleteTileProfile(id: id) },
+            onNew: { [weak self] in self?.newTileViewFromManager() })
+        tileManagerView = manager
+        return manager
+    }
+
     func makeSessionsView(mode: SessionsViewMode) -> SessionsView {
         SessionsView(
             mode: mode,
@@ -4972,6 +5366,8 @@ final class TerminalViewController: NSViewController {
 
     /// Raised by the palette and the Window menu; AppDelegate owns the window.
     var onShowTaskManager: (() -> Void)?
+    /// Opens the tile manager window (AppDelegate owns it, like Sessions).
+    var onShowTileManager: (() -> Void)?
 
     /// The task manager's rows, assembled here because everything they need is
     /// private or main-only: `location(ofSurface:)`, the workspace, and the
@@ -6794,4 +7190,11 @@ extension TerminalViewController: NSMenuItemValidation {
         }
         return true
     }
+}
+
+
+/// A `zetty tiles` refusal, carrying the message the CLI prints.
+struct TileCommandFailure: LocalizedError {
+    let errorDescription: String?
+    init(_ message: String) { errorDescription = message }
 }

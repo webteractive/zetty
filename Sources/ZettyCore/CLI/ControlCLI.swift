@@ -112,7 +112,10 @@ public enum ControlCLI {
                                               the background; --focus switches to it.
                                               Prints the moved pane's id
       zetty focus (--pane <id> | --cwd <path>)
-                                              focus a pane (selects its project/tab)
+                                              focus a pane (selects its project/tab).
+                                              With the grid up it focuses the pane's
+                                              tile instead, attaching it to the shown
+                                              view first when it is not in it
       zetty close (--pane <id> | --cwd <path>) [--tab]
                                               close a pane (a tab's last pane closes
                                               the tab; --tab closes the whole tab)
@@ -120,6 +123,23 @@ public enum ControlCLI {
       zetty tiles [--on|--off] [--profile <name>]
                                             toggle the grid of running sessions (⇧⌘G);
                                             --profile opens a saved tile view by name
+      zetty tiles list [--json]             saved tile views (● showing, ○ open)
+      zetty tiles open <name>               open a saved view and show the grid
+      zetty tiles new [<name>]              create a view and show it; prints its name
+      zetty tiles rename <old> <new> | rename <old> --to <new>
+      zetty tiles duplicate <name> [<new>]  copy a view, slots and all; prints the name
+      zetty tiles delete <name>             delete a saved view (its panes keep running)
+      zetty tiles attach [--pane <id> | --cwd <path>] [--slot <n>] [--view <name>]
+                                            show a pane's tab in a tile: its slot if
+                                              already there, else --slot, else the first
+                                              empty slot, else split the focused one.
+                                              Prints the slot number (1-based)
+      zetty tiles detach [--slot <n>] [--collapse] [--view <name>]
+                                            empty a slot (default: the focused tile);
+                                              --collapse also merges its split away
+      zetty tiles split [--slot <n>] [--horizontal] [--view <name>]
+                                            split a slot side by side (stacked with
+                                              --horizontal); prints the new slot number
       zetty scratch [--focus]               open a project-less, ephemeral terminal
                                               (Scratch section) in the background;
                                               --focus switches to it. Prints its
@@ -142,6 +162,11 @@ public enum ControlCLI {
         cwd, running tool, agent status, focus, plus `hibernated` per project and
         `live` per pane). `new-tab`/`split` print just the pane id, so:
         zetty send --pane "$(zetty new-tab)" ls --enter
+      - `status --json` also carries `tiles`: whether the grid is up, the active
+        view's slots (numbered from 1, in reading order) and every saved view.
+        While the grid is up, `isFocused` marks the focused TILE's pane, so the
+        default send/capture target is what you are looking at. `tiles attach`,
+        `detach` and `split` edit a view without bringing the grid up.
       - new-tab/split/break/scratch run in the BACKGROUND by default: they never
         change the active project or keyboard focus, so an agent can reshape the
         workspace while you keep typing. Pass --focus to switch to the result.
@@ -239,14 +264,7 @@ public enum ControlCLI {
         case "reload":
             return expectOK(.reload, success: "reloaded")
         case "tiles":
-            let on: Bool? = arguments.contains("--off") ? false
-                : (arguments.contains("--on") ? true : nil)
-            var profile: String?
-            if let flag = arguments.firstIndex(of: "--profile"),
-               arguments.indices.contains(flag + 1) {
-                profile = arguments[flag + 1]
-            }
-            return expectOK(.tiles(on: on, profile: profile), success: "ok")
+            return runTiles(arguments)
         case "scratch":
             return runScratch(arguments)
         case "scratch-clear":
@@ -912,6 +930,186 @@ public enum ControlCLI {
         return expectOK(.close(target: target, wholeTab: wholeTab), success: nil)
     }
 
+    // MARK: - tiles
+
+    /// What a `zetty tiles …` line asks for. Pure, so the grammar is testable
+    /// without a running app.
+    public enum TilesParse: Equatable {
+        case request(ControlRequest)
+        /// `tiles list` — answered from `status`, which already carries it.
+        case list(json: Bool)
+        case help
+        case failure(String)
+    }
+
+    public static func parseTiles(_ arguments: [String]) -> TilesParse {
+        guard let sub = arguments.first, !sub.hasPrefix("-") else {
+            return parseTilesToggle(arguments)
+        }
+        let rest = Array(arguments.dropFirst())
+        if rest.contains("--help") || rest.contains("-h") { return .help }
+        switch sub {
+        case "help":
+            return .help
+        case "list", "ls":
+            for arg in rest where arg != "--json" {
+                return .failure("unknown argument \"\(arg)\"")
+            }
+            return .list(json: rest.contains("--json"))
+        case "open":
+            guard !rest.isEmpty else { return .failure("tiles open needs a view name") }
+            return .request(.tiles(on: true, profile: rest.joined(separator: " ")))
+        case "new":
+            return .request(.tileNew(name: rest.isEmpty ? nil : rest.joined(separator: " ")))
+        case "delete", "rm":
+            guard !rest.isEmpty else { return .failure("tiles delete needs a view name") }
+            return .request(.tileDelete(name: rest.joined(separator: " ")))
+        case "rename":
+            switch splitPair(rest) {
+            case .some((let name, .some(let newName))):
+                return .request(.tileRename(name: name, newName: newName))
+            default:
+                return .failure("usage: zetty tiles rename <old> <new> | rename <old> --to <new>")
+            }
+        case "duplicate", "dup":
+            guard let (name, newName) = splitPair(rest) else {
+                return .failure("usage: zetty tiles duplicate <name> [<new>] | duplicate <name> --to <new>")
+            }
+            return .request(.tileDuplicate(name: name, newName: newName))
+        case "attach", "detach", "split":
+            return parseTileSlotVerb(sub, rest)
+        default:
+            return .failure("unknown tiles command \"\(sub)\"")
+        }
+    }
+
+    /// The original form: `tiles [--on|--off] [--profile <name>]`.
+    private static func parseTilesToggle(_ arguments: [String]) -> TilesParse {
+        var on: Bool?
+        var profile: String?
+        var index = 0
+        while index < arguments.count {
+            switch arguments[index] {
+            case "--on": on = true
+            case "--off": on = false
+            case "--profile":
+                index += 1
+                guard index < arguments.count else { return .failure("--profile needs a value") }
+                profile = arguments[index]
+            case "--help", "-h":
+                return .help
+            default:
+                return .failure("unknown argument \"\(arguments[index])\"")
+            }
+            index += 1
+        }
+        return .request(.tiles(on: on, profile: profile))
+    }
+
+    /// `<a> <b>`, `<a words…> --to <b words…>`, or a lone `<a>`. nil when the
+    /// words cannot be split unambiguously — two multi-word names need `--to`.
+    private static func splitPair(_ words: [String]) -> (String, String?)? {
+        if let to = words.firstIndex(of: "--to") {
+            let first = words[..<to].joined(separator: " ")
+            let second = words[(to + 1)...].joined(separator: " ")
+            guard !first.isEmpty, !second.isEmpty else { return nil }
+            return (first, second)
+        }
+        switch words.count {
+        case 1: return (words[0], nil)
+        case 2: return (words[0], words[1])
+        default: return nil
+        }
+    }
+
+    private static func parseTileSlotVerb(_ verb: String, _ arguments: [String]) -> TilesParse {
+        var target = PaneSelector.focused
+        var slot: Int?
+        var view: String?
+        var collapse = false
+        var vertical = true
+        var index = 0
+        while index < arguments.count {
+            let arg = arguments[index]
+            switch arg {
+            case "--pane" where verb == "attach", "--cwd" where verb == "attach":
+                index += 1
+                guard index < arguments.count else { return .failure("\(arg) needs a value") }
+                target = arg == "--pane" ? .pane(arguments[index]) : .cwd(arguments[index])
+            case "--slot":
+                index += 1
+                guard index < arguments.count,
+                      let value = Int(arguments[index]), value >= 1 else {
+                    return .failure("--slot needs a slot number (1 or more)")
+                }
+                slot = value
+            case "--view":
+                index += 1
+                guard index < arguments.count else { return .failure("--view needs a value") }
+                view = arguments[index]
+            case "--collapse" where verb == "detach":
+                collapse = true
+            case "--horizontal" where verb == "split":
+                vertical = false
+            default:
+                return .failure("unknown argument \"\(arg)\"")
+            }
+            index += 1
+        }
+        switch verb {
+        case "attach": return .request(.tileAttach(target: target, slot: slot, view: view))
+        case "detach": return .request(.tileDetach(slot: slot, collapse: collapse, view: view))
+        default: return .request(.tileSplit(slot: slot, vertical: vertical, view: view))
+        }
+    }
+
+    private static func runTiles(_ arguments: [String]) -> Int32 {
+        switch parseTiles(arguments) {
+        case .help:
+            print(usage)
+            return 0
+        case .failure(let message):
+            return failure(message)
+        case .list(let json):
+            switch roundTrip(.status) {
+            case .status(let snapshot):
+                guard let tiles = snapshot.tiles else {
+                    return failure("the running zetty app is too old to report tile views")
+                }
+                if json {
+                    let encoder = JSONEncoder()
+                    encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+                    if let data = try? encoder.encode(tiles) {
+                        print(String(data: data, encoding: .utf8) ?? "{}")
+                    }
+                } else {
+                    for line in tileViewLines(tiles) { print(line) }
+                }
+                return 0
+            case .error(let message): return failure(message)
+            default: return failure("unexpected response")
+            }
+        case .request(let request):
+            switch request {
+            case .tiles: return expectOK(request, success: "ok")
+            case .tileRename, .tileDelete, .tileDetach: return expectOK(request, success: nil)
+            default: return expectText(request)
+            }
+        }
+    }
+
+    /// `tiles list`: one line per saved view.
+    public static func tileViewLines(_ tiles: StatusSnapshot.Tiles) -> [String] {
+        guard !tiles.views.isEmpty else { return ["no tile views — zetty tiles new"] }
+        return tiles.views.map { view in
+            var fields = ["\(view.isActive ? "●" : (view.isOpen ? "○" : " ")) \(view.name)",
+                          "\(view.attached)/\(view.slots)"]
+            if view.isActive { fields.append(tiles.active ? "(showing)" : "(active)") }
+            else if view.isOpen { fields.append("(open)") }
+            return fields.joined(separator: "  ")
+        }
+    }
+
     private static func parseRequiredTarget(_ arguments: [String]) -> PaneSelector? {
         var target: PaneSelector?
         var index = 0
@@ -939,6 +1137,16 @@ public enum ControlCLI {
         switch roundTrip(request) {
         case .ok:
             if let success { print(success) }
+            return 0
+        case .error(let message): return failure(message)
+        default: return failure("unexpected response")
+        }
+    }
+
+    private static func expectText(_ request: ControlRequest) -> Int32 {
+        switch roundTrip(request) {
+        case .text(let text):
+            print(text)
             return 0
         case .error(let message): return failure(message)
         default: return failure("unexpected response")
@@ -1120,6 +1328,26 @@ public enum ControlCLI {
         let claimed = Set(snapshot.projects.compactMap(\.space))
         for space in snapshot.spaces where !claimed.contains(space.name) {
             lines.append("\(space.name)  [space, empty]")
+        }
+        // Only while the grid is up: it is what is on screen then, and the
+        // tree above no longer is. `tiles list` covers the library.
+        if let tiles = snapshot.tiles, tiles.active {
+            lines.append("▦ tiles  [\(tiles.view ?? "no view open")]")
+            for slot in tiles.slots {
+                var fields = ["\(slot.slot)"]
+                switch slot.state {
+                case "pane":
+                    if let pane = slot.pane { fields.append(pane) }
+                    if let label = slot.label { fields.append(label) }
+                case "missing":
+                    fields.append("(missing)")
+                    if let label = slot.label { fields.append(label) }
+                default:
+                    fields.append("(empty)")
+                }
+                if slot.isFocused { fields.append("*") }
+                lines.append("  \(fields.joined(separator: "  "))")
+            }
         }
         return lines
     }
