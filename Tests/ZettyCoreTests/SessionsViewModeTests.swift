@@ -37,3 +37,22 @@ import Testing
     #expect(AppConfig.parse("zetty-sessions-view = window")
         .ghostty.contains { $0.key == "zetty-sessions-view" } == false)
 }
+
+// MARK: - zetty-tile-manager-view
+
+@Test func tileManagerViewIsItsOwnSettingDefaultingToTheDrawer() {
+    #expect(AppConfig.parse("").tileManagerView == .drawer)
+    // Independent of Sessions: detaching one must not move the other.
+    let config = AppConfig.parse("zetty-sessions-view = window")
+    #expect(config.tileManagerView == .drawer)
+    #expect(AppConfig.parse("zetty-tile-manager-view = Window").tileManagerView == .window)
+    #expect(AppConfig.parse("zetty-tile-manager-view = sideways").tileManagerView == .drawer)
+}
+
+@Test func tileManagerViewRoundTripsAndNeverReachesGhostty() {
+    var config = AppConfig.parse("")
+    config.tileManagerView = .window
+    let rendered = config.rendered()
+    #expect(AppConfig.parse(rendered).tileManagerView == .window)
+    #expect(AppConfig.parse(rendered).ghostty.contains { $0.key == "zetty-tile-manager-view" } == false)
+}

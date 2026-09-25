@@ -92,6 +92,9 @@ public struct AppConfig: Equatable, Sendable {
     /// this, so the two forms are one setting rather than a setting plus a
     /// separate runtime state that can disagree with it.
     public var sessionsView: SessionsViewMode = .drawer
+    /// How the tile manager presents itself — the same drawer-or-window
+    /// choice, rewritten by its own detach and dock buttons.
+    public var tileManagerView: SessionsViewMode = .drawer
     /// How many tiles fit one screenful of the tile grid (⇧⌘G).
     /// Raw ghostty directives (from `ghostty.<key> = <value>` lines), forwarded
     /// to the terminal unchanged.
@@ -166,6 +169,7 @@ public struct AppConfig: Equatable, Sendable {
         sidebarPosition: SidebarPosition = .left,
         homePath: String? = nil,
         sessionsView: SessionsViewMode = .drawer,
+        tileManagerView: SessionsViewMode = .drawer,
         viewerHighlightCommand: String = AppConfig.defaultViewerHighlightCommand,
         viewerMaxBytes: Int = AppConfig.defaultViewerMaxBytes,
         fileTree: FileTreeSettings = FileTreeSettings(),
@@ -189,6 +193,7 @@ public struct AppConfig: Equatable, Sendable {
         self.sidebarPosition = sidebarPosition
         self.homePath = homePath
         self.sessionsView = sessionsView
+        self.tileManagerView = tileManagerView
         self.viewerHighlightCommand = viewerHighlightCommand
         self.viewerMaxBytes = viewerMaxBytes
         self.fileTree = fileTree
@@ -290,6 +295,8 @@ public struct AppConfig: Equatable, Sendable {
             case "zetty-sessions-view":
                 // An unrecognised value keeps the default rather than failing.
                 config.sessionsView = SessionsViewMode(rawValue: value.lowercased()) ?? .drawer
+            case "zetty-tile-manager-view":
+                config.tileManagerView = SessionsViewMode(rawValue: value.lowercased()) ?? .drawer
             case "zetty-restart-recovery":
                 config.restartRecovery = ["true", "yes", "on", "1"].contains(value.lowercased())
             case "zetty-file-tree-show-hidden":
@@ -462,6 +469,9 @@ public struct AppConfig: Equatable, Sendable {
         # or in its own window. The detach and dock buttons rewrite this.
         zetty-sessions-view = \(sessionsView.rawValue)
 
+        # Where the tile manager (saved tile views) appears — the same choice.
+        zetty-tile-manager-view = \(tileManagerView.rawValue)
+
         # Syntax highlighting for the read-only file viewer: the file is piped
         # through this command and its ANSI colors are rendered. `off` disables
         # it. A missing or failing command falls back to plain text.
@@ -568,7 +578,7 @@ public struct AppConfig: Equatable, Sendable {
 
 // MARK: - SessionsViewMode
 
-/// Where the Sessions view appears.
+/// Where a docked-or-detached view appears: Sessions, and the tile manager.
 ///
 /// Docked by default: it is a monitor you glance at while working in a pane,
 /// and a separate window is one more thing to arrange. Detaching is for when

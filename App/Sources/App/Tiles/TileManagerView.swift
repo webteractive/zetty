@@ -27,6 +27,10 @@ struct TileManagerRow: Equatable {
 ///
 /// It owns no state: every row comes from `rows()`, and the controller calls
 /// `reload()` whenever the library or the open set changes.
+///
+/// One view, two hosts, exactly like `SessionsView`: the bottom drawer and
+/// `TileManagerWindowController` both embed it, and `zetty-tile-manager-view`
+/// says which. The mode button flips it.
 @MainActor
 final class TileManagerView: NSView {
 
@@ -54,9 +58,15 @@ final class TileManagerView: NSView {
     private let onDuplicate: (UUID) throws -> UUID?
     private let onDelete: (UUID) -> Void
     private let onNew: () -> UUID?
+    private let onToggleMode: () -> Void
+    /// Which host this instance is in. Decides the mode button's glyph, and
+    /// whether `applyTheme` may restyle the window — in the drawer, that window
+    /// is the main one, which is not this view's to paint.
+    private let mode: SessionsViewMode
 
     private let summaryLabel = NSTextField(labelWithString: "")
     private let newButton = NSButton()
+    private let modeButton = NSButton()
     private let tableView = TileManagerTableView()
     private let scrollView = NSScrollView()
     private let emptyLabel = NSTextField(labelWithString: "")
@@ -68,12 +78,16 @@ final class TileManagerView: NSView {
     private var editingID: UUID?
     private var reloadPending = false
 
-    init(rows: @escaping () -> [TileManagerRow],
+    init(mode: SessionsViewMode,
+         rows: @escaping () -> [TileManagerRow],
          onOpen: @escaping (UUID) -> Void,
          onRename: @escaping (UUID, String) throws -> Void,
          onDuplicate: @escaping (UUID) throws -> UUID?,
          onDelete: @escaping (UUID) -> Void,
-         onNew: @escaping () -> UUID?) {
+         onNew: @escaping () -> UUID?,
+         onToggleMode: @escaping () -> Void) {
+        self.mode = mode
+        self.onToggleMode = onToggleMode
         self.rowsProvider = rows
         self.onOpen = onOpen
         self.onRename = onRename
@@ -108,6 +122,12 @@ final class TileManagerView: NSView {
         newButton.toolTip = "Make a view with one slot and open it"
         newButton.translatesAutoresizingMaskIntoConstraints = false
         addSubview(newButton)
+
+        modeButton.isBordered = false
+        modeButton.target = self
+        modeButton.action = #selector(modeClicked)
+        modeButton.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(modeButton)
 
         topBorder.wantsLayer = true
         topBorder.translatesAutoresizingMaskIntoConstraints = false
@@ -155,21 +175,27 @@ final class TileManagerView: NSView {
         emptyLabel.translatesAutoresizingMaskIntoConstraints = false
         addSubview(emptyLabel)
 
+        // Sessions' anatomy: a 1pt border along the top edge (the drawer's
+        // seam with the terminal), then the header row, then the table.
         NSLayoutConstraint.activate([
+            topBorder.topAnchor.constraint(equalTo: topAnchor),
+            topBorder.leadingAnchor.constraint(equalTo: leadingAnchor),
+            topBorder.trailingAnchor.constraint(equalTo: trailingAnchor),
+            topBorder.heightAnchor.constraint(equalToConstant: 1),
+
             summaryLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 14),
             summaryLabel.centerYAnchor.constraint(equalTo: newButton.centerYAnchor),
             summaryLabel.trailingAnchor.constraint(lessThanOrEqualTo: newButton.leadingAnchor,
                                                    constant: -8),
 
-            newButton.topAnchor.constraint(equalTo: topAnchor, constant: 8),
-            newButton.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -12),
+            newButton.topAnchor.constraint(equalTo: topBorder.bottomAnchor, constant: 6),
+            newButton.trailingAnchor.constraint(equalTo: modeButton.leadingAnchor, constant: -8),
 
-            topBorder.topAnchor.constraint(equalTo: newButton.bottomAnchor, constant: 8),
-            topBorder.leadingAnchor.constraint(equalTo: leadingAnchor),
-            topBorder.trailingAnchor.constraint(equalTo: trailingAnchor),
-            topBorder.heightAnchor.constraint(equalToConstant: 1),
+            modeButton.centerYAnchor.constraint(equalTo: newButton.centerYAnchor),
+            modeButton.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -12),
+            modeButton.widthAnchor.constraint(equalToConstant: 22),
 
-            scrollView.topAnchor.constraint(equalTo: topBorder.bottomAnchor),
+            scrollView.topAnchor.constraint(equalTo: newButton.bottomAnchor, constant: 6),
             scrollView.leadingAnchor.constraint(equalTo: leadingAnchor),
             scrollView.trailingAnchor.constraint(equalTo: trailingAnchor),
             scrollView.bottomAnchor.constraint(equalTo: bottomAnchor),
@@ -190,12 +216,40 @@ final class TileManagerView: NSView {
         emptyLabel.textColor = theme.fg3Color
         tableView.backgroundColor = theme.bg1Color
         scrollView.backgroundColor = theme.bg1Color
-        window?.appearance = theme.appearance
-        window?.backgroundColor = theme.bg1Color
+        styleModeButton()
+        if mode == .window {
+            window?.appearance = theme.appearance
+            window?.backgroundColor = theme.bg1Color
+        }
         // Colours are baked into the cells, so an unchanged row list still has
         // to be rebuilt for the new palette.
         tableView.reloadData()
     }
+
+    /// The same glyphs Sessions uses, so docking reads the same in both.
+    private func styleModeButton() {
+        let docked = mode == .drawer
+        let candidates = docked
+            ? ["arrow.up.left.and.arrow.down.right.square",
+               "arrow.up.left.and.arrow.down.right",
+               "arrow.up.forward.square"]
+            : ["arrow.down.right.and.arrow.up.left.square",
+               "arrow.down.right.and.arrow.up.left",
+               "arrow.down.forward.square"]
+        for symbol in candidates {
+            guard let image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)?
+                .withSymbolConfiguration(NSImage.SymbolConfiguration(pointSize: 12, weight: .medium))
+            else { continue }
+            modeButton.image = image
+            break
+        }
+        modeButton.contentTintColor = ZTheme.current.fg2Color
+        modeButton.toolTip = docked
+            ? "Open Tile Views in its own window"
+            : "Dock Tile Views to the bottom of the window"
+    }
+
+    @objc private func modeClicked() { onToggleMode() }
 
     // MARK: - Content
 

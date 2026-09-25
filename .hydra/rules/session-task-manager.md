@@ -67,7 +67,9 @@ the rebuild every structural change already funnels through. **Its height is a
 required height there becomes a window minimum — the trap that has broken the
 320pt floor three times — and a fixed 220pt drawer in a 320pt-tall window
 leaves no terminal at all. It is in `probeWindowFloor`, the first overlay that
-can actually move the floor since it lives inside the main window.
+can actually move the floor since it lives inside the main window. The tile
+manager's drawer (⇧⌘J) uses the same slot, so opening either one closes the
+other. See `.hydra/rules/tile-mode.md`.
 
 **The toggle IS the setting.** Detaching and docking rewrite
 `zetty-sessions-view` through `AppConfig.rendered()`, so the form it is left in

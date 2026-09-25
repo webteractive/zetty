@@ -192,6 +192,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         tvc.onReloadConfig = { [weak self] in self?.reloadConfiguration(nil) }
         tvc.onShowTaskManager = { [weak self] in self?.showTaskManager() }
         tvc.onShowTileManager = { [weak self] in self?.showTileManager() }
+        tvc.onToggleTileManagerMode = { [weak self] in self?.toggleTileManagerMode() }
         tvc.onToggleSessionsMode = { [weak self] in self?.toggleSessionsMode() }
         tvc.onOpenSettings = { [weak self] in self?.openSettings(nil) }
         tvc.onOpenSettingsTab = { [weak self] tab in self?.openSettings(tab: tab) }
@@ -1371,14 +1372,43 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     /// Built once and kept, like the Sessions window.
     private var tileManagerWindowController: TileManagerWindowController?
 
-    /// Opens the tile manager: every saved tile view, with open, rename,
-    /// duplicate and delete. View menu, the palette and the `+` library menu.
+    /// Opens the tile manager in whichever form `zetty-tile-manager-view`
+    /// names — every saved tile view, with open, rename, duplicate and delete.
+    /// ⇧⌘J, the View menu, the palette and the `+` library menu. Like
+    /// Sessions, the drawer form is a toggle.
     @MainActor @objc func showTileManager() {
         guard let tvc = terminalViewController else { return }
-        if tileManagerWindowController == nil {
-            tileManagerWindowController = TileManagerWindowController(manager: tvc.makeTileManagerView())
+        switch appConfig.tileManagerView {
+        case .drawer:
+            tvc.setTileManagerDrawer(visible: !tvc.isTileManagerDrawerVisible)
+        case .window:
+            if tileManagerWindowController == nil {
+                tileManagerWindowController =
+                    TileManagerWindowController(manager: tvc.makeTileManagerView(mode: .window))
+            }
+            tileManagerWindowController?.show()
         }
-        tileManagerWindowController?.show()
+    }
+
+    /// Flips between docked and detached and REWRITES the setting, as
+    /// `toggleSessionsMode` does — the toggle is the setting.
+    @MainActor func toggleTileManagerMode() {
+        guard let tvc = terminalViewController else { return }
+        switch appConfig.tileManagerView {
+        case .drawer:
+            tvc.setTileManagerDrawer(visible: false)
+            appConfig.tileManagerView = .window
+            saveConfig()
+            tileManagerWindowController =
+                TileManagerWindowController(manager: tvc.makeTileManagerView(mode: .window))
+            tileManagerWindowController?.show()
+        case .window:
+            tileManagerWindowController?.close()
+            tileManagerWindowController = nil
+            appConfig.tileManagerView = .drawer
+            saveConfig()
+            tvc.setTileManagerDrawer(visible: true)
+        }
     }
 
     /// Toggles the grid of running sessions. Menu, palette, prefix `g` and
@@ -2578,10 +2608,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         tiles.target = self
         viewMenu.addItem(tiles)
 
-        // No key equivalent: a library editor is visited, not toggled.
+        // ⇧⌘J, audited free across all four surfaces on 2026-09-25: no menu
+        // item uses J with shift, J is bare j (not a chord) on the prefix layer
+        // and in copy mode, and the user config binds nothing. It sits beside
+        // ⌘J because the two are the two docked drawers. What it costs is
+        // Chrome's Downloads and Xcode's Reveal in Project Navigator, neither
+        // of which Zetty has; ⌘ rather than ⌃ so it never reaches the pty.
         let manageTiles = NSMenuItem(title: "Manage Tile Views\u{2026}",
                                      action: #selector(showTileManager),
-                                     keyEquivalent: "")
+                                     keyEquivalent: "J")
+        manageTiles.keyEquivalentModifierMask = [.command, .shift]
         manageTiles.target = self
         viewMenu.addItem(manageTiles)
 

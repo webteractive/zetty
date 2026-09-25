@@ -2456,6 +2456,11 @@ final class TerminalViewController: NSViewController {
                      isOpen: { self.isSessionsDrawerVisible },
                      close: { self.setSessionsDrawer(visible: false) })
 
+        probeOverlay("tile manager drawer", window: window, target: target,
+                     open: { self.setTileManagerDrawer(visible: true) },
+                     isOpen: { self.isTileManagerDrawerVisible },
+                     close: { self.setTileManagerDrawer(visible: false) })
+
         // The grid lives inside this window too, so a floor it sets is
         // invisible to every other measurement — which is how the command
         // palette once shipped growing the window on ⌘K.
@@ -2968,7 +2973,7 @@ final class TerminalViewController: NSViewController {
             PaletteCommand(glyph: "▦", label: "Tile Running Sessions", kbd: "⇧⌘G") { [weak self] in self?.toggleTileMode() },
             PaletteCommand(glyph: "▦", label: "New Tile View", kbd: "") { [weak self] in self?.setTileMode(true); self?.newTileView() },
             PaletteCommand(glyph: "✎", label: "Rename Tile View…", kbd: "") { [weak self] in self?.configureActiveTileView() },
-            PaletteCommand(glyph: "▦", label: "Manage Tile Views…", kbd: "") { [weak self] in self?.onShowTileManager?() },
+            PaletteCommand(glyph: "▦", label: "Manage Tile Views…", kbd: "⇧⌘J") { [weak self] in self?.onShowTileManager?() },
             PaletteCommand(glyph: "⇉", label: "Broadcast: Tab", kbd: "") { [weak self] in self?.setBroadcast(.currentTab) },
             PaletteCommand(glyph: "⇉", label: "Broadcast: Project", kbd: "") { [weak self] in self?.setBroadcast(.project) },
             PaletteCommand(glyph: "⇉", label: "Broadcast: Agents", kbd: "") { [weak self] in self?.setBroadcast(.agents) },
@@ -5304,22 +5309,51 @@ final class TerminalViewController: NSViewController {
     /// Flips `zetty-sessions-view` and moves the view; AppDelegate owns both.
     var onToggleSessionsMode: (() -> Void)?
 
-    /// Builds a Sessions view wired to this controller's data and actions.
-    /// Both hosts use it, so the drawer and the window cannot diverge.
-    /// The tile manager's content. The controller keeps a weak reference so
-    /// every library change reloads it.
-    func makeTileManagerView() -> TileManagerView {
+    /// The tile manager's content, for either host. The controller keeps a
+    /// weak reference so every library change reloads it; only one host exists
+    /// at a time, because switching form tears the other down.
+    func makeTileManagerView(mode: SessionsViewMode) -> TileManagerView {
         let manager = TileManagerView(
+            mode: mode,
             rows: { [weak self] in self?.tileManagerRows ?? [] },
             onOpen: { [weak self] id in self?.openTileProfile(id) },
             onRename: { [weak self] id, name in try self?.renameTileProfile(id: id, to: name) },
             onDuplicate: { [weak self] id in try self?.duplicateTileProfile(id: id).id },
             onDelete: { [weak self] id in self?.deleteTileProfile(id: id) },
-            onNew: { [weak self] in self?.newTileViewFromManager() })
+            onNew: { [weak self] in self?.newTileViewFromManager() },
+            onToggleMode: { [weak self] in self?.onToggleTileManagerMode?() })
         tileManagerView = manager
         return manager
     }
 
+    /// The docked tile manager, when `zetty-tile-manager-view = drawer`. Held so
+    /// `rebuildSurfaceNodeView` re-slots the same instance.
+    private var tileManagerDrawer: TileManagerView?
+    /// Flips `zetty-tile-manager-view` and moves the view; AppDelegate owns both.
+    var onToggleTileManagerMode: (() -> Void)?
+
+    var isTileManagerDrawerVisible: Bool { tileManagerDrawer != nil }
+
+    /// Shows or hides the docked tile manager. It and the Sessions drawer
+    /// share the strip above the status bar and are never open together: each
+    /// takes up to 45% of the window, and two would leave no terminal.
+    func setTileManagerDrawer(visible: Bool) {
+        guard isTileManagerDrawerVisible != visible else { return }
+        if visible {
+            if sessionsDrawerVisible {
+                setSessionsDrawer(visible: false)
+                refreshStatusBarSessions()
+            }
+            tileManagerDrawer = makeTileManagerView(mode: .drawer)
+        } else {
+            tileManagerDrawer?.removeFromSuperview()
+            tileManagerDrawer = nil
+        }
+        rebuildSurfaceNodeView()
+    }
+
+    /// Builds a Sessions view wired to this controller's data and actions.
+    /// Both hosts use it, so the drawer and the window cannot diverge.
     func makeSessionsView(mode: SessionsViewMode) -> SessionsView {
         SessionsView(
             mode: mode,
@@ -5337,6 +5371,11 @@ final class TerminalViewController: NSViewController {
     func setSessionsDrawer(visible: Bool) {
         guard sessionsDrawerVisible != visible else { return }
         sessionsDrawerVisible = visible
+        // The tile manager's drawer shares the strip — see setTileManagerDrawer.
+        if visible, tileManagerDrawer != nil {
+            tileManagerDrawer?.removeFromSuperview()
+            tileManagerDrawer = nil
+        }
         if visible {
             let view = sessionsDrawer ?? makeSessionsView(mode: .drawer)
             view.onTick = { [weak self] in self?.refreshStatusBarSessions() }
@@ -6783,11 +6822,13 @@ final class TerminalViewController: NSViewController {
         var topGuide: NSLayoutYAxisAnchor = tabBarView?.bottomAnchor ?? container.topAnchor
         var bottomGuide = statusBarView?.topAnchor ?? container.bottomAnchor
 
-        // The Sessions drawer, mirroring how CloneWarningBanner slots in below
+        // The docked drawer — Sessions or the tile manager, never both —
+        // mirroring how CloneWarningBanner slots in below
         // the top guide: above the status bar, below the terminal, and it
         // appears and disappears with the rebuild that every structural change
         // already funnels through.
-        if sessionsDrawerVisible, let drawer = sessionsDrawer {
+        let dockedDrawer: NSView? = sessionsDrawerVisible ? sessionsDrawer : tileManagerDrawer
+        if let drawer = dockedDrawer {
             drawer.removeFromSuperview()
             container.addSubview(drawer)
             // Its height is a PREFERENCE, capped against the container. A

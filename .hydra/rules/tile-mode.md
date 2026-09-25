@@ -339,8 +339,15 @@ follow some rules that are easy to get wrong:
   on `focusedTerminalView()` while the grid is up. That view is the ACTIVE
   TAB's pane, and it steals the keyboard from the focused tile.
 
-**The tile manager** (`TileManagerView`, in `TileManagerWindowController`)
-is the one place a view can be DELETED. Closing a pill keeps the profile
+**The tile manager** (`TileManagerView`, ⇧⌘J) is the one place a view can be
+DELETED. Like Sessions it has two hosts, the bottom drawer (default) and
+`TileManagerWindowController`, chosen by `zetty-tile-manager-view`, which its
+mode button rewrites. It is a separate key from `zetty-sessions-view`, so
+detaching one never moves the other. The two drawers share the strip above the
+status bar, and `setTileManagerDrawer` and `setSessionsDrawer` each close the
+other: each is capped at 45% of the container, so two would leave no terminal.
+In the drawer, `applyTheme` must not touch `window`, because that window is
+the main one. Closing a pill keeps the profile
 on purpose, so before the manager existed the library only ever grew. The
 window and `zetty tiles delete` both go through
 `TerminalViewController.deleteTileProfile`. That closes the view if it is

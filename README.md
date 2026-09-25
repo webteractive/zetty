@@ -106,8 +106,12 @@ by the tool it's running.
     name it had, with a **Reattach…** action. **The mode itself is
     remembered too** — quit while the grid is up and the next launch comes
     back to it, with the same views open.
-  - **Manage your views** in **View → Manage Tile Views…** (also the command
-    palette, and `+` → **Manage Views…** in the strip). It lists every saved
+  - **Manage your views** with `⇧⌘J` or **View → Manage Tile Views…** (also
+    the command palette, and `+` → **Manage Views…** in the strip). Like
+    Sessions it docks to the bottom of the window, and its ⤡ button detaches it
+    into its own window (`zetty-tile-manager-view = drawer | window`, rewritten
+    by the button). The two drawers share that strip, so opening one closes the
+    other. It lists every saved
     view with its shape, how many of its slots are filled, and whether it is
     open or showing. From there you can open, rename, duplicate or delete one:
     double-click or Return opens it, Delete deletes it after asking. Deleting a
@@ -439,6 +443,7 @@ Command Line** and click install — this symlinks `zetty` into
 | `⌘1`–`⌘9` | Jump to tab |
 | `⌘J` | Toggle Sessions (docked drawer, or its own window) |
 | `⇧⌘G` | Toggle tile mode — a grid of manually attached panes |
+| `⇧⌘J` | Toggle the tile manager — saved tile views (docked drawer, or its own window) |
 | `⌘K` | Command palette (fuzzy — `go zetty` finds **Go to Project: zetty**) |
 | `⌘B` | Toggle sidebar — pinned → hidden → drawer |
 | `⇧⌘F` | Toggle the focused pane's file tree |
@@ -540,6 +545,7 @@ seeds a documented starter file on first launch. Format is plain
 | `zetty-home-path` | — | Directory the **Home** project is rooted at (`~` allowed); unset — or `off`/`~` — keeps it at your home directory |
 | `zetty-restart-recovery` | `true` | After a macOS restart/shutdown/logout, replay each preserved pane's last screen and resume the Claude/Codex session it was running |
 | `zetty-tiles-grid` | `4x4` | Uniform shape a NEW tile view is seeded with, as `<cols>x<rows>`; each profile keeps its own layout tree thereafter, and splitting a slot changes it. Up to `8x8` |
+| `zetty-tile-manager-view` | `drawer` | Where the tile manager (`⇧⌘J`) appears: docked at the bottom of the window, or in its own `window`. Its dock/detach button rewrites this |
 | `zetty-file-tree-show-hidden` | `true` | Show dotfiles in the per-pane file tree |
 | `zetty-file-tree-respect-gitignore` | `false` | Hide anything the repo's `.gitignore` excludes |
 | `zetty-file-tree-ignore` | — | Extra names to hide, comma-separated (e.g. `node_modules, vendor`) |

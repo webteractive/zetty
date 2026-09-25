@@ -196,7 +196,9 @@ are in `.hydra/rules/surfaces-and-memory.md`.
     File Tree; a future project-wide content search needs a different chord
     rather than stealing this one back. ⇧⌘G is spent on Toggle Tile Mode,
     costing find-previous and Finder's Go to Folder — plain ⌘G was left free on
-    purpose, for the viewer's deferred find-in-file.
+    purpose, for the viewer's deferred find-in-file. ⇧⌘J is spent on the tile
+    manager, beside ⌘J for Sessions (the two docked drawers), costing Chrome's
+    Downloads and Xcode's Reveal in Project Navigator.
 - Do not commit debug `NSLog`/`print` statements.
 - Never commit or push without being asked; never add `Co-Authored-By` or a
   session link to commit messages.
