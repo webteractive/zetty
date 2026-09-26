@@ -263,14 +263,21 @@ its layout tree with no back-link, so there is no way to ask which layout a
 view came from — and the tree is a tree everywhere, so the affordance is right
 everywhere.
 
-**The tile header is FIVE uniform icons**: open · refresh · split-down ·
-split-right · ×. `Open ▾`'s label plus a menu-popping split button ran ~160pt
-of a 24pt header, which is most of a tile in a 4x4 grid; icons cost ~90pt and
-keep the pane's NAME readable, which is what you navigate by. Refresh sits away
-from × deliberately — it ends the running agent and must not neighbour close.
-`buildHeaderButton` configures all five, because four near-identical blocks is
-how they drift apart. The slot menu stays on right-click, so **Remove Split**
-keeps a home.
+**The tile header is uniform icons**: open · refresh · split-down ·
+split-right · remove-split · ×. `Open ▾`'s label plus a menu-popping split
+button ran ~160pt of a 24pt header, which is most of a tile in a 4x4 grid.
+Icons cost ~90pt (~110pt with remove-split) and keep the pane's NAME readable,
+which is what you navigate by. Refresh sits away from × deliberately: it ends
+the running agent and must not neighbour close. `buildHeaderButton` configures
+them all, because near-identical blocks are how buttons drift apart.
+**Remove-split** (`collapseTileSlot`) is × and then × again in ONE press: it
+detaches the pane and collapses its split through `TileProfile.close`. That is
+the same thing `zetty tiles detach --collapse` does. It is built only when
+`canRemove`, and it is never added to the header otherwise, because a hidden
+button with no position leaves the chain of constraints ambiguous. That is safe
+because tiles are rebuilt on every structural change, so `canRemove` cannot go
+stale on a live tile. A filled tile's right-click menu offers **Remove Split**
+too, beside **Detach Pane**.
 
 **`Open ▾` left the status bar and arrives per tile.** `StatusBarView
 .isTileMode` folds the pill away (and drops the `⋯` menu's "Open Directory In"

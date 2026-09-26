@@ -5220,6 +5220,15 @@ final class TerminalViewController: NSViewController {
         tileFocusedSurfaceID = tileFocusableIDs.first
     }
 
+    /// The header's Remove Split: detach the pane (it keeps running) and
+    /// collapse the split in one press — what × then × on the emptied slot
+    /// does in two. `TileProfile.close` drops the attachment with the leaf.
+    func collapseTileSlot(at index: Int) {
+        guard tileMode, (activeTileProfile?.capacity ?? 0) > 1 else { return }
+        mutateActiveTileProfile { $0.close(at: index) }
+        reseedTileFocusIfGone()
+    }
+
     /// ⌘W and prefix `x` in tile mode.
     func detachFocusedTileSlot() {
         guard tileMode else { return }
@@ -6955,7 +6964,8 @@ final class TerminalViewController: NSViewController {
                 },
                 onSplit: { [weak self] index, direction in
                     self?.mutateActiveTileProfile { $0.split(at: index, direction: direction) }
-                })
+                },
+                onRemoveSplit: { [weak self] index in self?.collapseTileSlot(at: index) })
             grid.onSetRatio = { [weak self] divider, ratio, isFinal in
                 self?.mutateActiveTileProfile(persist: isFinal) {
                     $0.setRatio(atDivider: divider, to: ratio)

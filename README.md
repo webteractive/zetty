@@ -69,7 +69,9 @@ by the tool it's running.
     menu or `Ctrl+B %`. Removing is offered only when there is a split to
     collapse — a one-slot view has nothing to remove.
     Each tile's header carries **open · refresh · split down · split right ·
-    close**, and `⌘D` / `⇧⌘D` split the focused slot too. Attaching focuses
+    remove split · close**, and `⌘D` / `⇧⌘D` split the focused slot too.
+    **Remove split** detaches the pane and collapses its split in one press.
+    It only appears when there is a split to remove. Attaching focuses
     what you just attached.
     A tile's `×` (and `⌘W`) detaches the slot — the pane keeps running; press
     it again on the now-empty slot to remove the slot itself. **Double-click a

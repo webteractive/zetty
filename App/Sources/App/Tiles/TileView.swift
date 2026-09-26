@@ -88,6 +88,7 @@ final class TileView: NSView, AgentRestartPresenting {
     private let refreshButton = NSButton()
     private let splitDownButton = NSButton()
     private let splitRightButton = NSButton()
+    private let removeSplitButton = NSButton()
     private let goToPaneButton = NSButton()
     private let body = NSView()
     /// The registry's terminal view for this tile, when it has one — the
@@ -104,6 +105,7 @@ final class TileView: NSView, AgentRestartPresenting {
     private let onRefresh: () -> Void
     private let onDetach: () -> Void
     private let onSplit: (SplitDirection) -> Void
+    private let onRemoveSplit: () -> Void
 
     init(surfaceID: UUID?,
          slotIndex: Int,
@@ -119,7 +121,8 @@ final class TileView: NSView, AgentRestartPresenting {
          onOpen: @escaping (NSView) -> Void = { _ in },
          onRefresh: @escaping () -> Void = {},
          onDetach: @escaping () -> Void = {},
-         onSplit: @escaping (SplitDirection) -> Void = { _ in }) {
+         onSplit: @escaping (SplitDirection) -> Void = { _ in },
+         onRemoveSplit: @escaping () -> Void = {}) {
         self.surfaceID = surfaceID
         self.slotIndex = slotIndex
         self.status = status
@@ -130,6 +133,7 @@ final class TileView: NSView, AgentRestartPresenting {
         self.onRefresh = onRefresh
         self.onDetach = onDetach
         self.onSplit = onSplit
+        self.onRemoveSplit = onRemoveSplit
         self.canRemove = canRemove
         super.init(frame: .zero)
         wantsLayer = true
@@ -170,6 +174,14 @@ final class TileView: NSView, AgentRestartPresenting {
                     action: #selector(detachClicked), keyEquivalent: "")
                 detach.target = self
                 menu.addItem(detach)
+            }
+            // A filled tile can also go in one step, the same as its header
+            // button: detach and collapse together.
+            if surfaceID != nil, canRemove {
+                let remove = NSMenuItem(title: "Remove Split", action: #selector(removeSplitClicked),
+                                        keyEquivalent: "")
+                remove.target = self
+                menu.addItem(remove)
             }
             return menu
         }()
@@ -221,7 +233,8 @@ final class TileView: NSView, AgentRestartPresenting {
         // header, which is most of a tile in a 4x4 grid. Icons keep the pane's
         // name readable, which is the thing you actually navigate by.
         //
-        // Order is open · refresh · split-down · split-right · ×, and the two
+        // Order is open · refresh · split-down · split-right · remove-split · ×
+        // (remove-split only when there is a split to remove), and the two
         // destructive-ish ones sit apart: a refresh ends the running agent, so
         // it must not neighbour close.
         buildHeaderButton(openButton, symbol: "folder", fallback: "▤",
@@ -243,6 +256,19 @@ final class TileView: NSView, AgentRestartPresenting {
         // past `applicationDidFinishLaunching`, so the window is created and
         // then never ordered on screen. That shipped in 2f57b6d’s successor
         // and read as "Zetty launches invisibly".
+        // Remove Split: detach AND collapse in one press, beside the × that
+        // only detaches. Built only when there is a split to collapse —
+        // `TileNode.close` refuses the last leaf — so a one-slot view carries
+        // no button that would do nothing. Tiles are rebuilt on every
+        // structural change, so `canRemove` cannot go stale on a live tile.
+        if canRemove {
+            let symbol = ["rectangle.split.2x1.slash", "minus.rectangle"].first {
+                NSImage(systemSymbolName: $0, accessibilityDescription: nil) != nil
+            } ?? "minus.rectangle"
+            buildHeaderButton(removeSplitButton, symbol: symbol, fallback: "⊖",
+                              tip: "Remove this split (detaches the pane, which keeps running)",
+                              action: #selector(removeSplitClicked), hidden: false)
+        }
         buildHeaderButton(goToPaneButton, symbol: "xmark", fallback: "×",
                           tip: "Detach from this view (the pane keeps running)",
                           action: #selector(detachClicked), hidden: false)
@@ -293,8 +319,6 @@ final class TileView: NSView, AgentRestartPresenting {
             splitRightButton.heightAnchor.constraint(equalToConstant: 13),
             splitRightButton.centerYAnchor.constraint(equalTo: header.centerYAnchor),
             splitRightButton.leadingAnchor.constraint(equalTo: splitDownButton.trailingAnchor, constant: 7),
-            splitRightButton.trailingAnchor.constraint(
-                equalTo: goToPaneButton.leadingAnchor, constant: -7),
 
             goToPaneButton.widthAnchor.constraint(equalToConstant: 14),
             goToPaneButton.heightAnchor.constraint(equalToConstant: 14),
@@ -302,6 +326,22 @@ final class TileView: NSView, AgentRestartPresenting {
             goToPaneButton.trailingAnchor.constraint(equalTo: header.trailingAnchor,
                                                      constant: -8),
         ])
+        // splitRight → (removeSplit →) ×. The optional button is never added
+        // to the header when absent, so it cannot anchor anything.
+        if canRemove {
+            NSLayoutConstraint.activate([
+                removeSplitButton.widthAnchor.constraint(equalToConstant: 13),
+                removeSplitButton.heightAnchor.constraint(equalToConstant: 13),
+                removeSplitButton.centerYAnchor.constraint(equalTo: header.centerYAnchor),
+                removeSplitButton.leadingAnchor.constraint(
+                    equalTo: splitRightButton.trailingAnchor, constant: 7),
+                removeSplitButton.trailingAnchor.constraint(
+                    equalTo: goToPaneButton.leadingAnchor, constant: -7),
+            ])
+        } else {
+            splitRightButton.trailingAnchor.constraint(
+                equalTo: goToPaneButton.leadingAnchor, constant: -7).isActive = true
+        }
     }
 
     /// One 13pt icon button in the header. Four near-identical configuration
@@ -513,6 +553,8 @@ final class TileView: NSView, AgentRestartPresenting {
 
     @objc private func splitDown() { onSplit(.horizontal) }
 
+    @objc private func removeSplitClicked() { onRemoveSplit() }
+
     // MARK: - State
 
     func setFocused(_ focused: Bool) {
@@ -544,7 +586,8 @@ final class TileView: NSView, AgentRestartPresenting {
         messageLabel.textColor = theme.fg3Color
         iconView.contentTintColor = isFocused ? theme.fgColor : theme.fg2Color
         goToPaneButton.contentTintColor = theme.fg3Color
-        for button in [openButton, refreshButton, splitDownButton, splitRightButton] {
+        for button in [openButton, refreshButton, splitDownButton, splitRightButton,
+                       removeSplitButton] {
             button.contentTintColor = theme.fg3Color
         }
         restartCover?.applyTheme()

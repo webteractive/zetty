@@ -59,6 +59,8 @@ final class TileGridView: NSView {
     private let onDetach: (Int) -> Void
     /// Divide that slot in two.
     private let onSplit: (Int, SplitDirection) -> Void
+    /// Detach that slot's pane AND collapse its split, in one step.
+    private let onRemoveSplit: (Int) -> Void
     /// A sidebar tab row was dropped on a slot: "project:tab" indices, and the
     /// slot it landed in. Returns whether it was accepted.
     var onDropSidebarTab: ((Int, Int, Int) -> Bool)?
@@ -103,7 +105,8 @@ final class TileGridView: NSView {
          onRefresh: @escaping (UUID) -> Void,
          onAttach: @escaping (Int) -> Void,
          onDetach: @escaping (Int) -> Void,
-         onSplit: @escaping (Int, SplitDirection) -> Void) {
+         onSplit: @escaping (Int, SplitDirection) -> Void,
+         onRemoveSplit: @escaping (Int) -> Void) {
         self.rootProvider = rootProvider
         self.onCounts = onCounts
         self.onActivate = onActivate
@@ -113,6 +116,7 @@ final class TileGridView: NSView {
         self.onAttach = onAttach
         self.onDetach = onDetach
         self.onSplit = onSplit
+        self.onRemoveSplit = onRemoveSplit
         super.init(frame: .zero)
         translatesAutoresizingMaskIntoConstraints = false
         wantsLayer = true
@@ -199,7 +203,8 @@ final class TileGridView: NSView {
                 onOpen: { [weak self] anchor in if let id { self?.onOpen(id, anchor) } },
                 onRefresh: { [weak self] in if let id { self?.onRefresh(id) } },
                 onDetach: { [weak self] in self?.onDetach(index) },
-                onSplit: { [weak self] direction in self?.onSplit(index, direction) })
+                onSplit: { [weak self] direction in self?.onSplit(index, direction) },
+                onRemoveSplit: { [weak self] in self?.onRemoveSplit(index) })
             tile.translatesAutoresizingMaskIntoConstraints = true
             addSubview(tile)
             tiles.append(tile)
