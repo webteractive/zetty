@@ -1111,7 +1111,10 @@ final class TerminalViewController: NSViewController {
         // untouched — the branch is the whole difference.
         tabBar.onSelect = { [weak self] index in
             guard let self else { return }
-            self.tileMode ? self.selectTileView(at: index) : self.selectTab(at: index)
+            // The first click of a double-click-to-rename lands here too, so
+            // re-clicking the showing view must not rebuild the grid and reset
+            // tile focus under the field about to open.
+            self.tileMode ? self.selectTileViewIfDifferent(at: index) : self.selectTab(at: index)
         }
         tabBar.onNewTab = { [weak self] in
             guard let self else { return }
@@ -1120,8 +1123,7 @@ final class TerminalViewController: NSViewController {
         tabBar.onRenameTab = { [weak self] index, newName in
             guard let self else { return }
             if self.tileMode {
-                self.selectTileView(at: index)
-                self.renameActiveTileView(to: newName)
+                self.renameTileView(at: index, to: newName)
             } else {
                 self.renameTab(at: index, to: newName)
             }
@@ -5026,11 +5028,20 @@ final class TerminalViewController: NSViewController {
         tileManagerView?.reload()
     }
 
-    /// The strip's inline rename. A clash is refused rather than allowed:
-    /// two views with one name could not be told apart by `zetty tiles`.
-    func renameActiveTileView(to name: String) {
-        guard let active = activeTileProfile else { return }
-        do { try renameTileProfile(id: active.id, to: name) }
+    /// The strip's inline rename (double-click a view's pill, or prefix + ,).
+    /// It renames the view at `index` in place, without selecting it: a view
+    /// name is not a reason to switch the grid. A blank name is a cancel, not
+    /// an error; a normal tab reverts to its automatic name there, and a view
+    /// has none. A clash is refused, because two views with one name could not
+    /// be told apart by `zetty tiles`.
+    func renameTileView(at index: Int, to name: String) {
+        defer { focusTileFirstResponder() }
+        guard openTileViews.indices.contains(index) else { return }
+        guard !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            refreshTabBar()
+            return
+        }
+        do { try renameTileProfile(id: openTileViews[index].id, to: name) }
         catch {
             refreshTabBar()
             presentTileRenameError(error)
@@ -5155,6 +5166,14 @@ final class TerminalViewController: NSViewController {
         guard tileMode,
               let id = tileFocusedSurfaceID,
               let terminal = registry.appTerminalView(for: id) else { return }
+        // Never take the keyboard from a text field being edited: a view's
+        // inline rename, the tile manager's rename, the command palette. The
+        // grid calls this on every refresh, including the spawn queue's
+        // 2-second ticks, so without this guard a rename field lost focus, and
+        // with it committed, moments after it opened.
+        if let editor = view.window?.firstResponder as? NSTextView, editor.isFieldEditor {
+            return
+        }
         view.window?.makeFirstResponder(terminal)
     }
 

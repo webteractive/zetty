@@ -214,6 +214,15 @@ the lesser inconsistency. Reported as "opening the session manager makes the
 pane say attaching", because the Sessions drawer's toggle calls
 `rebuildSurfaceNodeView` — but ANY structural change did it.
 
+**`focusTileFirstResponder` never takes the keyboard from a field editor.**
+The grid calls it on every refresh, including the spawn queue's 2-second ticks,
+and selecting a view queues its tiles. So a pill's double-click rename lost
+focus, and with it committed, moments after opening, because the first click
+had queued spawns. The guard also covers the tile manager's rename and the
+command palette. Renaming a view from the strip goes through `renameTileView(at:)`,
+which renames that view in place without selecting it. A blank name there is a
+cancel, not an error: a view has no automatic name to fall back to.
+
 **The grid survives `rebuildSurfaceNodeView`** (removed from the container,
 instance kept), so a scheme change leaves everything `build()` coloured once in
 the old palette. `TileGridView.applyTheme()` exists for that and is called from

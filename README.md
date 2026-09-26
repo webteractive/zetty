@@ -86,7 +86,10 @@ by the tool it's running.
     new tile can come up already running an agent on the account you pick.
   - **Tile views are tabs.** While the grid is up the tab bar's strip carries
     tile views instead of the active project's tabs, with `+` opening your
-    saved **profiles**. Several can be open at once.
+    saved **profiles**. Several can be open at once. `⌘1`–`⌘9` jump to a view
+    and `⌘{` / `⌘}` step through them, as they do for tabs. **Double-click a
+    view's pill** (or `Ctrl+B ,`) to rename it in place. Enter keeps the name,
+    and Esc or an empty name cancels.
   - **⇧⌘G opens a chooser, not a view.** With nothing open the grid area
     offers **New View** and lists the views you can reopen, so nothing arrives
     uninvited. Closing your last view returns here.
