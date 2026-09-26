@@ -59,6 +59,8 @@ final class TileManagerView: NSView {
     private let onDelete: (UUID) -> Void
     private let onNew: () -> UUID?
     private let onToggleMode: () -> Void
+    /// Closes the drawer. nil in the window, whose title bar already has one.
+    private let onClose: (() -> Void)?
     /// Which host this instance is in. Decides the mode button's glyph, and
     /// whether `applyTheme` may restyle the window — in the drawer, that window
     /// is the main one, which is not this view's to paint.
@@ -67,6 +69,7 @@ final class TileManagerView: NSView {
     private let summaryLabel = NSTextField(labelWithString: "")
     private let newButton = NSButton()
     private let modeButton = NSButton()
+    private let closeButton = NSButton()
     private let tableView = TileManagerTableView()
     private let scrollView = NSScrollView()
     private let emptyLabel = NSTextField(labelWithString: "")
@@ -85,9 +88,11 @@ final class TileManagerView: NSView {
          onDuplicate: @escaping (UUID) throws -> UUID?,
          onDelete: @escaping (UUID) -> Void,
          onNew: @escaping () -> UUID?,
-         onToggleMode: @escaping () -> Void) {
+         onToggleMode: @escaping () -> Void,
+         onClose: (() -> Void)? = nil) {
         self.mode = mode
         self.onToggleMode = onToggleMode
+        self.onClose = onClose
         self.rowsProvider = rows
         self.onOpen = onOpen
         self.onRename = onRename
@@ -110,6 +115,9 @@ final class TileManagerView: NSView {
         summaryLabel.font = ZTheme.chromeFont(size: 12)
         summaryLabel.lineBreakMode = .byTruncatingTail
         summaryLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        // Hugs its text, so New View sits right after it rather than wherever
+        // an unconstrained label happens to stretch to.
+        summaryLabel.setContentHuggingPriority(.defaultHigh, for: .horizontal)
         summaryLabel.translatesAutoresizingMaskIntoConstraints = false
         addSubview(summaryLabel)
 
@@ -128,6 +136,16 @@ final class TileManagerView: NSView {
         modeButton.action = #selector(modeClicked)
         modeButton.translatesAutoresizingMaskIntoConstraints = false
         addSubview(modeButton)
+
+        closeButton.isBordered = false
+        closeButton.target = self
+        closeButton.action = #selector(closeClicked)
+        closeButton.image = NSImage(systemSymbolName: "xmark", accessibilityDescription: "Close")?
+            .withSymbolConfiguration(NSImage.SymbolConfiguration(pointSize: 11, weight: .medium))
+        closeButton.toolTip = "Close Tile Views (\u{21E7}\u{2318}J)"
+        closeButton.isHidden = onClose == nil
+        closeButton.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(closeButton)
 
         topBorder.wantsLayer = true
         topBorder.translatesAutoresizingMaskIntoConstraints = false
@@ -157,9 +175,11 @@ final class TileManagerView: NSView {
             }
             tableView.addTableColumn(item)
         }
-        tableView.columnAutoresizingStyle = .firstColumnOnlyAutoresizingStyle
-        tableView.tableColumns.first { $0.identifier.rawValue == Column.name.rawValue }?
-            .resizingMask = [.autoresizingMask, .userResizingMask]
+        // The LAST column takes the slack, and its ⋯ sits at its leading edge,
+        // so on a wide window every column stays packed to the left. With
+        // firstColumnOnly the 36pt shape column swallowed the width instead,
+        // and a full-width drawer pushed the names off to the far right.
+        tableView.columnAutoresizingStyle = .lastColumnOnlyAutoresizingStyle
 
         scrollView.documentView = tableView
         scrollView.hasVerticalScroller = true
@@ -185,15 +205,26 @@ final class TileManagerView: NSView {
 
             summaryLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 14),
             summaryLabel.centerYAnchor.constraint(equalTo: newButton.centerYAnchor),
-            summaryLabel.trailingAnchor.constraint(lessThanOrEqualTo: newButton.leadingAnchor,
-                                                   constant: -8),
 
+            // New View follows the summary rather than hugging the far edge:
+            // in a full-width drawer the right edge is a screen away from the
+            // list it acts on. Only the dock button, a window control, sits there.
             newButton.topAnchor.constraint(equalTo: topBorder.bottomAnchor, constant: 6),
-            newButton.trailingAnchor.constraint(equalTo: modeButton.leadingAnchor, constant: -8),
+            newButton.leadingAnchor.constraint(equalTo: summaryLabel.trailingAnchor, constant: 12),
+            newButton.trailingAnchor.constraint(lessThanOrEqualTo: modeButton.leadingAnchor,
+                                                constant: -8),
 
             modeButton.centerYAnchor.constraint(equalTo: newButton.centerYAnchor),
-            modeButton.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -12),
             modeButton.widthAnchor.constraint(equalToConstant: 22),
+
+            // × at the far edge, the dock button just inside it. With no ×
+            // (the window) the dock button takes the edge itself.
+            closeButton.centerYAnchor.constraint(equalTo: newButton.centerYAnchor),
+            closeButton.widthAnchor.constraint(equalToConstant: 22),
+            closeButton.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -12),
+            onClose == nil
+                ? modeButton.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -12)
+                : modeButton.trailingAnchor.constraint(equalTo: closeButton.leadingAnchor, constant: -2),
 
             scrollView.topAnchor.constraint(equalTo: newButton.bottomAnchor, constant: 6),
             scrollView.leadingAnchor.constraint(equalTo: leadingAnchor),
@@ -244,12 +275,15 @@ final class TileManagerView: NSView {
             break
         }
         modeButton.contentTintColor = ZTheme.current.fg2Color
+        closeButton.contentTintColor = ZTheme.current.fg2Color
         modeButton.toolTip = docked
             ? "Open Tile Views in its own window"
             : "Dock Tile Views to the bottom of the window"
     }
 
     @objc private func modeClicked() { onToggleMode() }
+
+    @objc private func closeClicked() { onClose?() }
 
     // MARK: - Content
 
@@ -452,7 +486,7 @@ extension TileManagerView: NSTableViewDataSource, NSTableViewDelegate {
             let image = NSImageView(image: TileShapeImage.make(for: row.root, size: 18))
             image.contentTintColor = row.isShowing ? theme.accentColor : theme.fg2Color
             image.imageScaling = .scaleProportionallyDown
-            return TileManagerCellView(content: image, centred: true)
+            return TileManagerCellView(content: image, alignment: .centre)
         case .actions:
             let button = NSButton(title: "\u{22EF}", target: self, action: #selector(actionsClicked(_:)))
             button.isBordered = false
@@ -460,7 +494,7 @@ extension TileManagerView: NSTableViewDataSource, NSTableViewDelegate {
             button.contentTintColor = theme.fg2Color
             button.tag = index
             button.toolTip = "Actions for this view"
-            return TileManagerCellView(content: button, centred: true)
+            return TileManagerCellView(content: button, alignment: .leading)
         case .name, .slots, .state:
             let label = NSTextField(labelWithString: "")
             label.font = ZTheme.chromeFont(size: 12, weight: column == .name && row.isShowing ? .semibold : .regular)
@@ -478,7 +512,7 @@ extension TileManagerView: NSTableViewDataSource, NSTableViewDelegate {
                 label.stringValue = row.isShowing ? "Showing" : (row.isOpen ? "Open" : "")
                 label.textColor = row.isShowing ? theme.accentColor : theme.fg2Color
             }
-            return TileManagerCellView(content: label, centred: false)
+            return TileManagerCellView(content: label, alignment: .fill)
         }
     }
 }
@@ -491,15 +525,20 @@ extension TileManagerView: NSTableViewDataSource, NSTableViewDelegate {
 private final class TileManagerCellView: NSView {
     let content: NSView
 
-    init(content: NSView, centred: Bool) {
+    enum Alignment { case centre, leading, fill }
+
+    init(content: NSView, alignment: Alignment) {
         self.content = content
         super.init(frame: .zero)
         content.translatesAutoresizingMaskIntoConstraints = false
         addSubview(content)
         var constraints = [content.centerYAnchor.constraint(equalTo: centerYAnchor)]
-        if centred {
+        switch alignment {
+        case .centre:
             constraints.append(content.centerXAnchor.constraint(equalTo: centerXAnchor))
-        } else {
+        case .leading:
+            constraints.append(content.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 6))
+        case .fill:
             constraints += [
                 content.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 6),
                 content.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -6),

@@ -110,8 +110,8 @@ by the tool it's running.
     the command palette, and `+` → **Manage Views…** in the strip). Like
     Sessions it docks to the bottom of the window, and its ⤡ button detaches it
     into its own window (`zetty-tile-manager-view = drawer | window`, rewritten
-    by the button). The two drawers share that strip, so opening one closes the
-    other. It lists every saved
+    by the button), and × in its header closes the drawer. The two drawers share
+    that strip, so opening one closes the other. It lists every saved
     view with its shape, how many of its slots are filled, and whether it is
     open or showing. From there you can open, rename, duplicate or delete one:
     double-click or Return opens it, Delete deletes it after asking. Deleting a

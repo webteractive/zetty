@@ -5321,7 +5321,10 @@ final class TerminalViewController: NSViewController {
             onDuplicate: { [weak self] id in try self?.duplicateTileProfile(id: id).id },
             onDelete: { [weak self] id in self?.deleteTileProfile(id: id) },
             onNew: { [weak self] in self?.newTileViewFromManager() },
-            onToggleMode: { [weak self] in self?.onToggleTileManagerMode?() })
+            onToggleMode: { [weak self] in self?.onToggleTileManagerMode?() },
+            onClose: mode == .drawer
+                ? { [weak self] in self?.setTileManagerDrawer(visible: false) }
+                : nil)
         tileManagerView = manager
         return manager
     }
