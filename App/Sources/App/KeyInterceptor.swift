@@ -214,15 +214,10 @@ extension TerminalViewController {
             case .cyclePanes: cycleTileFocus();      return
             // Views. The strip shows them, so the TAB verbs address them —
             // which also stops `c` and `,` being silent no-ops.
-            case .selectTab(let n): selectTileView(at: n - 1); return
-            case .nextTab:
-                let count = max(1, openTileViews.count)
-                selectTileView(at: (activeTileViewIndex + 1) % count)
-                return
-            case .previousTab:
-                let count = max(1, openTileViews.count)
-                selectTileView(at: (activeTileViewIndex - 1 + count) % count)
-                return
+            // The same helpers ⌘1…⌘9 and ⌘{ / ⌘} use, so the two layers agree.
+            case .selectTab(let n): selectTileViewIfDifferent(at: n - 1); return
+            case .nextTab: cycleTileView(by: 1); return
+            case .previousTab: cycleTileView(by: -1); return
             case .newTab: newTileView(); return
             case .renameTab: beginRenameActiveTileView(); return
             // DETACH, not close: the pane keeps running in its project.

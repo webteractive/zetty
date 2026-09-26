@@ -6318,6 +6318,7 @@ final class TerminalViewController: NSViewController {
 
     /// Switch to the next tab, wrapping.  Key equivalent: ⌘}.
     @objc func selectNextTab(_ sender: Any?) {
+        if tileMode { cycleTileView(by: 1); return }
         workspace.activeTabList.selectNext()
         refreshTabBar()
         refreshSidebar()
@@ -6329,6 +6330,7 @@ final class TerminalViewController: NSViewController {
 
     /// Switch to the previous tab, wrapping.  Key equivalent: ⌘{.
     @objc func selectPreviousTab(_ sender: Any?) {
+        if tileMode { cycleTileView(by: -1); return }
         workspace.activeTabList.selectPrevious()
         refreshTabBar()
         refreshSidebar()
@@ -6355,10 +6357,35 @@ final class TerminalViewController: NSViewController {
 
     /// ⌘1…⌘9 — jump to tab N in the active project. The menu item's tag
     /// carries the zero-based tab index; out-of-range numbers are no-ops.
+    ///
+    /// While the grid is up the strip holds tile VIEWS, so ⌘N picks view N —
+    /// the same thing prefix + N already did there. Selecting a project tab
+    /// instead switched it behind the grid and pulled the keyboard off the
+    /// focused tile through `focusedTerminalView()`.
     @objc func selectTabByNumber(_ sender: Any?) {
-        guard let index = (sender as? NSMenuItem)?.tag,
-              workspace.activeTabList.trees.indices.contains(index) else { return }
+        guard let index = (sender as? NSMenuItem)?.tag else { return }
+        if tileMode {
+            selectTileViewIfDifferent(at: index)
+            return
+        }
+        guard workspace.activeTabList.trees.indices.contains(index) else { return }
         selectTab(at: index)
+    }
+
+    /// Selects strip view `index`, and does nothing when it is already the one
+    /// showing — `selectTileView` resets tile focus to the first tile, which a
+    /// press of the current view's number must not do.
+    func selectTileViewIfDifferent(at index: Int) {
+        guard tileMode, openTileViews.indices.contains(index),
+              index != activeTileViewIndex else { return }
+        selectTileView(at: index)
+    }
+
+    /// ⌘} / ⌘{ and prefix n / p in tile mode: the next or previous view, wrapping.
+    func cycleTileView(by offset: Int) {
+        guard tileMode, openTileViews.count > 1 else { return }
+        let count = openTileViews.count
+        selectTileView(at: ((activeTileViewIndex + offset) % count + count) % count)
     }
 
     private func selectTab(at index: Int) {
@@ -7241,6 +7268,19 @@ extension TerminalViewController: NSMenuItemValidation {
         }
         if menuItem.action == #selector(breakPaneIntoTab(_:)) {
             return workspace.activeTabList.activeTree.layout.surfaces.count > 1
+        }
+        // ⌘1…⌘9 and ⌘{ / ⌘} act on tile views while the grid is up, so the
+        // menu says so rather than promising a tab.
+        if menuItem.action == #selector(selectTabByNumber(_:)) {
+            menuItem.title = tileMode ? "Select Tile View \(menuItem.tag + 1)"
+                                      : "Select Tab \(menuItem.tag + 1)"
+            return tileMode ? openTileViews.indices.contains(menuItem.tag) : true
+        }
+        if menuItem.action == #selector(selectNextTab(_:)) {
+            menuItem.title = tileMode ? "Select Next Tile View" : "Select Next Tab"
+        }
+        if menuItem.action == #selector(selectPreviousTab(_:)) {
+            menuItem.title = tileMode ? "Select Previous Tile View" : "Select Previous Tab"
         }
         return true
     }

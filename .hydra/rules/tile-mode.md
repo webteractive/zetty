@@ -297,7 +297,14 @@ whichever tile currently HAS focus, so clicking tile 7's button gives you tile
 item for the same reason; it no longer has an action of its own.
 
 **Chrome.** The strip carries tile-view pills while the grid is up
-(`refreshTabBar` branches; every `tabBar.on*` callback branches with it), `+`
+(`refreshTabBar` branches; every `tabBar.on*` callback branches with it, and so
+do ⌘1…⌘9 and ⌘{ / ⌘} through `selectTabByNumber` and `selectNext/PreviousTab`,
+whose menu titles `validateMenuItem` renames to "Tile View". Before that, ⌘N
+selected the active project's tab BEHIND the grid and `focusedTerminalView()`
+stole the keyboard from the focused tile. `selectTileViewIfDifferent` and
+`cycleTileView` are shared with the prefix layer, and pressing the number of
+the view already showing is a no-op, because `selectTileView` resets tile
+focus), `+`
 raises the profile library as a menu, and the tab bar keeps its sidebar and
 grid buttons — hiding the whole bar took the sidebar toggle with it, which is
 why only the pills fold. The running/idle count is a status-bar chip in the

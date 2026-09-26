@@ -441,8 +441,8 @@ Command Line** and click install — this symlinks `zetty` into
 | `⌥⌘T` | Break focused pane into its own tab |
 | `⌥⌘←` `⌥⌘→` `⌥⌘↑` `⌥⌘↓` | Resize the focused pane |
 | `⌘W` / `⇧⌘W` | Close pane / close tab |
-| `⌘}` / `⌘{` | Next / previous tab |
-| `⌘1`–`⌘9` | Jump to tab |
+| `⌘}` / `⌘{` | Next / previous tab (tile view, while the grid is up) |
+| `⌘1`–`⌘9` | Jump to tab (tile view, while the grid is up) |
 | `⌘J` | Toggle Sessions (docked drawer, or its own window) |
 | `⇧⌘G` | Toggle tile mode — a grid of manually attached panes |
 | `⇧⌘J` | Toggle the tile manager — saved tile views (docked drawer, or its own window) |
