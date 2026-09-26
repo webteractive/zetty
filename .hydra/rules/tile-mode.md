@@ -189,6 +189,18 @@ the new one. `focusTile` is therefore idempotent and skips re-asserting first
 responder when the responder is already inside that pane, or it would re-enter
 its own observation.
 
+**A sidebar click focuses the tile, when there is one.** `onSelectProject` and
+`onSelectTab` try `focusAttachedTile` first. For a tab row that is the tile
+showing that tab. For a project row it is the tile of the project's active tab,
+or else its first tile in slot order. When the view on screen has no such tile,
+`leaveTileModeForSidebarClick` exits the grid and then `selectProject` runs.
+On its own, `selectProject` switched the project BEHIND the grid, which was
+invisible, and it pulled the keyboard off the focused tile. The exit clears
+`tileFocusedSurfaceID` first, or `setTileMode(false)` would land on the focused
+tile's pane and flash it on the way to the one that was clicked. `focusAttachedTile` then
+calls `refreshSidebar()` so the highlight returns to the active project, which
+tile mode never changes.
+
 **⌘D / ⇧⌘D split the SLOT in tile mode**, they are not disabled there. The
 reason they once were still holds — no pane tree is on screen, so splitting a
 PANE would reshape the active project's layout out of sight — and splitting the

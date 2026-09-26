@@ -74,8 +74,11 @@ by the tool it's running.
     It only appears when there is a split to remove. Attaching focuses
     what you just attached.
     A tile's `×` (and `⌘W`) detaches the slot — the pane keeps running; press
-    it again on the now-empty slot to remove the slot itself. **Double-click a
-    tile's header** to leave the grid for that pane, and use its **folder
+    it again on the now-empty slot to remove the slot itself. Clicking a
+    project or tab in the **sidebar** focuses its tile when that tab is in the
+    view on screen. For a project row that is the tile of its active tab, or
+    else its first tile. If the view has none, the click leaves the grid and
+    opens that project or tab normally. **Double-click a tile's header** to leave the grid for that pane, and use its **folder
     button** to open that pane's own directory in an editor or Finder — the
     status bar's `Open ▾` folds away while the grid is up, because one bar-wide
     Open cannot say which of the panes on screen it means.

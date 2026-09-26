@@ -865,6 +865,13 @@ final class TerminalViewController: NSViewController {
         // Wire sidebar callbacks.
         sidebar.onSelectProject = { [weak self] index in
             guard let self, self.workspace.projects.indices.contains(index) else { return }
+            // With the grid up, a project that has a tile is answered by
+            // focusing it — switching projects behind the grid shows nothing.
+            if self.focusAttachedTile(projectIndex: index, tabIndex: nil) {
+                self.closeSidebarDrawer()
+                return
+            }
+            self.leaveTileModeForSidebarClick()
             // Selecting a hibernated project SHOWS it (a dormant placeholder with
             // a Wake button) — it stays hibernated until the wake is intentional.
             self.selectProject(at: index)
@@ -877,8 +884,12 @@ final class TerminalViewController: NSViewController {
         sidebar.onShowBellMenu = { [weak self] anchor in self?.showAttentionMenu(from: anchor) }
         sidebar.onOpenSettings = { [weak self] in self?.onOpenSettings?() }
         sidebar.onSelectTab = { [weak self] projectIndex, tabIndex in
-            self?.selectProject(at: projectIndex, tabIndex: tabIndex)
-            self?.closeSidebarDrawer()
+            guard let self else { return }
+            if !self.focusAttachedTile(projectIndex: projectIndex, tabIndex: tabIndex) {
+                self.leaveTileModeForSidebarClick()
+                self.selectProject(at: projectIndex, tabIndex: tabIndex)
+            }
+            self.closeSidebarDrawer()
         }
 
         sidebar.onMoveTab = { [weak self] projectIndex, from, to in
@@ -4480,6 +4491,53 @@ final class TerminalViewController: NSViewController {
         refreshSidebar()
         focusTile(location.surfaceID)
         onWorkspaceDidChange?()
+    }
+
+    /// A sidebar click while the grid is up: focus the tile showing that tab
+    /// (`tabIndex`), or for a project row the tile of its active tab, else its
+    /// first tile in slot order. Returns false, changing nothing, when the grid
+    /// is down or no such tile is in the showing view. The caller then leaves
+    /// the grid (`leaveTileModeForSidebarClick`) and selects what was clicked.
+    ///
+    /// Without it a click selected the project BEHIND the grid: invisible,
+    /// and `selectProject`'s `makeFirstResponder(focusedTerminalView())` pulled
+    /// the keyboard off the focused tile.
+    private func focusAttachedTile(projectIndex: Int, tabIndex: Int?) -> Bool {
+        guard tileMode else { return false }
+        let attached: [(tab: Int, id: UUID)] = tileResolution().compactMap {
+            guard case .pane(let p, let t, let id) = $0, p == projectIndex else { return nil }
+            return (t, id)
+        }
+        let target: UUID?
+        if let tabIndex {
+            target = attached.first { $0.tab == tabIndex }?.id
+        } else {
+            let activeTab = workspace.projects.indices.contains(projectIndex)
+                ? workspace.projects[projectIndex].tabList.activeIndex : -1
+            target = (attached.first { $0.tab == activeTab } ?? attached.first)?.id
+        }
+        guard let target else { return false }
+        focusTile(target)
+        // An explicit request for this pane, so it takes the keyboard even
+        // from the sidebar's filter field, which `focusTileFirstResponder`
+        // deliberately leaves alone. The sidebar highlight goes back to the
+        // active project, because tile mode never changes it.
+        if let terminal = registry.appTerminalView(for: target) {
+            view.window?.makeFirstResponder(terminal)
+        }
+        refreshSidebar()
+        return true
+    }
+
+    /// A sidebar click for something the grid does not show leaves the grid,
+    /// so the `selectProject` that follows is visible instead of happening
+    /// behind it. Tile focus is dropped first: exiting normally lands on the
+    /// focused tile's pane, which would flash that pane on the way to the one
+    /// that was clicked.
+    private func leaveTileModeForSidebarClick() {
+        guard tileMode else { return }
+        tileFocusedSurfaceID = nil
+        setTileMode(false)
     }
 
     /// Re-resolves the grid after the workspace changed underneath it — a pane
