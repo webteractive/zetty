@@ -106,6 +106,7 @@ final class TileView: NSView, AgentRestartPresenting {
     private let onDetach: () -> Void
     private let onSplit: (SplitDirection) -> Void
     private let onRemoveSplit: () -> Void
+    private let onAddProject: () -> Void
 
     init(surfaceID: UUID?,
          slotIndex: Int,
@@ -122,7 +123,8 @@ final class TileView: NSView, AgentRestartPresenting {
          onRefresh: @escaping () -> Void = {},
          onDetach: @escaping () -> Void = {},
          onSplit: @escaping (SplitDirection) -> Void = { _ in },
-         onRemoveSplit: @escaping () -> Void = {}) {
+         onRemoveSplit: @escaping () -> Void = {},
+         onAddProject: @escaping () -> Void = {}) {
         self.surfaceID = surfaceID
         self.slotIndex = slotIndex
         self.status = status
@@ -134,6 +136,7 @@ final class TileView: NSView, AgentRestartPresenting {
         self.onDetach = onDetach
         self.onSplit = onSplit
         self.onRemoveSplit = onRemoveSplit
+        self.onAddProject = onAddProject
         self.canRemove = canRemove
         super.init(frame: .zero)
         wantsLayer = true
@@ -406,7 +409,8 @@ final class TileView: NSView, AgentRestartPresenting {
     /// Rows themed in `applyTheme` — icon and label per action row.
     private var emptyActionViews: [(NSImageView, NSTextField)] = []
 
-    /// The empty cell's three choices, stacked.
+    /// The empty cell's choices, stacked: Attach, Add Project, Split Right,
+    /// Split Down (and Remove Split when there is a split).
     ///
     /// This is the whole of a fresh Freeform view, so it is where someone looks
     /// to find out what a tile view can do — and until now it offered a single
@@ -428,6 +432,14 @@ final class TileView: NSView, AgentRestartPresenting {
         stack.addArrangedSubview(
             makeActionRow(symbol: "plus", title: "Attach") { [weak self] in
                 self?.onActivate()
+            })
+        // Between Attach and the splits: both of the first two FILL the cell.
+        // `makeActionRow` is a `ClickRowView`, which consumes its mouseDown —
+        // a plain view would also reach `TileView.mouseDown` and open the
+        // attach picker on top of the folder panel.
+        stack.addArrangedSubview(
+            makeActionRow(symbol: "folder.badge.plus", title: "Add Project") { [weak self] in
+                self?.onAddProject()
             })
         stack.addArrangedSubview(
             makeActionRow(symbol: "rectangle.split.2x1", title: "Split Right") { [weak self] in

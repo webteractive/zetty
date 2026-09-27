@@ -170,6 +170,41 @@ end. `CommandSearch.rank` breaks ties on the original index, so its position in
 `tileAttachCandidates()` IS where a query naming the project puts it; collecting
 them separately would strand every one of them below every tab.
 
+**A fourth attach path adds a PROJECT.** The picker's `Add Project…` row (last,
+for the same tie-break reason), the empty cell's `Add Project` row and — while
+the grid is up — ⌘O / ⇧⌘N / sidebar `+` / palette all end in
+`addProjectToTile(_:target:)`. `presentAddProjectPanel` takes an `onChosen`,
+and `addProject(_:)` branches on `tileMode` at CHOOSE time (and closes an open
+attach picker first — it would point at a slot the add may split away). The
+sidebar's `+` goes through `addProject(nil)` for exactly this; it used to call
+the panel directly and would have bypassed the redirect. Three things are
+deliberate:
+
+- **`activate: false`, always.** Activating would switch the project behind
+  the grid — the invisible switch `320a61a` removed from sidebar clicks.
+- **Cancelling the chooser still attaches a plain shell**, where New session's
+  Cancel creates nothing: the folder panel has already committed a project,
+  and leaving it unattached strands it. `chooseAgentThenSpawn(in:onCancel:)`
+  carries that; every other caller passes no `onCancel`.
+- **A layout template skips the chooser** (`insertProject` reports
+  `usedTemplate`): the template already declares what its panes run.
+
+**A slot is re-checked after the sheets.** The tile paths cross two
+window-modal steps (folder panel, chooser) while a script can still reshape or
+switch views, so `.slot` carries the view id and what the slot held
+(`tileSlotTarget`), and `attachTab` attaches there only if
+`TileProfile.isStillTarget` agrees — else it places by `TilePlacement`. If the
+grid CLOSED meanwhile, nothing is dropped: a folder chosen from a tile's panel
+is added the ordinary way, and a chooser that returns with the grid down still
+stamps the pane and parks the tab in the active view in the background (no
+spawn, no focus), like `zetty tiles attach` does.
+
+A folder already in the workspace (`WorkspaceModel.projectIndex(forRoot:)`,
+canonical-key compared, never matching scratch) is attached, not re-added; if
+its tab is already in the view, both targets just focus that tile rather than
+show it twice (`attachTab`). `stampAndAttach` is shared with New session, so
+the stamp-before-spawn rule lives in one place.
+
 **There is no All Running view.** Toggling into tile mode opens the CHOOSER;
 an auto-filled view was what made the grid unreadable at sixteen tiles, and the
 picker replaced it rather than joining it. `TileProfileKind` and

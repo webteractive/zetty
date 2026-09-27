@@ -132,3 +132,18 @@ extension TileProfile {
         try container.encode(slots, forKey: .slots)
     }
 }
+
+extension TileProfile {
+
+    /// Whether an attach aimed at slot `index` while it held `captured` still
+    /// lands where it was aimed: the slot is inside the layout and holds what
+    /// it did. Adding a project into a tile crosses two window-modal steps (the
+    /// folder panel and the agent chooser), and a script can reshape the view
+    /// in between; `attach(at:)` would otherwise overwrite whatever is there
+    /// now, or fill a slot that is no longer on screen.
+    public func isStillTarget(_ index: Int, holding captured: TileSlot?) -> Bool {
+        guard index >= 0, index < capacity else { return false }
+        let current = slots.indices.contains(index) ? slots[index] : nil
+        return current == captured
+    }
+}

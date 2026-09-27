@@ -149,6 +149,18 @@ public final class WorkspaceModel {
         return p
     }
 
+    /// The project rooted at `path`, compared through
+    /// `ProjectSettingsStore.canonicalKey` — the same key tile slots resolve
+    /// by — so a trailing slash, a `..` or a symlink cannot mint a duplicate.
+    /// Scratch terminals never match: they are rooted at home, and Home is the
+    /// real project there.
+    public func projectIndex(forRoot path: String) -> Int? {
+        let key = ProjectSettingsStore.canonicalKey(path)
+        return projects.firstIndex {
+            !$0.isScratch && ProjectSettingsStore.canonicalKey($0.rootPath) == key
+        }
+    }
+
     /// Adds a clone project (an isolated copy of `cloneSource`'s directory).
     /// Background by default — an orchestrating agent spins up N clones without
     /// stealing focus; `makeActive` switches to it.

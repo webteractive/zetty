@@ -87,6 +87,13 @@ by the tool it's running.
     somewhere else. It goes through the project's own agent chooser when one
     is configured (Project Settings → Agents), exactly like `⌘T` does, so the
     new tile can come up already running an agent on the account you pick.
+  - **Add a project without leaving the grid.** The list's last row,
+    **Add Project…**, and an empty tile's **Add Project** button open the
+    folder panel; the new project's pane lands in that tile (after the agent
+    chooser, unless the project has a layout template). While the grid is up,
+    `⌘O` and the sidebar's **+** do the same, filling the first empty tile or
+    splitting the focused one. A folder that is already a project is attached,
+    not added twice, and the active project never changes.
   - **Tile views are tabs.** While the grid is up the tab bar's strip carries
     tile views instead of the active project's tabs, with `+` opening your
     saved **profiles**. Several can be open at once. `⌘1`–`⌘9` jump to a view

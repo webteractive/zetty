@@ -2,7 +2,8 @@ import AppKit
 import ZettyCore
 
 /// A scrim + centred panel listing every pane — plus a fresh session per
-/// project — fuzzy-filtered, for attaching one into a tile slot.
+/// project, and a row that adds a new project — fuzzy-filtered, for attaching
+/// one into a tile slot.
 ///
 /// Deliberately shaped like `CommandPaletteView` — same anatomy, same four key
 /// commands — so it behaves the way the palette already taught.
@@ -16,6 +17,8 @@ final class TileAttachPicker: NSView {
         case attach(TileSlot)
         /// Mint a fresh tab in this project and attach that.
         case newSession(projectIndex: Int)
+        /// Choose a folder, add it as a project, and attach its pane.
+        case addProject
     }
 
     struct Candidate {
@@ -74,7 +77,7 @@ final class TileAttachPicker: NSView {
         addSubview(panel)
 
         field.font = ZTheme.chromeFont(size: 13)
-        field.placeholderString = "Attach a pane or start a new session\u{2026}"
+        field.placeholderString = "Attach a pane, start a session, or add a project\u{2026}"
         field.isBordered = false
         field.drawsBackground = false
         field.focusRingType = .none

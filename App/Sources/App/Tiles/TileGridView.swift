@@ -68,6 +68,8 @@ final class TileGridView: NSView {
     /// new ratio, and whether the gesture has ended. Only the final call
     /// persists — see `mutateActiveTileProfile(persist:)`.
     var onSetRatio: ((Int, Double, Bool) -> Void)?
+    /// The empty cell's "Add Project" row, by slot index.
+    var onAddProject: ((Int) -> Void)?
 
     /// Retunes each tile's refresh button without rebuilding the grid.
     ///
@@ -204,7 +206,8 @@ final class TileGridView: NSView {
                 onRefresh: { [weak self] in if let id { self?.onRefresh(id) } },
                 onDetach: { [weak self] in self?.onDetach(index) },
                 onSplit: { [weak self] direction in self?.onSplit(index, direction) },
-                onRemoveSplit: { [weak self] in self?.onRemoveSplit(index) })
+                onRemoveSplit: { [weak self] in self?.onRemoveSplit(index) },
+                onAddProject: { [weak self] in self?.onAddProject?(index) })
             tile.translatesAutoresizingMaskIntoConstraints = true
             addSubview(tile)
             tiles.append(tile)

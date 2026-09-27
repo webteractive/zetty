@@ -943,8 +943,10 @@ final class TerminalViewController: NSViewController {
             self.setSpaceCollapsed(id, !space.isCollapsed)
         }
 
+        // Through `addProject(_:)`, the one entry every Add Project control
+        // uses, so tile mode's redirect covers the sidebar's `+` too.
         sidebar.onAddProject = { [weak self] in
-            self?.presentAddProjectPanel()
+            self?.addProject(nil)
         }
 
         sidebar.onRemoveProject = { [weak self] index in
@@ -1531,7 +1533,12 @@ final class TerminalViewController: NSViewController {
     /// session attached into a slot would otherwise be offered the agents and
     /// account default of whichever project happens to be selected behind the
     /// grid — a chooser naming the wrong project's agents is worse than none.
+    ///
+    /// `onCancel` runs for Cancel and for Manage. Every caller that creates
+    /// nothing on cancel passes none; adding a project into a tile passes one,
+    /// because the folder panel has already committed that project.
     func chooseAgentThenSpawn(in project: ProjectRuntime,
+                              onCancel: (() -> Void)? = nil,
                               _ onProceed: @escaping (_ command: String?, _ accountID: String?) -> Void) {
         let config = agentsProvider?(project) ?? .disabled
         let agents = config.agents
@@ -1548,8 +1555,10 @@ final class TerminalViewController: NSViewController {
             // launch chosen agent, on the chosen account
             case let .agent(command, accountID): onProceed(command, accountID)
             case let .standard(accountID):       onProceed(nil, accountID)
-            case .manage:                        self?.onOpenAgentSettings?(project)
-            case .cancel:                        break   // nothing created
+            case .manage:
+                self?.onOpenAgentSettings?(project)
+                onCancel?()
+            case .cancel:                        onCancel?()   // nil → nothing created
             }
         }
     }
@@ -3362,7 +3371,8 @@ final class TerminalViewController: NSViewController {
               isDirectory.boolValue else {
             return .failure(.protocolError("no such directory: \(root)"))
         }
-        if let existing = workspace.projects.first(where: { $0.rootPath == root }) {
+        if let index = workspace.projectIndex(forRoot: root) {
+            let existing = workspace.projects[index]
             return .failure(.protocolError("project \"\(existing.name)\" already uses \(root)"))
         }
         var spaceID: UUID?
@@ -4446,6 +4456,90 @@ final class TerminalViewController: NSViewController {
         enqueueMissingTileSurfaces()
     }
 
+    /// Where an attach lands: the slot that asked (picker row, empty cell), or
+    /// wherever `TilePlacement` puts it (⌘O / sidebar `+`).
+    private enum TileTarget {
+        /// Slot `index` of view `view`, which held `holding` when it was aimed
+        /// at. An attach that arrives after a modal step re-checks all three
+        /// (`TileProfile.isStillTarget`) and falls back to `.placed` if a
+        /// script reshaped or switched the view meanwhile.
+        case slot(Int, view: UUID?, holding: TileSlot?)
+        case placed
+    }
+
+    /// Aims at slot `index` of the view showing now, remembering what it holds.
+    private func tileSlotTarget(_ index: Int) -> TileTarget {
+        let profile = activeTileProfile
+        let held = profile.flatMap { $0.slots.indices.contains(index) ? $0.slots[index] : nil }
+        return .slot(index, view: profile?.id, holding: held)
+    }
+
+    /// Attaches `slot` (showing `surfaceID`) at `target` and focuses it.
+    ///
+    /// `.placed` is the `focusPaneInTiles` shape: with the chooser up there is
+    /// no view to attach into, so one is made first. If the tab is already in
+    /// the view, both targets just focus its tile — a `.slot` request must not
+    /// show the same tab twice.
+    private func attachTab(_ slot: TileSlot, showing surfaceID: UUID, target: TileTarget) {
+        if let profile = activeTileProfile,
+           case .existing = TilePlacement.place(tabID: slot.tabID, in: profile,
+                                                focusedSlot: tileFocusedSlot) {
+            focusTile(surfaceID)
+            return
+        }
+        if case .slot(let index, let viewID, let held) = target,
+           let profile = activeTileProfile, profile.id == viewID,
+           profile.isStillTarget(index, holding: held) {
+            attachAndFocus(slot, at: index)
+            return
+        }
+        // `.placed`, or a `.slot` whose view or slot changed while a sheet was up.
+        if activeTileProfile == nil {
+            selectTileView(at: createTileView(named: nil))
+        }
+        let focused = tileFocusedSlot
+        mutateActiveTileProfile { $0.place(slot, focusedSlot: focused) }
+        enqueueMissingTileSurfaces()
+        focusTile(surfaceID)
+    }
+
+    /// The tail every chooser-then-attach path shares: stamp the pane's account
+    /// and startup command, then attach the tab that holds it.
+    ///
+    /// Both stamps MUST land before anything can spawn the pane — the surface
+    /// environment is read once, when libghostty creates it — and the spawn
+    /// belongs to the tile queue (`attachAndFocus` / `enqueueMissingTileSurfaces`),
+    /// never `spawnPaneInBackground`, so it is staggered with the rest of the grid.
+    private func stampAndAttach(paneID: UUID, in project: ProjectRuntime,
+                                command: String?, accountID: String?,
+                                target: TileTarget) {
+        let tabList = project.tabList
+        tabList.updateSurface(paneID) {
+            $0.accountID = self.resolvedAccountID(explicit: accountID, project: project)
+        }
+        if let command { pendingStartupCommands[paneID] = command }
+        guard let tabIndex = tabList.trees.firstIndex(where: {
+            $0.layout.surfaces.contains { $0.id == paneID }
+        }) else { return }
+        let tree = tabList.trees[tabIndex]
+        let tileSlot = TileSlot(
+            projectRoot: project.rootPath, tabID: tree.id,
+            label: "\(project.name) / \(tabDisplayTitle(for: tree, at: tabIndex))")
+        if tileMode {
+            attachTab(tileSlot, showing: tree.focusedSurfaceID ?? paneID, target: target)
+        } else if activeTileProfile != nil {
+            // The grid closed while a sheet was up (a script, the tile manager).
+            // Still place the tab — in the background, the way `zetty tiles
+            // attach` does with the grid down — so the project is waiting in
+            // the view next time rather than stranded. Nothing spawns or
+            // takes focus: the grid is not on screen.
+            let noFocus: Int? = nil
+            mutateActiveTileProfile { $0.place(tileSlot, focusedSlot: noFocus) }
+        }
+        refreshSidebar()
+        onWorkspaceDidChange?()
+    }
+
     // MARK: Tile control — shared by `zetty tiles` and the manager window
 
     /// A slot naming the tab at `projectIndex`/`tabIndex`, labelled the way
@@ -4854,7 +4948,7 @@ final class TerminalViewController: NSViewController {
     /// keeping it here is what puts it under that project's tabs for a query
     /// naming the project, instead of far below them.
     private func tileAttachCandidates() -> [TileAttachPicker.Candidate] {
-        workspace.projects.enumerated().flatMap { projectIndex, project in
+        let panes = workspace.projects.enumerated().flatMap { projectIndex, project in
             project.tabList.trees.enumerated().map { index, tree in
                 let label = "\(project.name) / \(tabDisplayTitle(for: tree, at: index))"
                 let surfaceID = tree.focusedSurfaceID ?? tree.layout.surfaces.first?.id
@@ -4872,6 +4966,12 @@ final class TerminalViewController: NSViewController {
                     action: .newSession(projectIndex: projectIndex)),
             ]
         }
+        // Last, so a query naming a project still lists its tabs first.
+        return panes + [
+            TileAttachPicker.Candidate(label: "Add Project\u{2026}",
+                                       detail: "choose a folder",
+                                       action: .addProject),
+        ]
     }
 
     func presentTileAttachPicker(slot index: Int) {
@@ -4886,6 +4986,8 @@ final class TerminalViewController: NSViewController {
                 self.attachAndFocus(slot, at: index)
             case .newSession(let projectIndex):
                 self.attachNewTileSession(projectIndex: projectIndex, slot: index)
+            case .addProject:
+                self.presentAddProjectPanelForTile(slot: index)
             }
         }
         tileAttachPicker = picker
@@ -4901,28 +5003,69 @@ final class TerminalViewController: NSViewController {
     private func attachNewTileSession(projectIndex: Int, slot: Int) {
         guard workspace.projects.indices.contains(projectIndex) else { return }
         let project = workspace.projects[projectIndex]
+        let target = tileSlotTarget(slot)
         chooseAgentThenSpawn(in: project) { [weak self] command, accountID in
             guard let self, self.tileMode else { return }
-            let tabList = project.tabList
-            let paneID = tabList.newBackgroundTab()
-            // Both stamps MUST land before anything can spawn the pane: the
-            // surface environment is read once, when libghostty creates it.
-            tabList.updateSurface(paneID) {
-                $0.accountID = self.resolvedAccountID(explicit: accountID, project: project)
-            }
-            if let command { self.pendingStartupCommands[paneID] = command }
+            let paneID = project.tabList.newBackgroundTab()
+            self.stampAndAttach(paneID: paneID, in: project, command: command,
+                                accountID: accountID, target: target)
+        }
+    }
 
-            let tabIndex = tabList.trees.count - 1
-            let tree = tabList.trees[tabIndex]
-            let tileSlot = TileSlot(
+    /// Opens the add-project panel for tile slot `slot` — the picker's
+    /// "Add Project…" row and the empty cell's "Add Project" row.
+    func presentAddProjectPanelForTile(slot: Int) {
+        // Aimed now, before the panel: `attachTab` re-checks it afterwards.
+        let target = tileSlotTarget(slot)
+        presentAddProjectPanel { [weak self] url in
+            guard let self else { return }
+            // The grid closed while the panel was up: the folder was still
+            // chosen, so add it the ordinary way rather than drop it.
+            if self.tileMode {
+                self.addProjectToTile(url, target: target)
+            } else {
+                self.addProjectFromURL(url)
+            }
+        }
+    }
+
+    /// Adds `url` as a project in the BACKGROUND and attaches its pane to a
+    /// tile, focused, without leaving the grid or changing the active project.
+    ///
+    /// - A folder that is already a project is not added again: its active tab
+    ///   is attached (or its tile focused) exactly as if picked from the picker.
+    /// - A layout template skips the agent chooser; the template already says
+    ///   what its panes run.
+    /// - Cancelling the chooser still attaches, as a plain shell. Unlike "New
+    ///   session", the folder panel has already committed a project here, and
+    ///   leaving it unattached would strand what the user just asked to see.
+    private func addProjectToTile(_ url: URL, target: TileTarget) {
+        guard tileMode else { return }
+        if let index = workspace.projectIndex(forRoot: url.path) {
+            let project = workspace.projects[index]
+            let tree = project.tabList.activeTree
+            guard let paneID = tree.focusedSurfaceID ?? tree.layout.surfaces.first?.id else { return }
+            let slot = TileSlot(
                 projectRoot: project.rootPath, tabID: tree.id,
-                label: "\(project.name) / \(self.tabDisplayTitle(for: tree, at: tabIndex))")
-            // `attachAndFocus` owns the spawn too — deliberately the tile
-            // queue rather than `spawnPaneInBackground`, so a new session is
-            // staggered with every other pane the grid is bringing up.
-            self.attachAndFocus(tileSlot, at: slot)
-            self.refreshSidebar()
-            self.onWorkspaceDidChange?()
+                label: "\(project.name) / \(tabDisplayTitle(for: tree, at: project.tabList.activeIndex))")
+            attachTab(slot, showing: paneID, target: target)
+            refreshSidebar()
+            return
+        }
+
+        let (project, usedTemplate) = insertProject(url, name: nil, activate: false)
+        let tree = project.tabList.activeTree
+        guard let paneID = tree.focusedSurfaceID ?? tree.layout.surfaces.first?.id else { return }
+        // No `tileMode` guard: if the grid closed while the chooser was up,
+        // `stampAndAttach` still stamps the pane and parks the tab in the view.
+        let attach: (String?, String?) -> Void = { [weak self] command, accountID in
+            self?.stampAndAttach(paneID: paneID, in: project, command: command,
+                                 accountID: accountID, target: target)
+        }
+        if usedTemplate {
+            attach(nil, nil)
+        } else {
+            chooseAgentThenSpawn(in: project, onCancel: { attach(nil, nil) }, attach)
         }
     }
 
@@ -5815,11 +5958,27 @@ final class TerminalViewController: NSViewController {
     /// Folder button, create — a folder, then adds it as a project. A single
     /// "Initialize git repository" checkbox git-inits the chosen folder. This is
     /// the one unified entry point (sidebar "+", ⌘O, ⇧⌘N, palette all land here).
+    ///
+    /// While the grid is up the new project is attached into it instead
+    /// (`TilePlacement`: the first hole, else a split of the focused tile) —
+    /// activating it would switch the project BEHIND the grid, invisibly.
+    /// Tile mode is read when the folder is CHOSEN, not when the panel opened.
     @objc func addProject(_ sender: Any?) {
-        presentAddProjectPanel()
+        // A picker left open would point at a slot the add may split away.
+        if isTileAttachPickerOpen { dismissTileAttachPicker() }
+        presentAddProjectPanel { [weak self] url in
+            guard let self else { return }
+            if self.tileMode {
+                self.addProjectToTile(url, target: .placed)
+            } else {
+                self.addProjectFromURL(url)
+            }
+        }
     }
 
-    private func presentAddProjectPanel() {
+    /// The panel itself. `onChosen` receives the folder after any git-init, so
+    /// every caller — the ordinary add and the tile paths — shares one panel.
+    private func presentAddProjectPanel(onChosen: @escaping (URL) -> Void) {
         let panel = NSOpenPanel()
         panel.canChooseDirectories = true
         panel.canChooseFiles = false
@@ -5848,7 +6007,7 @@ final class TerminalViewController: NSViewController {
             defer { self.addProjectGitCheckbox = nil }
             guard response == .OK, let url = panel.url else { return }
             if gitCheck.state == .on { self.gitInitIfNeeded(atPath: url.path) }
-            self.addProjectFromURL(url)
+            onChosen(url)
         }
 
         if let window = view.window {
@@ -5864,14 +6023,24 @@ final class TerminalViewController: NSViewController {
     /// when the project is later opened).
     @discardableResult
     private func addProjectFromURL(_ url: URL, name: String? = nil, activate: Bool = true) -> ProjectRuntime {
+        insertProject(url, name: name, activate: activate).project
+    }
+
+    /// `addProjectFromURL`, also reporting whether a layout template replaced
+    /// the default seed. Adding into a tile needs to know: a template already
+    /// declares what its panes run, so the agent chooser is skipped.
+    private func insertProject(_ url: URL, name: String?, activate: Bool)
+        -> (project: ProjectRuntime, usedTemplate: Bool) {
         let project = workspace.addProject(
             name: name ?? url.lastPathComponent, rootPath: url.path, makeActive: activate)
         // A resolved layout template replaces the default single-pane seed
         // (fresh project → nothing to confirm-discard).
+        var usedTemplate = false
         if let template = layoutTemplateProvider?(project),
            let built = template.tabList(rootPath: project.rootPath) {
             project.tabList.replaceTrees(from: built.tabList)
             pendingStartupCommands.merge(built.commands) { _, new in new }
+            usedTemplate = true
         }
         stampAccounts(in: project)
         refreshTabBar()
@@ -5885,7 +6054,7 @@ final class TerminalViewController: NSViewController {
         } else {
             onWorkspaceDidChange?()     // persist the added project
         }
-        return project
+        return (project, usedTemplate)
     }
 
     /// Interactive entry (⌃⌘N / palette / menu): always switches to the new
@@ -7074,6 +7243,9 @@ final class TerminalViewController: NSViewController {
                 self?.mutateActiveTileProfile(persist: isFinal) {
                     $0.setRatio(atDivider: divider, to: ratio)
                 }
+            }
+            grid.onAddProject = { [weak self] index in
+                self?.presentAddProjectPanelForTile(slot: index)
             }
             grid.onDropSidebarTab = { [weak self] projectIndex, tabIndex, slot in
                 self?.attachSidebarTabToTile(projectIndex: projectIndex,
