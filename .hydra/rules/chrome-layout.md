@@ -256,6 +256,9 @@ be wrong**, and folds otherwise.
 - **The account always folds** into the location dropup. It is identity, not
   state, and the status bar is not its only surface — the tab pill carries an
   account dot too.
+- **In tile mode the whole location cluster is hidden** (account · cwd · git,
+  and the collapsed chip), not folded — each tile carries its own footer. See
+  `tile-mode.md`; `updateLocationVisibility()` owns it.
 
 Visibility for the two folding pills lives in `updateBroadcastVisibility()` and
 `updateAccountVisibility()` rather than in their renderers, because both are

@@ -20,6 +20,8 @@ struct TileDescriptor {
     /// Whether this pane's agent can be restarted on its existing
     /// conversation — exactly "a resume line can be built".
     let canRefresh: Bool
+    /// The tile's footer; nil for anything but a live pane.
+    var statusLine: TileStatusLine? = nil
 }
 
 // MARK: - TileGridView
@@ -70,6 +72,8 @@ final class TileGridView: NSView {
     var onSetRatio: ((Int, Double, Bool) -> Void)?
     /// The empty cell's "Add Project" row, by slot index.
     var onAddProject: ((Int) -> Void)?
+    /// A tile footer's account chip, by surface.
+    var onAccountClicked: ((UUID) -> Void)?
 
     /// Retunes each tile's refresh button without rebuilding the grid.
     ///
@@ -81,6 +85,19 @@ final class TileGridView: NSView {
     /// `AgentRestartPresenting` lookup.
     func tile(for surfaceID: UUID) -> TileView? {
         tiles.first { $0.surfaceID == surfaceID }
+    }
+
+    /// The surfaces the grid is showing, in slot order.
+    var attachedSurfaceIDs: [UUID] { tiles.compactMap(\.surfaceID) }
+
+    /// Pushes each tile's footer IN PLACE. Never route this through
+    /// `update(tiles:)`, which rebuilds every tile: a `cd` in one pane would
+    /// then rebuild sixteen (`CLAUDE.md` → Chrome refresh).
+    func updateStatusLines(_ lines: [UUID: TileStatusLine]) {
+        for tile in tiles {
+            guard let id = tile.surfaceID else { continue }
+            tile.setStatusLine(lines[id])
+        }
     }
 
     func updateRefreshButtons(_ canRefresh: (UUID) -> Bool) {
@@ -207,7 +224,9 @@ final class TileGridView: NSView {
                 onDetach: { [weak self] in self?.onDetach(index) },
                 onSplit: { [weak self] direction in self?.onSplit(index, direction) },
                 onRemoveSplit: { [weak self] in self?.onRemoveSplit(index) },
-                onAddProject: { [weak self] in self?.onAddProject?(index) })
+                onAddProject: { [weak self] in self?.onAddProject?(index) },
+                statusLine: descriptor.statusLine,
+                onAccountClicked: { [weak self] in if let id { self?.onAccountClicked?(id) } })
             tile.translatesAutoresizingMaskIntoConstraints = true
             addSubview(tile)
             tiles.append(tile)

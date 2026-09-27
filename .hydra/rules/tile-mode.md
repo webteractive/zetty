@@ -355,6 +355,55 @@ item for the same reason; it no longer has an action of its own.
 **Chrome.** The strip carries tile-view pills while the grid is up
 (`refreshTabBar` branches; every `tabBar.on*` callback branches with it, and so
 do ⌘1…⌘9 and ⌘{ / ⌘} through `selectTabByNumber` and `selectNext/PreviousTab`,
+**The status bar's account · cwd · git left too, onto a footer per tile.**
+`StatusBarView.updateLocationVisibility()` hides `accountPill`, `cwdLabel`,
+`gitStack` and `locationChip` while `isTileMode`, and `refreshStatusBar` skips
+the bar's account resolve and git probe entirely. **The footers ride the
+coalesced chrome tick EXPLICITLY** (`setNeedsChromeRefresh`'s closure), not
+`refreshStatusBar`: in tile mode `refreshTabBar` returns before it reaches the
+status bar, and the first cut relied on it — footers then never saw a `cd`.
+`registry.onTitleChange` (which fires for cwd changes too) marks the pane
+dirty in `TileDirectoryCache`, and the tick refreshes only while something is
+dirty. `TileStatusLineView` is the status bar per tile, which is
+why it is MONO; don't "fix" it to `chromeFont`. Only a `.terminal` tile builds
+one, so empty, missing, attaching and failed cells keep their full height.
+Four rules keep it cheap:
+
+- **It updates in place** (`TileGridView.updateStatusLines` →
+  `TileView.setStatusLine`, which no-ops on an equal `TileStatusLine`), NEVER
+  through `refreshTileGrid`, which rebuilds every tile. `applyTheme` clears the
+  render cache, or the footer freezes in the old palette. `tileDescriptors`
+  also carries the line, so a rebuild draws it at once rather than blank.
+- **Git is probed per DIRECTORY** (`TileGitProber`), serially on `gitQueue`,
+  re-probed by the existing 15s timer only while the grid is up, and reset
+  when it closes; a result for a directory no tile shows is dropped. Sixteen
+  tiles in one repo are one `git` process.
+- **Parts drop whole** by `TileStatusLine.visibleParts(width:widths:)` — ↑↓,
+  account label, ●n, account icon, branch — and the cwd truncates at its head.
+  The branch is measured CAPPED (`branchWidth(labelWidth:)`, 120pt label) and
+  truncates at its tail, or one long feature-branch name pushes the account
+  and ●n out first. A tile too short for a footer plus a usable terminal
+  (`fitsFooter`) zeroes the footer's height in `setFrameSize` rather than
+  over-constrain header + footer + body.
+  The cwd chain is `paneDirectory(for:)`, shared with the bar so the two
+  cannot disagree. It reads a FILE (`PaneCwdStore`), so `TileDirectoryCache`
+  re-reads only a dirty pane, at most once a second each (a spinning agent
+  dirties its pane every frame), and schedules one retry so a `cd` followed by
+  silence still lands. The tick takes ids from `grid.attachedSurfaceIDs`, not
+  `tileResolution()`, which `realpath`s every project root.
+- **The footer's account chip restyles only when the account moves**
+  (`chipToken`), and it is an icon + label in a `ClickRowView`, not an
+  `NSButton` — no `attributedTitle` to leak KVO, and no button insets to make
+  the measured width lie. `hitTest` answers with the chip or the footer, never
+  a label, so a single click focuses the tile; a double-click is swallowed,
+  because on a tile it means "leave the grid" and that belongs to the header.
+
+The bar's `scheduleGitProbe` guard compares against `statusBarSurface`, not
+`paneTree.focusedSurfaceID`: in tile mode those differ, and the old guard
+silently dropped every result. Leaving the grid clears
+`lastGitProbeDirectory` so the bar re-probes rather than showing git as old as
+the grid session.
+
 whose menu titles `validateMenuItem` renames to "Tile View". Before that, ⌘N
 selected the active project's tab BEHIND the grid and `focusedTerminalView()`
 stole the keyboard from the focused tile. `selectTileViewIfDifferent` and

@@ -46,7 +46,7 @@ enum TileStatus: Equatable {
 /// `delaysPrimaryMouseButtonEvents`, and "Split Down also opened the picker"
 /// is not a thing to leave to that.
 @MainActor
-private final class ClickRowView: NSView {
+final class ClickRowView: NSView {
     var onClick: (() -> Void)?
 
     override func mouseDown(with event: NSEvent) { onClick?() }
@@ -95,6 +95,12 @@ final class TileView: NSView, AgentRestartPresenting {
     /// overlay must be parented onto it, not beside it.
     private weak var terminalView: NSView?
     private let messageLabel = NSTextField(labelWithString: "")
+    private let statusLineView = TileStatusLineView()
+    /// Only a live terminal tile has a footer: empty, missing, attaching and
+    /// failed cells keep their full height for their actions and messages.
+    private var hasStatusLine = false
+    /// The footer's height, zeroed when the tile is too short for one.
+    private var footerHeightConstraint: NSLayoutConstraint?
 
     private let canRemove: Bool
     private var isFocused: Bool
@@ -124,7 +130,9 @@ final class TileView: NSView, AgentRestartPresenting {
          onDetach: @escaping () -> Void = {},
          onSplit: @escaping (SplitDirection) -> Void = { _ in },
          onRemoveSplit: @escaping () -> Void = {},
-         onAddProject: @escaping () -> Void = {}) {
+         onAddProject: @escaping () -> Void = {},
+         statusLine: TileStatusLine? = nil,
+         onAccountClicked: @escaping () -> Void = {}) {
         self.surfaceID = surfaceID
         self.slotIndex = slotIndex
         self.status = status
@@ -151,6 +159,8 @@ final class TileView: NSView, AgentRestartPresenting {
                         canRefresh: canRefresh)
         }
         buildBody(content: content)
+        statusLineView.onAccountClicked = onAccountClicked
+        if hasStatusLine { statusLineView.setLine(statusLine) }
         // The live grid is the layout editor, so a slot splits like a pane.
         menu = {
             let menu = NSMenu()
@@ -373,14 +383,34 @@ final class TileView: NSView, AgentRestartPresenting {
         addSubview(body)
         let bodyTop: NSLayoutYAxisAnchor
         if case .empty = content { bodyTop = topAnchor } else { bodyTop = header.bottomAnchor }
+        let bodyBottom: NSLayoutConstraint
+        if case .terminal = content {
+            hasStatusLine = true
+            addSubview(statusLineView)
+            NSLayoutConstraint.activate([
+                statusLineView.leadingAnchor.constraint(equalTo: leadingAnchor,
+                                                        constant: Self.borderWidth),
+                statusLineView.trailingAnchor.constraint(equalTo: trailingAnchor,
+                                                         constant: -Self.borderWidth),
+                statusLineView.bottomAnchor.constraint(equalTo: bottomAnchor,
+                                                       constant: -Self.borderWidth),
+            ])
+            let footerHeight = statusLineView.heightAnchor.constraint(
+                equalToConstant: TileStatusLineView.height)
+            footerHeight.isActive = true
+            footerHeightConstraint = footerHeight
+            bodyBottom = body.bottomAnchor.constraint(equalTo: statusLineView.topAnchor)
+        } else {
+            bodyBottom = body.bottomAnchor.constraint(equalTo: bottomAnchor,
+                                                      constant: -Self.borderWidth)
+        }
         NSLayoutConstraint.activate([
             body.topAnchor.constraint(equalTo: bodyTop),
             body.leadingAnchor.constraint(equalTo: leadingAnchor,
                                           constant: Self.borderWidth),
             body.trailingAnchor.constraint(equalTo: trailingAnchor,
                                            constant: -Self.borderWidth),
-            body.bottomAnchor.constraint(equalTo: bottomAnchor,
-                                         constant: -Self.borderWidth),
+            bodyBottom,
         ])
 
         switch content {
@@ -575,6 +605,31 @@ final class TileView: NSView, AgentRestartPresenting {
         applyTheme()
     }
 
+    override func setFrameSize(_ newSize: NSSize) {
+        super.setFrameSize(newSize)
+        updateFooterFit()
+    }
+
+    /// Drops the footer in a tile too short to hold it and a usable terminal —
+    /// a divider drag can make one — rather than over-constrain the header,
+    /// footer and body and log unsatisfiable constraints. The grid
+    /// frame-positions tiles, so this is where a new height arrives.
+    private func updateFooterFit() {
+        guard hasStatusLine, let height = footerHeightConstraint else { return }
+        let fits = TileStatusLine.fitsFooter(tileHeight: Double(bounds.height),
+                                             headerHeight: Double(Self.headerHeight),
+                                             border: Double(Self.borderWidth))
+        guard statusLineView.isHidden == fits else { return }
+        statusLineView.isHidden = !fits
+        height.constant = fits ? TileStatusLineView.height : 0
+    }
+
+    /// In-place footer update — never a rebuild. No-ops on an equal line.
+    func setStatusLine(_ line: TileStatusLine?) {
+        guard hasStatusLine else { return }
+        statusLineView.setLine(line)
+    }
+
     func setStatus(_ newStatus: TileStatus) {
         guard status != newStatus else { return }
         status = newStatus
@@ -603,6 +658,7 @@ final class TileView: NSView, AgentRestartPresenting {
             button.contentTintColor = theme.fg3Color
         }
         restartCover?.applyTheme()
+        statusLineView.applyTheme()
         for (icon, label) in emptyActionViews {
             icon.contentTintColor = theme.fg2Color
             label.textColor = theme.fg2Color

@@ -94,6 +94,11 @@ by the tool it's running.
     `⌘O` and the sidebar's **+** do the same, filling the first empty tile or
     splitting the focused one. A folder that is already a project is attached,
     not added twice, and the active project never changes.
+  - **Every tile has its own status line.** While the grid is up the status
+    bar's account, directory and git state move onto a footer on each tile, so
+    every pane shows where it is and what branch it is on — not only the
+    focused one. In a narrow tile the details give way first, and the
+    directory always stays.
   - **Tile views are tabs.** While the grid is up the tab bar's strip carries
     tile views instead of the active project's tabs, with `+` opening your
     saved **profiles**. Several can be open at once. `⌘1`–`⌘9` jump to a view

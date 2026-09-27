@@ -214,6 +214,11 @@ final class TerminalViewController: NSViewController {
             // changes between rebuilds. One boolean per visible pane, never a
             // rebuild — tree updates stay inside the pane's own view.
             self.updatePaneRefreshButtons()
+            // Explicitly, not through `refreshStatusBar`: in tile mode
+            // `refreshTabBar` returns before it reaches the status bar, so the
+            // footers would otherwise never see a `cd`. Only when some pane
+            // actually reported a change, so an idle grid costs nothing.
+            if self.tileMode, self.tileDirectories.hasDirty { self.refreshTileStatusLines() }
         }
     }
 
@@ -591,6 +596,9 @@ final class TerminalViewController: NSViewController {
                 self.staleTitleSurfaces.remove(id)
             }
             self.persistTitle(for: id)
+            // This subscription fires for a cwd change as well as a title, so
+            // it is what tells a tile footer its directory may have moved.
+            if self.tileMode { self.tileDirectories.markDirty(id) }
             // Coalesced: an animating agent title fires this many times a second.
             self.setNeedsChromeRefresh(tabBar: true, sidebar: true)
             // The subscription fires once when the pane's surface pair is
@@ -618,11 +626,17 @@ final class TerminalViewController: NSViewController {
     /// after reactivation catches up.
     private func startGitRefreshPolling() {
         gitRefreshTimer = Timer.scheduledTimer(withTimeInterval: 15, repeats: true) { [weak self] _ in
-            guard let self, NSApp.isActive, let statusBar = self.statusBarView, !statusBar.isHidden
-            else { return }
-            guard let directory = self.lastGitProbeDirectory else { return }
+            guard let self, NSApp.isActive else { return }
+            // While the grid is up the bar shows no git; the tile footers do.
+            if self.tileMode {
+                // A scheduled Timer fires on the main run loop.
+                MainActor.assumeIsolated { self.tileGitProber.refreshAll() }
+                return
+            }
+            guard let statusBar = self.statusBarView, !statusBar.isHidden,
+                  let directory = self.lastGitProbeDirectory else { return }
             self.scheduleGitProbe(for: directory,
-                                  surfaceID: self.paneTree.focusedSurfaceID,
+                                  surfaceID: self.statusBarSurface?.id,
                                   force: true)
         }
     }
@@ -1232,11 +1246,7 @@ final class TerminalViewController: NSViewController {
         // In tile mode the bar describes the tile you are typing into, not the
         // active project's focused pane — which is not even on screen.
         let focused = statusBarSurface
-        let rawCwd = focused.flatMap { PaneCwdStore.read($0.id) }
-            ?? focused.flatMap { registry.workingDirectory(for: $0) }
-            ?? focused?.workingDir
-            ?? NSHomeDirectory()
-        let cwd = Self.normalizedPath(rawCwd)
+        let cwd = paneDirectory(for: focused)
         let shell = URL(fileURLWithPath: ProcessInfo.processInfo.environment["SHELL"] ?? "/bin/zsh")
             .lastPathComponent
         statusBar.update(
@@ -1249,6 +1259,13 @@ final class TerminalViewController: NSViewController {
         )
         statusBar.setZoomed(paneTree.zoomedSurfaceID != nil)
         statusBar.setBroadcasting(broadcastScope)
+        // Tile mode hides the bar's account and git — each tile carries its
+        // own — so neither is worth a resolve or a `git` process here. This
+        // same coalesced cadence feeds the tile footers instead.
+        guard !tileMode else {
+            refreshTileStatusLines()
+            return
+        }
         // Reads the pane's STAMPED account, so the chip describes the process
         // that is actually running rather than what the project would give a
         // new pane. Cached identity only — never a probe on this path.
@@ -1272,6 +1289,86 @@ final class TerminalViewController: NSViewController {
             return workspace.surface(with: id)
         }
         return paneTree.focusedSurface
+    }
+
+    /// The pane's working directory, normalised — the one chain the status bar
+    /// and the tile footers both read, so they cannot disagree.
+    private func paneDirectory(for surface: Surface?) -> String {
+        let raw = surface.flatMap { PaneCwdStore.read($0.id) }
+            ?? surface.flatMap { registry.workingDirectory(for: $0) }
+            ?? surface?.workingDir
+            ?? NSHomeDirectory()
+        return Self.normalizedPath(raw)
+    }
+
+    /// Git state for the tile footers, probed once per directory.
+    private lazy var tileGitProber: TileGitProber = {
+        let prober = TileGitProber(queue: gitQueue)
+        prober.onUpdate = { [weak self] in self?.refreshTileStatusLines() }
+        return prober
+    }()
+
+    /// Each tile's directory, re-read only for panes that reported a change.
+    private var tileDirectories = TileDirectoryCache()
+    /// One pending wake-up for re-reads `tileDirectories` deferred.
+    private var tileDirectoryRetry: DispatchWorkItem?
+
+    /// The footer for each of `ids`, by surface. Reads cached identity, the
+    /// directory cache and the prober's cache — a cwd file is read only for a
+    /// pane that changed, and never a probe on this path; `track` schedules
+    /// any directory it has not seen.
+    private func tileStatusLines(for ids: [UUID]) -> [UUID: TileStatusLine] {
+        let accounts = accountsProvider?() ?? []
+        let now = Date()
+        var lines: [UUID: TileStatusLine] = [:]
+        var directories: Set<String> = []
+        var retryAfter: TimeInterval?
+        tileDirectories.prune(keeping: Set(ids))
+        for id in ids {
+            guard let surface = workspace.surface(with: id) else { continue }
+            let lookup = tileDirectories.directory(for: id, now: now) {
+                paneDirectory(for: surface)
+            }
+            if let wait = lookup.retryAfter { retryAfter = min(retryAfter ?? wait, wait) }
+            let directory = lookup.directory
+            directories.insert(directory)
+            // Same rule as the bar: no configured accounts, no chip.
+            let account = accounts.isEmpty ? nil : AgentAccountResolver.resolve(
+                paneAccountID: effectiveAccountID(for: surface),
+                projectAccountID: nil,
+                accounts: accounts,
+                home: NSHomeDirectory())
+            lines[id] = TileStatusLine(cwd: Self.abbreviatingHome(directory),
+                                       git: tileGitProber.status(for: directory),
+                                       account: account)
+        }
+        tileGitProber.track(directories)
+        if let retryAfter { scheduleTileDirectoryRetry(after: retryAfter) }
+        return lines
+    }
+
+    /// A pane changed inside the re-read interval: come back once it has
+    /// passed, or a `cd` followed by silence would never reach the footer.
+    private func scheduleTileDirectoryRetry(after delay: TimeInterval) {
+        guard tileDirectoryRetry == nil else { return }
+        let work = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            self.tileDirectoryRetry = nil
+            self.refreshTileStatusLines()
+        }
+        tileDirectoryRetry = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: work)
+    }
+
+    /// In-place footer refresh. Rides the coalesced chrome refresh (via
+    /// `refreshStatusBar`) and the prober's results — never `refreshTileGrid`,
+    /// which rebuilds every tile.
+    private func refreshTileStatusLines() {
+        guard tileMode, let grid = tileGridView else { return }
+        // The grid's own tiles, not `tileResolution()`: resolving
+        // canonicalises every project root (a `realpath` each), and this runs
+        // on the chrome tick.
+        grid.updateStatusLines(tileStatusLines(for: grid.attachedSurfaceIDs))
     }
 
     /// Fans raw bytes out to every pane in the active broadcast target set
@@ -1409,7 +1506,10 @@ final class TerminalViewController: NSViewController {
         let work = DispatchWorkItem { [weak self] in
             let status = GitStatusProbe.probe(directory: directory)
             DispatchQueue.main.async {
-                guard let self, self.paneTree.focusedSurfaceID == surfaceID else { return }
+                // `statusBarSurface`, not `paneTree`: in tile mode the probe
+                // was scheduled for the focused TILE, and comparing against the
+                // active tab's pane silently dropped every result.
+                guard let self, self.statusBarSurface?.id == surfaceID else { return }
                 self.statusBarView?.updateGit(status)
             }
         }
@@ -5277,6 +5377,16 @@ final class TerminalViewController: NSViewController {
         defer { tileManagerView?.reload() }
         // `Open ▾` folds away while the grid is up; each tile carries its own.
         statusBarView?.isTileMode = on
+        // The bar stopped probing while the grid was up, so its git state is
+        // as old as the grid session. Forget the directory so the refresh on
+        // the way out probes again even when the cwd is the same.
+        if !on {
+            lastGitProbeDirectory = nil
+            tileGitProber.reset()
+            tileDirectories.reset()
+            tileDirectoryRetry?.cancel()
+            tileDirectoryRetry = nil
+        }
         // The strip's contents change with the mode, and `refreshTabBar`
         // branches on it — without this the pills stay on the old set.
         defer { refreshTabBar() }
@@ -5317,10 +5427,15 @@ final class TerminalViewController: NSViewController {
     }
 
     private func tileDescriptors() -> [TileDescriptor] {
+        let resolution = tileResolution()
+        // Footers drawn at build time, not blank until the next refresh tick.
+        let lines = tileMode ? tileStatusLines(for: resolution.compactMap {
+            if case .pane(_, _, let id) = $0 { return id } else { return nil }
+        }) : [:]
         // One split to collapse means at least two leaves; `TileNode.close`
         // refuses the last one.
         let canRemove = (activeTileProfile?.capacity ?? 0) > 1
-        return tileResolution().enumerated().map { index, slot in
+        return resolution.enumerated().map { index, slot in
             switch slot {
             case .empty:
                 return TileDescriptor(slotIndex: index, surfaceID: nil, label: "",
@@ -5350,7 +5465,8 @@ final class TerminalViewController: NSViewController {
                                       icon: surface.flatMap { agentIcon(for: $0) },
                                       status: status, content: content,
                                       canRemove: canRemove,
-                                      canRefresh: canRefreshAgent(surfaceID: id))
+                                      canRefresh: canRefreshAgent(surfaceID: id),
+                                      statusLine: lines[id])
             }
         }
     }
@@ -7247,6 +7363,7 @@ final class TerminalViewController: NSViewController {
             grid.onAddProject = { [weak self] index in
                 self?.presentAddProjectPanelForTile(slot: index)
             }
+            grid.onAccountClicked = { [weak self] _ in self?.onOpenAccountSettings?() }
             grid.onDropSidebarTab = { [weak self] projectIndex, tabIndex, slot in
                 self?.attachSidebarTabToTile(projectIndex: projectIndex,
                                              tabIndex: tabIndex, slot: slot) ?? false

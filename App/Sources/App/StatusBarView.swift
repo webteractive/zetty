@@ -173,6 +173,7 @@ final class StatusBarView: NSView {
         didSet {
             guard isTileMode != oldValue else { return }
             updateEditorVisibility()
+            updateLocationVisibility()
         }
     }
     /// `infoStack.fittingSize.width`, remembered across passes. A hidden stack
@@ -635,20 +636,23 @@ final class StatusBarView: NSView {
 
     private func applyLocationCollapse() {
         let text = LocationChip.label(cwd: shownCwd, git: shownGit)
-        let showChip = isLocationCollapsed && !text.isEmpty
+        // Tile mode hides the whole cluster — each tile carries its own.
+        let showChip = isLocationCollapsed && !text.isEmpty && !isTileMode
+        let hideGit = isLocationCollapsed || isTileMode
         // `updateGit` calls this on every git probe — cwd changes plus a 15s
         // timer — so the log has to be guarded by a real state change or it
         // becomes a heartbeat rather than a signal.
-        let changed = gitStack.isHidden != isLocationCollapsed
+        let changed = gitStack.isHidden != hideGit
             || locationChip.isHidden == showChip
         // The cwd folds in WITH git now: one pill for the whole cluster rather
         // than a truncated path sitting beside a chip.
-        cwdLabel.isHidden = showChip
-        gitStack.isHidden = isLocationCollapsed
+        cwdLabel.isHidden = showChip || isTileMode
+        gitStack.isHidden = hideGit
         locationChip.isHidden = !showChip
         renderLocationChip()
         if changed {
             ZettyLog.chrome.log("location: collapsed=\(isLocationCollapsed) chip=\(showChip) "
+                + "tile=\(isTileMode) "
                 + "width=\(Int(bounds.width)) "
                 + "threshold=\(Int(StatusBarCompaction.collapseLeftBelow))")
         }
@@ -677,7 +681,7 @@ final class StatusBarView: NSView {
     /// Display only — the status bar has never acted on either.
     @objc private func locationChipClicked() {
         let lines = LocationChip.detailLines(cwd: shownCwd, git: shownGit)
-        let account = shownAccount.map(accountDisplayName)
+        let account = shownAccount.map(Self.accountDisplayName)
         guard !lines.isEmpty || account != nil else { return }
 
         let menu = NSMenu()
@@ -734,7 +738,16 @@ final class StatusBarView: NSView {
     /// than state, and it is not the only place it shows — the tab pill carries
     /// an account dot too, so a compact bar is not the last word on it.
     private func updateAccountVisibility() {
-        accountPill.isHidden = isCompact || shownAccount == nil
+        accountPill.isHidden = isCompact || isTileMode || shownAccount == nil
+    }
+
+    /// Tile mode removes the account · cwd · git cluster outright: every tile
+    /// carries its own (`TileStatusLineView`), and one bar-wide answer across a
+    /// grid changes under you as focus moves. Two inputs decide it, so it lives
+    /// here rather than in a renderer — same reason as the pills above.
+    private func updateLocationVisibility() {
+        applyLocationCollapse()
+        updateAccountVisibility()
     }
 
     /// Two inputs decide this, so it lives here rather than in the renderer —
@@ -1206,7 +1219,7 @@ final class StatusBarView: NSView {
         // "Default" or "<Account> (<Agent>)" — the harness is named in text
         // rather than shown as a logo. The default login isn't tied to one
         // harness, so it carries no suffix.
-        let label = accountDisplayName(account)
+        let label = Self.accountDisplayName(account)
         accountButton.attributedTitle = NSAttributedString(
             string: " \(label)",
             attributes: [
@@ -1225,7 +1238,7 @@ final class StatusBarView: NSView {
     /// "Default", or "<Account> (<Agent>)". The harness is named in text rather
     /// than shown as a logo; the default login isn't tied to one, so it carries
     /// no suffix.
-    private func accountDisplayName(_ account: AccountResolution) -> String {
+    static func accountDisplayName(_ account: AccountResolution) -> String {
         let agent = account.agentID.flatMap { SpawnableAgent.byID($0)?.shortName }
         return agent.map { "\(account.displayName) (\($0))" } ?? account.displayName
     }
