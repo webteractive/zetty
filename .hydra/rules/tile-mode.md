@@ -262,13 +262,16 @@ pane say attaching", because the Sessions drawer's toggle calls
 `rebuildSurfaceNodeView` — but ANY structural change did it.
 
 **`focusTileFirstResponder` never takes the keyboard from a field editor.**
-The grid calls it on every refresh, including the spawn queue's 2-second ticks,
-and selecting a view queues its tiles. So a pill's double-click rename lost
-focus, and with it committed, moments after opening, because the first click
-had queued spawns. The guard also covers the tile manager's rename and the
-command palette. Renaming a view from the strip goes through `renameTileView(at:)`,
-which renames that view in place without selecting it. A blank name there is a
-cancel, not an error: a view has no automatic name to fall back to.
+The grid calls it on every refresh, including the spawn queue's 2-second ticks.
+Without the guard, any text field open over the grid would lose focus on the
+next tick: a view's inline rename, the tile manager's rename, or the command
+palette. The guard is still needed, but it was NOT why double-click rename
+failed. That was `selectText` ending the edit in `TabBarView.beginRename`, which
+affected normal tabs too (see `chrome-layout.md` → "Inline tab rename"). A pill
+can also be renamed from its right-click menu. Renaming a view from the strip
+goes through `renameTileView(at:)`, which renames that view in place without
+selecting it. A blank name there is a cancel, not an error: a view has no
+automatic name to fall back to.
 
 **The grid survives `rebuildSurfaceNodeView`** (removed from the container,
 instance kept), so a scheme change leaves everything `build()` coloured once in
@@ -352,9 +355,6 @@ whichever tile currently HAS focus, so clicking tile 7's button gives you tile
 `directoryURL(for:)` applied to the focused pane. Finder went through the same
 item for the same reason; it no longer has an action of its own.
 
-**Chrome.** The strip carries tile-view pills while the grid is up
-(`refreshTabBar` branches; every `tabBar.on*` callback branches with it, and so
-do ⌘1…⌘9 and ⌘{ / ⌘} through `selectTabByNumber` and `selectNext/PreviousTab`,
 **The status bar's account · cwd · git left too, onto a footer per tile.**
 `StatusBarView.updateLocationVisibility()` hides `accountPill`, `cwdLabel`,
 `gitStack` and `locationChip` while `isTileMode`, and `refreshStatusBar` skips
@@ -404,6 +404,9 @@ silently dropped every result. Leaving the grid clears
 `lastGitProbeDirectory` so the bar re-probes rather than showing git as old as
 the grid session.
 
+**Chrome.** The strip carries tile-view pills while the grid is up
+(`refreshTabBar` branches; every `tabBar.on*` callback branches with it, and so
+do ⌘1…⌘9 and ⌘{ / ⌘} through `selectTabByNumber` and `selectNext/PreviousTab`,
 whose menu titles `validateMenuItem` renames to "Tile View". Before that, ⌘N
 selected the active project's tab BEHIND the grid and `focusedTerminalView()`
 stole the keyboard from the focused tile. `selectTileViewIfDifferent` and

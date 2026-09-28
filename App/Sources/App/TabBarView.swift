@@ -408,6 +408,9 @@ final class TabBarView: NSView {
             item.onDoubleClick = { [weak self] idx in
                 self?.beginRename(at: idx)
             }
+            item.onRename = { [weak self] idx in
+                self?.beginRename(at: idx)
+            }
             item.onDragMoved = { [weak self] item, location in
                 self?.itemDragged(item, locationInWindow: location)
             }
@@ -608,7 +611,6 @@ final class TabBarView: NSView {
         field.bezelStyle = .roundedBezel
         field.focusRingType = .none
         field.translatesAutoresizingMaskIntoConstraints = false
-        field.onCommit = { [weak self] in self?.commitRename() }
         field.onCancel = { [weak self] in self?.cancelRename() }
 
         addSubview(field)
@@ -622,7 +624,15 @@ final class TabBarView: NSView {
         editingField = field
         editingIndex = index
         window?.makeFirstResponder(field)
-        field.selectText(nil)
+        // Select through the field editor, NEVER `field.selectText(nil)`: on a
+        // field that is already editing, selectText ENDS the edit first. That
+        // posts controlTextDidEndEditing, which this field reads as a blur and
+        // commits, so the rename closed again in the same call that opened it.
+        // Measured on 2026-09-26: begin, commit and a first responder of the
+        // window itself, all within 85ms of one double-click.
+        field.currentEditor()?.selectAll(nil)
+        // Armed only now, so nothing during setup can count as a blur.
+        field.onCommit = { [weak self] in self?.commitRename() }
     }
 
     private func commitRename() {
@@ -676,6 +686,9 @@ private final class TabItemView: NSView {
     var onSelect: ((Int) -> Void)?
     var onClose: ((Int) -> Void)?
     var onDoubleClick: ((Int) -> Void)?
+    /// Rename… from the right-click menu. It opens the same inline editor as a
+    /// double-click does.
+    var onRename: ((Int) -> Void)?
     /// Horizontal drag beyond the click slop — reorder gesture in progress
     /// (location in window coordinates) / finished.
     var onDragMoved: ((TabItemView, NSPoint) -> Void)?
@@ -930,6 +943,34 @@ private final class TabItemView: NSView {
 
     @objc private func closeClicked(_: Any?) {
         onClose?(index)
+    }
+
+    /// Right-click: Rename… (the same inline editor a double-click opens), and
+    /// Close when the pill offers one. The same index-addressed callbacks as a
+    /// click, so tile mode's branch in the owner applies unchanged.
+    override func menu(for event: NSEvent) -> NSMenu? {
+        let menu = NSMenu()
+        let rename = NSMenuItem(title: "Rename\u{2026}", action: #selector(renamePicked(_:)),
+                                keyEquivalent: "")
+        rename.target = self
+        menu.addItem(rename)
+        if closeButton.superview != nil {
+            menu.addItem(.separator())
+            let close = NSMenuItem(title: "Close", action: #selector(closeClicked(_:)),
+                                   keyEquivalent: "")
+            close.target = self
+            menu.addItem(close)
+        }
+        return menu
+    }
+
+    @objc private func renamePicked(_: Any?) {
+        // After the menu has fully closed: opening the field while the menu is
+        // still tracking lets its dismissal take the keyboard straight back.
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            self.onRename?(self.index)
+        }
     }
 }
 

@@ -24,6 +24,7 @@ final class TileStatusLineView: NSView {
     static let height = CGFloat(TileStatusLine.footerHeight)
     private static let accountIconWidth: CGFloat = 16
     private static let accountIconSize: CGFloat = 10
+    private static let accountPillHeight: CGFloat = 14
 
     var onAccountClicked: (() -> Void)?
 
@@ -156,12 +157,12 @@ final class TileStatusLineView: NSView {
         let labelWidth = line.account == nil ? 0 : accountLabel.intrinsicContentSize.width + 3
         let aheadW = aheadLabel.stringValue.isEmpty ? 0 : aheadLabel.intrinsicContentSize.width
         let behindW = behindLabel.stringValue.isEmpty ? 0 : behindLabel.intrinsicContentSize.width
-        let branchLabelWidth = min(branchLabel.intrinsicContentSize.width,
-                                   CGFloat(TileStatusLine.branchLabelMaxWidth))
+        let branchNaturalWidth = branchLabel.intrinsicContentSize.width
+        let branchLabelWidth = min(branchNaturalWidth, CGFloat(TileStatusLine.branchLabelMaxWidth))
         let widths = TileStatusLine.Widths(
             accountIcon: Double(Self.accountIconWidth),
             accountLabel: Double(labelWidth),
-            branch: TileStatusLine.branchWidth(labelWidth: Double(branchLabel.intrinsicContentSize.width)),
+            branch: TileStatusLine.branchWidth(labelWidth: Double(branchNaturalWidth)),
             aheadBehind: Double(aheadW + behindW + (aheadW > 0 && behindW > 0 ? 4 : 0)),
             changes: Double(changesLabel.intrinsicContentSize.width))
         let parts = line.visibleParts(width: Double(bounds.width), widths: widths)
@@ -179,12 +180,14 @@ final class TileStatusLineView: NSView {
         if parts.account {
             accountLabel.isHidden = !parts.accountLabel
             let w = Self.accountIconWidth + (parts.accountLabel ? labelWidth : 0)
-            place(accountPill, x: x, width: w, height: 14)
+            let pillHeight = Self.accountPillHeight
+            place(accountPill, x: x, width: w, height: pillHeight)
             let icon = Self.accountIconSize
-            accountIcon.frame = NSRect(x: 3, y: ((14 - icon) / 2).rounded(), width: icon, height: icon)
+            accountIcon.frame = NSRect(x: 3, y: ((pillHeight - icon) / 2).rounded(),
+                                       width: icon, height: icon)
             if parts.accountLabel {
                 let h = accountLabel.intrinsicContentSize.height
-                accountLabel.frame = NSRect(x: Self.accountIconWidth, y: ((14 - h) / 2).rounded(),
+                accountLabel.frame = NSRect(x: Self.accountIconWidth, y: ((pillHeight - h) / 2).rounded(),
                                             width: labelWidth - 3, height: h)
             }
             x += w + gap

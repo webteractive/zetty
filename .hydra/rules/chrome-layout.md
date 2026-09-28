@@ -357,3 +357,19 @@ narrow window there is nothing to push aside.
 - Esc is a local key monitor live only while the drawer is open —
   `KeyBindingEngine` has nowhere to register a direct chord in `.normal` mode.
 - Drawer state is transient; only `sidebarCollapsed` is persisted.
+
+
+## Inline tab rename
+
+Double-click a pill, right-click it → **Rename…**, or press prefix + `,` to open
+`TabBarView.beginRename`. Tile mode uses the same field for view names.
+**Never call `field.selectText(nil)` there.** On a field that is already editing,
+`selectText` ENDS the edit before selecting. That posts
+`controlTextDidEndEditing`, and `RenameTextField` treats that notification as a
+blur and commits. So the field closed in the same call that opened it. The
+pills looked dead to double-click from ba92d24 until 2026-09-26, when a log
+showed begin, commit and a first responder of the window itself all within
+85ms of one double-click. Select with `currentEditor()?.selectAll(nil)`, and arm
+`onCommit` only after the field is up. The right-click Rename… opens the field
+on the next run-loop turn, because opening it while the menu is still tracking
+lets the menu's dismissal take the keyboard straight back.

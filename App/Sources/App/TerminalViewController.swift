@@ -1270,15 +1270,8 @@ final class TerminalViewController: NSViewController {
         // that is actually running rather than what the project would give a
         // new pane. Cached identity only — never a probe on this path.
         let accounts = accountsProvider?() ?? []
-        statusBar.setAccount(
-            focused.map { surface in
-                AgentAccountResolver.resolve(
-                    paneAccountID: effectiveAccountID(for: surface),
-                    projectAccountID: nil,
-                    accounts: accounts,
-                    home: NSHomeDirectory())
-            },
-            hasAccounts: !accounts.isEmpty)
+        statusBar.setAccount(focused.map { paneAccount(for: $0, accounts: accounts) },
+                             hasAccounts: !accounts.isEmpty)
         scheduleGitProbe(for: cwd, surfaceID: focused?.id)
     }
 
@@ -1289,6 +1282,16 @@ final class TerminalViewController: NSViewController {
             return workspace.surface(with: id)
         }
         return paneTree.focusedSurface
+    }
+
+    /// The pane's STAMPED account, resolved — the one rule the status bar and
+    /// the tile footers both read. The project default is deliberately left
+    /// out: the chip describes the running process, not what a new pane gets.
+    private func paneAccount(for surface: Surface, accounts: [AgentAccount]) -> AccountResolution {
+        AgentAccountResolver.resolve(paneAccountID: effectiveAccountID(for: surface),
+                                     projectAccountID: nil,
+                                     accounts: accounts,
+                                     home: NSHomeDirectory())
     }
 
     /// The pane's working directory, normalised — the one chain the status bar
@@ -1333,11 +1336,7 @@ final class TerminalViewController: NSViewController {
             let directory = lookup.directory
             directories.insert(directory)
             // Same rule as the bar: no configured accounts, no chip.
-            let account = accounts.isEmpty ? nil : AgentAccountResolver.resolve(
-                paneAccountID: effectiveAccountID(for: surface),
-                projectAccountID: nil,
-                accounts: accounts,
-                home: NSHomeDirectory())
+            let account = accounts.isEmpty ? nil : paneAccount(for: surface, accounts: accounts)
             lines[id] = TileStatusLine(cwd: Self.abbreviatingHome(directory),
                                        git: tileGitProber.status(for: directory),
                                        account: account)
@@ -1360,9 +1359,9 @@ final class TerminalViewController: NSViewController {
         DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: work)
     }
 
-    /// In-place footer refresh. Rides the coalesced chrome refresh (via
-    /// `refreshStatusBar`) and the prober's results — never `refreshTileGrid`,
-    /// which rebuilds every tile.
+    /// In-place footer refresh. Rides the coalesced chrome tick (explicitly —
+    /// see `setNeedsChromeRefresh`), `refreshStatusBar` and the prober's
+    /// results — never `refreshTileGrid`, which rebuilds every tile.
     private func refreshTileStatusLines() {
         guard tileMode, let grid = tileGridView else { return }
         // The grid's own tiles, not `tileResolution()`: resolving
@@ -5116,17 +5115,7 @@ final class TerminalViewController: NSViewController {
     /// "Add Project…" row and the empty cell's "Add Project" row.
     func presentAddProjectPanelForTile(slot: Int) {
         // Aimed now, before the panel: `attachTab` re-checks it afterwards.
-        let target = tileSlotTarget(slot)
-        presentAddProjectPanel { [weak self] url in
-            guard let self else { return }
-            // The grid closed while the panel was up: the folder was still
-            // chosen, so add it the ordinary way rather than drop it.
-            if self.tileMode {
-                self.addProjectToTile(url, target: target)
-            } else {
-                self.addProjectFromURL(url)
-            }
-        }
+        presentAddProjectPanel(tileTarget: tileSlotTarget(slot))
     }
 
     /// Adds `url` as a project in the BACKGROUND and attaches its pane to a
@@ -5142,12 +5131,10 @@ final class TerminalViewController: NSViewController {
     private func addProjectToTile(_ url: URL, target: TileTarget) {
         guard tileMode else { return }
         if let index = workspace.projectIndex(forRoot: url.path) {
-            let project = workspace.projects[index]
-            let tree = project.tabList.activeTree
-            guard let paneID = tree.focusedSurfaceID ?? tree.layout.surfaces.first?.id else { return }
-            let slot = TileSlot(
-                projectRoot: project.rootPath, tabID: tree.id,
-                label: "\(project.name) / \(tabDisplayTitle(for: tree, at: project.tabList.activeIndex))")
+            let tabList = workspace.projects[index].tabList
+            let tree = tabList.activeTree
+            guard let paneID = tree.focusedSurfaceID ?? tree.layout.surfaces.first?.id,
+                  let slot = tileSlot(forTabAt: index, tabList.activeIndex) else { return }
             attachTab(slot, showing: paneID, target: target)
             refreshSidebar()
             return
@@ -6082,10 +6069,18 @@ final class TerminalViewController: NSViewController {
     @objc func addProject(_ sender: Any?) {
         // A picker left open would point at a slot the add may split away.
         if isTileAttachPickerOpen { dismissTileAttachPicker() }
+        presentAddProjectPanel(tileTarget: .placed)
+    }
+
+    /// The panel, routed when the folder is CHOSEN: into the grid at
+    /// `tileTarget` while it is up, otherwise the ordinary add. If the grid
+    /// closed while the panel was up the folder was still chosen, so it is
+    /// added the ordinary way rather than dropped.
+    private func presentAddProjectPanel(tileTarget: TileTarget) {
         presentAddProjectPanel { [weak self] url in
             guard let self else { return }
             if self.tileMode {
-                self.addProjectToTile(url, target: .placed)
+                self.addProjectToTile(url, target: tileTarget)
             } else {
                 self.addProjectFromURL(url)
             }

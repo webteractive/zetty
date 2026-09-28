@@ -103,7 +103,8 @@ by the tool it's running.
     tile views instead of the active project's tabs, with `+` opening your
     saved **profiles**. Several can be open at once. `⌘1`–`⌘9` jump to a view
     and `⌘{` / `⌘}` step through them, as they do for tabs. **Double-click a
-    view's pill** (or `Ctrl+B ,`) to rename it in place. Enter keeps the name,
+    view's pill**, right-click it → **Rename…**, or press `Ctrl+B ,` to
+    rename it in place. Enter keeps the name,
     and Esc or an empty name cancels.
   - **⇧⌘G opens a chooser, not a view.** With nothing open the grid area
     offers **New View** and lists the views you can reopen, so nothing arrives
