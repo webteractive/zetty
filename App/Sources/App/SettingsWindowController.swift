@@ -515,7 +515,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
                 "No accounts yet — the Default login is in use everywhere."
             return
         }
-        // The shim command is the only way to know `z-<name>` exists at all.
+        // The shim command is the only way to know `claude-<name>` exists at all.
         var status = "\(accountRows.count) account\(accountRows.count == 1 ? "" : "s"), "
             + "plus the Default login.  Run one from any terminal with "
             + accountRows.map(AccountShim.name(for:)).joined(separator: ", ") + "."

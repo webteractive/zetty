@@ -802,9 +802,9 @@ follow the account.
   GUI twin, opening a new tab on that account.
 
 **Shortcut commands.** Each account also gets one: an account named *Personal*
-gives you `z-personal`, generated in `~/.local/bin` beside the `zetty` symlink
+on Claude gives you `claude-personal` (a Codex one, `codex-personal`), generated in `~/.local/bin` beside the `zetty` symlink
 and removed when the account is. It takes the same arguments
-(`z-personal --resume`). If `zetty` works in your shell these will too — they
+(`claude-personal --resume`). If `zetty` works in your shell these will too — they
 rely on the same `~/.local/bin` being on your `PATH`. A file of your own already
 sitting at that name is never overwritten; Settings → Accounts reports the
 collision instead.
@@ -915,7 +915,7 @@ zetty accounts --probe                   # …and ask each one who it's signed i
 zetty new-tab --account work             # open a tab on a specific account
 zetty run personal                       # run that account's agent HERE (execs it)
 zetty run personal --resume              # ...args after the name go to the harness
-z-personal                               # the generated shortcut, same thing
+claude-personal                          # the generated shortcut, same thing
 zetty --version                          # which build is this?
 zetty split --pane 1a2b3c4d --horizontal # background split; prints the new pane id
 zetty split --pane 1a2b3c4d --focus      # ...or bring the new pane to front

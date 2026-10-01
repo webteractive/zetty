@@ -48,6 +48,10 @@ if isatty(STDIN_FILENO) != 0 {
     exit(0)
 }
 
+// GUI from here on. A relaunch from inside a pane (`open -a` passes the shell's
+// env) must not put every Default-login pane on that pane's account.
+LaunchEnvironment.clearInherited()
+
 // Point libghostty at our bundled resources (shell-integration scripts +
 // terminfo) so spawned shells get working-directory reports (for the status
 // bar) and prompt marks. The bundled terminfo keeps `xterm-ghostty` resolvable

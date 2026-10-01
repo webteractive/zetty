@@ -189,7 +189,7 @@ Gotchas, all deliberate:
   forces a pill rebuild.
 
 - **An account is reachable by name, not only by picker.** `zetty run <account>`
-  (and the generated `z-<account>` shim) execs the harness in the CURRENT
+  (and the generated `<harness>-<account>` shim, e.g. `claude-work`) execs the harness in the CURRENT
   terminal with the account's config-dir variable set, reading
   `agent-accounts.json` directly — **no control socket in that path**, so it
   works with the app closed, in Terminal.app, or over SSH. That is what makes a
@@ -203,7 +203,19 @@ Gotchas, all deliberate:
   already provides for that one symlink — an app update repairs one link and
   every shim follows, instead of N stale links to detect. `AccountShim.marker`
   (`# zetty-account-shim`) is load-bearing: a file without it is never written or
-  removed, so a user's own `z-<name>` survives.
+  removed, so a user's own `claude-<name>` survives. Shims are named after the
+  account's harness (`AccountShim.name`); they were `z-<account>` until that
+  read too little like the agent it starts. The installer scans only
+  `AccountShim.candidatePrefixes` (the legacy `z-` plus each account-capable
+  harness id) — never every file in `~/.local/bin`, which holds large
+  binaries — so upgrading removes the old `z-*` shims rather than leaving both.
+- **The GUI clears inherited account and pane variables at launch**
+  (`LaunchEnvironment.clearInherited`, on main.swift's GUI path only — the CLI
+  runs inside panes and needs them). A Default-login pane sets no
+  `CLAUDE_CONFIG_DIR` / `CODEX_HOME`, so it inherits the app's, and `open -a`
+  from a terminal hands the app that shell's env: relaunching Zetty from a
+  pane on an account put every Default pane on that account. A new
+  account-capable harness's `configDirEnvVar` joins the list automatically.
 - **`Surface.runningAccountID` is the account RUNNING in a pane; `accountID` is
   the one it was SPAWNED with.** Both are persisted, and the difference matters:
   the spawn stamp can never be rewritten (the env was captured once, at

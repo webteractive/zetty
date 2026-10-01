@@ -53,8 +53,9 @@ public enum ControlCLI {
                                               the account name is passed to the
                                               harness. An unknown account name is
                                               an error, never the default login.
-                                              A `z-<account>` shortcut command is
-                                              generated for each account
+                                              A `<harness>-<account>` shortcut
+                                              (`claude-work`) is generated for
+                                              each account
 
       zetty add-project <path> [--name <name>] [--space <name>] [--focus]
                                               add a directory as a project in the

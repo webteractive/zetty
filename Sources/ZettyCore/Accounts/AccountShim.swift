@@ -1,6 +1,6 @@
 import Foundation
 
-/// The `z-<account>` shortcut commands: naming, script contents, and which
+/// The `<harness>-<account>` shortcut commands (`claude-work`): naming, script contents, and which
 /// files to write or remove for a given set of accounts. Pure — the filesystem
 /// half is `AccountShimInstaller` in the app layer.
 ///
@@ -11,16 +11,26 @@ import Foundation
 /// A symlink per account would instead create one stale-link risk per account.
 public enum AccountShim {
 
-    /// Shell-command prefix. Fixed: no known collision (zoxide's `z` is a
-    /// function, not a `z-*` command).
-    public static let prefix = "z-"
+    /// What shims were named before they carried their harness. Still
+    /// scanned, so an upgrade removes the old `z-<account>` files instead of
+    /// leaving both names behind.
+    public static let legacyPrefix = "z-"
+
+    /// Name prefixes a shim of ours can start with: the legacy one plus every
+    /// harness that can host accounts. The installer scans only these, so it
+    /// never reads an unrelated binary in the shim directory.
+    public static var candidatePrefixes: [String] {
+        [legacyPrefix] + SpawnableAgent.accountCapable.map { $0.id + "-" }
+    }
 
     /// Identifies a file as ours. A file in the shim directory WITHOUT this
-    /// line is never written or removed — a user's own `z-personal` survives.
+    /// line is never written or removed — a user's own `claude-personal` survives.
     public static let marker = "# zetty-account-shim"
 
+    /// Named after the harness the account belongs to, so the command reads
+    /// like the agent it starts: `claude-work`, `codex-work`.
     public static func name(for account: AgentAccount) -> String {
-        prefix + AgentAccountSupport.slug(account.name)
+        account.agentID + "-" + AgentAccountSupport.slug(account.name)
     }
 
     public static func scriptContents(cliPath: String, accountName: String) -> String {

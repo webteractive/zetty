@@ -1849,8 +1849,11 @@ final class TerminalViewController: NSViewController {
         guard let kind = probedResumableKind(for: surfaceID) else { return nil }
         let environment = resumeEnvironment(for: surfaceID, kind: kind)
 
+        // Only a hook session of the PROBED kind: `environment` is that
+        // harness's login, and a stale kind would get the other one's.
         let state = agentDetector.state(for: surfaceID)
-        if let command = AgentResume.command(for: state, environment: environment) {
+        if state.kind == kind,
+           let command = AgentResume.command(for: state, environment: environment) {
             return command
         }
         if let cached = lookedUpResumeSessions[surfaceID], cached.kind == kind {

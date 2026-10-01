@@ -8,9 +8,24 @@ private func account(_ name: String) -> AgentAccount {
                  directory: "~/.zetty/accounts/\(AgentAccountSupport.slug(name))")
 }
 
-@Test func shimNameIsPrefixedSlugOfTheAccountName() {
-    #expect(AccountShim.name(for: account("Personal")) == "z-personal")
-    #expect(AccountShim.name(for: account("Work Account")) == "z-work-account")
+@Test func shimNameIsTheHarnessThenTheSlugOfTheAccountName() {
+    #expect(AccountShim.name(for: account("Personal")) == "claude-personal")
+    #expect(AccountShim.name(for: account("Work Account")) == "claude-work-account")
+    let codex = AgentAccount(id: "work", name: "Work", directory: "~/.zetty/accounts/work",
+                             agentID: "codex")
+    #expect(AccountShim.name(for: codex) == "codex-work")
+}
+
+// An upgrade must still find the old `z-` shims, or both names linger.
+@Test func candidatePrefixesCoverLegacyAndEveryAccountHarness() {
+    #expect(Set(AccountShim.candidatePrefixes) == ["z-", "claude-", "codex-"])
+}
+
+@Test func reconcileRemovesLegacyShims() {
+    let (write, remove) = AccountShim.reconcile(
+        accounts: [account("Personal")], cliPath: cliPath, existing: ["z-personal"])
+    #expect(remove == ["z-personal"])
+    #expect(write.map(\.name) == ["claude-personal"])
 }
 
 @Test func shimScriptCarriesMarkerAndExecsTheCLI() {
@@ -31,7 +46,7 @@ private func account(_ name: String) -> AgentAccount {
     let (write, remove) = AccountShim.reconcile(
         accounts: [account("Personal"), account("Work")],
         cliPath: cliPath, existing: [])
-    #expect(write.map(\.name).sorted() == ["z-personal", "z-work"])
+    #expect(write.map(\.name).sorted() == ["claude-personal", "claude-work"])
     #expect(write.allSatisfy { $0.contents.contains(AccountShim.marker) })
     #expect(remove.isEmpty)
 }
@@ -39,10 +54,10 @@ private func account(_ name: String) -> AgentAccount {
 @Test func reconcileRemovesShimsNoAccountClaims() {
     let (write, remove) = AccountShim.reconcile(
         accounts: [account("Personal")],
-        cliPath: cliPath, existing: ["z-personal", "z-deleted"])
-    #expect(remove == ["z-deleted"])
+        cliPath: cliPath, existing: ["claude-personal", "claude-deleted"])
+    #expect(remove == ["claude-deleted"])
     // Still rewritten, so a stale CLI path or an edited file self-heals.
-    #expect(write.map(\.name) == ["z-personal"])
+    #expect(write.map(\.name) == ["claude-personal"])
 }
 
 @Test func reconcileWithNoAccountsRemovesEverything() {

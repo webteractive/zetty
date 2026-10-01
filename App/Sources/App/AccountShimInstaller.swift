@@ -1,7 +1,7 @@
 import Foundation
 import ZettyCore
 
-/// Writes and removes the `z-<account>` shortcut scripts in `~/.local/bin`,
+/// Writes and removes the `<harness>-<account>` shortcut scripts in `~/.local/bin`,
 /// beside the `zetty` symlink `CLILink` maintains.
 ///
 /// Filesystem half of the pure `AccountShim`. Idempotent — safe to run on every
@@ -13,7 +13,7 @@ enum AccountShimInstaller {
     static var directory: URL { CLILink.url.deletingLastPathComponent() }
 
     /// Reconciles the shims with `accounts`. Never touches a file that does not
-    /// carry `AccountShim.marker`, so a user's own `z-personal` survives.
+    /// carry `AccountShim.marker`, so a user's own `claude-personal` survives.
     static func sync(accounts: [AgentAccount]) {
         let fm = FileManager.default
         try? fm.createDirectory(at: directory, withIntermediateDirectories: true)
@@ -46,12 +46,18 @@ enum AccountShimInstaller {
 
     private static func existingShimNames() -> [String] {
         let names = (try? FileManager.default.contentsOfDirectory(atPath: directory.path)) ?? []
-        return names.filter {
-            $0.hasPrefix(AccountShim.prefix) && isOurs(directory.appendingPathComponent($0))
+        return names.filter { name in
+            AccountShim.candidatePrefixes.contains { name.hasPrefix($0) }
+                && isOurs(directory.appendingPathComponent(name))
         }
     }
 
+    /// Reads only the head: the marker is on line 2, and a harness prefix also
+    /// matches real binaries (`codex-code-mode-host` is ~60 MB).
     private static func isOurs(_ url: URL) -> Bool {
-        (try? String(contentsOf: url, encoding: .utf8))?.contains(AccountShim.marker) ?? false
+        guard let handle = try? FileHandle(forReadingFrom: url) else { return false }
+        defer { try? handle.close() }
+        let head = (try? handle.read(upToCount: 256)) ?? nil
+        return head.map { String(decoding: $0, as: UTF8.self).contains(AccountShim.marker) } ?? false
     }
 }
