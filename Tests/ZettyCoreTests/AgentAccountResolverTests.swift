@@ -102,4 +102,38 @@ extension AgentAccountResolverTests {
     func testDefaultResolutionHasNoAgent() {
         XCTAssertNil(AccountResolution.default.agentID)
     }
+
+    // MARK: - harnessAccount
+
+    private var codexWork: AgentAccount {
+        AgentAccount(id: "codex-work", name: "Codex Work", colorID: nil,
+                     directory: "~/.zetty/accounts/codex-work", agentID: "codex")
+    }
+
+    private func harness(_ agent: String, running: String?, spawned: String?) -> AccountResolution {
+        AgentAccountResolver.harnessAccount(agentID: agent, runningAccountID: running,
+                                            spawnedAccountID: spawned,
+                                            accounts: [work, personal, codexWork], home: home)
+    }
+
+    func testTheZettyRunOverrideBeatsTheSpawnAccount() {
+        let r = harness("claude", running: "personal", spawned: "work")
+        XCTAssertEqual(r.accountID, "personal")
+        XCTAssertEqual(r.env, ["CLAUDE_CONFIG_DIR": "/Users/tester/.zetty/accounts/personal"])
+    }
+
+    func testTheSpawnAccountAppliesWithNoOverride() {
+        XCTAssertEqual(harness("claude", running: nil, spawned: "work").accountID, "work")
+    }
+
+    func testAnotherHarnessesAccountSaysNothingAboutThisOne() {
+        // A Codex login's CODEX_HOME does not decide which Claude login runs.
+        XCTAssertEqual(harness("claude", running: "codex-work", spawned: "work").accountID, "work")
+        XCTAssertTrue(harness("claude", running: nil, spawned: "codex-work").isDefault)
+        XCTAssertEqual(harness("codex", running: "codex-work", spawned: "work").accountID, "codex-work")
+    }
+
+    func testAnUnknownAccountFallsThroughToTheDefaultLogin() {
+        XCTAssertTrue(harness("claude", running: "gone", spawned: nil).isDefault)
+    }
 }

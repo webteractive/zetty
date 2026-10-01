@@ -30,17 +30,24 @@ public enum RestartRecovery {
         public let agent: AgentKind?
         public let agentSession: String?
         public let agentCwd: String?
+        /// The account the harness was RUNNING under, when not the default
+        /// login — which, after `zetty run`, is not the account the pane was
+        /// spawned with. See `pinnedAccount(for:spawnedAccountID:accounts:home:)`.
+        public let agentAccount: String?
 
         public init(surface: UUID, snapshot: String?, agent: AgentKind?,
-                    agentSession: String?, agentCwd: String?) {
+                    agentSession: String?, agentCwd: String?, agentAccount: String? = nil) {
             self.surface = surface
             self.snapshot = snapshot
             self.agent = agent
             self.agentSession = agentSession
             self.agentCwd = agentCwd
+            self.agentAccount = agentAccount
         }
 
-        private enum CodingKeys: String, CodingKey { case surface, snapshot, agent, agentSession, agentCwd }
+        private enum CodingKeys: String, CodingKey {
+            case surface, snapshot, agent, agentSession, agentCwd, agentAccount
+        }
 
         public init(from decoder: Decoder) throws {
             let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -51,6 +58,7 @@ public enum RestartRecovery {
             agent = try c.decodeIfPresent(String.self, forKey: .agent).flatMap(AgentKind.init(rawValue:))
             agentSession = try c.decodeIfPresent(String.self, forKey: .agentSession)
             agentCwd = try c.decodeIfPresent(String.self, forKey: .agentCwd)
+            agentAccount = try c.decodeIfPresent(String.self, forKey: .agentAccount)
         }
     }
 
@@ -68,10 +76,13 @@ public enum RestartRecovery {
         /// The tally. `surfaces` are the panes considered (session owners); a
         /// surface with neither a snapshot nor a known harness session has
         /// nothing to recover and is omitted. Order follows `surfaces`.
+        /// `agentAccounts` is the account each pane's harness runs under; it is
+        /// recorded only beside a session, since nothing else resumes.
         public static func make(
             surfaces: [UUID],
             snapshots: [UUID: String],
             agentStates: [UUID: AgentState],
+            agentAccounts: [UUID: String] = [:],
             now: Date
         ) -> Manifest {
             let entries: [Entry] = surfaces.compactMap { id in
@@ -84,7 +95,8 @@ public enum RestartRecovery {
                     snapshot: snapshot,
                     agent: session == nil ? nil : state?.kind,
                     agentSession: session?.id,
-                    agentCwd: session?.cwd)
+                    agentCwd: session?.cwd,
+                    agentAccount: session == nil ? nil : agentAccounts[id])
             }
             return Manifest(version: currentVersion, writtenAt: now, entries: entries)
         }
@@ -129,6 +141,24 @@ public enum RestartRecovery {
         }
     }
 
+    /// The login a recovered resume must be pinned to, or nil when the pane's
+    /// own spawn env already is that login.
+    ///
+    /// A recovered pane spawns a fresh shell carrying the account it was
+    /// SPAWNED with, so an agent that was running under a `zetty run` override
+    /// would otherwise come back under the spawn login, and look for its
+    /// conversation in the wrong config dir. An account removed since the
+    /// power-off falls through to nil, never strands the resume.
+    public static func pinnedAccount(for entry: Entry, spawnedAccountID: String?,
+                                     accounts: [AgentAccount], home: String) -> AccountResolution? {
+        guard let agent = entry.agent, let running = entry.agentAccount,
+              running != spawnedAccountID else { return nil }
+        let account = AgentAccountResolver.harnessAccount(
+            agentID: agent.rawValue, runningAccountID: running, spawnedAccountID: nil,
+            accounts: accounts, home: home)
+        return account.isDefault ? nil : account
+    }
+
     /// The line typed into a recovered pane to pick the harness session back
     /// up. `cd` first because Claude resolves `--resume` against the project
     /// the session belongs to and the pane's own shell may spawn elsewhere.
@@ -136,7 +166,13 @@ public enum RestartRecovery {
     /// nil for agents without a verified resume grammar, and for an id that
     /// fails `AgentEvent.isValidSessionID` (defence in depth — the hook parser
     /// already dropped those).
-    public static func resumeCommand(agent: AgentKind, sessionID: String, cwd: String) -> String? {
+    ///
+    /// `environment` is prefixed onto the harness alone (`KEY='v' claude …`),
+    /// for a harness the pane's shell would otherwise start under the wrong
+    /// login — see `AgentAccountResolver.harnessAccount`. A pair that is not a
+    /// plain shell name and a safe value is dropped rather than typed.
+    public static func resumeCommand(agent: AgentKind, sessionID: String, cwd: String,
+                                     environment: [String: String] = [:]) -> String? {
         guard AgentEvent.isValidSessionID(sessionID) else { return nil }
         let quotedID = ShellQuote.singleQuoted(sessionID)
         let resume: String
@@ -145,7 +181,23 @@ public enum RestartRecovery {
         case .codex:  resume = "\(command(forCatalogID: "codex")) resume \(quotedID)"
         default:      return nil
         }
-        return "cd \(ShellQuote.singleQuoted(cwd)) && \(resume)"
+        let assignments = EnvDirective.sanitized(environment)
+            .filter { isShellName($0.key) }
+            .sorted { $0.key < $1.key }
+            .map { "\($0.key)=\(ShellQuote.singleQuoted($0.value)) " }
+            .joined()
+        return "cd \(ShellQuote.singleQuoted(cwd)) && \(assignments)\(resume)"
+    }
+
+    /// A name a POSIX shell accepts on the left of a prefix assignment.
+    /// Anything else would be run as a COMMAND rather than assigned.
+    private static func isShellName(_ key: String) -> Bool {
+        guard let first = key.unicodeScalars.first,
+              first == "_" || (first.isASCII && CharacterSet.letters.contains(first))
+        else { return false }
+        return key.unicodeScalars.allSatisfy {
+            $0 == "_" || ($0.isASCII && CharacterSet.alphanumerics.contains($0))
+        }
     }
 
     private static func command(forCatalogID id: String) -> String {

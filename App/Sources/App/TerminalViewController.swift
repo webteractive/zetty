@@ -693,13 +693,23 @@ final class TerminalViewController: NSViewController {
                 // The pane's foreground process is no longer that account's
                 // agent, so the `zetty run` it was launched by has ended.
                 for (id, command) in commands {
-                    guard let surface = self.workspace.surface(with: id),
+                    // A restart quits the agent on purpose and brings it back
+                    // under the same login (see `resumeEnvironment`), so the
+                    // gap is not the `zetty run` ending.
+                    guard self.agentRestartTimers[id] == nil,
+                          let surface = self.workspace.surface(with: id),
                           let running = surface.runningAccountID,
                           let account = self.accountsProvider?()
                               .first(where: { $0.id == running }),
-                          let agent = SpawnableAgent.byID(account.agentID),
-                          command != agent.defaultCommand
+                          let agent = SpawnableAgent.byID(account.agentID)
                     else { continue }
+                    if command == agent.defaultCommand {
+                        self.runningAccountHolds.removeValue(forKey: id)
+                        continue
+                    }
+                    // Same for a recovery resume still on its way.
+                    if let until = self.runningAccountHolds[id], Date() < until { continue }
+                    self.runningAccountHolds.removeValue(forKey: id)
                     self.updateSurfaceAnywhere(id) { $0.runningAccountID = nil }
                 }
                 self.setNeedsChromeRefresh(tabBar: true, sidebar: true)
@@ -1811,7 +1821,7 @@ final class TerminalViewController: NSViewController {
         // where both exist.
         onSurfacesClosed?([surfaceID])
         foregroundBySurface.removeValue(forKey: surfaceID)
-        lookedUpResumeCommands.removeValue(forKey: surfaceID)
+        lookedUpResumeSessions.removeValue(forKey: surfaceID)
         resumeLookupAttempted.remove(surfaceID)
 
         refreshTabBar()
@@ -1830,34 +1840,104 @@ final class TerminalViewController: NSViewController {
     /// pane that never finished a turn would have no id — on the reference
     /// workspace hooks alone covered 2 panes in 11, which would leave this
     /// button absent from most of the panes that want it.
+    ///
+    /// The line carries the pane's ACCOUNT: see `resumeEnvironment`.
     func agentResumeCommand(for surfaceID: UUID) -> String? {
-        let state = agentDetector.state(for: surfaceID)
-        if let command = AgentResume.command(for: state) { return command }
-
         // The probe outranks the stored kind: a pane can carry a stale kind
         // from the era when hook events matched by directory, which is what
         // once produced `codex resume <claude id>`.
-        guard let running = foregroundBySurface[surfaceID], !running.isEmpty,
-              let kind = AgentKind(rawValue: running)
-                  ?? AgentKind.allCases.first(where: { $0.rawValue == running }),
-              let cwd = PaneCwdStore.read(surfaceID)
-                  ?? workspace.surface(with: surfaceID).flatMap({ registry.workingDirectory(for: $0) })
-        else { return nil }
+        guard let kind = probedResumableKind(for: surfaceID) else { return nil }
+        let environment = resumeEnvironment(for: surfaceID, kind: kind)
 
-        let target = AgentSessionLookup.Target(surface: surfaceID, cwd: cwd, agent: kind)
-        guard let found = AgentSessionLookup.fallbackSessions(for: [target], claimed: [])[surfaceID]
+        let state = agentDetector.state(for: surfaceID)
+        if let command = AgentResume.command(for: state, environment: environment) {
+            return command
+        }
+        if let cached = lookedUpResumeSessions[surfaceID], cached.kind == kind {
+            return AgentResume.command(
+                for: AgentState(kind: kind, status: nil, session: cached.session),
+                environment: environment)
+        }
+
+        guard let target = sessionLookupTarget(for: surfaceID, kind: kind),
+              let found = AgentSessionLookup.fallbackSessions(for: [target], claimed: [])[surfaceID]
         else { return nil }
-        return AgentResume.command(for: AgentState(kind: kind, status: nil, session: found))
+        return AgentResume.command(for: AgentState(kind: kind, status: nil, session: found),
+                                   environment: environment)
     }
 
-    /// Resume lines resolved from a harness's own store, per surface.
+    /// The login `kind` is running under in this pane.
+    func harnessAccount(for surfaceID: UUID, kind: AgentKind) -> AccountResolution {
+        guard let surface = workspace.surface(with: surfaceID) else { return .default }
+        return AgentAccountResolver.harnessAccount(
+            agentID: kind.rawValue,
+            runningAccountID: surface.runningAccountID,
+            spawnedAccountID: surface.accountID,
+            accounts: accountsProvider?() ?? [],
+            home: NSHomeDirectory())
+    }
+
+    /// Environment the resume must carry so the agent comes back under the
+    /// login it was running as.
+    ///
+    /// Only a `zetty run` override needs it: the pane's shell still holds the
+    /// SPAWN account's env, so a bare `claude --resume` there would reopen the
+    /// conversation under the wrong login. When the running login is the spawn
+    /// one the shell already has it, and adding nothing also leaves a
+    /// hand-typed project env var alone.
+    private func resumeEnvironment(for surfaceID: UUID, kind: AgentKind) -> [String: String] {
+        let account = harnessAccount(for: surfaceID, kind: kind)
+        guard !account.isDefault,
+              account.accountID == workspace.surface(with: surfaceID)?.runningAccountID
+        else { return [:] }
+        return account.env
+    }
+
+    /// What `AgentSessionLookup` needs for this pane, in the store of the login
+    /// it is running — each config dir keeps its own transcripts.
+    private func sessionLookupTarget(for surfaceID: UUID, kind: AgentKind) -> AgentSessionLookup.Target? {
+        guard let cwd = PaneCwdStore.read(surfaceID)
+                ?? workspace.surface(with: surfaceID).flatMap({ registry.workingDirectory(for: $0) })
+        else { return nil }
+        return AgentSessionLookup.Target(surface: surfaceID, cwd: cwd, agent: kind,
+                                         configDirectory: harnessConfigDirectory(for: surfaceID, kind: kind))
+    }
+
+    /// The config dir `kind` keeps its sessions in for this pane's login; nil
+    /// for the default login.
+    func harnessConfigDirectory(for surfaceID: UUID, kind: AgentKind) -> String? {
+        SpawnableAgent.byID(kind.rawValue)?.configDirEnvVar
+            .flatMap { harnessAccount(for: surfaceID, kind: kind).env[$0] }
+    }
+
+    /// Panes whose `zetty run` override must survive the agent being gone for
+    /// a while, until this deadline or until the probe sees the agent back.
+    ///
+    /// A restart-recovery resume waits `resumeGracePeriod` in a bare shell
+    /// before it is typed, and the probe reads that shell as the `zetty run`
+    /// having ended — clearing the override the resume is about to bring back.
+    private var runningAccountHolds: [UUID: Date] = [:]
+
+    /// How long a delivered recovery resume keeps its override held for the
+    /// agent to appear.
+    private static let runningAccountHoldAfterResume: TimeInterval = 30
+
+    /// Marks `accountID` as running in a pane whose resume is queued, and
+    /// holds it until that resume has had its chance.
+    func holdRunningAccountForResume(surfaceID: UUID, accountID: String) {
+        updateSurfaceAnywhere(surfaceID) { $0.runningAccountID = accountID }
+        runningAccountHolds[surfaceID] = .distantFuture
+    }
+
+    /// Sessions resolved from a harness's own store, per surface.
     ///
     /// Cached because `AgentSessionLookup` reads transcripts off disk, and the
     /// visibility predicate below runs for every visible pane on each coalesced
     /// chrome refresh — resolving inline would put a filesystem scan on the
     /// main thread several times a second, which is the mistake the `git` pill
-    /// already made here.
-    private var lookedUpResumeCommands: [UUID: String] = [:]
+    /// already made here. The SESSION is cached, not the line: the account it
+    /// resumes under is read when the button is pressed.
+    private var lookedUpResumeSessions: [UUID: (kind: AgentKind, session: AgentSession)] = [:]
     /// Surfaces already looked up, so a pane with genuinely no session is not
     /// rescanned on every tick.
     private var resumeLookupAttempted: Set<UUID> = []
@@ -1872,7 +1952,7 @@ final class TerminalViewController: NSViewController {
         guard let kind = probedResumableKind(for: surfaceID),
               AgentResume.canRestart(kind) else { return false }
         return AgentResume.command(for: agentDetector.state(for: surfaceID)) != nil
-            || lookedUpResumeCommands[surfaceID] != nil
+            || lookedUpResumeSessions[surfaceID] != nil
     }
 
     /// The resumable harness the probe sees in this pane, if any.
@@ -1899,17 +1979,16 @@ final class TerminalViewController: NSViewController {
             // A pane that stopped running an agent releases its cache entry, so
             // the button disappears and a later agent is looked up afresh.
             guard let kind = probedResumableKind(for: id) else {
-                lookedUpResumeCommands.removeValue(forKey: id)
+                lookedUpResumeSessions.removeValue(forKey: id)
                 resumeLookupAttempted.remove(id)
                 continue
             }
-            guard lookedUpResumeCommands[id] == nil, !resumeLookupAttempted.contains(id),
+            guard lookedUpResumeSessions[id] == nil, !resumeLookupAttempted.contains(id),
                   AgentResume.command(for: agentDetector.state(for: id)) == nil,
-                  let cwd = PaneCwdStore.read(id)
-                      ?? workspace.surface(with: id).flatMap({ registry.workingDirectory(for: $0) })
+                  let target = sessionLookupTarget(for: id, kind: kind)
             else { continue }
             resumeLookupAttempted.insert(id)
-            targets.append(AgentSessionLookup.Target(surface: id, cwd: cwd, agent: kind))
+            targets.append(target)
         }
         guard !targets.isEmpty else { return }
 
@@ -1921,11 +2000,8 @@ final class TerminalViewController: NSViewController {
             DispatchQueue.main.async {
                 guard let self else { return }
                 for (surface, session) in found {
-                    guard let kind = kinds[surface],
-                          let command = AgentResume.command(
-                            for: AgentState(kind: kind, status: nil, session: session))
-                    else { continue }
-                    self.lookedUpResumeCommands[surface] = command
+                    guard let kind = kinds[surface] else { continue }
+                    self.lookedUpResumeSessions[surface] = (kind, session)
                 }
                 self.updatePaneRefreshButtons()
             }
@@ -1967,9 +2043,7 @@ final class TerminalViewController: NSViewController {
 
         // BEFORE anything is sent: a harness may clear its hook state as it
         // exits, and the resume is worthless without the id.
-        guard let resume = AgentResume.command(for: agentDetector.state(for: surfaceID))
-                ?? lookedUpResumeCommands[surfaceID]
-                ?? agentResumeCommand(for: surfaceID) else {
+        guard let resume = agentResumeCommand(for: surfaceID) else {
             presentAgentRestartFailure("No session to resume was found for this pane.")
             return
         }
@@ -2216,6 +2290,10 @@ final class TerminalViewController: NSViewController {
     private func injectStartupCommandIfPending(_ surfaceID: UUID) {
         guard let command = pendingStartupCommands.removeValue(forKey: surfaceID) else { return }
         let isResume = guardedResumeSurfaces.remove(surfaceID) != nil
+        if isResume, runningAccountHolds[surfaceID] != nil {
+            runningAccountHolds[surfaceID] = Date()
+                + Self.resumeGracePeriod + Self.runningAccountHoldAfterResume
+        }
         deliverAfterSpawn(
             command + "\r", to: surfaceID,
             after: isResume ? Self.resumeGracePeriod : Self.spawnGracePeriod,

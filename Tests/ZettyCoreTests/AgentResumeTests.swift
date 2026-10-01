@@ -61,3 +61,22 @@ private func state(_ kind: AgentKind?, id: String?, cwd: String = "/w/proj") -> 
     #expect(AgentResume.canRestart(.claude))
     #expect(AgentResume.canRestart(.codex))
 }
+
+@Test func aResumeCanBePinnedToAnAccountLogin() {
+    // After `zetty run`, the pane's shell still holds the SPAWN account, so the
+    // resume has to name the running login itself.
+    let command = AgentResume.command(
+        for: state(.claude, id: "abc-123"),
+        environment: ["CLAUDE_CONFIG_DIR": "/Users/g/.zetty/accounts/work"])
+    #expect(command
+            == "cd '/w/proj' && CLAUDE_CONFIG_DIR='/Users/g/.zetty/accounts/work' claude --resume 'abc-123'")
+}
+
+@Test func anUnsafeEnvironmentPairIsDroppedNotTyped() {
+    // A key that is not a shell name would run as a COMMAND; a control
+    // character would end the line early.
+    let command = AgentResume.command(
+        for: state(.codex, id: "019a"),
+        environment: ["rm -rf ~;X": "1", "CODEX_HOME": "/a\nb", "1BAD": "x"])
+    #expect(command == "cd '/w/proj' && codex resume '019a'")
+}

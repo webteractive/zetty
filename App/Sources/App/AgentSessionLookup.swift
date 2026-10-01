@@ -14,6 +14,11 @@ enum AgentSessionLookup {
         let surface: UUID
         let cwd: String
         let agent: AgentKind
+        /// The harness's config dir for the login this pane runs — an account's
+        /// `CLAUDE_CONFIG_DIR` / `CODEX_HOME`. nil is the default login
+        /// (`~/.claude`, `~/.codex`). Each dir keeps its own transcripts, so
+        /// scanning the wrong one finds nothing, or another login's session.
+        var configDirectory: String? = nil
     }
 
     /// How many transcript lines to read while confirming a slug guess. The
@@ -35,21 +40,27 @@ enum AgentSessionLookup {
 
         // Grouped by directory: that is the granularity both stores offer, and
         // the granularity the ambiguity policy is written against.
-        let byCwd = Dictionary(grouping: targets.filter { $0.agent == .claude }, by: \.cwd)
-        for (cwd, panes) in byCwd {
-            let ids = claudeSessionIDs(forCwd: cwd, limit: panes.count)
-            for (surface, id) in AgentSessionStore.assign(
-                panes: panes.map(\.surface), candidates: ids, excluding: claimed) {
-                result[surface] = AgentSession(id: id, cwd: cwd)
+        // ...and by config dir first, because each login has its own store.
+        let claudeByStore = Dictionary(grouping: targets.filter { $0.agent == .claude },
+                                       by: { configRoot($0, defaultName: ".claude") })
+        for (root, storeTargets) in claudeByStore {
+            for (cwd, panes) in Dictionary(grouping: storeTargets, by: \.cwd) {
+                let ids = claudeSessionIDs(forCwd: cwd, root: root, limit: panes.count)
+                for (surface, id) in AgentSessionStore.assign(
+                    panes: panes.map(\.surface), candidates: ids, excluding: claimed) {
+                    result[surface] = AgentSession(id: id, cwd: cwd)
+                }
             }
         }
 
-        let codexByCwd = Dictionary(grouping: targets.filter { $0.agent == .codex }, by: \.cwd)
-        if !codexByCwd.isEmpty {
+        let codexByStore = Dictionary(grouping: targets.filter { $0.agent == .codex },
+                                      by: { configRoot($0, defaultName: ".codex") })
+        for (root, storeTargets) in codexByStore {
+            let codexByCwd = Dictionary(grouping: storeTargets, by: \.cwd)
             // How many ids each directory actually needs, so the scan can stop
             // as soon as every pane is covered instead of reading to its limit.
             let needed = codexByCwd.mapValues(\.count)
-            let idsByCwd = codexSessionIDs(needed: needed)
+            let idsByCwd = codexSessionIDs(root: root, needed: needed)
             for (cwd, panes) in codexByCwd {
                 for (surface, id) in AgentSessionStore.assign(
                     panes: panes.map(\.surface), candidates: idsByCwd[cwd] ?? [], excluding: claimed) {
@@ -69,10 +80,9 @@ enum AgentSessionLookup {
     /// that directory by the `cwd` inside the transcript — so a change to
     /// Claude's undocumented slug rule yields no fallback rather than a wrong
     /// resume.
-    private static func claudeSessionIDs(forCwd cwd: String, limit: Int) -> [String] {
+    private static func claudeSessionIDs(forCwd cwd: String, root: URL, limit: Int) -> [String] {
         let slug = AgentSessionStore.claudeProjectSlug(forCwd: cwd)
-        let directory = FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent(".claude/projects/\(slug)", isDirectory: true)
+        let directory = root.appendingPathComponent("projects/\(slug)", isDirectory: true)
         var found: [String] = []
         for url in newestFirst(in: directory) {
             guard let id = AgentSessionStore.sessionID(fromTranscriptFileName: url.lastPathComponent) else {
@@ -105,9 +115,8 @@ enum AgentSessionLookup {
     /// Newest-first session ids per requested directory, from Codex's rollout
     /// store. One pass, newest file first, stopping as soon as every directory
     /// in `needed` has that many ids — or the scan limit is reached.
-    private static func codexSessionIDs(needed: [String: Int]) -> [String: [String]] {
-        let root = FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent(".codex/sessions", isDirectory: true)
+    private static func codexSessionIDs(root: URL, needed: [String: Int]) -> [String: [String]] {
+        let root = root.appendingPathComponent("sessions", isDirectory: true)
         // Rollout names start with an ISO timestamp, and the tree is
         // <yyyy>/<mm>/<dd>, so a reverse lexicographic sort of the full paths
         // is chronological without a single stat call.
@@ -148,6 +157,16 @@ enum AgentSessionLookup {
     }
 
     // MARK: - Shared
+
+    /// The harness's config dir for `target`: its account's, or the default
+    /// login's `~/<defaultName>`.
+    private static func configRoot(_ target: Target, defaultName: String) -> URL {
+        if let dir = target.configDirectory {
+            return URL(fileURLWithPath: dir, isDirectory: true)
+        }
+        return FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent(defaultName, isDirectory: true)
+    }
 
     /// Directory contents ordered newest modification first; empty when the
     /// directory is missing.

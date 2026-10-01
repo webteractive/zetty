@@ -48,7 +48,10 @@ by the tool it's running.
   grid is up. The pane is covered with a **Reloading session…** placeholder
   while Zetty quits the agent (`/exit`, `/quit`) and runs `claude --resume` /
   `codex resume` in its session, then uncovers once the agent is back — so the
-  conversation returns and **the scrollback is kept**. Nothing is torn down;
+  conversation returns and **the scrollback is kept**. It comes back under the
+  **account** it was running as — including one started with `zetty run
+  <account>` — and finds the conversation in that account's own history.
+  Nothing is torn down;
   the session is driven from outside. If the agent does not quit, or does not
   come back, nothing further is sent rather than posting a resume into its
   prompt. The button turns accent throughout and flashes green on success, red if
@@ -670,8 +673,9 @@ seconds apart, rather than waiting to be clicked, so recovery finishes on its
 own without eleven agents starting at the same instant.
 
 Snapshots need preserve-sessions (zmx is the scrollback source); resumes work
-in any pane. Hermes panes come back as a plain shell, since Zetty has no
-verified way to resume one. ⌘Q and `zetty quit` are unaffected — those keep
+in any pane. Each agent comes back under the **account** it was running as,
+including one started with `zetty run <account>`. Hermes panes come back as a
+plain shell, since Zetty has no verified way to resume one. ⌘Q and `zetty quit` are unaffected — those keep
 sessions alive as before — and a crash or power loss leaves nothing to recover
 from. If a restart is cancelled after Zetty has already quit, the relaunch
 notices each agent is still running and types nothing into it.

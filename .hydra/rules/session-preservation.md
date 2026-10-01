@@ -153,6 +153,21 @@ triggers:
     agent process, and 11 agents launching together took the reference machine
     past load 35. Hibernated projects are skipped — they were dormant before
     the power-off and waking them would spawn work the user put away.
+  - **A resume comes back under the login its agent was RUNNING as.** A
+    recovered pane respawns a shell carrying the account it was SPAWNED with,
+    so an agent started by `zetty run <account>` would otherwise resume under
+    the wrong login, and the session lookup would scan the wrong config dir.
+    The tally records `Entry.agentAccount` (the harness's account, read on main
+    via `harnessAccount` before the off-main tally; the lookup gets
+    `Target.configDirectory`). At relaunch `RestartRecovery.pinnedAccount`
+    prefixes that login's `CLAUDE_CONFIG_DIR` / `CODEX_HOME` onto the resume
+    when it differs from the spawn account, which is why `agentAccounts` loads
+    BEFORE the manifest is applied. `holdRunningAccountForResume` re-sets
+    `runningAccountID` and HOLDS it: the resume waits `resumeGracePeriod` in a
+    bare shell, and the foreground probe would otherwise read that shell as
+    the `zetty run` having ended and clear the override the resume is about to
+    bring back. The hold lasts until the probe sees the agent, or 30s past
+    delivery.
   - **A resume is never typed into a pane whose agent is still running.** The
     manifest assumes the power-off killed everything, and a restart CANCELLED
     after Zetty quit breaks that: the app relaunches, sessions are alive, and

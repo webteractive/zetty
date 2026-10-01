@@ -151,11 +151,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         // Restart recovery: the manifest exists only after a power-off quit and
         // is deleted by this read. Only a restored layout can own its surfaces;
         // after a fallback every entry would be dropped anyway.
+        // Accounts first: a resume pins the login its agent was running under.
+        agentAccounts = agentAccountStore.load()
         if let manifest = RestartRecoveryRunner.consumeManifest() {
             applyRecoveryManifest(manifest, to: tvc, restoredFromDisk: restoredFromDisk)
         }
         projectSettings = projectSettingsStore.load()
-        agentAccounts = agentAccountStore.load()
         // Drop stamps naming an account that no longer exists, so workspace.json
         // stays honest about which login each pane actually got.
         if tvc.workspace.healAccountIDs(known: Set(agentAccounts.accounts.map(\.id))) {
@@ -1675,10 +1676,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         // store below (off-main, inside the budget).
         let lookupTargets = tvc.agentPanes()
             .filter { states[$0.surface]?.session == nil }
-            .map { AgentSessionLookup.Target(surface: $0.surface, cwd: $0.cwd, agent: $0.agent) }
+            .map { AgentSessionLookup.Target(
+                surface: $0.surface, cwd: $0.cwd, agent: $0.agent,
+                configDirectory: tvc.harnessConfigDirectory(for: $0.surface, kind: $0.agent)) }
         let claimedSessions = Set(states.values.compactMap { $0.session?.id })
         let probedAgents = Dictionary(
             tvc.agentPanes().map { ($0.surface, $0.agent) }, uniquingKeysWith: { first, _ in first })
+        // The account each candidate harness runs under, read here on main
+        // because the tally below picks the kind off-main. A resume must come
+        // back under that login, which after `zetty run` is not the spawn one.
+        var harnessAccounts: [UUID: [AgentKind: String]] = [:]
+        for id in owners {
+            for kind in Set([probedAgents[id], states[id]?.kind].compactMap { $0 }) {
+                let account = tvc.harnessAccount(for: id, kind: kind)
+                if !account.isDefault { harnessAccounts[id, default: [:]][kind] = account.accountID }
+            }
+        }
         let zmx = ZmxRunner.locate()
 
         DispatchQueue.global(qos: .userInitiated).async {
@@ -1713,8 +1726,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
                     + " detector=\(states[surface]?.kind?.rawValue ?? "none")"
                     + " chosen=\(state.kind?.rawValue ?? "none")")
             }
+            var agentAccounts: [UUID: String] = [:]
+            for (surface, state) in merged {
+                if let kind = state.kind, let account = harnessAccounts[surface]?[kind] {
+                    agentAccounts[surface] = account
+                }
+            }
             let manifest = RestartRecovery.Manifest.make(
-                surfaces: owners, snapshots: snapshots, agentStates: merged, now: Date())
+                surfaces: owners, snapshots: snapshots, agentStates: merged,
+                agentAccounts: agentAccounts, now: Date())
             _ = RestartRecoveryRunner.write(manifest)
             if killingSessions, let zmx {
                 let sessions = ZmxRunner.listZettySessions(zmxPath: zmx)
@@ -2108,9 +2128,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         var resumes: [UUID: String] = [:]
         for entry in kept {
             if let path = entry.snapshot { recoverySnapshotPaths[entry.surface] = path }
-            if let agent = entry.agent, let id = entry.agentSession, let cwd = entry.agentCwd,
-               let command = RestartRecovery.resumeCommand(agent: agent, sessionID: id, cwd: cwd) {
-                resumes[entry.surface] = command
+            guard let agent = entry.agent, let id = entry.agentSession, let cwd = entry.agentCwd
+            else { continue }
+            // The pane respawns carrying the account it was SPAWNED with; an
+            // agent that ran under `zetty run` is pinned back to that login.
+            let pinned = RestartRecovery.pinnedAccount(
+                for: entry,
+                spawnedAccountID: tvc.workspace.surface(with: entry.surface)?.accountID,
+                accounts: agentAccounts.accounts, home: NSHomeDirectory())
+            guard let command = RestartRecovery.resumeCommand(
+                agent: agent, sessionID: id, cwd: cwd, environment: pinned?.env ?? [:])
+            else { continue }
+            resumes[entry.surface] = command
+            if let pinned {
+                tvc.holdRunningAccountForResume(surfaceID: entry.surface, accountID: pinned.accountID)
             }
         }
         tvc.queueStartupCommands(resumes, asAgentResume: true)

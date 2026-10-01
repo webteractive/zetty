@@ -55,6 +55,32 @@ public enum AgentAccountResolver {
         return .default
     }
 
+    /// The login a pane's `agentID` harness is running under: the `zetty run`
+    /// override first, then the account the pane was spawned with — each only
+    /// when it belongs to THAT harness, since a Codex account's `CODEX_HOME`
+    /// says nothing about which Claude login shares the pane. `.default` when
+    /// neither applies.
+    ///
+    /// A restart must come back under this login, not the pane's spawn env:
+    /// after `zetty run` the shell still carries the spawn account, so a bare
+    /// resume would reopen the conversation under the wrong login — or fail to
+    /// find it, since each config dir keeps its own transcripts.
+    public static func harnessAccount(
+        agentID: String,
+        runningAccountID: String?,
+        spawnedAccountID: String?,
+        accounts: [AgentAccount],
+        home: String
+    ) -> AccountResolution {
+        for candidate in [runningAccountID, spawnedAccountID] {
+            guard let candidate,
+                  let account = accounts.first(where: { $0.id == candidate }),
+                  account.agentID == agentID else { continue }
+            return resolution(for: account, home: home)
+        }
+        return .default
+    }
+
     public static func resolution(for account: AgentAccount, home: String) -> AccountResolution {
         var env: [String: String] = [:]
         // The variable name comes from the agent catalog. An agent with no known

@@ -77,3 +77,45 @@ private let t0 = Date(timeIntervalSince1970: 1_800_000_000)
 @Test func snapshotFileNameFollowsTheSessionName() {
     #expect(RestartRecovery.snapshotFileName(for: sA) == SessionPersistence.sessionName(for: sA) + ".vt")
 }
+
+// MARK: - Accounts
+
+private let workClaude = AgentAccount(id: "work", name: "Work", colorID: nil,
+                                      directory: "~/.zetty/accounts/work", agentID: "claude")
+
+private func accountEntry(_ account: String?) -> RestartRecovery.Entry {
+    RestartRecovery.Entry(surface: sA, snapshot: nil, agent: .claude,
+                          agentSession: "8d1e", agentCwd: "/p", agentAccount: account)
+}
+
+@Test func theManifestRecordsTheAccountBesideASessionOnly() {
+    let m = RestartRecovery.Manifest.make(
+        surfaces: [sA, sB], snapshots: [sB: "/snap/b.vt"],
+        agentStates: [sA: AgentState(kind: .claude, status: .idle,
+                                     session: AgentSession(id: "8d1e", cwd: "/p"))],
+        agentAccounts: [sA: "work", sB: "work"], now: Date(timeIntervalSince1970: 0))
+    #expect(m.entries.first { $0.surface == sA }?.agentAccount == "work")
+    // Nothing resumes in B, so there is nothing to pin.
+    #expect(m.entries.first { $0.surface == sB }?.agentAccount == nil)
+    #expect(RestartRecovery.Manifest.decode(m.encoded()!) == m)
+}
+
+@Test func aZettyRunAccountIsPinnedBackOntoTheResume() {
+    let pinned = RestartRecovery.pinnedAccount(
+        for: accountEntry("work"), spawnedAccountID: nil, accounts: [workClaude], home: "/Users/g")
+    #expect(pinned?.accountID == "work")
+    #expect(RestartRecovery.resumeCommand(agent: .claude, sessionID: "8d1e", cwd: "/p",
+                                          environment: pinned?.env ?? [:])
+            == "cd '/p' && CLAUDE_CONFIG_DIR='/Users/g/.zetty/accounts/work' claude --resume '8d1e'")
+}
+
+@Test func theSpawnAccountOrAGoneAccountPinsNothing() {
+    // The respawned shell already carries its spawn account.
+    #expect(RestartRecovery.pinnedAccount(
+        for: accountEntry("work"), spawnedAccountID: "work", accounts: [workClaude], home: "/h") == nil)
+    // Removed since the power-off: fall through rather than strand the resume.
+    #expect(RestartRecovery.pinnedAccount(
+        for: accountEntry("work"), spawnedAccountID: nil, accounts: [], home: "/h") == nil)
+    #expect(RestartRecovery.pinnedAccount(
+        for: accountEntry(nil), spawnedAccountID: "work", accounts: [workClaude], home: "/h") == nil)
+}

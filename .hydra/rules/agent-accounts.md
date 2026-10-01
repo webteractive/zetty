@@ -212,7 +212,10 @@ Gotchas, all deliberate:
   `effectiveAccountID(for:)` accessor — never by reading either field directly.
   The override is persisted because preserved zmx sessions outlive the app; it is
   cleared by the foreground probe when the pane's foreground process stops being
-  that agent, and at restore for any pane owning no preserved session. **With
+  that agent, and at restore for any pane owning no preserved session. The
+  probe skips a pane with a restart or a recovery resume in flight
+  (`agentRestartTimers`, `runningAccountHolds`), whose agent is gone on
+  purpose and coming back under the same login. **With
   `preserve-sessions` off there is no probe**, so an override there clears only
   at the next launch.
 - **Deriving the running account from the process environment was tried and

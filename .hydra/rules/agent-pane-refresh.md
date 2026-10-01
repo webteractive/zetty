@@ -123,3 +123,19 @@ triggers:
   change. `LeafContainerView.setRefreshVisible` is one boolean per visible
   pane, driven from the coalesced chrome refresh — it stays inside the pane's
   own view, exactly as the file tree does, rather than forcing a rebuild.
+- **The resume comes back under the login the agent was RUNNING as, not the
+  pane's spawn env.** After `zetty run <account>` the pane's shell still holds
+  the account it was spawned with, so a bare `claude --resume` there reopened
+  the conversation under the wrong login, and the lookup scanned only
+  `~/.claude` / `~/.codex` when each account's config dir keeps its own
+  transcripts. `AgentAccountResolver.harnessAccount` picks the login
+  (`runningAccountID`, then `accountID`, each only if it belongs to THAT
+  harness); `AgentSessionLookup.Target.configDirectory` scans its store; and
+  when it is the `zetty run` override, `resumeEnvironment` prefixes
+  `CLAUDE_CONFIG_DIR='…'` / `CODEX_HOME='…'` onto the harness in the resume
+  line. The spawn login adds nothing, since the shell already has it, and
+  that way a hand-typed project env var is left alone. The cache holds the
+  SESSION, not the line, so the account is read when the button is pressed.
+  The probe's override-clearing skips panes with a restart in flight: the
+  agent quits on purpose mid-restart, and clearing the override there would
+  flip the chip back to the spawn account.
