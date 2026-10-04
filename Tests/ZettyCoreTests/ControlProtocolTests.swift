@@ -248,6 +248,25 @@ private let panes: [StatusSnapshot.Pane] = [
     #expect(ControlCLI.recognizes(["clone", "--project", "zetty"]))
 }
 
+@Test func mergeAndPushCloneRequestsRoundTrip() throws {
+    for request in [ControlRequest.mergeClone(name: "zetty/fork-1"), .pushClone(name: "zetty/fork-1")] {
+        let line = try ControlWire.encodeLine(request)
+        #expect(try ControlWire.decodeRequest(line) == request)
+    }
+    #expect(ControlCLI.recognizes(["merge-clone", "fork-1"]))
+    #expect(ControlCLI.recognizes(["push-clone", "fork-1"]))
+}
+
+@Test func statusProjectCarriesItsCloneSourceAndToleratesAnOlderPayload() throws {
+    let project = StatusSnapshot.Project(name: "zetty/fork-1", isActive: true, hibernated: false,
+                                         cloneOf: "/Users/me/zetty", tabs: [])
+    let data = try JSONEncoder().encode(project)
+    #expect(try JSONDecoder().decode(StatusSnapshot.Project.self, from: data).cloneOf == "/Users/me/zetty")
+    // An app older than the field sends none; that is "not a clone", not an error.
+    let old = Data(#"{"name":"zetty","isActive":true,"hibernated":false,"tabs":[]}"#.utf8)
+    #expect(try JSONDecoder().decode(StatusSnapshot.Project.self, from: old).cloneOf == nil)
+}
+
 @Test func updateCloneRequestRoundTrips() throws {
     let line = try ControlWire.encodeLine(.updateClone(name: "zetty/fork-1"))
     let decoded = try ControlWire.decodeRequest(line)

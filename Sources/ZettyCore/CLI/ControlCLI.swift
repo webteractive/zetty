@@ -79,6 +79,13 @@ public enum ControlCLI {
       zetty update-clone <name>               merge the clone's SOURCE branch into
                                               the clone (update it); leaves any
                                               conflicts in the clone to resolve
+      zetty merge-clone <name>                land the clone's work in its SOURCE:
+                                              update the clone, then merge it into
+                                              the source locally. Refuses on a
+                                              dirty source; a conflict there is
+                                              aborted and the source left as it was
+      zetty push-clone <name>                 update the clone, then push its
+                                              branch to origin for a PR
       zetty remove-project <name> [--fetch | --discard]
                                               remove a project (closes its tabs and
                                               ends their sessions; no confirmation).
@@ -190,7 +197,7 @@ public enum ControlCLI {
     /// binary to decide CLI mode vs. launching the GUI).
     public static func recognizes(_ arguments: [String]) -> Bool {
         guard let first = arguments.first else { return false }
-        return ["status", "ls", "send", "capture", "view", "new-tab", "add-project", "new-project", "clone", "update-clone",
+        return ["status", "ls", "send", "capture", "view", "new-tab", "add-project", "new-project", "clone", "update-clone", "merge-clone", "push-clone",
                 "remove-project", "hibernate", "wake", "split", "break", "focus", "close", "reload", "tiles",
                 "scratch", "scratch-clear", "quit", "accounts", "run",
                 "new-space", "rename-space", "remove-space", "move-to-space",
@@ -235,7 +242,11 @@ public enum ControlCLI {
         case "clone":
             return runClone(arguments)
         case "update-clone":
-            return runUpdateClone(arguments)
+            return runCloneVerb(arguments, verb: "update-clone") { .updateClone(name: $0) }
+        case "merge-clone":
+            return runCloneVerb(arguments, verb: "merge-clone") { .mergeClone(name: $0) }
+        case "push-clone":
+            return runCloneVerb(arguments, verb: "push-clone") { .pushClone(name: $0) }
         case "remove-project":
             return runRemoveProject(arguments)
         case "hibernate":
@@ -761,16 +772,19 @@ public enum ControlCLI {
         return expectPane(.cloneProject(project: project, name: name, focus: focus))
     }
 
-    private static func runUpdateClone(_ arguments: [String]) -> Int32 {
+    /// `update-clone`, `merge-clone` and `push-clone`: a clone's name in, a
+    /// one-line summary out.
+    private static func runCloneVerb(_ arguments: [String], verb: String,
+                                     _ request: (String) -> ControlRequest) -> Int32 {
         if arguments.contains("--help") || arguments.contains("-h") {
             print(usage)
             return 0
         }
         let name = arguments.joined(separator: " ").trimmingCharacters(in: .whitespaces)
         guard !name.isEmpty else {
-            return failure("update-clone needs a clone name")
+            return failure("\(verb) needs a clone name")
         }
-        switch roundTrip(.updateClone(name: name)) {
+        switch roundTrip(request(name)) {
         case .text(let summary):
             print(summary)
             return 0

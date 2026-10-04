@@ -18,6 +18,8 @@ export type Pane = {
 // Only that project: the rest of the workspace is not this session's business.
 export function projectPanes(statusJSON: string, me: string | undefined): {
   project: string
+  /** The directory this project was cloned from, when it is a clone. */
+  cloneOf?: string
   panes: Pane[]
 } | undefined {
   let status: unknown
@@ -46,7 +48,11 @@ export function projectPanes(statusJSON: string, me: string | undefined): {
       }
     }
     if (panes.some(pane => pane.isMe)) {
-      return { project: typeof project.name === 'string' ? project.name : '', panes }
+      return {
+        project: typeof project.name === 'string' ? project.name : '',
+        cloneOf: typeof project.cloneOf === 'string' ? project.cloneOf : undefined,
+        panes,
+      }
     }
   }
   return undefined
@@ -73,6 +79,11 @@ export function describePanes(found: { project: string; panes: Pane[] }): string
     return `${pane.id}  ${what}${status}  ${pane.title || pane.cwd}${me}`
   })
   return [`Project ${found.project}: ${found.panes.length} pane(s)`, ...lines].join('\n')
+}
+
+// The last path component, which is how a clone's source is named in a row.
+export function baseName(path: string): string {
+  return path.replace(/\/+$/, '').split('/').pop() ?? path
 }
 
 // MARK: - Rate-limit warning

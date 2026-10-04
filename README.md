@@ -788,6 +788,12 @@ Inside the Claude pane itself the mod adds:
   type into panes it did not open, or see other projects. Turn the tools off
   with **Settings → Agents → Let Claude open and read panes**, or
   `zetty-claude-tools = false`; the commands stay.
+- **A clone row above the prompt.** In a cloned project the pane shows
+  `Clone of <source>` with **Merge into source** and **Push branch**. Each
+  asks for a second press before it runs, and **Hide** removes the row for the
+  session. They run `zetty merge-clone` / `zetty push-clone`, the same merge
+  and push the sidebar's **Merge to Source…** offers, with the same refusals
+  (a source with uncommitted changes, conflicts).
 - **A rate-limit warning above the prompt.** Once a window is 90% used a row
   appears with the figure, when it resets, and a **New pane on <account>**
   button for each of your other Claude accounts, plus Dismiss. The new pane
@@ -1004,6 +1010,8 @@ zetty add-project ~/work/api --space "Client Acme"  # ...and file it into an exi
 zetty new-project ~/work/new --git       # create a folder + add it (optional git init)
 zetty clone --project api --name fork-1  # instant CoW clone, own branch zetty/fork-1
 zetty update-clone fork-1                # merge the source's latest into the clone, leaving conflicts in place
+zetty merge-clone fork-1                 # then land the clone's work in the source (refuses on a dirty source)
+zetty push-clone fork-1                  # or push the clone's branch to origin for a PR
 zetty remove-project api                 # close a project's tabs (no confirmation)
 zetty remove-project api/fork-1 --fetch  # clone: land its branch in the source repo, then delete
 zetty hibernate api                      # free a project's sessions/processes (keeps layout)

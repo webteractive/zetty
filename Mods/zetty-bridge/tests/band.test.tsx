@@ -41,7 +41,7 @@ test('other accounts are the Claude ones this session is not running under', () 
   expect(otherAccounts('nope', '~/.claude', '/Users/me')).toEqual([])
 })
 
-function world(on: On, runs: string[], status = '') {
+function world(on: On, runs: string[], status = '', toasts: string[] = []) {
   mock.env(on, {
     ZETTY: '1', HOME: '/Users/me', ZETTY_SURFACE: SURFACE, ZETTY_BIN: BIN,
     CLAUDE_CONFIG_DIR: '/Users/me/.zetty/accounts/work',
@@ -56,7 +56,10 @@ function world(on: On, runs: string[], status = '') {
   on('session.measure', (_$, e) => ({ changed: e.changed }))
   on('command.register', (_$, e) => ({ value: { command: e.name } }))
   on('tool.register', (_$, e) => ({ value: { tool: `mcp__zetty-bridge__${e.name}` } }))
-  on('ui.toast', () => ({ value: undefined }))
+  on('ui.toast', (_$, e) => {
+    toasts.push(e.text)
+    return { value: undefined }
+  })
   // What the engine draws when the mod has nothing to show: an empty band.
   on('ui.render', { component: 'AbovePrompt' }, ($, e) => {
     const { Box } = $.ui.resolve(e)
@@ -151,3 +154,46 @@ for (const surface of ['terminal', 'desktop'] as const) {
     await ui.unmount()
   })
 }
+
+const CLONE_STATUS = JSON.stringify({
+  projects: [{
+    name: 'app/fix-1', cloneOf: '/work/app',
+    tabs: [{ title: 'main', panes: [{ id: '0a1b2c3d', title: 'claude', cwd: '/c', tool: 'claude' }] }],
+  }],
+})
+
+for (const surface of ['terminal', 'desktop'] as const) {
+  test(`${surface}: in a clone the band offers merge and push, each behind a second press`, async ($, on) => {
+    const runs: string[] = []
+    const toasts: string[] = []
+    world(on, runs, CLONE_STATUS, toasts)
+    await $.session.start({ cwd: '/c', surface, isInteractive: true })
+
+    const ui = await $.ui.mount({ ...BAND, surface })
+    expect(await ui.find({ type: 'Text', text: /Clone of app/ })).toBeDefined()
+
+    await ui.press({ key: 'clone-push' })
+    expect(await ui.find({ type: 'Text', text: /Push app\/fix-1's branch to origin\?/ })).toBeDefined()
+    expect(runs.some(run => run.startsWith('push-clone'))).toBe(false)   // not yet
+    await ui.press({ key: 'clone-cancel' })
+    expect(runs.some(run => run.startsWith('push-clone'))).toBe(false)
+
+    await ui.press({ key: 'clone-merge' })
+    await ui.press({ key: 'clone-confirm' })
+    expect(runs.at(-1)).toBe('merge-clone app/fix-1')
+    expect(toasts.at(-1)).toBe('Merged into the source.')   // the CLI printed nothing
+
+    await ui.press({ key: 'clone-hide' })
+    expect(await ui.find({ key: 'clone-merge' })).toBe(undefined)
+    await ui.unmount()
+  })
+}
+
+test('an ordinary project shows no clone band', async ($, on) => {
+  const runs: string[] = []
+  world(on, runs, STATUS)
+  await $.session.start({ cwd: '/work/app', surface: 'terminal', isInteractive: true })
+  const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
+  expect(await ui.find({ key: 'clone-merge' })).toBe(undefined)
+  await ui.unmount()
+})

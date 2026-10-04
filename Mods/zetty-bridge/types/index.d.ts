@@ -16,6 +16,9 @@ export type FleetPane = {
 
 export type Fleet = { project: string; panes: FleetPane[] }
 
+/** The clone this pane's project is, and the directory it was forked from. */
+export type Clone = { project: string; source: string }
+
 declare module 'claude-code' {
   interface PluginState {
     'zetty-bridge': {
@@ -27,6 +30,10 @@ declare module 'claude-code' {
       accounts: string[]
       /** This project's panes as last listed, for the fleet sidebar. */
       fleet: Fleet | null
+      /** Set when this pane's project is a clone; null otherwise. */
+      clone: Clone | null
+      /** The clone action awaiting a second press, or that the band is hidden. */
+      cloneStep: 'idle' | 'merge' | 'push' | 'hidden'
     }
   }
 }

@@ -1974,29 +1974,49 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
                     defaultDirectory: AgentAccountSupport
                         .agentHomeDirectory(agentID: AgentAccountSupport.defaultAgentID, home: home)
                         .map { AgentAccountSupport.abbreviate($0, home: home) }))
-            case .updateClone(let name):
+            case .updateClone(let name), .mergeClone(let name), .pushClone(let name):
+                // Slow verbs: plan on main, run git off it. Merge and push are
+                // the runners the sidebar's Merge to Source… uses, with their
+                // refusals and their abort-on-conflict.
                 let planned = DispatchQueue.main.sync { () -> TerminalViewController.UpdateClonePlan in
                     guard let tvc = self.terminalViewController else {
                         return .failed("Zetty is still starting up")
                     }
                     return tvc.planUpdateClone(name: name)
                 }
+                let cloneRoot: String, sourceRoot: String
                 switch planned {
                 case .failed(let message):
                     return .error(message)
-                case .ready(let cloneRoot, let sourceRoot):
+                case .ready(let clone, let source):
+                    (cloneRoot, sourceRoot) = (clone, source)
+                }
+                func conflictsInClone(_ files: [String], then next: String) -> ControlResponse {
+                    .error("merge conflicts left in the clone — resolve them there, then \(next). "
+                        + "Conflicting files:\n" + files.joined(separator: "\n"))
+                }
+                switch request {
+                case .mergeClone:
+                    switch CloneRunner.mergeUpdates(cloneRoot: cloneRoot, sourceRoot: sourceRoot) {
+                    case .merged(let summary): return .text("merged into the source: \(summary)")
+                    case .syncConflicts(let files): return conflictsInClone(files, then: "commit")
+                    case .sourceConflict(let files):
+                        return .error("merging into the source conflicted and was aborted — the source "
+                            + "is untouched. Conflicting files:\n" + files.joined(separator: "\n"))
+                    case .refused(let message), .failed(let message): return .error(message)
+                    }
+                case .pushClone:
+                    switch CloneRunner.pushBranch(cloneRoot: cloneRoot, sourceRoot: sourceRoot) {
+                    case .pushed(let summary): return .text("pushed: \(summary)")
+                    case .syncConflicts(let files): return conflictsInClone(files, then: "commit")
+                    case .refused(let message), .failed(let message): return .error(message)
+                    }
+                default:
                     switch CloneRunner.updateFromSource(cloneRoot: cloneRoot, sourceRoot: sourceRoot) {
-                    case .updated(let summary):
-                        return .text(summary)
-                    case .upToDate:
-                        return .text("already up to date with the source")
-                    case .conflicts(let files):
-                        return .error("merge conflicts left in the clone — resolve them there, then "
-                            + "commit and PR. Conflicting files:\n" + files.joined(separator: "\n"))
-                    case .refused(let message):
-                        return .error(message)
-                    case .failed(let message):
-                        return .error(message)
+                    case .updated(let summary): return .text(summary)
+                    case .upToDate: return .text("already up to date with the source")
+                    case .conflicts(let files): return conflictsInClone(files, then: "commit and PR")
+                    case .refused(let message), .failed(let message): return .error(message)
                     }
                 }
             default:
@@ -2137,7 +2157,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
                 return .error(message)
             }
             return .ok
-        case .capture, .quit, .cloneProject, .removeProject, .updateClone, .accounts:
+        case .capture, .quit, .cloneProject, .removeProject, .updateClone, .mergeClone,
+             .pushClone, .accounts:
             // Slow verbs — handled on the socket queue in startControlSocket.
             return .error("internal: slow verb routed to the main handler")
         }

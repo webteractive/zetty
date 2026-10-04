@@ -211,6 +211,18 @@ at in a real pane yet.
 workspace is never handed to the model. `read_pane` answers only for panes
 `open_pane` returned in this load of the mod.
 
+**The clone band asks twice.** `Merge into source` changes the source repo
+and `Push branch` pushes to origin; the CLI verbs behind them ask nothing, so
+the band holds a `cloneStep` (`idle` → `merge`/`push` → run) and only the
+second press runs `zetty merge-clone` / `push-clone`. Zetty already shows a
+`CloneWarningBanner` outside tile mode; the band is what a TILE has, and
+`Hide` drops it for the session. It reads `cloneOf` from `zetty status --json`
+once, at `session.start`. Those two verbs get a 120 s timeout rather than the
+10 s every other call has — they run git over a whole repository.
+
+**`ZETTY_BIN` falls back to `zetty` on `PATH`.** A pane opened before Zetty
+injected the variable has only that, and every preserved session predates it.
+
 ## Verifying
 
 ```sh

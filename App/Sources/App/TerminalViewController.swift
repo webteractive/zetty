@@ -3621,7 +3621,8 @@ final class TerminalViewController: NSViewController {
             let effectiveSpaceID = workspace.effectiveSpaceID(of: project)
             return StatusSnapshot.Project(name: project.name, isActive: isActiveProject,
                                          hibernated: project.isHibernated,
-                                         space: effectiveSpaceID.flatMap { spaceNames[$0] }, tabs: tabs)
+                                         space: effectiveSpaceID.flatMap { spaceNames[$0] },
+                                         cloneOf: project.cloneSource, tabs: tabs)
         }
         return StatusSnapshot(projects: projects,
                                spaces: workspace.spaces.map { .init(name: $0.name, collapsed: $0.isCollapsed) },
@@ -4153,7 +4154,7 @@ final class TerminalViewController: NSViewController {
         }
         var isDir: ObjCBool = false
         guard FileManager.default.fileExists(atPath: sourceRoot, isDirectory: &isDir), isDir.boolValue else {
-            return .failed("the source directory is gone (\(sourceRoot)) — cannot update")
+            return .failed("the source directory is gone (\(sourceRoot))")
         }
         return .ready(cloneRoot: clone.rootPath, sourceRoot: sourceRoot)
     }

@@ -78,6 +78,14 @@ public enum ControlRequest: Equatable, Sendable {
     /// leave conflicts in the clone to resolve). Response `.text` with a
     /// summary, or `.error` for a refusal/failure.
     case updateClone(name: String)
+    /// Land the named clone's work in its SOURCE: sync the source into the
+    /// clone, then merge the clone into the source locally. Refuses on a dirty
+    /// source and aborts cleanly if that merge conflicts. Response `.text`
+    /// with a summary, or `.error`.
+    case mergeClone(name: String)
+    /// Sync the source into the named clone, then push the clone's branch to
+    /// `origin` for a PR. Response `.text` with a summary, or `.error`.
+    case pushClone(name: String)
     /// Remove the named project (case-insensitive), closing all of its
     /// tabs/panes and ending their zmx sessions (no confirmation dialog —
     /// the CLI call IS the confirmation). The last project can't be removed.
@@ -250,6 +258,10 @@ extension ControlRequest: Codable {
             )
         case "update-clone":
             self = .updateClone(name: try container.decode(String.self, forKey: .project))
+        case "merge-clone":
+            self = .mergeClone(name: try container.decode(String.self, forKey: .project))
+        case "push-clone":
+            self = .pushClone(name: try container.decode(String.self, forKey: .project))
         case "remove-project":
             self = .removeProject(
                 name: try container.decode(String.self, forKey: .project),
@@ -404,6 +416,12 @@ extension ControlRequest: Codable {
             try container.encode(focus, forKey: .focus)
         case .updateClone(let name):
             try container.encode("update-clone", forKey: .command)
+            try container.encode(name, forKey: .project)
+        case .mergeClone(let name):
+            try container.encode("merge-clone", forKey: .command)
+            try container.encode(name, forKey: .project)
+        case .pushClone(let name):
+            try container.encode("push-clone", forKey: .command)
             try container.encode(name, forKey: .project)
         case .removeProject(let name, let fetch, let discard):
             try container.encode("remove-project", forKey: .command)
@@ -676,18 +694,23 @@ public struct StatusSnapshot: Codable, Equatable, Sendable {
         public let hibernated: Bool
         /// The Space this project renders under, or nil for Pinned/Projects.
         public let space: String?
+        /// For a clone, the directory it was forked from; nil for an ordinary
+        /// project. What `update-clone` / `merge-clone` / `push-clone` act on.
+        public let cloneOf: String?
         public let tabs: [Tab]
 
-        public init(name: String, isActive: Bool, hibernated: Bool, space: String? = nil, tabs: [Tab]) {
+        public init(name: String, isActive: Bool, hibernated: Bool, space: String? = nil,
+                    cloneOf: String? = nil, tabs: [Tab]) {
             self.name = name
             self.isActive = isActive
             self.hibernated = hibernated
             self.space = space
+            self.cloneOf = cloneOf
             self.tabs = tabs
         }
 
         private enum CodingKeys: String, CodingKey {
-            case name, isActive, hibernated, space, tabs
+            case name, isActive, hibernated, space, cloneOf, tabs
         }
 
         /// Hand-written for the same reason as `Pane.init(from:)`: `hibernated`
@@ -698,6 +721,7 @@ public struct StatusSnapshot: Codable, Equatable, Sendable {
             isActive = try c.decodeIfPresent(Bool.self, forKey: .isActive) ?? false
             hibernated = try c.decodeIfPresent(Bool.self, forKey: .hibernated) ?? false
             space = try c.decodeIfPresent(String.self, forKey: .space)
+            cloneOf = try c.decodeIfPresent(String.self, forKey: .cloneOf)
             tabs = try c.decodeIfPresent([Tab].self, forKey: .tabs) ?? []
         }
     }

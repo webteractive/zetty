@@ -51,6 +51,10 @@ Commands (see `zetty --help` for full grammar and agent notes):
 - `remove-project <name>` — remove a project (case-insensitive), closing
   its tabs/panes and ending their zmx sessions; no confirmation dialog,
   and the last remaining project can't be removed.
+- `update-clone <name>` / `merge-clone <name>` / `push-clone <name>` — bring a
+  clone up to date with its source, land its work in the source locally, or
+  push its branch to origin for a PR. All three are slow verbs (git runs off
+  the main thread) and print a one-line summary; see `project-clones.md`.
 - `scratch [--focus]` — open a project-less, ephemeral scratch terminal
   (rooted at home, never persisted) in the Scratch section, in
   the BACKGROUND by default; `--focus` switches to it. Prints the new pane

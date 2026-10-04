@@ -1,7 +1,9 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register, SessionUsage } from 'claude-code'
 
-import { describePanes, fleetLabel, limitWarning, otherAccounts, projectPanes, UUID } from './panes'
+import {
+  baseName, describePanes, fleetLabel, limitWarning, otherAccounts, projectPanes, UUID,
+} from './panes'
 
 // Zetty bridge: keeps one snapshot per pane at
 // ~/.zetty/agent-usage/<surface>.json, rewritten whole on every change.
@@ -70,13 +72,17 @@ function publish($: EngineInterface, measured?: Usage): Promise<void> {
 
 type ZettyResult = { ok: boolean; out: string }
 
-async function zetty($: EngineInterface, args: readonly string[]): Promise<ZettyResult> {
-  const bin = await $.env.get('ZETTY_BIN')
-  if (!(await $.env.get('ZETTY')) || !bin) {
+async function zetty(
+  $: EngineInterface, args: readonly string[], timeoutMs = 10_000,
+): Promise<ZettyResult> {
+  if (!(await $.env.get('ZETTY'))) {
     return { ok: false, out: 'This session is not running inside a Zetty pane.' }
   }
+  // A pane opened before Zetty injected ZETTY_BIN has only the PATH to go on,
+  // where the CLI is when Settings → Command Line installed it.
+  const bin = (await $.env.get('ZETTY_BIN')) ?? 'zetty'
   try {
-    const ran = await $.process.run([bin, ...args], { timeoutMs: 10_000 })
+    const ran = await $.process.run([bin, ...args], { timeoutMs })
     const ok = ran.exitCode === 0
     return { ok, out: (ok ? ran.stdout : ran.stderr || ran.stdout).trim() }
   } catch (err) {
@@ -263,6 +269,39 @@ async function openOnAccount($: EngineInterface, account: string): Promise<void>
   $.ui.toast(split.ok ? `Opened a pane on ${account}` : split.out)
 }
 
+// MARK: - Clone band
+
+// In a cloned project, a row offering the two ways its work goes back. Zetty
+// shows a banner for the same thing outside tile mode; this is the one a tile
+// has. Both actions change something outside the clone, so each takes a
+// second press, and the row can be hidden for the session.
+const clone = atom({ plugin: 'zetty-bridge', key: 'clone' } as const, null)
+const cloneStep = atom({ plugin: 'zetty-bridge', key: 'cloneStep' } as const, 'idle')
+// A merge or a push runs git over a whole repository.
+const CLONE_TIMEOUT_MS = 120_000
+
+async function startCloneBand($: EngineInterface): Promise<void> {
+  const status = await zetty($, ['status', '--json'])
+  const found = status.ok ? projectPanes(status.out, await paneID($)) : undefined
+  const source = found?.cloneOf
+  await update($, clone, () =>
+    found !== undefined && source !== undefined ? { project: found.project, source } : null)
+}
+
+async function runCloneAction($: EngineInterface, action: 'merge' | 'push'): Promise<void> {
+  const target = await read($, clone)
+  await update($, cloneStep, () => 'idle')
+  if (target === null) return
+  $.ui.toast(action === 'merge' ? 'Merging into the source…' : 'Pushing the branch…')
+  const ran = await zetty(
+    $, [action === 'merge' ? 'merge-clone' : 'push-clone', target.project], CLONE_TIMEOUT_MS)
+  // `out` is trimmed, so an empty first line means the CLI printed nothing.
+  const fallback = action === 'merge'
+    ? (ran.ok ? 'Merged into the source.' : 'The merge failed.')
+    : (ran.ok ? 'Pushed the branch.' : 'The push failed.')
+  $.ui.toast(ran.out.split('\n')[0] || fallback)
+}
+
 // MARK: - Fleet sidebar
 
 // A docked list of this project's panes, opened only by `/zetty fleet`. Claude
@@ -288,6 +327,7 @@ export const register: Register = on => {
     await startCommands($).catch(() => {})
     await startTools($).catch(() => {})
     await startBand($).catch(() => {})
+    await startCloneBand($).catch(() => {})
     return started
   })
 
@@ -337,26 +377,51 @@ export const register: Register = on => {
     if (e.props.hasSurvey) return next(e)
     const warning = limitWarning(
       await read($, limits), await read($, dismissed), LIMIT_WARN_PERCENT, await $.clock.now())
-    if (warning === undefined) return next(e)
+    const step = await read($, cloneStep)
+    const cloned = step === 'hidden' ? null : await read($, clone)
+    if (warning === undefined && cloned === null) return next(e)
 
     const { Box, Button, Text } = $.ui.resolve(e)
     const others = (await read($, accounts)).slice(0, MAX_ACCOUNT_BUTTONS)
 
     return (
-      <Box>
-        <Text color="yellow">{warning.text} </Text>
-        {others.map((account, index) => (
-          <Button
-            key={`account-${index}`}
-            label={`New pane on ${account}`}
-            onPress={() => openOnAccount($, account)}
-          />
-        ))}
-        <Button
-          key="dismiss"
-          label="Dismiss"
-          onPress={() => update($, dismissed, kinds => [...kinds, warning.kind])}
-        />
+      <Box flexDirection="column">
+        {warning !== undefined && (
+          <Box>
+            <Text color="yellow">{warning.text} </Text>
+            {others.map((account, index) => (
+              <Button
+                key={`account-${index}`}
+                label={`New pane on ${account}`}
+                onPress={() => openOnAccount($, account)}
+              />
+            ))}
+            <Button
+              key="dismiss"
+              label="Dismiss"
+              onPress={() => update($, dismissed, kinds => [...kinds, warning.kind])}
+            />
+          </Box>
+        )}
+        {cloned !== null && step === 'idle' && (
+          <Box>
+            <Text dimColor>Clone of {baseName(cloned.source)} </Text>
+            <Button key="clone-merge" label="Merge into source" onPress={() => update($, cloneStep, () => 'merge')} />
+            <Button key="clone-push" label="Push branch" onPress={() => update($, cloneStep, () => 'push')} />
+            <Button key="clone-hide" label="Hide" onPress={() => update($, cloneStep, () => 'hidden')} />
+          </Box>
+        )}
+        {cloned !== null && (step === 'merge' || step === 'push') && (
+          <Box>
+            <Text color="yellow">
+              {step === 'merge'
+                ? `Merge ${cloned.project} into ${baseName(cloned.source)}? `
+                : `Push ${cloned.project}'s branch to origin? `}
+            </Text>
+            <Button key="clone-confirm" label="Yes" onPress={() => runCloneAction($, step)} />
+            <Button key="clone-cancel" label="Cancel" onPress={() => update($, cloneStep, () => 'idle')} />
+          </Box>
+        )}
       </Box>
     )
   })

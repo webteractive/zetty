@@ -323,6 +323,15 @@ open -a /Applications/zetty.app
   `zetty-*` session no restored surface owns, so an untracked one is killed on
   relaunch — taking the agent doing the install with it. Run quit → wait →
   open as one backgrounded command so it survives the GUI being briefly down.
+- **`ditto` never removes what the new build dropped.** It merges into the
+  existing bundle, so a file deleted or renamed in the repo stays in
+  `/Applications/zetty.app` from an older install. Renaming the mod's
+  `register.ts` to `register.tsx` left both in the installed bundle, and
+  `ModInstaller` then copied the dead one out. After an install whose change
+  removed or renamed a bundled resource, delete the leftover by hand and run
+  `codesign --verify --deep /Applications/zetty.app` — an extra file breaks the
+  bundle's seal until it is gone. A released DMG is a fresh bundle and is not
+  affected.
 - **For a release, install the Release build** (`build/Build/Products/Release/`
   from `package.sh`), so `/Applications` matches the shipped DMG.
 - **A dependency bump counts as a change.** `swift test` covers only the pure

@@ -128,5 +128,13 @@ per-file **Replace**/**Keep Both** choice, launched from the non-git branch of
 step (`CloneRunner.updateFromSource`) and is routed as a **slow verb**
 alongside `clone`/`capture`/`quit`/`removeProject` (plan on main via
 `TerminalViewController.planUpdateClone`, merge off the socket queue, outcome
-text/error returned to the CLI) — the GUI's Merge updates/Push to branch
-strategies are not exposed to the CLI in Phase 1.
+text/error returned to the CLI) . The GUI's two merge-back strategies have
+their own verbs: **`merge-clone <name>`** (`CloneRunner.mergeUpdates`) and
+**`push-clone <name>`** (`CloneRunner.pushBranch`), routed as slow verbs the
+same way and reusing `planUpdateClone`. They carry the runners' refusals
+through unchanged — a dirty source, sync conflicts left in the clone, a source
+merge that conflicts and is aborted — and they ask no confirmation, because a
+CLI call is the confirmation; the Claude Code mod's clone band, which calls
+them, puts its own second press in front (`claude-mod.md`).
+`StatusSnapshot.Project.cloneOf` names a clone's source directory, decoded
+with `decodeIfPresent` so an older app's payload reads as "not a clone".
