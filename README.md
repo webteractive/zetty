@@ -163,16 +163,20 @@ by the tool it's running.
     running/idle count while the grid is up.
 - **Sessions** — `⌘J`, **View → Sessions…**, the command palette, or the
   status-bar pill. It docks to the **bottom of the window** by default; the ⤡ button in
-  its header detaches it into its own window, and the ⤠ button docks it back.
+  its header detaches it into its own window, the ⤠ button docks it back, and
+  the docked drawer's **×** closes it.
   Whichever form you leave it in is remembered — the buttons rewrite
   `zetty-sessions-view`. It lists
   every zmx session Zetty spawned, **grouped by project** in sidebar order:
   which pane owns it, what it is running, its
-  live CPU, the resident memory of its own processes, and — for a Claude
-  session — what it has cost so far. Each project's header totals its sessions'
-  CPU and memory and carries a **Hibernate** button, so putting idle projects
-  away is one click each without visiting them (Home and scratch terminals have
-  none; sessions no pane owns trail under **Orphaned**). Above the list,
+  live CPU, and the resident memory of its own processes. Each project's header row totals its
+  sessions' CPU and memory under those columns and leads with a **moon**
+  button that hibernates the project, also offered as **Hibernate “project”**
+  in every session's **⋮** menu — so idle projects can be put away without
+  visiting them (greyed out for Home and scratch terminals; sessions no pane
+  owns trail under **Orphaned**). A hibernated project has no sessions: if
+  one survives hibernating, Zetty ends it within seconds, and the project reads
+  *hibernated, ending…* until it is gone. Above the list,
   Zetty's measured footprint. Per row: **Reveal Pane** (in tile mode it
   focuses the pane's tile, attaching its tab when the view lacks it),
   **Interrupt** (Ctrl-C), and **Kill Session…**. The status-bar pill carries a dot that turns yellow
@@ -243,12 +247,15 @@ by the tool it's running.
   section. Home, scratch terminals, and clones are never members — a clone
   always follows its source's Space.
 - **Hibernating projects** — right-click a project → **Hibernate Project** (or
-  `zetty hibernate`, or its **Hibernate** button in the Sessions view) to free
+  `zetty hibernate`, or its moon button in the Sessions view) to free
   its sessions/processes while keeping its layout. Shells sitting idle at a
   prompt are sent `exit` first, so they leave cleanly (history written, logout
   hooks run); anything still running — or still alive a few seconds later — is
   killed. Waking a project during those seconds wakes it once they are over.
-  Hibernated projects collect at the bottom of the sidebar in a **Hibernating**
+  A hibernated project never runs a session: a tile view showing one of its
+  panes shows **"<project> is hibernated"** with a **Wake Project** button
+  instead of starting it, and any session that survives hibernating is ended
+  automatically. Hibernated projects collect at the bottom of the sidebar in a **Hibernating**
   section that is **collapsible** (click the header to tuck the dormant rows
   away) and **sorted by name**. Dormancy never blocks the CLI: `zetty status`
   reports it (`hibernated` per project, `live` per pane) and `send`/`new-tab`/
@@ -775,8 +782,6 @@ across panes and across accounts:
 - **Notifications that say what is wanted.** A needs-attention notification
   carries Claude's own message ("Claude needs your permission to use Bash")
   instead of only the project name.
-- **Cost per session** in the Sessions view, side by side for every Claude
-  pane. On a subscription it is an estimate at list price, not a charge.
 - **Restarting an agent** finds its conversation sooner, including straight
   after a `/clear`.
 

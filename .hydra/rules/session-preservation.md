@@ -26,14 +26,15 @@ triggers:
   they survive app quit/relaunch; reattach replays terminal state. Quit
   survives, explicit close kills (via `registry.prune` → `zmx kill`); a
   one-shot startup reap kills `zetty-*` sessions no restored surface owns
-  (crash leftovers), and Settings offers a manual kill too. Ownership for both
-  diffs is `WorkspaceModel.sessionOwnerSurfaceIDs` (ALL projects, hibernated
-  included) — **not** `TerminalViewController.allSurfaceIDs`, which excludes
-  hibernated projects so `prune` can free their surfaces. Hibernating frees a
-  project's sessions only best-effort (it can't when zmx has gone missing, and
-  a crash can cut it short), so reaping against the attachment set kills any
-  session that survived — unattended, since auto-hibernation needs no user
-  action. Reap only what no project claims. The
+  (crash leftovers), and Settings offers a manual kill too. The ORPHAN diff
+  uses `WorkspaceModel.sessionOwnerSurfaceIDs` (ALL projects, hibernated
+  included), because the same pass sweeps `<uuid>.cwd` files and a dormant
+  pane needs its cwd to wake at. **A hibernated project owns no SESSIONS,
+  though**: hibernation's kill is best-effort (zmx missing, a crash, or a tile
+  respawning a pane), and `reconcileSessions` ends any survivor through the
+  hibernation teardown (`endLeftoverSessionsOfHibernatedProjects`, see
+  `surfaces-and-memory.md`). This reverses the earlier rule that spared them —
+  the user's ruling: a hibernated project must have no session at all. The
   Settings (⌘,) toggle offers to download the zmx release binary from zmx.sh
   into `~/.zetty/bin` when missing (Homebrew/manual installs are detected
   too); config-only enablement without zmx falls back to plain shells with a

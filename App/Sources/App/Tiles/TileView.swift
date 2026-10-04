@@ -16,6 +16,10 @@ enum TileContent {
     case empty
     /// The slot's project or tab is gone; carries the remembered label.
     case missing(String)
+    /// The pane's project is hibernated; carries the project's name. Nothing
+    /// is spawned for it — a hibernated project owns no sessions, and a tile
+    /// that attached one would quietly undo the hibernation — until Wake.
+    case hibernated(String)
 }
 
 // MARK: - TileStatus
@@ -133,6 +137,7 @@ final class TileView: NSView, AgentRestartPresenting, NSDraggingSource {
     private let onSplit: (SplitDirection) -> Void
     private let onRemoveSplit: () -> Void
     private let onAddProject: () -> Void
+    private let onWake: () -> Void
 
     init(surfaceID: UUID?,
          slotIndex: Int,
@@ -153,6 +158,7 @@ final class TileView: NSView, AgentRestartPresenting, NSDraggingSource {
          onSplit: @escaping (SplitDirection) -> Void = { _ in },
          onRemoveSplit: @escaping () -> Void = {},
          onAddProject: @escaping () -> Void = {},
+         onWake: @escaping () -> Void = {},
          statusLine: TileStatusLine? = nil,
          onAccountClicked: @escaping () -> Void = {}) {
         self.surfaceID = surfaceID
@@ -168,6 +174,7 @@ final class TileView: NSView, AgentRestartPresenting, NSDraggingSource {
         self.onSplit = onSplit
         self.onRemoveSplit = onRemoveSplit
         self.onAddProject = onAddProject
+        self.onWake = onWake
         self.canRemove = canRemove
         self.endAction = endAction
         super.init(frame: .zero)
@@ -473,6 +480,9 @@ final class TileView: NSView, AgentRestartPresenting, NSDraggingSource {
         case .missing(let label):
             addMessage("\(label)\nnot found")
             addReattachButton()
+        case .hibernated(let project):
+            addMessage("\(project) is hibernated")
+            addWakeButton()
         }
     }
 
@@ -621,6 +631,24 @@ final class TileView: NSView, AgentRestartPresenting, NSDraggingSource {
     }
 
     @objc private func reattachClicked() { onActivate() }
+
+    /// Its own callback, NOT `onActivate`: a mouse-down anywhere on a tile
+    /// activates it, and a stray click must not wake a project.
+    private func addWakeButton() {
+        let button = NSButton(title: "Wake Project", target: self,
+                              action: #selector(wakeClicked))
+        button.isBordered = false
+        button.font = ZTheme.chromeFont(size: 11)
+        button.contentTintColor = ZTheme.current.accentColor
+        button.translatesAutoresizingMaskIntoConstraints = false
+        body.addSubview(button)
+        NSLayoutConstraint.activate([
+            button.centerXAnchor.constraint(equalTo: body.centerXAnchor),
+            button.topAnchor.constraint(equalTo: messageLabel.bottomAnchor, constant: 6),
+        ])
+    }
+
+    @objc private func wakeClicked() { onWake() }
 
     @objc private func openClicked() { onOpen(openButton) }
 

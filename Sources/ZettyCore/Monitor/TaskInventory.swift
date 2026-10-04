@@ -84,14 +84,31 @@ public struct TaskGroup: Equatable, Sendable {
         case orphaned
     }
 
+    /// What the header's moon does.
+    public enum Action: Equatable, Sendable {
+        /// An awake project: hibernate it.
+        case hibernate
+        /// Shown greyed, with the reason, rather than hidden.
+        case unavailable(Unavailable)
+    }
+
+    public enum Unavailable: Equatable, Sendable {
+        /// Home and scratch terminals are never hibernated.
+        case permanent
+        /// Hibernated, and its sessions are ending: a hibernated project owns
+        /// no sessions, so any it still lists are on their way out — the
+        /// teardown's grace period, or `reconcileSessions` ending a leftover.
+        case endingSessions
+    }
+
     public let owner: Owner
     public let title: String
-    /// Whether the header offers Hibernate.
-    public let canHibernate: Bool
-    /// Hibernated, but its sessions have not ended yet — the teardown's grace
-    /// period, while idle shells are given the chance to exit.
-    public let isHibernating: Bool
+    /// nil for Orphaned, which has no project verb at all.
+    public let action: Action?
+    public let isHibernated: Bool
     public let rows: [TaskRow]
+
+    public var isEndingSessions: Bool { action == .unavailable(.endingSessions) }
 
     /// Sum of the measured rows; nil when none is measured yet, for the same
     /// reason a row shows "—" rather than 0 on the first tick.
@@ -130,14 +147,19 @@ extension TaskInventory {
             guard !byProject[index].isEmpty else { return nil }
             return TaskGroup(owner: .project(project.id),
                              title: project.name,
-                             canHibernate: project.canHibernate && !project.isHibernated,
-                             isHibernating: project.isHibernated,
+                             action: action(for: project),
+                             isHibernated: project.isHibernated,
                              rows: byProject[index])
         }
         if !unclaimed.isEmpty {
-            groups.append(TaskGroup(owner: .orphaned, title: "Orphaned", canHibernate: false,
-                                    isHibernating: false, rows: unclaimed))
+            groups.append(TaskGroup(owner: .orphaned, title: "Orphaned", action: nil,
+                                    isHibernated: false, rows: unclaimed))
         }
         return groups
+    }
+
+    static func action(for project: TaskProjectRef) -> TaskGroup.Action {
+        guard project.canHibernate else { return .unavailable(.permanent) }
+        return project.isHibernated ? .unavailable(.endingSessions) : .hibernate
     }
 }

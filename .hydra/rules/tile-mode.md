@@ -254,10 +254,22 @@ the instant after `tileDescriptors()` created it: the tile renders
 `.attaching`, `enqueueMissingTileSurfaces` re-creates it, and the next rebuild
 frees it again. Every prune site therefore goes through
 `retainedSurfaceIDs` (`allSurfaceIDs` + `tileFocusableIDs` while tile mode is
-on) rather than `Set(allSurfaceIDs)`, so no site can forget. Attaching a pane
-to a tile is an explicit request to see it, and that outranks hibernation's
-claim on the memory — the sidebar still shows the project as dormant, which is
-the lesser inconsistency. Reported as "opening the session manager makes the
+on) rather than `Set(allSurfaceIDs)`, so no site can forget.
+
+**A hibernated project's tile is a placeholder, never a terminal.**
+`tileFocusableIDs` leaves out panes of hibernated projects, and because it is
+also the spawn queue's input and part of `retainedSurfaceIDs`, that one filter
+is what stops a tile spawning a dormant pane. It used to be the other way —
+"attaching outranks hibernation" — and a saved view respawned Devops's session
+at every launch, so the project read as hibernated while running. The slot now
+renders `TileContent.hibernated` ("<project> is hibernated" + **Wake
+Project**). Wake has its own callback (`onWake`), NOT `onActivate`, because a
+mouse-down anywhere on a tile activates it and a stray click must not wake a
+project. `wakeProject` in tile mode wakes IN PLACE (no `select`, tile mode
+never changes the active project) and runs `enqueueMissingTileSurfaces`.
+`focusPaneInTiles` (`zetty focus`, Sessions' Reveal) wakes first, matching
+`focus` everywhere else; `focusAttachedTile` skips dormant tiles so a sidebar
+click falls through to leaving the grid and selecting (which wakes). Reported as "opening the session manager makes the
 pane say attaching", because the Sessions drawer's toggle calls
 `rebuildSurfaceNodeView` — but ANY structural change did it.
 
@@ -363,8 +375,8 @@ Four things are deliberate:
   through hibernation (`retainedSurfaceIDs`, see "prune must spare the tiles"),
   so a tile left attached respawns a fresh shell the instant its session is
   killed and the hibernate reads as having done nothing. Only the pressed slot
-  is detached; another open view still pointing at that project wakes its pane
-  when shown, which is the existing "attached outranks hibernation" rule.
+  is detached; another open view still pointing at that project shows its
+  hibernated placeholder (see "A hibernated project's tile is a placeholder").
 - **Ending a session is closing the pane, never `zmx kill`.** The same rule the
   Sessions view follows (`killSession`): lifetime follows model ownership, and
   a session killed under a pane the model still owns leaves it attached to a

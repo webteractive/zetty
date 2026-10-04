@@ -4,8 +4,9 @@ import ZettyCore
 // MARK: - SessionsView
 
 /// Every zmx session Zetty spawned: what owns it, what it is running, what it
-/// is costing, and the actions to deal with it — grouped under their projects,
-/// each header carrying that project's Hibernate.
+/// is costing, and the actions to deal with it — grouped under a header row
+/// per project, whose moon (Hibernate) is also an item on each of its
+/// sessions' ⋮ menus.
 ///
 /// One view, two hosts — the bottom drawer and the detached window both embed
 /// this. A second implementation for the drawer would drift from this one
@@ -17,6 +18,9 @@ import ZettyCore
 final class SessionsView: NSView {
 
     private enum Column: String, CaseIterable {
+        /// First, so a row's verbs sit beside its name rather than past the
+        /// numbers at the far edge of a wide drawer.
+        case actions = ""
         case session = "SESSION"
         case pane = "PANE"
         case running = "RUNNING"
@@ -27,11 +31,6 @@ final class SessionsView: NSView {
         // way, and the header was jargon for a number every task manager calls
         // memory. The precision lives in the column's tooltip instead.
         case rss = "RAM"
-        /// What the agent session in this pane has cost so far, from Zetty's
-        /// Claude Code mod. Each pane's own status line shows its own; this is
-        /// the one place every session's figure sits side by side.
-        case cost = "COST"
-        case actions = ""
 
         var width: CGFloat {
             switch self {
@@ -40,8 +39,7 @@ final class SessionsView: NSView {
             case .running: return 110
             case .cpu: return 70
             case .rss: return 100
-            case .cost: return 64
-            case .actions: return 40
+            case .actions: return 34
             }
         }
     }
@@ -49,15 +47,18 @@ final class SessionsView: NSView {
     private let sampler: SessionSampler
     private let groupsProvider: () -> [TaskGroup]
     private let footprintProvider: () -> Int64?
-    private let costProvider: (UUID) -> Double?
     private let onReveal: (TaskRow) -> Void
     private let onInterrupt: (TaskRow) -> Void
     private let onKill: (TaskRow) -> Void
-    private let onHibernate: (UUID) -> Void
+    private let onProjectAction: (UUID) -> Void
     private let onToggleMode: () -> Void
+    private let onClose: () -> Void
 
     private let summaryLabel = NSTextField(labelWithString: "")
     private let modeButton = NSButton()
+    /// Drawer only: the detached window has its own title-bar close, and a
+    /// second one inside it would be two controls for one action.
+    private let closeButton = NSButton()
     private let tableView = NSTableView()
     private let scrollView = NSScrollView()
     private let emptyLabel = NSTextField(labelWithString: "")
@@ -102,22 +103,22 @@ final class SessionsView: NSView {
          sampler: SessionSampler,
          groupsProvider: @escaping () -> [TaskGroup],
          footprintProvider: @escaping () -> Int64?,
-         costProvider: @escaping (UUID) -> Double? = { _ in nil },
          onReveal: @escaping (TaskRow) -> Void,
          onInterrupt: @escaping (TaskRow) -> Void,
          onKill: @escaping (TaskRow) -> Void,
-         onHibernate: @escaping (UUID) -> Void,
-         onToggleMode: @escaping () -> Void) {
+         onProjectAction: @escaping (UUID) -> Void,
+         onToggleMode: @escaping () -> Void,
+         onClose: @escaping () -> Void = {}) {
         self.mode = mode
         self.sampler = sampler
         self.groupsProvider = groupsProvider
         self.footprintProvider = footprintProvider
-        self.costProvider = costProvider
         self.onReveal = onReveal
         self.onInterrupt = onInterrupt
         self.onKill = onKill
-        self.onHibernate = onHibernate
+        self.onProjectAction = onProjectAction
         self.onToggleMode = onToggleMode
+        self.onClose = onClose
         super.init(frame: .zero)
         translatesAutoresizingMaskIntoConstraints = false
         wantsLayer = true
@@ -152,6 +153,17 @@ final class SessionsView: NSView {
         styleModeButton()
         addSubview(modeButton)
 
+        closeButton.isBordered = false
+        closeButton.target = self
+        closeButton.action = #selector(closeClicked)
+        closeButton.image = NSImage(systemSymbolName: "xmark", accessibilityDescription: "Close")?
+            .withSymbolConfiguration(NSImage.SymbolConfiguration(pointSize: 11, weight: .medium))
+        closeButton.toolTip = "Close Sessions (⌘J)"
+        closeButton.contentTintColor = theme.fg2Color
+        closeButton.isHidden = mode != .drawer
+        closeButton.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(closeButton)
+
         tableView.headerView = NSTableHeaderView()
         tableView.usesAlternatingRowBackgroundColors = false
         tableView.backgroundColor = theme.bg1Color
@@ -168,15 +180,10 @@ final class SessionsView: NSView {
             let item = NSTableColumn(identifier: NSUserInterfaceItemIdentifier(column.rawValue))
             item.title = column.rawValue
             item.width = column.width
-            if column == .cpu || column == .rss || column == .cost {
+            if column == .cpu || column == .rss {
                 // The cells were right-aligned but the headers were not, which
                 // reads as the column itself being misaligned.
                 item.headerCell.alignment = .right
-            }
-            if column == .cost {
-                item.headerToolTip = "What this pane's Claude session has cost so far, as "
-                    + "Claude Code totals it. On a subscription it is an estimate at list "
-                    + "price, not a charge."
             }
             if column == .rss {
                 item.headerToolTip = "Resident memory of this session's own processes. "
@@ -216,8 +223,11 @@ final class SessionsView: NSView {
                                                    constant: -8),
 
             modeButton.centerYAnchor.constraint(equalTo: summaryLabel.centerYAnchor),
-            modeButton.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -12),
             modeButton.widthAnchor.constraint(equalToConstant: 22),
+
+            closeButton.centerYAnchor.constraint(equalTo: summaryLabel.centerYAnchor),
+            closeButton.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -12),
+            closeButton.widthAnchor.constraint(equalToConstant: 22),
 
             scrollView.topAnchor.constraint(equalTo: summaryLabel.bottomAnchor, constant: 8),
             scrollView.leadingAnchor.constraint(equalTo: leadingAnchor),
@@ -229,6 +239,12 @@ final class SessionsView: NSView {
             emptyLabel.leadingAnchor.constraint(greaterThanOrEqualTo: leadingAnchor, constant: 14),
             emptyLabel.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -14),
         ])
+        // Beside the close button in the drawer; at the edge in the window,
+        // where the close button is hidden.
+        (mode == .drawer
+            ? modeButton.trailingAnchor.constraint(equalTo: closeButton.leadingAnchor, constant: -4)
+            : modeButton.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -12)
+        ).isActive = true
     }
 
     private func styleModeButton() {
@@ -292,6 +308,7 @@ final class SessionsView: NSView {
         tableView.backgroundColor = theme.bg1Color
         scrollView.backgroundColor = theme.bg1Color
         styleModeButton()
+        closeButton.contentTintColor = theme.fg2Color
         tableView.reloadData()
     }
 
@@ -350,14 +367,14 @@ final class SessionsView: NSView {
         entries = newEntries
         // Row order is unchanged, so the actions buttons keep the tags they
         // were built with; only the text needs refreshing.
-        for (row, item) in entries.enumerated() {
-            guard case .session(let entry) = item else {
-                if case .group(let group) = item,
-                   let header = tableView.view(atColumn: 0, row: row,
-                                               makeIfNecessary: false) as? SessionGroupHeaderView {
-                    header.update(group)
-                }
-                continue
+        for (row, entry) in entries.enumerated() {
+            // A header's Hibernate turns off once its project starts
+            // hibernating — same sessions, so this path, not a reload.
+            if case .group(let group) = entry,
+               let cell = tableView.view(atColumn: 0, row: row,
+                                         makeIfNecessary: false) as? SessionCellView,
+               let button = cell.content as? NSButton {
+                styleHibernateButton(button, for: group)
             }
             for (index, column) in Column.allCases.enumerated() where column != .actions {
                 guard let cell = tableView.view(atColumn: index, row: row,
@@ -372,12 +389,13 @@ final class SessionsView: NSView {
 
     /// One place that decides a cell's text, colour and alignment, shared by
     /// creation and in-place update so the two cannot disagree.
-    private func configure(_ label: NSTextField, with entry: TaskRow, column: Column) {
+    private func configure(_ label: NSTextField, with entry: Entry, column: Column) {
         let value = text(for: entry, column: column)
         if label.stringValue != value { label.stringValue = value }
-        label.font = ZTheme.chromeFont(size: 12)
+        let isHeader = entry.session == nil && column == .session
+        label.font = ZTheme.chromeFont(size: 12, weight: isHeader ? .semibold : .regular)
         label.textColor = colour(for: entry, column: column, theme: ZTheme.current)
-        label.alignment = (column == .cpu || column == .rss || column == .cost) ? .right : .natural
+        label.alignment = (column == .cpu || column == .rss) ? .right : .natural
         label.lineBreakMode = .byTruncatingTail
         label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
     }
@@ -389,49 +407,128 @@ final class SessionsView: NSView {
 
     @objc private func modeClicked() { onToggleMode() }
 
+    @objc private func closeClicked() { onClose() }
+
     @objc private func rowDoubleClicked() {
         guard let row = session(at: tableView.clickedRow), !row.isOrphan else { return }
         onReveal(row)
     }
 
     @objc private func actionsClicked(_ sender: NSButton) {
-        guard let row = session(at: sender.tag) else { return }
+        guard entries.indices.contains(sender.tag) else { return }
+        let row = session(at: sender.tag)
 
         let menu = NSMenu()
-        if !row.isOrphan {
-            let reveal = NSMenuItem(title: "Reveal Pane", action: #selector(revealPicked),
-                                    keyEquivalent: "")
-            reveal.target = self
-            reveal.tag = sender.tag
-            menu.addItem(reveal)
+        // Enabled state is set by hand: an unavailable Hibernate is shown
+        // greyed out with its reason, never silently left out — on Home's
+        // rows it read as the action being missing.
+        menu.autoenablesItems = false
+        // Each item carries the row's KEY, never its index: the sampler keeps
+        // ticking while the menu is open, and a re-sort would otherwise aim
+        // Interrupt, Kill or Hibernate at whichever row moved into that slot.
+        let key = entries[sender.tag].key
+        func add(_ title: String, _ action: Selector) -> NSMenuItem {
+            let item = NSMenuItem(title: title, action: action, keyEquivalent: "")
+            item.target = self
+            item.representedObject = key
+            menu.addItem(item)
+            return item
         }
-        let interrupt = NSMenuItem(title: "Interrupt", action: #selector(interruptPicked),
-                                   keyEquivalent: "")
-        interrupt.target = self
-        interrupt.tag = sender.tag
-        menu.addItem(interrupt)
-        menu.addItem(.separator())
-        let kill = NSMenuItem(title: row.isOrphan ? "Kill Session" : "Kill Session…",
-                              action: #selector(killPicked), keyEquivalent: "")
-        kill.target = self
-        kill.tag = sender.tag
-        menu.addItem(kill)
+
+        if let row {
+            if !row.isOrphan { _ = add("Reveal Pane", #selector(revealPicked)) }
+            _ = add("Interrupt", #selector(interruptPicked))
+            menu.addItem(.separator())
+        }
+        if let group = group(containing: sender.tag), let action = group.action {
+            let item = add(Self.actionTitle(action, group: group), #selector(hibernatePicked))
+            item.isEnabled = Self.isActionable(action)
+            item.toolTip = Self.actionToolTip(action, group: group)
+        }
+        if let row {
+            _ = add(row.isOrphan ? "Kill Session" : "Kill Session…", #selector(killPicked))
+        }
 
         menu.popUp(positioning: nil, at: NSPoint(x: 0, y: sender.bounds.height), in: sender)
     }
 
+    /// The row a menu item was opened on, re-found by key at pick time.
+    private func pickedIndex(_ item: NSMenuItem) -> Int? {
+        guard let key = item.representedObject as? String else { return nil }
+        return entries.firstIndex { $0.key == key }
+    }
+
+    private func pickedSession(_ item: NSMenuItem) -> TaskRow? {
+        pickedIndex(item).flatMap(session(at:))
+    }
+
     @objc private func revealPicked(_ sender: NSMenuItem) {
-        guard let row = session(at: sender.tag) else { return }
+        guard let row = pickedSession(sender) else { return }
         onReveal(row)
     }
 
+    /// Greyed with its reason rather than hidden — a missing control read as
+    /// a bug, and so did one greyed with no way to learn why.
+    private func styleHibernateButton(_ button: NSButton, for group: TaskGroup) {
+        let theme = ZTheme.current
+        let actionable = group.action.map(Self.isActionable) ?? false
+        button.isEnabled = actionable
+        button.contentTintColor = actionable ? theme.fg2Color : theme.fg3Color
+        button.toolTip = group.action.map { Self.actionToolTip($0, group: group) }
+    }
+
+    private static func isActionable(_ action: TaskGroup.Action) -> Bool {
+        if case .unavailable = action { return false }
+        return true
+    }
+
+    private static func actionTitle(_ action: TaskGroup.Action, group: TaskGroup) -> String {
+        "Hibernate “\(group.title)”"
+    }
+
+    private static func actionToolTip(_ action: TaskGroup.Action, group: TaskGroup) -> String {
+        switch action {
+        case .hibernate:
+            return "Hibernate “\(group.title)”: free its sessions and processes, keeping its "
+                + "layout. Idle shells are asked to exit first."
+        case .unavailable(.permanent):
+            return "Home and scratch terminals are never hibernated."
+        case .unavailable(.endingSessions):
+            return "“\(group.title)” is hibernated; its sessions are ending."
+        }
+    }
+
+    @objc private func hibernateHeaderClicked(_ sender: NSButton) {
+        actOnGroup(containing: sender.tag)
+    }
+
+    @objc private func hibernatePicked(_ sender: NSMenuItem) {
+        guard let index = pickedIndex(sender) else { return }
+        actOnGroup(containing: index)
+    }
+
+    private func actOnGroup(containing index: Int) {
+        guard let group = group(containing: index), let action = group.action,
+              Self.isActionable(action), case .project(let id) = group.owner else { return }
+        onProjectAction(id)
+    }
+
+    /// The group a table row sits under: the nearest header at or above it.
+    private func group(containing index: Int) -> TaskGroup? {
+        guard entries.indices.contains(index) else { return nil }
+        for entry in entries[...index].reversed() {
+            if case .group(let group) = entry { return group }
+        }
+        return nil
+    }
+
     @objc private func interruptPicked(_ sender: NSMenuItem) {
-        guard let row = session(at: sender.tag) else { return }
+        guard let row = pickedSession(sender) else { return }
         onInterrupt(row)
     }
 
     @objc private func killPicked(_ sender: NSMenuItem) {
-        guard let row = session(at: sender.tag) else { return }
+        guard let row = pickedSession(sender) else { return }
 
         // An orphan needs no confirmation: nothing owns it and nothing is lost.
         guard !row.isOrphan else { onKill(row); return }
@@ -454,90 +551,11 @@ final class SessionsView: NSView {
 
 // MARK: - Group rows
 
-/// A project's header row: its name, what its sessions cost together, and its
-/// Hibernate. Styled like the sidebar's section headers, separated by a
-/// hairline rather than a fill (depth is borders + surfaces).
-@MainActor
-private final class SessionGroupHeaderView: NSView {
-
-    private let titleLabel = NSTextField(labelWithString: "")
-    private let detailLabel = NSTextField(labelWithString: "")
-    private let hibernateButton = NSButton()
-    private let onHibernate: (UUID) -> Void
-    private var projectID: UUID?
-
-    init(onHibernate: @escaping (UUID) -> Void) {
-        self.onHibernate = onHibernate
-        super.init(frame: .zero)
-
-        titleLabel.font = ZTheme.chromeFont(size: 12, weight: .semibold)
-        titleLabel.lineBreakMode = .byTruncatingTail
-        titleLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-        detailLabel.font = ZTheme.chromeFont(size: 11)
-        detailLabel.lineBreakMode = .byTruncatingTail
-        detailLabel.setContentCompressionResistancePriority(.defaultLow - 1, for: .horizontal)
-
-        hibernateButton.isBordered = false
-        hibernateButton.title = "Hibernate"
-        hibernateButton.font = ZTheme.chromeFont(size: 11)
-        hibernateButton.image = NSImage(systemSymbolName: "moon.zzz",
-                                        accessibilityDescription: "Hibernate")?
-            .withSymbolConfiguration(NSImage.SymbolConfiguration(pointSize: 11, weight: .medium))
-        hibernateButton.imagePosition = .imageLeading
-        hibernateButton.target = self
-        hibernateButton.action = #selector(hibernateClicked)
-        hibernateButton.toolTip = "Free this project's sessions and processes, keeping its layout. "
-            + "Idle shells are asked to exit first."
-
-        for view in [titleLabel, detailLabel, hibernateButton] as [NSView] {
-            view.translatesAutoresizingMaskIntoConstraints = false
-            addSubview(view)
-        }
-        NSLayoutConstraint.activate([
-            titleLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 14),
-            titleLabel.centerYAnchor.constraint(equalTo: centerYAnchor),
-            detailLabel.leadingAnchor.constraint(equalTo: titleLabel.trailingAnchor, constant: 10),
-            detailLabel.firstBaselineAnchor.constraint(equalTo: titleLabel.firstBaselineAnchor),
-            detailLabel.trailingAnchor.constraint(lessThanOrEqualTo: hibernateButton.leadingAnchor,
-                                                  constant: -8),
-            hibernateButton.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -12),
-            hibernateButton.centerYAnchor.constraint(equalTo: centerYAnchor),
-        ])
-    }
-
-    @available(*, unavailable)
-    required init?(coder: NSCoder) { fatalError("not supported") }
-
-    func update(_ group: TaskGroup) {
-        let theme = ZTheme.current
-        if case .project(let id) = group.owner { projectID = id } else { projectID = nil }
-
-        titleLabel.textColor = group.owner == .orphaned ? theme.fg3Color : theme.fgColor
-        if titleLabel.stringValue != group.title { titleLabel.stringValue = group.title }
-
-        var detail = "\(group.rows.count) session\(group.rows.count == 1 ? "" : "s")"
-        // "—" for an unmeasured group, never "0.0%" — the rows' own rule.
-        detail += " · " + (group.cpuPercent.map { String(format: "%.1f%%", $0) } ?? "—")
-        detail += " · " + ByteFormat.short(group.rssBytes)
-        if group.isHibernating { detail += " · hibernating…" }
-        if detailLabel.stringValue != detail { detailLabel.stringValue = detail }
-        detailLabel.textColor = theme.fg3Color
-
-        hibernateButton.isHidden = !group.canHibernate
-        hibernateButton.contentTintColor = theme.fg2Color
-        hibernateButton.attributedTitle = NSAttributedString(
-            string: "Hibernate",
-            attributes: [.font: ZTheme.chromeFont(size: 11), .foregroundColor: theme.fg2Color])
-    }
-
-    @objc private func hibernateClicked() {
-        guard let projectID else { return }
-        onHibernate(projectID)
-    }
-}
-
-/// The row behind a group header: the table's own surface plus a hairline
-/// above every group but the first, instead of the system group-row fill.
+/// The row behind a project's header: the table's own surface plus a hairline
+/// above every group but the first. The header is an ordinary row — not an
+/// `NSTableView` group row, which spans the columns and takes the inset
+/// style's section padding — so its name and totals sit in the columns they
+/// summarise.
 @MainActor
 private final class SessionGroupRowView: NSTableRowView {
 
@@ -599,42 +617,50 @@ extension SessionsView: NSTableViewDataSource, NSTableViewDelegate {
 
     func numberOfRows(in tableView: NSTableView) -> Int { entries.count }
 
-    func tableView(_ tableView: NSTableView, isGroupRow row: Int) -> Bool {
-        entries.indices.contains(row) && entries[row].session == nil
-    }
-
     func tableView(_ tableView: NSTableView, shouldSelectRow row: Int) -> Bool {
         session(at: row) != nil
     }
 
     func tableView(_ tableView: NSTableView, heightOfRow row: Int) -> CGFloat {
-        session(at: row) == nil ? 30 : tableView.rowHeight
+        session(at: row) == nil ? 28 : tableView.rowHeight
     }
 
     func tableView(_ tableView: NSTableView, rowViewForRow row: Int) -> NSTableRowView? {
-        // The system group-row style paints its own (non-theme) background.
         session(at: row) == nil ? SessionGroupRowView(isFirst: row == 0) : nil
     }
 
     func tableView(_ tableView: NSTableView,
                    viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
-        guard entries.indices.contains(row) else { return nil }
-        if case .group(let group) = entries[row] {
-            let header = SessionGroupHeaderView(onHibernate: { [weak self] id in
-                self?.onHibernate(id)
-            })
-            header.update(group)
-            return header
-        }
-        guard let entry = session(at: row),
+        guard entries.indices.contains(row),
               let raw = tableColumn?.identifier.rawValue,
               let column = Column(rawValue: raw) else { return nil }
+        let entry = entries[row]
         let theme = ZTheme.current
 
         if column == .actions {
-            let button = NSButton(title: "⋯", target: self, action: #selector(actionsClicked(_:)))
+            if case .group(let group) = entry {
+                // A header's one verb is its project's Hibernate, so it is the
+                // button itself rather than a ⋮ with a single item. Orphaned
+                // has no project verb, so no button.
+                guard group.owner != .orphaned else { return nil }
+                let button = NSButton(title: "", target: self,
+                                      action: #selector(hibernateHeaderClicked(_:)))
+                button.isBordered = false
+                button.image = NSImage(systemSymbolName: "moon.zzz",
+                                       accessibilityDescription: "Hibernate")?
+                    .withSymbolConfiguration(NSImage.SymbolConfiguration(pointSize: 12,
+                                                                         weight: .medium))
+                button.imagePosition = .imageOnly
+                button.tag = row
+                styleHibernateButton(button, for: group)
+                return SessionCellView(content: button)
+            }
+            // Vertical (U+22EE): it is the first column, where a horizontal
+            // ellipsis reads as truncated text. SF Symbols ships no plain
+            // vertical ellipsis on this macOS, so it is a glyph.
+            let button = NSButton(title: "⋮", target: self, action: #selector(actionsClicked(_:)))
             button.isBordered = false
-            button.font = ZTheme.chromeFont(size: 13, weight: .bold)
+            button.font = ZTheme.chromeFont(size: 14, weight: .bold)
             button.contentTintColor = theme.fg2Color
             button.tag = row
             button.toolTip = "Actions for this session"
@@ -646,7 +672,12 @@ extension SessionsView: NSTableViewDataSource, NSTableViewDelegate {
         return SessionCellView(content: label)
     }
 
-    private func text(for entry: TaskRow, column: Column) -> String {
+    private func text(for item: Entry, column: Column) -> String {
+        let entry: TaskRow
+        switch item {
+        case .session(let row): entry = row
+        case .group(let group): return text(for: group, column: column)
+        }
         switch column {
         case .session: return entry.session
         case .pane: return entry.paneLabel ?? "(no pane)"
@@ -657,15 +688,37 @@ extension SessionsView: NSTableViewDataSource, NSTableViewDelegate {
             guard let percent = entry.load.cpuPercent else { return "—" }
             return String(format: "%.1f%%", percent)
         case .rss: return ByteFormat.short(entry.load.rssBytes)
-        case .cost:
-            // Empty, never "$0.00": most rows are not Claude sessions at all.
-            guard let cost = entry.surfaceID.flatMap(costProvider) else { return "" }
-            return String(format: "$%.2f", cost)
         case .actions: return ""
         }
     }
 
-    private func colour(for entry: TaskRow, column: Column, theme: ZTheme) -> NSColor {
+    /// A header row: the project in SESSION, the count in PANE, and the
+    /// group's totals under the columns they sum.
+    private func text(for group: TaskGroup, column: Column) -> String {
+        switch column {
+        case .session: return group.title
+        case .pane:
+            let count = "\(group.rows.count) session\(group.rows.count == 1 ? "" : "s")"
+            return group.isEndingSessions ? count + " · hibernated, ending…" : count
+        case .cpu:
+            // "—" for an unmeasured group, never "0.0%" — the rows' own rule.
+            guard let percent = group.cpuPercent else { return "—" }
+            return String(format: "%.1f%%", percent)
+        case .rss: return ByteFormat.short(group.rssBytes)
+        case .running, .actions: return ""
+        }
+    }
+
+    private func colour(for item: Entry, column: Column, theme: ZTheme) -> NSColor {
+        let entry: TaskRow
+        switch item {
+        case .session(let row): entry = row
+        case .group(let group):
+            if column == .session {
+                return group.owner == .orphaned ? theme.fg3Color : theme.fgColor
+            }
+            return theme.fg3Color
+        }
         if entry.isOrphan { return theme.fg3Color }
         switch column {
         case .session: return theme.fg3Color

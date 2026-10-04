@@ -57,21 +57,51 @@ Four things here will look like tidy-ups and are not:
 
 **Rows are grouped by project, in sidebar order — not by load.**
 `TaskInventory.groups` (pure, tested) puts each project's rows under a header
-with its Hibernate button, keeping the CPU sort only *inside* a group. Sorting
-the groups by load would slide a header's button out from under the pointer
-every few seconds. Group headers are `NSTableView` group rows with
-`floatsGroupRows = false` and their own row view: the system group-row style
-paints a non-theme fill. `updateInPlace` compares entry KEYS (a header by its
-owner, a session by its name), so an unchanged tick still only rewrites text.
-Hibernate goes through `hibernateProject(_:)` with the busy confirmation —
-it is a GUI click, not a CLI call. A project that is hibernated but whose
-sessions are still ending (see `.hydra/rules/surfaces-and-memory.md`) shows
-"hibernating…" and no button.
+row, keeping the CPU sort only *inside* a group — sorting groups by load would
+reshuffle projects under the pointer every few seconds. **The header is an
+ordinary row, not an `NSTableView` group row**: a group row spans the columns
+and takes the inset style's section padding, so its name and totals could not
+line up (it shipped that way once and was visibly misaligned). It fills the
+columns instead — name in SESSION, count in PANE, totals under CPU and RAM —
+and no selection. **The actions column comes FIRST**: a session gets a ⋮ menu
+(U+22EE — SF Symbols has no plain vertical ellipsis here), a project header
+gets a `moon.zzz` button that hibernates directly, its only verb. Every
+session's ⋮ also offers "Hibernate “project”" (from the nearest header above).
+What the moon does is the pure `TaskGroup.Action` (tested): `.hibernate` for
+an awake project, else `.unavailable(.permanent)` (Home/scratch) or
+`.unavailable(.endingSessions)` (hibernated — **a hibernated project owns no
+sessions**, so any it still lists are being ended by the teardown or by
+`reconcileSessions`, see `surfaces-and-memory.md`), shown GREYED with the
+reason as tooltip. The menu sets `autoenablesItems = false`, and
+`updateInPlace` restyles the header button since none of these changes a row
+key. Leaving the action out on Home's rows was reported as it missing. The
+click re-resolves the action (`performSessionsProjectAction`) instead of
+trusting the button. **⋮ menu items carry the row's KEY (`representedObject`),
+never its index**: the sampler keeps ticking while a menu is open (main-queue
+blocks run in the event-tracking mode), so an index would aim Interrupt, Kill
+or Hibernate at whichever row a re-sort moved into that slot. (An interim "End Leftover Sessions" moon existed for a
+day: Devops sat "hibernated" with a session a tile had respawned, and the user
+ruled that hibernated projects must have NO sessions — so leftovers are ended
+automatically and the button went.) There is no COST column — the user
+dropped it from this view; the per-pane figure stays in Claude Code's own
+status line.
+`updateInPlace` compares entry KEYS (a header by its owner, a session by its
+name), so an unchanged tick still only rewrites text. Hibernate goes through
+`hibernateProject(_:)` with the busy confirmation — a GUI click, not a CLI
+call. A project hibernated but whose sessions are still ending (see
+`.hydra/rules/surfaces-and-memory.md`) reads "hibernating…" and drops the
+menu item.
 
 **Reveal Pane branches on tile mode**, exactly like the CLI's `focus`:
 `focusPaneInTiles` with the grid up, `focusPane(at:)` otherwise. The latter
 alone selects the project BEHIND the grid, so in tile mode Reveal did nothing
 visible.
+
+**The × close button is drawer-only.** The detached window already has its
+title-bar close, and a second one inside it would be two controls for one
+action. The drawer's × goes through `setSessionsDrawer(visible: false)` plus
+`refreshStatusBarSessions()`, the same pair ⌘J's path ends in, so the pill's
+open state cannot go stale.
 
 **Docked or detached, one view.** `zetty-sessions-view = drawer | window`
 (default `drawer`). `SessionsView` is the whole thing; the bottom drawer and

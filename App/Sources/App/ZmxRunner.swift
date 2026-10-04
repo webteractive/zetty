@@ -77,6 +77,10 @@ enum ZmxRunner {
         }
     }
 
+    /// The bound on each zmx call inside `endSessions`. Generous — they
+    /// normally take milliseconds — so it only ever trips on a hung zmx.
+    static let teardownCallTimeout: TimeInterval = 5
+
     /// Ends a hibernating project's sessions gracefully: types `exit` into the
     /// idle shells, waits up to the grace period for them to go, then kills
     /// whatever is still listed. `completion` runs on main once nothing of the
@@ -85,16 +89,38 @@ enum ZmxRunner {
     static func endSessions(_ plan: HibernationTeardown.Plan, zmxPath: String,
                             completion: @escaping @MainActor () -> Void) {
         DispatchQueue.global(qos: .userInitiated).async {
+            // Every call is bounded: a hung zmx must delay a hibernate, never
+            // pin its panes (and any queued wake) for good. A send that times
+            // out means zmx is not answering, so the rest are not tried.
+            let timeout = teardownCallTimeout
             for session in plan.exit {
-                _ = send(session: session, text: HibernationTeardown.exitInput, zmxPath: zmxPath)
+                let started = Date()
+                let sent = send(session: session, text: HibernationTeardown.exitInput,
+                                zmxPath: zmxPath, timeout: timeout)
+                // Only a TIMEOUT means zmx is hung. An ordinary failure (that
+                // shell already gone) must not cost the others their `exit`.
+                if !sent, Date().timeIntervalSince(started) >= timeout { break }
             }
-            var listed = Set(listZettySessions(zmxPath: zmxPath))
+            // nil when `zmx list` itself failed — which proves nothing, unlike
+            // `listZettySessions`'s empty answer, which would read as "every
+            // session is gone" and let the caller free live surfaces.
+            func list() -> Set<String>? {
+                run(zmxPath, ["list", "--short"], timeout: timeout)
+                    .map { Set(SessionPersistence.zettySessions(fromList: $0)) }
+            }
+            var listed = list()
             let deadline = Date() + HibernationTeardown.gracePeriod
-            while !plan.exitsFinished(listed: listed), Date() < deadline {
+            while !(listed.map { plan.exitsFinished(listed: $0) } ?? false), Date() < deadline {
                 Thread.sleep(forTimeInterval: 0.2)
-                listed = Set(listZettySessions(zmxPath: zmxPath))
+                listed = list()
             }
-            killAndWait(sessions: plan.remaining(listed: listed), zmxPath: zmxPath)
+            let toKill = listed.map { plan.remaining(listed: $0) } ?? plan.all
+            if !toKill.isEmpty { _ = run(zmxPath, ["kill"] + toKill, timeout: timeout) }
+            // `zmx kill` exiting is not the sessions being gone, and the caller
+            // frees their surfaces next: confirm, and force what is left.
+            if let after = list(), case let left = plan.remaining(listed: after), !left.isEmpty {
+                _ = run(zmxPath, ["kill"] + left + ["--force"], timeout: timeout)
+            }
             DispatchQueue.main.async { MainActor.assumeIsolated { completion() } }
         }
     }
@@ -174,8 +200,9 @@ enum ZmxRunner {
     ///
     /// Blocking — call off-main.
     @discardableResult
-    static func send(session: String, text: String, zmxPath: String) -> Bool {
-        run(zmxPath, ["send", session, text]) != nil
+    static func send(session: String, text: String, zmxPath: String,
+                     timeout: TimeInterval? = nil) -> Bool {
+        run(zmxPath, ["send", session, text], timeout: timeout) != nil
     }
 
     // MARK: - Private
@@ -183,13 +210,19 @@ enum ZmxRunner {
     /// Runs a binary, returning stdout on exit 0 (nil otherwise). Blocking —
     /// call off-main for anything slow.
     @discardableResult
-    private static func run(_ path: String, _ args: [String]) -> String? {
-        runData(path, args).flatMap { String(data: $0, encoding: .utf8) }
+    private static func run(_ path: String, _ args: [String],
+                            timeout: TimeInterval? = nil) -> String? {
+        runData(path, args, timeout: timeout).flatMap { String(data: $0, encoding: .utf8) }
     }
 
     /// Raw stdout, so callers that must not lose bytes (VT scrollback) don't
     /// go through a lossy String conversion.
-    private static func runData(_ path: String, _ args: [String]) -> Data? {
+    /// - Parameter timeout: when set, the process is terminated (then killed)
+    ///   once it runs that long, and the call answers nil — a failure, never a
+    ///   partial result. Only the hibernation teardown sets it: a hung zmx
+    ///   there would otherwise hold the project's panes forever.
+    private static func runData(_ path: String, _ args: [String],
+                                timeout: TimeInterval? = nil) -> Data? {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: path)
         process.arguments = args
@@ -201,14 +234,55 @@ enum ZmxRunner {
         let stdout = Pipe()
         process.standardOutput = stdout
         process.standardError = FileHandle.nullDevice
+        // Installed BEFORE launch, so an exit can never beat it.
+        let exited = DispatchSemaphore(value: 0)
+        if timeout != nil { process.terminationHandler = { _ in exited.signal() } }
         do {
             try process.run()
         } catch {
             return nil
         }
-        let data = stdout.fileHandleForReading.readDataToEndOfFile()
+        guard let timeout else {
+            let data = stdout.fileHandleForReading.readDataToEndOfFile()
+            process.waitUntilExit()
+            guard process.terminationStatus == 0 else { return nil }
+            return data
+        }
+        // Read on a worker and WAIT with the deadline: a read blocks until
+        // every holder of the pipe exits, and a child the process spawned can
+        // outlive a SIGKILL of the process itself — measured, a TERM-ignoring
+        // shell held the caller for its child's full 30 s. On timeout the
+        // worker is abandoned (it ends when the pipe finally closes).
+        //
+        // ONE deadline covers the read AND the exit: a process can close its
+        // stdout and keep running, so a bare `waitUntilExit` after the read
+        // would be the unbounded wait all over again.
+        let deadline = DispatchTime.now() + timeout
+        let output = OutputBox()
+        let read = DispatchSemaphore(value: 0)
+        DispatchQueue.global(qos: .utility).async {
+            output.data = stdout.fileHandleForReading.readDataToEndOfFile()
+            read.signal()
+        }
+        guard read.wait(timeout: deadline) == .success,
+              exited.wait(timeout: deadline) == .success
+        else {
+            process.terminate()
+            let pid = process.processIdentifier
+            DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 1) {
+                if process.isRunning { _ = Darwin.kill(pid, SIGKILL) }
+            }
+            return nil
+        }
+        // Reap so the status below is final — never blocks now, it has exited.
         process.waitUntilExit()
-        guard process.terminationStatus == 0 else { return nil }
-        return data
+        guard process.terminationReason == .exit, process.terminationStatus == 0 else { return nil }
+        return output.data
     }
+}
+
+/// The timed `runData` read's result, handed from its worker to the caller.
+/// The semaphore orders the write before the read.
+private final class OutputBox: @unchecked Sendable {
+    var data = Data()
 }

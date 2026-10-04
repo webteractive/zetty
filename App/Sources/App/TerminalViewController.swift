@@ -403,7 +403,22 @@ final class TerminalViewController: NSViewController {
     private var surfacesAwaitingTeardown: Set<UUID> = []
     /// Projects woken during their own teardown; woken once it finishes, so
     /// the fresh shells never attach to a session that is about to die.
-    private var wakeAfterTeardown: Set<UUID> = []
+    private var wakeAfterTeardown: [UUID: PendingWake] = [:]
+
+    /// A wake that has to wait for its project's teardown.
+    private struct PendingWake {
+        /// The active project when the wake was asked for. If the user has
+        /// moved on by the time it runs, it wakes in place rather than pulling
+        /// them back to it seconds later.
+        let activeAtRequest: UUID
+        /// False for a background verb (`ensurePaneIsLive`), which promises
+        /// never to move the user's view — it must not switch to the project
+        /// seconds later either.
+        let movesView: Bool
+        /// What the caller wanted to do with the woken project — `focus`
+        /// landing on its pane. Runs once it is awake.
+        var then: [() -> Void] = []
+    }
 
     // NOTE: `registry.onSurfacesRemoved` is deliberately left unset. Surfaces
     // leaving the registry means their GPU resources are freed — it does NOT
@@ -428,6 +443,7 @@ final class TerminalViewController: NSViewController {
     /// (⌘W and the per-pane ×) simply didn't have it.
     func reconcileSessions() {
         let owned = sessionOwnerSurfaceIDs        // read on main; workspace is main-only
+        endLeftoverSessionsOfHibernatedProjects()
         let zmx = ZmxRunner.locate()
         DispatchQueue.global(qos: .utility).async { [weak self] in
             let listed = zmx.map { ZmxRunner.listZettySessions(zmxPath: $0) } ?? []
@@ -540,6 +556,50 @@ final class TerminalViewController: NSViewController {
     /// Every surface ID across ALL projects, hibernated included — the panes
     /// whose preserved zmx sessions this workspace owns (for orphan diffing).
     var sessionOwnerSurfaceIDs: [UUID] { workspace.sessionOwnerSurfaceIDs }
+
+    /// A hibernated project owns no sessions. Any it still has — a kill that
+    /// failed or was cut short, or one a tile reattached before tiles stopped
+    /// spawning dormant panes — is ended here, through the same teardown
+    /// hibernation uses, so a wake meanwhile is queued rather than attaching
+    /// to a session about to die. `reconcileSessions` calls it on every
+    /// structural change and its 300s backstop.
+    ///
+    /// Only SESSIONS: the panes and their `<uuid>.cwd` files stay owned, since
+    /// waking reopens each pane at that directory. That is why the orphan pass
+    /// below still diffs against `sessionOwnerSurfaceIDs`.
+    private func endLeftoverSessionsOfHibernatedProjects() {
+        guard let teardown = onSurfacesHibernating, let zmx = ZmxRunner.locate() else { return }
+        let dormant = workspace.projects.filter(\.isHibernated).map { project in
+            (project, project.tabList.trees.flatMap { $0.layout.surfaces.map(\.id) }
+                .filter { !surfacesAwaitingTeardown.contains($0) })
+        }.filter { !$0.1.isEmpty }
+        guard !dormant.isEmpty else { return }
+        DispatchQueue.global(qos: .utility).async { [weak self] in
+            let listed = Set(ZmxRunner.listZettySessions(zmxPath: zmx))
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated {
+                    guard let self else { return }
+                    for (project, panes) in dormant {
+                        // Re-checked on main: woken meanwhile, or already being
+                        // torn down, and it is not ours to end.
+                        guard project.isHibernated else { continue }
+                        let alive = panes.filter {
+                            listed.contains(SessionPersistence.sessionName(for: $0))
+                                && !self.surfacesAwaitingTeardown.contains($0)
+                        }
+                        guard !alive.isEmpty else { continue }
+                        ZettyLog.lifecycle.log("reconcile: ending \(alive.count) leftover "
+                            + "session(s) of hibernated project")
+                        // No foreground known for dormant panes, so nothing is
+                        // typed into them: the plan kills straight away.
+                        let plan = HibernationTeardown.plan(surfaceIDs: alive, foreground: [:],
+                                                            agentBusy: [])
+                        self.runTeardown(teardown, plan: plan, panes: alive, of: project)
+                    }
+                }
+            }
+        }
+    }
 
     /// The detector's current view of a pane — kind, status, and the harness
     /// session its hooks last reported. Read by the restart-recovery tally.
@@ -4414,11 +4474,13 @@ final class TerminalViewController: NSViewController {
     /// The single expression of "showing a project means showing a *live* one" —
     /// `selectProject` alone renders a hibernated project's placeholder, which is
     /// what used to make `focus` on a dormant pane a no-op.
-    private func revealProject(at index: Int) {
+    private func revealProject(at index: Int, movesView: Bool = true) {
         guard workspace.projects.indices.contains(index) else { return }
         let project = workspace.projects[index]
         if project.isHibernated {
-            wakeProject(project)                        // selects + rebuilds
+            // Selects + rebuilds — unless the wake has to wait out a teardown,
+            // when `movesView` decides whether it may switch to it later.
+            wakeProject(project, movesView: movesView)
         } else if index != workspace.activeIndex {
             selectProject(at: index)
         }
@@ -4478,7 +4540,9 @@ final class TerminalViewController: NSViewController {
         let previousProjectID = workspace.activeProject.id
         let previousTabIndex = project.tabList.activeIndex
 
-        revealProject(at: location.projectIndex)
+        // A queued wake (the project is mid-teardown) must not switch to it
+        // later: this path promises never to move the user's view.
+        revealProject(at: location.projectIndex, movesView: false)
         if project.tabList.activeIndex != location.tabIndex {
             project.tabList.select(index: location.tabIndex)
             refreshTabBar()
@@ -4508,6 +4572,18 @@ final class TerminalViewController: NSViewController {
     /// hibernated project first — unlike the background verbs, `focus` exists to
     /// switch the view, so it wakes and *stays* rather than restoring.
     private func focusPane(at location: (projectIndex: Int, tabIndex: Int, surfaceID: UUID)) {
+        let project = workspace.projects[location.projectIndex]
+        if project.isHibernated {
+            // Continue from the wake, which may wait out the project's
+            // teardown — acting now would focus a tab of whichever project is
+            // active. Re-located because waking re-sorts projects.
+            wakeProject(project) { [weak self] in
+                guard let self, !project.isHibernated,
+                      let fresh = self.location(ofSurface: location.surfaceID) else { return }
+                self.focusPane(at: fresh)
+            }
+            return
+        }
         revealProject(at: location.projectIndex)
         let tabList = workspace.activeTabList
         if tabList.activeIndex != location.tabIndex {
@@ -4960,6 +5036,19 @@ final class TerminalViewController: NSViewController {
     /// knock you out of it.
     private func focusPaneInTiles(at location: (projectIndex: Int, tabIndex: Int, surfaceID: UUID)) {
         guard let slot = tileSlot(forTabAt: location.projectIndex, location.tabIndex) else { return }
+        // `focus` wakes a dormant project everywhere else; in the grid the
+        // tile would otherwise just show its hibernated placeholder. Continue
+        // from the wake (re-located: waking re-sorts projects), since it may
+        // have to wait out the project's teardown.
+        let project = workspace.projects[location.projectIndex]
+        if project.isHibernated {
+            wakeProject(project) { [weak self] in
+                guard let self, !project.isHibernated,
+                      let fresh = self.location(ofSurface: location.surfaceID) else { return }
+                self.focusPaneInTiles(at: fresh)
+            }
+            return
+        }
         setTabFocus(location)
         if activeTileProfile == nil {
             // The chooser is up: there is no view to attach into, so make one.
@@ -4985,7 +5074,10 @@ final class TerminalViewController: NSViewController {
     private func focusAttachedTile(projectIndex: Int, tabIndex: Int?) -> Bool {
         guard tileMode else { return false }
         let attached: [(tab: Int, id: UUID)] = tileResolution().compactMap {
-            guard case .pane(let p, let t, let id) = $0, p == projectIndex else { return nil }
+            // A hibernated project's tile is a placeholder with nothing to
+            // focus; the caller then leaves the grid and selects (and wakes).
+            guard case .pane(let p, let t, let id) = $0, p == projectIndex,
+                  !workspace.projects[p].isHibernated else { return nil }
             return (t, id)
         }
         let target: UUID?
@@ -5315,9 +5407,17 @@ final class TerminalViewController: NSViewController {
     }
 
     /// Surface ids of the attached panes, in slot order — the focus ring.
+    ///
+    /// Panes of HIBERNATED projects are left out, and that is load-bearing:
+    /// this list is also what the spawn queue attaches and what
+    /// `retainedSurfaceIDs` keeps, so including them made a tile spawn a
+    /// dormant project's session (at launch, unasked) and keep it alive. Their
+    /// slots render `.hibernated` with a Wake button instead.
     private var tileFocusableIDs: [UUID] {
         tileResolution().compactMap {
-            if case .pane(_, _, let id) = $0 { return id } else { return nil }
+            guard case .pane(let projectIndex, _, let id) = $0,
+                  !workspace.projects[projectIndex].isHibernated else { return nil }
+            return id
         }
     }
 
@@ -5720,10 +5820,13 @@ final class TerminalViewController: NSViewController {
                 return TileDescriptor(slotIndex: index, surfaceID: nil, label: label,
                                       icon: nil, status: .idle, content: .missing(label),
                                       canRemove: canRemove, canRefresh: false)
-            case .pane(_, _, let id):
+            case .pane(let projectIndex, _, let id):
                 let surface = workspace.surface(with: id)
+                let project = workspace.projects[projectIndex]
                 let content: TileContent
-                if let reason = tileSpawnFailures[id] {
+                if project.isHibernated {
+                    content = .hibernated(project.name)
+                } else if let reason = tileSpawnFailures[id] {
                     content = .failed(reason)
                 } else if let surface, registry.isLive(id) {
                     content = .terminal(registry.terminalView(for: surface))
@@ -6049,12 +6152,15 @@ final class TerminalViewController: NSViewController {
             sampler: sessionSampler,
             groupsProvider: { [weak self] in self?.taskGroups() ?? [] },
             footprintProvider: { ProcessFootprint.current() },
-            costProvider: { [weak self] id in self?.shownUsage(for: id)?.costUSD },
             onReveal: { [weak self] row in self?.revealPane(row) },
             onInterrupt: { [weak self] row in self?.interruptSession(row) },
             onKill: { [weak self] row in self?.killSession(row) },
-            onHibernate: { [weak self] id in self?.hibernateProject(id: id) },
-            onToggleMode: { [weak self] in self?.onToggleSessionsMode?() }
+            onProjectAction: { [weak self] id in self?.performSessionsProjectAction(id) },
+            onToggleMode: { [weak self] in self?.onToggleSessionsMode?() },
+            onClose: { [weak self] in
+                self?.setSessionsDrawer(visible: false)
+                self?.refreshStatusBarSessions()
+            }
         )
     }
 
@@ -6146,11 +6252,14 @@ final class TerminalViewController: NSViewController {
         return TaskInventory.groups(rows: taskRows(), projects: projects)
     }
 
-    /// The Sessions view's per-project Hibernate. Asks first when something
-    /// is still running, like every other GUI hibernate.
-    func hibernateProject(id: UUID) {
-        guard let project = workspace.projects.first(where: { $0.id == id }) else { return }
-        hibernateProject(project)
+    /// The Sessions view's per-project moon. The action is resolved AGAIN on
+    /// the click rather than read from the button, which was drawn up to a
+    /// sampler tick ago.
+    func performSessionsProjectAction(_ id: UUID) {
+        guard let project = workspace.projects.first(where: { $0.id == id }),
+              let group = taskGroups().first(where: { $0.owner == .project(id) }),
+              group.action == .hibernate else { return }
+        hibernateProject(project)     // asks first if busy
     }
 
     /// Focuses the pane a session belongs to, so triage can start by looking
@@ -7239,25 +7348,60 @@ final class TerminalViewController: NSViewController {
         let plan = HibernationTeardown.plan(surfaceIDs: surfaceIDs,
                                             foreground: foregroundBySurface,
                                             agentBusy: busyAgents)
-        surfacesAwaitingTeardown.formUnion(surfaceIDs)
+        runTeardown(teardown, plan: plan, panes: surfaceIDs, of: project)
+    }
+
+    /// Holds `panes`' surfaces until the plan's sessions are gone, then lets
+    /// prune free them and honours a wake that arrived meanwhile.
+    private func runTeardown(_ teardown: (HibernationTeardown.Plan,
+                                          @escaping @MainActor () -> Void) -> Void,
+                             plan: HibernationTeardown.Plan, panes: [UUID],
+                             of project: ProjectRuntime) {
+        surfacesAwaitingTeardown.formUnion(panes)
         teardown(plan) { [weak self] in
             guard let self else { return }
-            surfacesAwaitingTeardown.subtract(surfaceIDs)
+            surfacesAwaitingTeardown.subtract(panes)
             rebuildSurfaceNodeView()               // now prune may free them
-            if wakeAfterTeardown.remove(project.id) != nil { wakeProject(project) }
+            if let pending = wakeAfterTeardown.removeValue(forKey: project.id) {
+                // The continuations ride the wake rather than running beside
+                // it, so they fire only once the project is truly awake — even
+                // if it has to wait out yet another teardown.
+                let movesView = pending.movesView
+                    && workspace.activeProject.id == pending.activeAtRequest
+                wakeProject(project, movesView: movesView) { pending.then.forEach { $0() } }
+            }
         }
     }
 
     /// Wakes a hibernated project: fresh shells at each pane's cwd, layout intact.
-    func wakeProject(_ project: ProjectRuntime) {
+    ///
+    /// - Parameters:
+    ///   - movesView: false wakes it without selecting it — background verbs.
+    ///   - then: runs once the project is awake — at once normally, or when a
+    ///     teardown it had to wait for finishes. A caller that goes on to act
+    ///     on the project (`focus`) must continue here, not after the call, or
+    ///     it acts on whatever project happens to be active.
+    func wakeProject(_ project: ProjectRuntime, movesView: Bool = true,
+                     then: (() -> Void)? = nil) {
         guard project.isHibernated,
-              let index = workspace.projects.firstIndex(where: { $0.id == project.id }) else { return }
+              let index = workspace.projects.firstIndex(where: { $0.id == project.id })
+        else { then?(); return }
         let panes = project.tabList.trees.flatMap { $0.layout.surfaces.map(\.id) }
         if panes.contains(where: surfacesAwaitingTeardown.contains) {
             // Its sessions are still ending, and the retained surfaces are
             // attached to them — waking now would show dead panes. Seconds at
             // most; the teardown's completion wakes it.
-            wakeAfterTeardown.insert(project.id)
+            var pending = wakeAfterTeardown[project.id]
+                ?? PendingWake(activeAtRequest: workspace.activeProject.id, movesView: movesView)
+            if let then { pending.then.append(then) }
+            wakeAfterTeardown[project.id] = pending
+            return
+        }
+        if tileMode || !movesView {
+            // Tile mode never changes the active project: wake IN PLACE, and
+            // let the grid's spawn queue bring the panes up in its tiles.
+            wakeInPlace(project)
+            then?()
             return
         }
         project.isHibernated = false
@@ -7272,6 +7416,21 @@ final class TerminalViewController: NSViewController {
         rebuildSurfaceNodeView()               // re-creates surfaces → fresh shells
         onWorkspaceDidChange?()
         if let focused = focusedTerminalView() { view.window?.makeFirstResponder(focused) }
+        then?()
+    }
+
+    /// Wakes `project` without selecting it: tile mode (which never changes
+    /// the active project), and a deferred wake the user has moved on from.
+    /// Its panes spawn when shown, like any background project's.
+    private func wakeInPlace(_ project: ProjectRuntime) {
+        guard project.isHibernated else { return }
+        project.isHibernated = false
+        workspace.reapplyOrdering()
+        lastActiveAt[project.id] = Date()
+        refreshSidebar()
+        rebuildSurfaceNodeView()
+        if tileMode { enqueueMissingTileSurfaces() }
+        onWorkspaceDidChange?()
     }
 
     /// Hibernate the named project (CLI, case-insensitive). No confirmation —
@@ -7772,6 +7931,10 @@ final class TerminalViewController: NSViewController {
             }
             grid.onAddProject = { [weak self] index in
                 self?.presentAddProjectPanelForTile(slot: index)
+            }
+            grid.onWake = { [weak self] id in
+                guard let self, let found = location(ofSurface: id) else { return }
+                wakeProject(workspace.projects[found.projectIndex])
             }
             grid.onAccountClicked = { [weak self] _ in self?.onOpenAccountSettings?() }
             grid.onSwapSlots = { [weak self] source, target in

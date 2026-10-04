@@ -133,26 +133,32 @@ private func project(_ name: String, _ surfaces: [UUID], canHibernate: Bool = tr
         projects: [project("api", [a])])
     #expect(groups.map(\.title) == ["api", "Orphaned"])
     #expect(groups[1].owner == .orphaned)
-    #expect(groups[1].canHibernate == false)
+    #expect(groups[1].action == nil)
 }
 
-@Test func homeAndScratchOfferNoHibernate() {
-    let h = UUID()
-    let groups = TaskInventory.groups(
-        rows: [row(h, "zetty-h")],
-        projects: [project("Home", [h], canHibernate: false)])
-    #expect(groups[0].canHibernate == false)
+private func action(_ ref: TaskProjectRef, _ id: UUID) -> TaskGroup.Action? {
+    TaskInventory.groups(rows: [row(id, "zetty-x")], projects: [ref])[0].action
 }
 
-@Test func aHibernatedProjectWithLiveSessionsReadsAsHibernating() {
-    // Its sessions are still ending (the teardown's grace period), so it shows
-    // — but hibernating it again would be a dead button.
+@Test func anAwakeProjectOffersHibernate() {
     let a = UUID()
-    let groups = TaskInventory.groups(
-        rows: [row(a, "zetty-a")],
-        projects: [project("api", [a], hibernated: true)])
-    #expect(groups[0].isHibernating)
-    #expect(groups[0].canHibernate == false)
+    #expect(action(project("api", [a]), a) == .hibernate)
+}
+
+@Test func homeAndScratchShowHibernateUnavailable() {
+    let h = UUID()
+    #expect(action(project("Home", [h], canHibernate: false), h) == .unavailable(.permanent))
+}
+
+@Test func aHibernatedProjectThatStillListsSessionsReadsAsEnding() {
+    // A hibernated project owns no sessions, so any still listed are being
+    // ended (the teardown, or reconcileSessions ending a leftover) — there is
+    // nothing for the moon to do.
+    let a = UUID()
+    let groups = TaskInventory.groups(rows: [row(a, "zetty-a")],
+                                      projects: [project("api", [a], hibernated: true)])
+    #expect(groups[0].action == .unavailable(.endingSessions))
+    #expect(groups[0].isEndingSessions)
 }
 
 @Test func groupTotalsSumMeasuredLoadOnly() {

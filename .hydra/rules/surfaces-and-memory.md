@@ -49,9 +49,15 @@ once the same event (`onSurfacesRemoved` was wired straight to
   without killing its shells.
 
 The guarantee is now **`reconcileSessions()`**: it kills every `zetty-*` session
-no surface in `WorkspaceModel.sessionOwnerSurfaceIDs` owns (ALL projects,
-hibernated included — so it can never kill a session a dormant pane still
-refers to), and sweeps orphaned `<uuid>.cwd` files in the same pass. It is
+no surface in `WorkspaceModel.sessionOwnerSurfaceIDs` owns, and sweeps orphaned
+`<uuid>.cwd` files in the same pass — that diff spans hibernated projects so a
+dormant pane keeps its cwd file. It ALSO ends every session a HIBERNATED
+project still has (`endLeftoverSessionsOfHibernatedProjects`): a hibernated
+project owns no sessions. Those go through `runTeardown` like hibernation
+itself — marked in `surfacesAwaitingTeardown`, killed, then released — so a
+wake landing mid-kill is queued instead of reattaching to a dying session, and
+panes already in a teardown are skipped so the grace period's `exit` is not
+pre-empted by a kill. It is
 idempotent and costs one `zmx list`, so it runs debounced from
 `rebuildSurfaceNodeView` (every structural change funnels through there) plus a
 300s backstop. `onSurfacesClosed` remains only as the *fast* path. Adding a new
@@ -74,7 +80,35 @@ Manual hibernation still frees a project's surfaces after ending its sessions
 a `HibernationTeardown.Plan` to `ZmxRunner.endSessions`: idle shells (probe
 says `""`, no busy agent — a MISSING probe entry is not idle) get
 `HibernationTeardown.exitInput` via `zmx send`, the rest wait up to
-`gracePeriod`, then whatever is still listed is `killAndWait`ed. Until the
+`gracePeriod`, then whatever is still listed is `killAndWait`ed. **A FAILED
+`zmx list` is "unknown", never "empty"**: `listZettySessions` answers `[]` on
+failure, which would read as every session gone, skip the kill and release
+live surfaces — so `endSessions` lists through its own nil-on-failure helper,
+kills the whole plan when it never got an answer, and re-lists after the kill
+to `--force` any survivor before calling back. **Every teardown zmx call is
+bounded** (`ZmxRunner.teardownCallTimeout`, 5 s; a `send` that TIMED OUT
+skips the rest — an ordinary failure, a shell already gone, must not cost the
+others their `exit`): a hung zmx would otherwise hold the panes — and any queued wake —
+forever. The timed `runData` reads on a worker and waits with the deadline,
+because the read blocks until EVERY holder of the pipe exits and a child can
+outlive a SIGKILL of its parent (measured: a TERM-ignoring shell held a plain
+read for its child's full 30 s). ONE deadline covers the read AND the exit,
+via a `terminationHandler` installed before launch: a process can close stdout
+and keep running, so a bare `waitUntilExit` after the read was the same
+unbounded wait. Untimed calls are unchanged.
+
+**A queued wake keeps its intent** (`PendingWake`): it records the active
+project at request time and, if the user has moved on when the teardown ends,
+wakes IN PLACE (`wakeInPlace`) instead of yanking them back — and a background
+verb's wake (`ensurePaneIsLive` → `revealProject(movesView: false)`) never
+switches to it at all, since that path promises not to move the view.
+`wakeProject` takes a `then:` continuation that runs once the project is
+actually awake — the queued continuations are passed INTO the deferred wake,
+so a project that must wait out a second teardown still runs them only once
+awake;
+`focusPane(at:)` and `focusPaneInTiles` continue there (re-locating by surface
+id, since waking re-sorts projects) — acting after the call instead focused a
+tab of whichever project was active. Until the
 completion runs, the project's panes sit in `surfacesAwaitingTeardown`, which
 `retainedSurfaceIDs` keeps — freeing a surface whose `zmx attach` client is
 live is the main-thread block above. It used to fire `zmx kill` async and

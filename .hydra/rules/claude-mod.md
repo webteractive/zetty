@@ -25,8 +25,8 @@ the Claude Code process — at `Mods/zetty-bridge/`. It reports what the classic
 hooks cannot see (context fill, cost, rate limits, why a turn ended).
 
 What reads it: the account chip and pickers (rate limits), every status dot
-(a failed turn), the needs-attention notification (its message), the Sessions
-view (cost), and the agent resume line (session id).
+(a failed turn), the needs-attention notification (its message), and the
+agent resume line (session id). The Sessions view's COST column was removed.
 
 Pure model in `ZettyCore`: `AgentUsage` + `AgentUsageStore` (the snapshot and
 its change detection), `AccountLimits` + `AccountLimitLabel` (limits per

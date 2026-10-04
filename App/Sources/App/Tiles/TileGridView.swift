@@ -82,6 +82,8 @@ final class TileGridView: NSView {
     var onSetRatio: ((Int, Double, Bool) -> Void)?
     /// The empty cell's "Add Project" row, by slot index.
     var onAddProject: ((Int) -> Void)?
+    /// A hibernated pane's tile asked to wake its project.
+    var onWake: ((UUID) -> Void)?
     /// A tile footer's account chip, by surface.
     var onAccountClicked: ((UUID) -> Void)?
 
@@ -252,6 +254,7 @@ final class TileGridView: NSView {
                 onSplit: { [weak self] direction in self?.onSplit(index, direction) },
                 onRemoveSplit: { [weak self] in self?.onRemoveSplit(index) },
                 onAddProject: { [weak self] in self?.onAddProject?(index) },
+                onWake: { [weak self] in if let id { self?.onWake?(id) } },
                 statusLine: descriptor.statusLine,
                 onAccountClicked: { [weak self] in if let id { self?.onAccountClicked?(id) } })
             tile.translatesAutoresizingMaskIntoConstraints = true
