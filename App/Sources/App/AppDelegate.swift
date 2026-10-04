@@ -2335,8 +2335,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         guard statusItem == nil else { return }
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         if let button = item.button {
-            button.title = "Z"
-            button.font = NSFont.systemFont(ofSize: NSFont.systemFontSize, weight: .bold)
+            button.image = ZettyMark.menuBarImage()
             button.toolTip = "Zetty"
             button.setAccessibilityLabel("Zetty")
         }

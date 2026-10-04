@@ -508,8 +508,8 @@ wake all of a Space's members. Filtering is a plain substring match on the
 label, and only the first 50 matches are rendered — the footer says how many
 more matched, so keep typing to narrow a large workspace.
 
-Closing the main window keeps Zetty and its terminals running behind a **Z**
-in the macOS menu bar and hides its Dock icon until the window is restored. The
+Closing the main window keeps Zetty and its terminals running behind the Zetty
+mark (the Z with a terminal tile on its tail) in the macOS menu bar and hides its Dock icon until the window is restored. The
 status menu lists every awake project, with nested tab choices for projects that
 have multiple tabs. Agent status dots mirror the sidebar: green means running,
 yellow needs attention, and dim gray is idle. **Close Zetty**, **Quit Zetty**,
