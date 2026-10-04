@@ -173,7 +173,10 @@ echo "  commit  $RELEASE_COMMIT"
 gh release view "$TAG" --json url,assets \
   -q '"  url     " + .url, "  assets  " + ([.assets[].name] | join(", "))'
 echo
+# `ditto` in place, never `rm -rf` first: ZettyGhostty.framework is lazy-loaded,
+# so deleting the bundle under a live process kills it with a dyld SIGABRT.
+# See "Installing after a change" in CLAUDE.md.
 echo "Reminder: install the packaged build so /Applications matches the release:"
-echo "  zetty quit && rm -rf /Applications/zetty.app \\"
-echo "    && ditto build/Build/Products/Release/zetty.app /Applications/zetty.app \\"
-echo "    && open -a /Applications/zetty.app"
+echo "  ditto build/Build/Products/Release/zetty.app /Applications/zetty.app \\"
+echo "    && defaults read /Applications/zetty.app/Contents/Info.plist ZettyBuildCommit \\"
+echo "    && zetty quit && sleep 2 && open -a /Applications/zetty.app"

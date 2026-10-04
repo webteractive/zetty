@@ -258,6 +258,16 @@ the pin only moves when somebody looks.
   libghostty module from the old pin is rejected with "ghostty.h has been
   modified since the module file was built", which reads like a broken
   release and is only a stale cache.
+- **Clean the RELEASE build folder too**, which is a separate cache:
+  `xcodebuild -project zetty.xcodeproj -scheme zetty -configuration Release
+  -destination 'generic/platform=macOS' -derivedDataPath build clean`. Skip it
+  and `scripts/release.sh` fails at packaging with that same error — AFTER it
+  has committed and pushed the `chore(release)` commit, which leaves a pushed
+  version bump with no tag and no release. That happened on v0.1.49. The way
+  out is to clean `build/`, run `scripts/package.sh`, repeat the script's own
+  checks (checksum against the sidecar, packaged version, commit stamp), then
+  tag the release commit and `gh release create` with both assets. Do NOT
+  re-run `release.sh`: it would bump the version a second time.
 - **A newer LINE** (e.g. `2.2.x` while pinned to `1.6.x`): not a routine bump.
   The same research covers it; say what the line is and let Glen decide; a new line can remove API, and the last move
   across lines (`32ae982`) lost `TerminalSurface.sendText`.
@@ -395,7 +405,7 @@ Project rules override global rules on conflict.
 | changing agent status dots, hooks, or needs-attention notifications | `Sources/ZettyCore/Agents/**` · `App/Sources/App/AgentEventWatcher.swift` · `App/Sources/App/HookInstaller.swift` | .hydra/rules/agent-detection.md |
 | changing the pane refresh button or restarting an agent in place | `App/Sources/App/Tiles/ReloadingOverlay.swift` · `App/Sources/App/Tiles/RefreshSpinner.swift` · `App/Sources/App/Tiles/AgentRestartPresenting.swift` · `Sources/ZettyCore/Recovery/AgentResume.swift` | .hydra/rules/agent-pane-refresh.md |
 | changing the tab bar, status bar, sidebar, or command palette · the window refuses to resize or its minimum size grows · adding an overlay or anything inside the main window | `App/Sources/App/TabBarView.swift` · `App/Sources/App/StatusBarView.swift` · `App/Sources/App/SidebarView.swift` · `App/Sources/App/SidebarDrawer.swift` · `App/Sources/App/CommandPaletteView.swift` · `Sources/ZettyCore/StatusBar/**` · `Sources/ZettyCore/Support/CommandSearch.swift` · `Sources/ZettyCore/Support/FuzzyMatch.swift` · `Sources/ZettyCore/Model/SidebarMetrics.swift` | .hydra/rules/chrome-layout.md |
-| changing any file of a mod under Mods/ — bump version in its plugin.json in the same change · changing Zetty's Claude Code mod or what it reports · changing the context readout, or adding chrome fed by agent usage · the context readout is missing or stale | `Mods/**` · `Sources/ZettyCore/Agents/AgentUsage.swift` · `Sources/ZettyCore/Agents/ModInstall.swift` · `Sources/ZettyCore/StatusBar/ContextMeter.swift` · `App/Sources/App/AgentUsageWatcher.swift` · `App/Sources/App/ModInstaller.swift` · `claude plugin validate` · `claude plugin test` | .hydra/rules/claude-mod.md |
+| changing any file of a mod under Mods/ — bump version in its plugin.json in the same change · changing Zetty's Claude Code mod or what it reports · adding chrome fed by agent usage (rate limits, cost, context, turn outcome) | `Mods/**` · `Sources/ZettyCore/Agents/AgentUsage.swift` · `Sources/ZettyCore/Agents/ModInstall.swift` · `App/Sources/App/AgentUsageWatcher.swift` · `App/Sources/App/ModInstaller.swift` · `Sources/ZettyCore/Accounts/AccountLimits.swift` · `claude plugin validate` · `claude plugin test` | .hydra/rules/claude-mod.md |
 | adding or changing a zetty CLI verb · changing the control socket or StatusSnapshot | `Sources/ZettyCore/CLI/**` · `App/Sources/App/ControlSocketServer.swift` · `App/Sources/App/CLILink.swift` · `App/Sources/App/main.swift` | .hydra/rules/control-cli.md |
 | changing the per-pane file tree | `Sources/ZettyCore/FileTree/**` · `App/Sources/App/FileTree/**` | .hydra/rules/file-tree.md |
 | changing the file viewer peek or cmd-click path handling · the file viewer shows a blank panel · opening files from terminal output | `Sources/ZettyCore/Viewer/**` · `Sources/ZettyCore/Diagnostics/**` · `App/Sources/App/FileViewerLoader.swift` · `App/Sources/App/FileViewerOverlay.swift` · `App/Sources/App/PathHoverTracker.swift` · `App/Sources/App/ZettyLog.swift` · `zetty view` | .hydra/rules/file-viewer.md |
