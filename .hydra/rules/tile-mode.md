@@ -526,6 +526,20 @@ never restored, so `detachDeadScratchTileSlots()` empties a dead scratch's slots
 after `scratch-clear`, after removing a scratch project, and on library load —
 a hole, not a "missing" cell with a Reattach that could never work.
 
+**Tile mode outranks the hibernation placeholder.** `rebuildSurfaceNodeView`
+renders what `PaneAreaContent.resolve` says (ZettyCore, tested), and the grid
+wins whatever the active project is doing. It used to check the active project's
+hibernation FIRST, so anything that made a hibernated project active while the
+grid was up swapped the grid for that project's placeholder and left it outside
+the window, with `tileMode` still true. Every tile attached after that got a view
+no window ever held, so no surface: `scratch-clear` re-pointed the active project
+at the first pinned one (Devops, hibernated), and the next `scratch --focus`
+landed in its tile as `live: false` for good. The grid log line
+`tiles: leaves=…` stops entirely when this happens; it is the quickest tell.
+`removeScratchProjects` and `performRemoveProject` now move the active project
+only when a scratch WAS the active one, and neither close path hands the keyboard
+to `focusedTerminalView()` while the grid is up.
+
 **The spawn queue tests for a VIEW, not liveness.** `enqueueMissingTileSurfaces`,
 `attachNextTileSurface` and `tileDescriptors` use `registry.hasTerminalView`:
 the queue creates the view, the grid shows it, and being shown is what creates

@@ -188,15 +188,20 @@ public final class WorkspaceModel {
         return "scratch \(n)"
     }
 
-    /// Removes every scratch terminal at once, re-pointing `activeIndex` at the
-    /// first pinned project (or the first project if none are pinned). No-op if
-    /// there are no scratch projects, or if removing them would leave none.
+    /// Removes every scratch terminal at once. The active project stays active
+    /// when it survives; only when a scratch WAS active does `activeIndex` move
+    /// to the first pinned project (or the first project if none are pinned).
+    /// Jumping regardless used to switch the project behind the tile grid,
+    /// where scratch is never made active. No-op if there are no scratch
+    /// projects, or if removing them would leave none.
     public func removeScratchProjects() {
         guard projects.contains(where: \.isScratch) else { return }
         let survivors = projects.filter { !$0.isScratch }
         guard !survivors.isEmpty else { return }
+        let active = activeProject
         projects = survivors
-        activeIndex = projects.firstIndex(where: \.isPinned) ?? 0
+        activeIndex = projects.firstIndex { $0 === active }
+            ?? projects.firstIndex(where: \.isPinned) ?? 0
     }
 
     public func removeProject(at index: Int) {

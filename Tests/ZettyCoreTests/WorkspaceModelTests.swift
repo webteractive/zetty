@@ -302,3 +302,17 @@ import Foundation
     ws.togglePin(at: ws.projects.firstIndex { $0.id == pinned.id }!)
     #expect(ws.projects[0].isHome)                // Home ahead of pinned
 }
+
+@Test func removeScratchProjectsKeepsAnActiveProjectThatSurvives() {
+    // Clearing scratch from the tile grid, where a scratch is never made
+    // active, used to jump to the first pinned project anyway — and when that
+    // one was hibernated the rebuild swapped the grid for its placeholder.
+    let ws = WorkspaceModel(restoring: [
+        ProjectRuntime(name: "pin", rootPath: "/p", isPinned: true),
+        ProjectRuntime(name: "web", rootPath: "/w"),
+    ], activeIndex: 1)!
+    ws.addScratchProject(makeActive: false)
+    ws.removeScratchProjects()
+    #expect(ws.projects.map(\.name) == ["pin", "web"])
+    #expect(ws.activeProject.name == "web")
+}

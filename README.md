@@ -225,7 +225,8 @@ by the tool it's running.
 - **Scratch terminals** — spin up a throwaway, project-less terminal rooted at
   home (`⌃⌘N`, the command palette, or `zetty scratch`). They live in their own
   **Scratch** sidebar section, are never saved to the workspace, and every tab
-  is closable — closing the last returns you to your first pinned project.
+  is closable — closing the last one while you're looking at it returns you to
+  your first pinned project.
   Clear them all at once with **Close All Scratch Terminals** (`zetty
   scratch-clear`). Like any other pane they run inside a preserved session, so
   `zetty capture` can read their output — but that session ends when the pane

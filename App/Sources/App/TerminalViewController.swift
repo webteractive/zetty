@@ -4940,13 +4940,17 @@ final class TerminalViewController: NSViewController {
     /// saved view and every open one. Scratch is never persisted and closes for
     /// good, so without this its tile would sit there as a permanent "missing"
     /// cell offering a Reattach that can never work.
+    ///
+    /// Persists only. Both callers rebuild straight after, and refreshing the
+    /// grid here — before that rebuild, with focus still on the dead tile —
+    /// asked AppKit to focus a view that had just left the window.
     private func detachDeadScratchTileSlots() {
         let changed = detachDeadScratchSlots(in: &tileLibrary.profiles)
         _ = detachDeadScratchSlots(in: &openTileViews)
-        guard changed else { return }
-        persistTileLibrary()
-        refreshTileGrid()
-        refreshTabBar()
+        if let focused = tileFocusedSurfaceID, !tileFocusableIDs.contains(focused) {
+            tileFocusedSurfaceID = tileFocusableIDs.first
+        }
+        if changed { persistTileLibrary() }
     }
 
     private func detachDeadScratchSlots(in profiles: inout [TileProfile]) -> Bool {
@@ -6843,7 +6847,9 @@ final class TerminalViewController: NSViewController {
         refreshSidebar()
         rebuildSurfaceNodeView()
         onWorkspaceDidChange?()
-        if let focused = focusedTerminalView() {
+        // Under the grid the keyboard belongs to the focused tile, which the
+        // rebuild already claims; the active tab's pane is not on screen.
+        if !tileMode, let focused = focusedTerminalView() {
             view.window?.makeFirstResponder(focused)
         }
     }
@@ -6920,16 +6926,19 @@ final class TerminalViewController: NSViewController {
 
     private func performRemoveProject(at index: Int) {
         let wasScratch = workspace.projects[index].isScratch
+        let wasActive = index == workspace.activeIndex
         let closingSurfaces = workspace.projects[index].tabList.trees
             .flatMap { $0.layout.surfaces.map(\.id) }
         let countBefore = workspace.projects.count
         workspace.removeProject(at: index)
         guard workspace.projects.count != countBefore else { return }   // last project — no-op
         if wasScratch { detachDeadScratchTileSlots() }
-        // Closing the last scratch terminal returns focus to the first pinned
-        // project (or the first project if none are pinned), rather than
-        // whichever neighbour `removeProject` happened to land on.
-        if wasScratch, !workspace.projects.contains(where: \.isScratch) {
+        // Closing the last scratch terminal while looking at it returns focus to
+        // the first pinned project (or the first project if none are pinned),
+        // rather than whichever neighbour `removeProject` happened to land on.
+        // One you were not looking at — any scratch under the tile grid —
+        // leaves the active project alone.
+        if wasScratch, wasActive, !workspace.projects.contains(where: \.isScratch) {
             workspace.select(index: workspace.projects.firstIndex(where: \.isPinned) ?? 0)
         }
         onActiveProjectChanged?()   // removal can shift which project is active
@@ -6940,7 +6949,7 @@ final class TerminalViewController: NSViewController {
         refreshSidebar()
         rebuildSurfaceNodeView()
         onWorkspaceDidChange?()
-        if let focused = focusedTerminalView() {
+        if !tileMode, let focused = focusedTerminalView() {
             view.window?.makeFirstResponder(focused)
         }
     }
@@ -7970,10 +7979,17 @@ final class TerminalViewController: NSViewController {
             topGuide = banner.bottomAnchor
         }
 
+        // One decision, tested in ZettyCore: tile mode outranks the active
+        // project, whose hibernation placeholder once replaced the grid and
+        // stranded every tile pane outside the window.
+        let paneArea = PaneAreaContent.resolve(
+            tileMode: tileMode, hasOpenTileViews: !openTileViews.isEmpty,
+            activeProjectHibernated: workspace.activeProject.isHibernated)
+
         // Active project hibernated → render a dormant placeholder (status +
         // Wake button) instead of terminal panes. Viewing never wakes it; the
         // button (or context menu / palette / CLI) is the intentional wake.
-        if workspace.activeProject.isHibernated {
+        if paneArea == .hibernationPlaceholder {
             let project = workspace.activeProject
             let placeholder = HibernationPlaceholderView(
                 projectName: project.name,
@@ -7996,7 +8012,7 @@ final class TerminalViewController: NSViewController {
         // Tile mode replaces the pane area, exactly where the hibernation
         // placeholder substitutes itself. Pruning needs no change: the
         // surfaces the grid shows are ones `allSurfaceIDs` already retains.
-        if tileMode, openTileViews.isEmpty {
+        if paneArea == .tileChooser {
             let chooser = TileChooserView(
                 profiles: tileLibrary.profiles,
                 onPickProfile: { [weak self] profile in
@@ -8019,7 +8035,7 @@ final class TerminalViewController: NSViewController {
             return
         }
 
-        if tileMode {
+        if paneArea == .tileGrid {
             let grid = tileGridView ?? TileGridView(
                 // The ACTIVE PROFILE's grid, not the global key — that one is
                 // only the default a new view is seeded with.
