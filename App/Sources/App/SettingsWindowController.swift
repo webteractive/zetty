@@ -34,6 +34,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     private let notifySoundSwitch = NSSwitch()
     private let notifyBadgeSwitch = NSSwitch()
     private let notifySystemSwitch = NSSwitch()
+    private let claudeModSwitch = NSSwitch()
 
     // Command Line section controls.
     private let cliStatusLabel = NSTextField(labelWithString: "")
@@ -409,6 +410,17 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         notifySystemSwitch.target = self
         notifySystemSwitch.action = #selector(notifySystemToggled(_:))
         addFullWidth(switchRow("macOS notifications", control: notifySystemSwitch), to: stack)
+
+        stack.addArrangedSubview(spacer())
+        stack.addArrangedSubview(sectionHeader("Claude Code Integration"))
+        stack.addArrangedSubview(caption(
+            "Loads Zetty's mod into Claude Code, which reports each pane's context "
+            + "fill to the status bar. Applies to agents started from now on; a "
+            + "running one keeps what it started with."
+        ))
+        claudeModSwitch.target = self
+        claudeModSwitch.action = #selector(claudeModToggled(_:))
+        addFullWidth(switchRow("Context readout", control: claudeModSwitch), to: stack)
 
         stack.addArrangedSubview(spacer())
         stack.addArrangedSubview(sectionHeader("Status Hooks"))
@@ -865,6 +877,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         notifySoundSwitch.state = config.notifySound ? .on : .off
         notifyBadgeSwitch.state = config.notifyBadge ? .on : .off
         notifySystemSwitch.state = config.notifySystem ? .on : .off
+        claudeModSwitch.state = config.claudeMod ? .on : .off
         loginItemSwitch.state = SMAppService.mainApp.status == .enabled ? .on : .off
 
         // Which zmx binary backs the feature is an implementation detail; the
@@ -1006,6 +1019,13 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         let store = ConfigStore(fileURL: configURL)
         var config = store.load()
         config.notifySystem = sender.state == .on
+        store.save(config)
+    }
+
+    @objc private func claudeModToggled(_ sender: NSSwitch) {
+        let store = ConfigStore(fileURL: configURL)
+        var config = store.load()
+        config.claudeMod = sender.state == .on
         store.save(config)
     }
 

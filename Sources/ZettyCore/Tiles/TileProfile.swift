@@ -90,6 +90,16 @@ public struct TileProfile: Codable, Equatable, Sendable {
         padToCapacity()
     }
 
+    /// Exchanges what two slots hold; the layout tree is untouched, so the
+    /// tiles trade places and nothing else moves. One side may be a hole,
+    /// which makes this a move. Both must be on screen: a slot past
+    /// `capacity` has no tile to drag or to drop on.
+    public mutating func swapSlots(_ first: Int, _ second: Int) {
+        guard first != second, first >= 0, second >= 0,
+              first < capacity, second < capacity else { return }
+        slots.swapAt(first, second)
+    }
+
     public mutating func setRatio(atDivider index: Int, to ratio: Double) {
         root.setRatio(atDivider: index, to: ratio)
     }

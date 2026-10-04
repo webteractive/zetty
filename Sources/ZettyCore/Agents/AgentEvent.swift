@@ -27,13 +27,20 @@ public struct AgentEvent: Equatable, Sendable {
     /// The harness's own session id (Claude `session_id`, Codex `thread-id`),
     /// validated by `isValidSessionID` so it can be typed into a shell later.
     public let session: String?
+    /// The harness's config-dir variable as the hook saw it: "" when unset
+    /// (the default login), a path for an account. nil when the helper said
+    /// nothing — it predates the field, or the harness hosts no accounts —
+    /// which must not be read as "default".
+    public let configDirectory: String?
 
-    public init(cwd: String, agent: AgentKind, event: Kind, surface: UUID? = nil, session: String? = nil) {
+    public init(cwd: String, agent: AgentKind, event: Kind, surface: UUID? = nil,
+                session: String? = nil, configDirectory: String? = nil) {
         self.cwd = cwd
         self.agent = agent
         self.event = event
         self.surface = surface
         self.session = session
+        self.configDirectory = configDirectory
     }
 
     /// `[A-Za-z0-9._-]{1,128}` — everything Claude and Codex emit, nothing a
@@ -59,9 +66,9 @@ public struct AgentEvent: Equatable, Sendable {
     }
 
     /// Parses one JSON line:
-    /// `{"cwd": "...", "agent": "claude", "event": "running", "surface": "<uuid>", "session": "<id>"}`.
+    /// `{"cwd": "...", "agent": "claude", "event": "running", "surface": "<uuid>", "session": "<id>", "config": "<dir>"}`.
     /// Returns nil for malformed input, an unknown agent, or an unknown event.
-    /// `surface` and `session` are OPTIONAL — a helper predating them, or a
+    /// `surface`, `session` and `config` are OPTIONAL — a helper predating them, or a
     /// value that fails validation, yields nil for that field without
     /// rejecting the line.
     /// `agent` matches an `AgentKind` raw value or any of its registry `binaryNames`;
@@ -80,7 +87,8 @@ public struct AgentEvent: Equatable, Sendable {
         guard let agent = resolveAgent(agentRaw), let kind = resolveEvent(eventRaw) else { return nil }
         let surface = (object["surface"] as? String).flatMap(UUID.init(uuidString:))
         let session = (object["session"] as? String).flatMap { isValidSessionID($0) ? $0 : nil }
-        return AgentEvent(cwd: cwd, agent: agent, event: kind, surface: surface, session: session)
+        return AgentEvent(cwd: cwd, agent: agent, event: kind, surface: surface, session: session,
+                          configDirectory: object["config"] as? String)
     }
 
     private static func resolveAgent(_ raw: String) -> AgentKind? {

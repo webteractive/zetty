@@ -84,7 +84,7 @@ both redraw from the same tick.
 
 **The status-bar pill is a fixed-width glyph plus a dot**, never a percentage.
 `pillStack` hugs its content, so a number changing every few seconds would slide
-Broadcast and `Open ▾` out from under the pointer — the exact jitter that killed
+Broadcast out from under the pointer — the exact jitter that killed
 the cycling ambient chip. The dot turns yellow above `SessionsView.busyThreshold`,
 and the pill follows the compact rule the rest of the bar follows: it folds into
 the `⋯` menu, except while a session is hot or the view is open.

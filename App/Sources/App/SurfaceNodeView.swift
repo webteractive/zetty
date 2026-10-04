@@ -26,6 +26,8 @@ struct PaneActionWiring {
     let canRefreshAgent: (UUID) -> Bool
     /// Restart the agent on its existing conversation.
     let onRefreshAgent: (UUID) -> Void
+    /// Show the Open picker for this pane's own directory, under that button.
+    let onOpen: (UUID, NSView) -> Void
 }
 
 // MARK: - SurfaceNodeView
@@ -384,8 +386,8 @@ final class LeafContainerView: NSView, AgentRestartPresenting {
         statusDot = dot
     }
 
-    /// Lays the gutter actions out right-to-left from the trailing edge:
-    /// split-vertical · split-horizontal · break · close.
+    /// Lays the gutter actions out against the trailing edge:
+    /// refresh · open · file tree · split-vertical · split-horizontal · break · close.
     /// The split pair is always available; break and × only when the pane is
     /// closable. Scroll-to-bottom is deliberately NOT here — its button did
     /// nothing in panes running an agent CLI and the cause is unfound, so the
@@ -411,6 +413,14 @@ final class LeafContainerView: NSView, AgentRestartPresenting {
         refresh.isHidden = !showsRefresh
         refreshButton = refresh
         stack.addArrangedSubview(refresh)
+
+        // Per pane rather than on the status bar: one bar-wide Open has to
+        // guess which pane it means. Same place it holds in a tile's header.
+        stack.addArrangedSubview(makeGutterButton(
+            symbol: "folder", fallback: "▤",
+            toolTip: "Open this pane's directory in an editor or Finder",
+            action: #selector(openTapped(_:))
+        ))
 
         if fileTreeWiring != nil {
             stack.addArrangedSubview(makeGutterButton(
@@ -495,6 +505,10 @@ final class LeafContainerView: NSView, AgentRestartPresenting {
 
     @objc private func refreshAgentTapped() {
         paneActions?.onRefreshAgent(surfaceID)
+    }
+
+    @objc private func openTapped(_ sender: NSButton) {
+        paneActions?.onOpen(surfaceID, sender)
     }
 
     /// Shows or hides the refresh button WITHOUT a rebuild.

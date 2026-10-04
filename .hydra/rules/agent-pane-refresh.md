@@ -131,9 +131,15 @@ triggers:
   transcripts. `AgentAccountResolver.harnessAccount` picks the login
   (`runningAccountID`, then `accountID`, each only if it belongs to THAT
   harness); `AgentSessionLookup.Target.configDirectory` scans its store; and
-  when it is the `zetty run` override, `resumeEnvironment` prefixes
-  `CLAUDE_CONFIG_DIR='…'` / `CODEX_HOME='…'` onto the harness in the resume
-  line. The spawn login adds nothing, since the shell already has it, and
+  `AgentAccountResolver.resumeLogin` says what the line must change — it
+  compares the running login with the one the SHELL holds. An account the
+  shell lacks is prefixed (`CLAUDE_CONFIG_DIR='…'` / `CODEX_HOME='…'`). The
+  default login in a pane spawned on an account is the variable being ABSENT,
+  so it is removed for the harness alone: `env -u CLAUDE_CONFIG_DIR claude
+  --resume …`. Not an empty assignment — Codex refuses a `CODEX_HOME` that
+  names no directory — and `env` rather than a subshell so the line is the
+  same in any shell (it bypasses a shell alias for the harness, as `zetty
+  run`'s own exec does). The spawn login adds nothing, since the shell already has it, and
   that way a hand-typed project env var is left alone. The cache holds the
   SESSION, not the line, so the account is read when the button is pressed.
   The probe's override-clearing skips panes with a restart in flight: the

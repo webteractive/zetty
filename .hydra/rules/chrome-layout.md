@@ -103,7 +103,7 @@ documents at length, and both are easy to undo by accident:
    · libghostty · version) is frame-positioned inside `infoHost`, and **nothing
    ties `infoHost`'s width to the stack inside it** — it claims the leftover
    between the left cluster and the trailing pills via a priority-1 fill plus a
-   999 "don't overlap". Only `pillStack` (broadcast · CLI · Open ▾ · the chip)
+   999 "don't overlap". Only `pillStack` (broadcast · CLI · sessions · the chip)
    is pinned to the trailing edge and measured. Hiding the ambient views on
    resize is NOT a substitute and was tried: the window can never shrink far
    enough to trigger the hide, because the wide layout's own width is the floor.
@@ -215,10 +215,10 @@ the rest as a menu. Two things about it are deliberate:
 
 - **Nothing in `pillStack` may change width ON A TIMER.** An earlier version
   rotated through the stats every 4s; because the stack hugs its content, every
-  change resized it and shifted Broadcast and `Open ▾` sideways, so a pill you
+  change resized it and shifted Broadcast sideways, so a pill you
   were about to click moved out from under the pointer. That is what killed the
   rotation — the frequency, not the readout. A scheme name changes only when
-  someone changes the scheme, and by then `Open ▾` and the account have folded
+  someone changes the scheme, and by then the account has folded
   away, so the ordinary compact bar has nothing else in the stack to shift.
   **The left chip varies in width freely**: the left cluster is anchored to the
   leading edge and the action pills to the trailing one, so nothing clickable
@@ -234,7 +234,7 @@ leaks a KVO dependency record per assignment. The click comes from an
 ## Compact is two pills, and the exceptions are conditional
 
 A narrow bar renders the location pill and the `⋯` pill, and nothing else —
-`Open ▾` and the account pill fold away with the ambient stats. Everything that
+the account pill folds away with the ambient stats. Everything that
 remains follows one rule: **it appears only in the state where hiding it would
 be wrong**, and folds otherwise.
 
@@ -250,9 +250,11 @@ be wrong**, and folds otherwise.
   indicator.
 - **The CLI pill** was already conditional on being stale, and **a pending
   update** already takes the `⋯` chip over. Both are the same rule.
-- **`Open ▾` always folds**: it is a menu, so folding it into a menu costs one
-  click and loses nothing. `showEditorMenuFromChip` hands off to the very same
-  picker rather than growing a second way to build it.
+- **`Open ▾` is not on the bar at all.** It was a pill here, folding into the
+  `⋯` menu when compact, and it opened the FOCUSED pane's directory — which in
+  a split tab means guessing. It is a `folder` button in each pane's gutter
+  now (`PaneActionWiring.onOpen`), second after refresh as in a tile's header,
+  so a button always names its own pane. Do not bring the pill back.
 - **The account always folds** into the location dropup. It is identity, not
   state, and the status bar is not its only surface — the tab pill carries an
   account dot too.

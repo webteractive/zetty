@@ -159,9 +159,11 @@ triggers:
     the wrong login, and the session lookup would scan the wrong config dir.
     The tally records `Entry.agentAccount` (the harness's account, read on main
     via `harnessAccount` before the off-main tally; the lookup gets
-    `Target.configDirectory`). At relaunch `RestartRecovery.pinnedAccount`
+    `Target.configDirectory`). At relaunch `RestartRecovery.pinnedLogin`
     prefixes that login's `CLAUDE_CONFIG_DIR` / `CODEX_HOME` onto the resume
-    when it differs from the spawn account, which is why `agentAccounts` loads
+    when it differs from the spawn account — or, for the DEFAULT login in a
+    pane spawned on an account, removes it with `env -u` (the tally records
+    `@default` too, for exactly this) — which is why `agentAccounts` loads
     BEFORE the manifest is applied. `holdRunningAccountForResume` re-sets
     `runningAccountID` and HOLDS it: the resume waits `resumeGracePeriod` in a
     bare shell, and the foreground probe would otherwise read that shell as

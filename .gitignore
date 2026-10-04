@@ -37,5 +37,9 @@ dist/
 # Local process artifacts (brainstorming specs + implementation plans)
 docs/superpowers/
 
+# Claude Code lays its type declarations beside a mod it loads from disk
+Mods/*/.claude-plugin/types/
+Mods/*/tsconfig.json
+
 # Misc
 *.log

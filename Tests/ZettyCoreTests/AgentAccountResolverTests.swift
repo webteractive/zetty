@@ -122,6 +122,88 @@ extension AgentAccountResolverTests {
         XCTAssertEqual(r.env, ["CLAUDE_CONFIG_DIR": "/Users/tester/.zetty/accounts/personal"])
     }
 
+    func testAReportedDefaultLoginIsNotAGapToFallThrough() {
+        // The default login running in a pane spawned on an account.
+        XCTAssertTrue(harness("claude", running: AgentAccountSupport.defaultID,
+                              spawned: "work").isDefault)
+    }
+
+    // MARK: - resumeLogin
+
+    private func login(_ agent: String, running: String?, spawned: String?) -> ResumeLogin {
+        AgentAccountResolver.resumeLogin(agentID: agent, runningAccountID: running,
+                                         spawnedAccountID: spawned,
+                                         accounts: [work, personal, codexWork], home: home)
+    }
+
+    func testAResumeInheritsTheShellWhenTheRunningLoginIsTheSpawnOne() {
+        XCTAssertEqual(login("claude", running: nil, spawned: "work"), .inherited)
+        XCTAssertEqual(login("claude", running: nil, spawned: nil), .inherited)
+        XCTAssertEqual(login("claude", running: AgentAccountSupport.defaultID, spawned: nil),
+                       .inherited)
+    }
+
+    func testAResumeAssignsAnAccountTheShellDoesNotHold() {
+        XCTAssertEqual(login("claude", running: "personal", spawned: "work"),
+                       ResumeLogin(environment: [
+                           "CLAUDE_CONFIG_DIR": "/Users/tester/.zetty/accounts/personal"]))
+    }
+
+    func testAResumeDropsTheShellsAccountForTheDefaultLogin() {
+        XCTAssertEqual(login("claude", running: AgentAccountSupport.defaultID, spawned: "work"),
+                       ResumeLogin(unsetting: ["CLAUDE_CONFIG_DIR"]))
+    }
+
+    func testAResumeLeavesAnotherHarnessesAccountAlone() {
+        // The shell's CODEX_HOME is not Claude's to remove.
+        XCTAssertEqual(login("claude", running: AgentAccountSupport.defaultID,
+                             spawned: "codex-work"), .inherited)
+    }
+
+    // MARK: - reported config directory
+
+    private func reported(_ directory: String, agent: String = "claude") -> String? {
+        AgentAccountResolver.accountID(forReportedConfigDirectory: directory, agentID: agent,
+                                       accounts: [work, personal, codexWork], home: home)
+    }
+
+    func testAnUnsetVariableIsTheDefaultLogin() {
+        XCTAssertEqual(reported(""), AgentAccountSupport.defaultID)
+    }
+
+    func testTheHarnessOwnHomeIsTheDefaultLogin() {
+        XCTAssertEqual(reported("/Users/tester/.claude"), AgentAccountSupport.defaultID)
+        XCTAssertEqual(reported("~/.codex/", agent: "codex"), AgentAccountSupport.defaultID)
+    }
+
+    func testAnAccountDirectoryNamesItsAccount() {
+        XCTAssertEqual(reported("/Users/tester/.zetty/accounts/personal"), "personal")
+        XCTAssertEqual(reported("~/.zetty/accounts/work/"), "work")
+        XCTAssertEqual(reported("/Users/tester/.zetty/accounts/codex-work", agent: "codex"),
+                       "codex-work")
+    }
+
+    func testADirectoryIsOnlyMatchedAgainstItsOwnHarness() {
+        XCTAssertNil(reported("/Users/tester/.zetty/accounts/codex-work"))
+    }
+
+    func testAnUnknownDirectoryNamesNothing() {
+        XCTAssertNil(reported("/Users/tester/somewhere-else"))
+    }
+
+    func testAHarnessWithoutAccountsNamesNothing() {
+        XCTAssertNil(reported("", agent: "hermes"))
+    }
+
+    func testTheOverrideIsOnlyHeldWhenItDiffersFromTheSpawnAccount() {
+        XCTAssertNil(AgentAccountResolver.runningOverride(reported: "work", spawned: "work"))
+        XCTAssertEqual(AgentAccountResolver.runningOverride(reported: "personal", spawned: "work"),
+                       "personal")
+        XCTAssertEqual(AgentAccountResolver.runningOverride(
+            reported: AgentAccountSupport.defaultID, spawned: "work"),
+                       AgentAccountSupport.defaultID)
+    }
+
     func testTheSpawnAccountAppliesWithNoOverride() {
         XCTAssertEqual(harness("claude", running: nil, spawned: "work").accountID, "work")
     }

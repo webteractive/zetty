@@ -20,6 +20,9 @@ private func runHook(args: [String], stdin: String, extraEnv: [String: String]) 
     env["ZETTY"] = "1"
     env.removeValue(forKey: "ZETTY_SURFACE")
     env.removeValue(forKey: "ZETTY_CWD_FILE")
+    // The suite may itself be running inside an account's pane.
+    env.removeValue(forKey: "CLAUDE_CONFIG_DIR")
+    env.removeValue(forKey: "CODEX_HOME")
     for (k, v) in extraEnv { env[k] = v }
     process.environment = env
     let input = Pipe()
@@ -74,4 +77,42 @@ private func runHook(args: [String], stdin: String, extraEnv: [String: String]) 
     let event = try #require(AgentEvent.parse(line: line))
     #expect(event.surface == nil)
     #expect(event.session == nil)
+}
+
+@Test func hookReportsTheConfigDirectoryItsHarnessIsRunningUnder() throws {
+    let lines = try runHook(
+        args: ["emit", "claude", "idle"], stdin: #"{"cwd":"/p"}"#,
+        extraEnv: ["CLAUDE_CONFIG_DIR": "/Users/x/.zetty/accounts/work",
+                   // Another harness's variable says nothing about this one.
+                   "CODEX_HOME": "/Users/x/.zetty/accounts/codex-work"])
+    let line = try #require(lines.last)
+    let event = try #require(AgentEvent.parse(line: line))
+    #expect(event.configDirectory == "/Users/x/.zetty/accounts/work")
+}
+
+@Test func hookReportsAnUnsetConfigDirectoryAsEmptyNotMissing() throws {
+    // "" is the default login; a missing field is an older helper. Reading the
+    // second as the first would move every pane to Default on upgrade.
+    let lines = try runHook(args: ["emit", "claude", "idle"], stdin: #"{"cwd":"/p"}"#,
+                            extraEnv: [:])
+    let line = try #require(lines.last)
+    let event = try #require(AgentEvent.parse(line: line))
+    #expect(event.configDirectory == "")
+}
+
+@Test func hookReportsCodexHomeForCodex() throws {
+    let payload = #"{"type":"agent-turn-complete","thread-id":"t1","cwd":"/q"}"#
+    let lines = try runHook(args: ["codex", payload], stdin: "",
+                            extraEnv: ["CODEX_HOME": "/Users/x/.zetty/accounts/codex-work"])
+    let line = try #require(lines.last)
+    let event = try #require(AgentEvent.parse(line: line))
+    #expect(event.configDirectory == "/Users/x/.zetty/accounts/codex-work")
+}
+
+@Test func hookSaysNothingAboutConfigForAHarnessWithoutAccounts() throws {
+    let lines = try runHook(args: ["emit", "hermes", "idle"], stdin: #"{"cwd":"/p"}"#,
+                            extraEnv: ["CLAUDE_CONFIG_DIR": "/Users/x/.zetty/accounts/work"])
+    let line = try #require(lines.last)
+    let event = try #require(AgentEvent.parse(line: line))
+    #expect(event.configDirectory == nil)
 }

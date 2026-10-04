@@ -66,6 +66,11 @@ final class TileGridView: NSView {
     /// A sidebar tab row was dropped on a slot: "project:tab" indices, and the
     /// slot it landed in. Returns whether it was accepted.
     var onDropSidebarTab: ((Int, Int, Int) -> Bool)?
+    /// A tile's header was dragged onto another tile: the two slot indices
+    /// whose contents trade places.
+    var onSwapSlots: ((Int, Int) -> Void)?
+    /// The tile a header drag is over, kept so its highlight can be cleared.
+    private weak var dropTargetTile: TileView?
     /// A divider moved: its index (as `TileNode.dividers` numbers them), the
     /// new ratio, and whether the gesture has ended. Only the final call
     /// persists — see `mutateActiveTileProfile(persist:)`.
@@ -85,6 +90,11 @@ final class TileGridView: NSView {
     /// `AgentRestartPresenting` lookup.
     func tile(for surfaceID: UUID) -> TileView? {
         tiles.first { $0.surfaceID == surfaceID }
+    }
+
+    /// The pane a slot is showing, if it holds a live one.
+    func surfaceID(atSlot slot: Int) -> UUID? {
+        tiles.first { $0.slotIndex == slot }?.surfaceID
     }
 
     /// The surfaces the grid is showing, in slot order.
@@ -142,7 +152,7 @@ final class TileGridView: NSView {
         // The sidebar's own tab-row type — dropping onto the GRID, which is
         // outside the outline view, so `validateDrop`'s refuse-everything rule
         // (the thing protecting the pinned-first invariant) is not involved.
-        registerForDraggedTypes([SidebarView.tabDragType])
+        registerForDraggedTypes([SidebarView.tabDragType, TileView.slotDragType])
         build()
     }
 
@@ -269,8 +279,33 @@ final class TileGridView: NSView {
         return tiles.firstIndex { $0.frame.contains(local) }
     }
 
+    /// The slot a tile's header drag is carrying, if this drag is one.
+    private func draggedSlot(_ sender: NSDraggingInfo) -> Int? {
+        sender.draggingPasteboard.string(forType: TileView.slotDragType).flatMap(Int.init)
+    }
+
+    /// The tile a dragged slot would trade places with — any tile but its
+    /// own, holes included, since dropping on a hole is how a pane is moved.
+    private func swapTarget(for source: Int, _ sender: NSDraggingInfo) -> TileView? {
+        guard let index = slotIndex(at: sender.draggingLocation),
+              tiles[index].slotIndex != source else { return nil }
+        return tiles[index]
+    }
+
+    private func setDropTarget(_ tile: TileView?) {
+        guard dropTargetTile !== tile else { return }
+        dropTargetTile?.setDropTarget(false)
+        tile?.setDropTarget(true)
+        dropTargetTile = tile
+    }
+
     override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
-        sender.draggingPasteboard.string(forType: SidebarView.tabDragType) != nil
+        if let source = draggedSlot(sender) {
+            let target = swapTarget(for: source, sender)
+            setDropTarget(target)
+            return target == nil ? [] : .move
+        }
+        return sender.draggingPasteboard.string(forType: SidebarView.tabDragType) != nil
             ? .copy : []
     }
 
@@ -278,7 +313,22 @@ final class TileGridView: NSView {
         draggingEntered(sender)
     }
 
+    override func draggingExited(_ sender: NSDraggingInfo?) {
+        setDropTarget(nil)
+    }
+
+    override func draggingEnded(_ sender: NSDraggingInfo) {
+        setDropTarget(nil)
+    }
+
     override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
+        if let source = draggedSlot(sender) {
+            guard let target = swapTarget(for: source, sender)?.slotIndex else { return false }
+            // After the drop returns: the swap rebuilds every tile, and the
+            // dragged one is still this session's source.
+            DispatchQueue.main.async { [weak self] in self?.onSwapSlots?(source, target) }
+            return true
+        }
         guard let payload = sender.draggingPasteboard.string(forType: SidebarView.tabDragType)
         else { return false }
         let parts = payload.split(separator: ":")

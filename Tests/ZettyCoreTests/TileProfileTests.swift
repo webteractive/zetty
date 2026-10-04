@@ -118,3 +118,39 @@ private func profile(grid: TilesGrid = TilesGrid(columns: 2, rows: 2)) -> TilePr
     #expect(text.contains("root"))
     #expect(!text.contains("grid"))
 }
+
+@Test func swappingSlotsTradesTheirPanesAndLeavesTheLayoutAlone() {
+    var p = profile()
+    let a = slot("a"), b = slot("b")
+    p.attach(a, at: 0)
+    p.attach(b, at: 3)
+    let root = p.root
+    p.swapSlots(0, 3)
+    #expect(p.slots[0] == b)
+    #expect(p.slots[3] == a)
+    #expect(p.root == root)
+    #expect(p.slots.count == 4)
+}
+
+@Test func swappingWithAHoleMovesThePane() {
+    var p = profile()
+    let a = slot("a")
+    p.attach(a, at: 1)
+    p.swapSlots(1, 2)
+    #expect(p.slots[1] == nil)
+    #expect(p.slots[2] == a)
+    #expect(p.attachmentCount == 1)
+}
+
+@Test func swappingOutsideTheLayoutIsRefused() {
+    // A slot past `capacity` is not on screen, so there is no tile to drop on.
+    var p = profile()
+    let a = slot("a")
+    p.attach(a, at: 0)
+    p.attach(slot("offscreen"), at: 6)
+    let before = p
+    p.swapSlots(0, 6)
+    p.swapSlots(0, -1)
+    p.swapSlots(0, 0)
+    #expect(p == before)
+}

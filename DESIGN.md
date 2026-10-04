@@ -178,8 +178,8 @@ are authoritative.
   place** when only content changed — see the chrome-refresh rules in CLAUDE.md.
 - **Pane** — `bg1`, 8pt radius, **borderless**. Focus is shown by an accent
   status dot in the 24pt top gutter strip (dim `fg3` when unfocused), which
-  also carries click targets for scroll to bottom / split vertically / split
-  horizontally and, in a multi-pane tab, break-into-tab and close.
+  also carries click targets for open (the pane's directory, in an editor or
+  Finder) / split vertically / split horizontally and, in a multi-pane tab, break-into-tab and close.
   Right-clicking the strip opens the same actions as a menu. *(A pane header
   with name/subtitle and a `RUNNING` badge appeared in the original handoff and
   is still unbuilt.)*
@@ -189,14 +189,16 @@ are authoritative.
   the terminal and the hibernation placeholder.
 - **Status bar** (`bg0`, 30pt, mono) — tracks the focused pane: git branch
   (purple) with ahead/behind/changes, working directory, shell, and libghostty
-  version, plus pills for `Open ▾` (opens the focused pane's directory),
-  appearance and scheme switchers, an "Update available" pill when one is
+  version, plus pills for appearance and scheme switchers, an "Update available" pill when one is
   waiting, and mode chips — `PREFIX`, `COPY`, `ZOOM`, `BROADCAST` (yellow).
+  A focused Claude pane adds a plain context readout last in the left cluster
+  (`ctx 15%`, figure padded to a fixed width): `fg3` normally, yellow from 80%,
+  red from 95%. It is the first thing a compact bar drops.
   **Compact** (a narrow window): the ambient readouts — appearance, scheme,
   shell, libghostty, version — collapse into one `bg2` pill carrying the scheme
   (accent dot + name + chevron, the same anatomy as the location pill) that
-  opens the set as a menu above itself; `Open ▾` and the broadcast pill drop to
-  their glyphs, and `Open ▾` and the account pill fold away entirely. On the
+  opens the set as a menu above itself; the broadcast pill drops to its
+  glyph, and the account pill folds away entirely. On the
   left, the working directory and git fold into a single purple-texted `bg2`
   pill (`zetty ⏇ main ●`), which may vary in width — nothing clickable sits to
   its right. The result is **two pills**; anything else breaks back out only in

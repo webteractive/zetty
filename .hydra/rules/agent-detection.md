@@ -35,7 +35,10 @@ harness hooks *ping* Zetty:
    shared hook helper (`~/.zetty/hooks/zetty-hook.py`) and registers it in the
    harness config (toggle off to uninstall).
 2. On a lifecycle event the harness runs the helper, which appends
-   `{cwd, agent, event}` to `~/.zetty/agent-events.jsonl`.
+   `{cwd, agent, event}` to `~/.zetty/agent-events.jsonl` — plus `surface`,
+   `session`, and `config` (the harness's config-dir variable as the hook
+   process sees it; that last one drives the account chip, see
+   `agent-accounts.md`).
 3. `AgentEventWatcher` tails that file; `TerminalViewController` correlates each
    event to panes **by working directory** and drives the dots.
 

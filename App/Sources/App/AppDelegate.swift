@@ -77,6 +77,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
 
     /// Installs/removes agent hooks in each harness's config.
     private let hookInstaller = HookInstaller()
+    private let modInstaller = ModInstaller()
 
     /// `~/Library/Application Support/zetty/` (created on first use) — shared
     /// by the workspace and project-settings stores.
@@ -135,6 +136,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         // Load config and resolve the active scheme BEFORE the view controller
         // is created (it reads ZTheme.current in viewDidLoad).
         appConfig = configStore.load()
+        // Before any pane spawns, like ZETTY above: a pane's environment is
+        // captured once, when its shell starts.
+        modInstaller.applyEnvironment(enabled: appConfig.claudeMod)
         ZTheme.scheme = resolvedScheme()
         applyChromeFontFromConfig()             // chrome font before any view reads monoFont
         NSApp.appearance = appearanceOverride
@@ -304,6 +308,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             }
             // The bundled zsh integration writes $PWD here on every cd so the
             // status bar can show the focused pane's live working directory.
+            // A project's own plugin folders replace the process-wide value in
+            // this pane, so Zetty's mod has to be put back beside them.
+            if let own = env[ModInstall.pluginDirsVariable], self?.appConfig.claudeMod == true {
+                env[ModInstall.pluginDirsVariable] = ModInstall.pluginDirs(
+                    existing: own,
+                    modPath: ModInstall.installedPath(home: NSHomeDirectory()),
+                    enabled: true)
+            }
             env["ZETTY_CWD_FILE"] = PaneCwdStore.path(for: surface.id)
             // The hook helper reports this back so an event routes to exactly
             // this pane rather than to every pane sharing its cwd.
@@ -784,6 +796,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     /// the theme + terminal overrides to every live pane — no relaunch needed.
     @objc func reloadConfiguration(_ sender: Any?) {
         appConfig = configStore.load()
+        modInstaller.applyEnvironment(enabled: appConfig.claudeMod)   // new panes only
         // A menu action, so this always runs on main — but the delegate itself
         // is nonisolated, hence the explicit assumption rather than an await.
         MainActor.assumeIsolated { EditorCatalog.invalidate() }  // pick up an editor installed since launch
@@ -1688,8 +1701,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         var harnessAccounts: [UUID: [AgentKind: String]] = [:]
         for id in owners {
             for kind in Set([probedAgents[id], states[id]?.kind].compactMap { $0 }) {
-                let account = tvc.harnessAccount(for: id, kind: kind)
-                if !account.isDefault { harnessAccounts[id, default: [:]][kind] = account.accountID }
+                // The default login is recorded too: in a pane spawned on an
+                // account it is a difference the resume has to carry.
+                harnessAccounts[id, default: [:]][kind] =
+                    tvc.harnessAccount(for: id, kind: kind).accountID
             }
         }
         let zmx = ZmxRunner.locate()
@@ -2131,13 +2146,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             guard let agent = entry.agent, let id = entry.agentSession, let cwd = entry.agentCwd
             else { continue }
             // The pane respawns carrying the account it was SPAWNED with; an
-            // agent that ran under `zetty run` is pinned back to that login.
-            let pinned = RestartRecovery.pinnedAccount(
+            // agent that ran under another login is pinned back to that one.
+            let pinned = RestartRecovery.pinnedLogin(
                 for: entry,
                 spawnedAccountID: tvc.workspace.surface(with: entry.surface)?.accountID,
                 accounts: agentAccounts.accounts, home: NSHomeDirectory())
             guard let command = RestartRecovery.resumeCommand(
-                agent: agent, sessionID: id, cwd: cwd, environment: pinned?.env ?? [:])
+                agent: agent, sessionID: id, cwd: cwd,
+                environment: pinned?.login.environment ?? [:],
+                unsetting: pinned?.login.unsetting ?? [])
             else { continue }
             resumes[entry.surface] = command
             if let pinned {

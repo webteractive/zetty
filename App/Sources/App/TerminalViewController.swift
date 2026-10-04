@@ -120,6 +120,10 @@ final class TerminalViewController: NSViewController {
     private let agentDetector = AgentDetector()
     /// Watches the hook event sink (`~/.zetty/agent-events.jsonl`).
     private var agentEventWatcher: AgentEventWatcher?
+    /// What Zetty's Claude Code mod reports per pane (context fill, cost, rate
+    /// limits) — things the hooks above cannot see.
+    private var agentUsage = AgentUsageStore()
+    private var agentUsageWatcher: AgentUsageWatcher?
 
     /// Foreground command per preserved pane, from the zmx/ps probe. This is
     /// the identity used for tab logos/names; hook events only drive the
@@ -179,7 +183,10 @@ final class TerminalViewController: NSViewController {
     private struct ChromeRefreshNeeds {
         var tabBar = false
         var sidebar = false
-        var isEmpty: Bool { !tabBar && !sidebar }
+        /// The status bar alone. A tab-bar refresh reaches it too, but returns
+        /// early in tile mode and re-evaluates every pill on the way.
+        var statusBar = false
+        var isEmpty: Bool { !tabBar && !sidebar && !statusBar }
     }
 
     private var chromeNeeds = ChromeRefreshNeeds()
@@ -197,9 +204,10 @@ final class TerminalViewController: NSViewController {
     /// foreground-process probe, agent hook events) must come through here.
     /// User-driven changes still call `refreshTabBar()`/`refreshSidebar()`
     /// directly so the UI reacts to input in the same run-loop turn.
-    func setNeedsChromeRefresh(tabBar: Bool = false, sidebar: Bool = false) {
+    func setNeedsChromeRefresh(tabBar: Bool = false, sidebar: Bool = false, statusBar: Bool = false) {
         if tabBar { chromeNeeds.tabBar = true }
         if sidebar { chromeNeeds.sidebar = true }
+        if statusBar { chromeNeeds.statusBar = true }
         guard !chromeNeeds.isEmpty, !chromeRefreshScheduled else { return }
         chromeRefreshScheduled = true
         DispatchQueue.main.asyncAfter(deadline: .now() + Self.chromeRefreshInterval) { [weak self] in
@@ -210,6 +218,7 @@ final class TerminalViewController: NSViewController {
             // refreshTabBar refreshes the status bar too, so don't double up.
             if needs.tabBar { self.refreshTabBar() }
             if needs.sidebar { self.refreshSidebar() }
+            if needs.statusBar, !needs.tabBar || self.tileMode { self.refreshStatusBar() }
             // Agent presence decides the gutter's refresh button, and it
             // changes between rebuilds. One boolean per visible pane, never a
             // rebuild — tree updates stay inside the pane's own view.
@@ -616,6 +625,7 @@ final class TerminalViewController: NSViewController {
         }
 
         startAgentEventWatcher()
+        startAgentUsageWatcher()
         startForegroundPolling()
         startGitRefreshPolling()
         startSessionReconcileTimer()
@@ -694,16 +704,25 @@ final class TerminalViewController: NSViewController {
                 // agent, so the `zetty run` it was launched by has ended.
                 for (id, command) in commands {
                     // A restart quits the agent on purpose and brings it back
-                    // under the same login (see `resumeEnvironment`), so the
+                    // under the same login (see `resumeLogin`), so the
                     // gap is not the `zetty run` ending.
                     guard self.agentRestartTimers[id] == nil,
                           let surface = self.workspace.surface(with: id),
-                          let running = surface.runningAccountID,
-                          let account = self.accountsProvider?()
-                              .first(where: { $0.id == running }),
-                          let agent = SpawnableAgent.byID(account.agentID)
+                          let running = surface.runningAccountID
                     else { continue }
-                    if command == agent.defaultCommand {
+                    // A hook can report the DEFAULT login, which belongs to no
+                    // one harness — it lasts while any of them holds the pane.
+                    let harnesses: [String]
+                    if running == AgentAccountSupport.defaultID {
+                        harnesses = SpawnableAgent.accountCapable.map(\.defaultCommand)
+                    } else if let account = self.accountsProvider?()
+                                .first(where: { $0.id == running }),
+                              let agent = SpawnableAgent.byID(account.agentID) {
+                        harnesses = [agent.defaultCommand]
+                    } else {
+                        continue
+                    }
+                    if harnesses.contains(command) {
                         self.runningAccountHolds.removeValue(forKey: id)
                         continue
                     }
@@ -1226,8 +1245,6 @@ final class TerminalViewController: NSViewController {
         let statusBar = StatusBarView()
         statusBar.onSelectAppearance = { [weak self] mode in self?.onSetAppearance?(mode) }
         statusBar.onSelectScheme = { [weak self] scheme in self?.onSelectScheme?(scheme) }
-        statusBar.onShowEditorMenu = { [weak self] anchor in self?.showEditorMenu(from: anchor) }
-        statusBar.onBuildEditorMenu = { [weak self] in self?.editorMenu() ?? NSMenu() }
         statusBar.onSessionsClicked = { [weak self] in self?.onShowTaskManager?() }
         statusBar.onUpdateClicked = { [weak self] in self?.onUpdatePillClicked?() }
         statusBar.onBroadcastClicked = { [weak self] in self?.cycleBroadcast() }
@@ -1269,6 +1286,7 @@ final class TerminalViewController: NSViewController {
         )
         statusBar.setZoomed(paneTree.zoomedSurfaceID != nil)
         statusBar.setBroadcasting(broadcastScope)
+        statusBar.setContext(contextMeter(for: focused))
         // Tile mode hides the bar's account and git — each tile carries its
         // own — so neither is worth a resolve or a `git` process here. This
         // same coalesced cadence feeds the tile footers instead.
@@ -1566,6 +1584,37 @@ final class TerminalViewController: NSViewController {
         replayAgentEvents(from: url)
     }
 
+    private func startAgentUsageWatcher() {
+        let watcher = AgentUsageWatcher(
+            knownSurfaces: { [weak self] in Set(self?.allSurfaceIDs ?? []) },
+            onUsage: { [weak self] usages in
+                guard let self else { return }
+                // `session.measure` fires several times a turn. Only a change a
+                // view shows is worth a refresh, and it goes through the
+                // coalescer like every other machine-driven one.
+                var changed = false
+                for usage in usages where self.agentUsage.apply(usage) { changed = true }
+                if changed { self.setNeedsChromeRefresh(statusBar: true) }
+            },
+            onRemoved: { [weak self] surfaces in
+                guard let self else { return }
+                var changed = false
+                for surface in surfaces where self.agentUsage.remove(surface) { changed = true }
+                if changed { self.setNeedsChromeRefresh(statusBar: true) }
+            })
+        watcher.start()
+        agentUsageWatcher = watcher
+    }
+
+    /// The status bar's context readout for a pane, or nil when it has none
+    /// worth showing — no snapshot, a session that ended, or a pane whose
+    /// foreground is no longer Claude.
+    private func contextMeter(for surface: Surface?) -> ContextMeter? {
+        guard let surface, let usage = agentUsage.usage(for: surface.id),
+              usage.isShown(foreground: foregroundBySurface[surface.id]) else { return nil }
+        return ContextMeter(usage: usage)
+    }
+
     /// Trims the hook-event log to a bounded tail, synchronously and BEFORE the
     /// watcher seeds its read offset — rotating under a live tail would leave
     /// that offset past the new end of file.
@@ -1841,32 +1890,32 @@ final class TerminalViewController: NSViewController {
     /// workspace hooks alone covered 2 panes in 11, which would leave this
     /// button absent from most of the panes that want it.
     ///
-    /// The line carries the pane's ACCOUNT: see `resumeEnvironment`.
+    /// The line carries the pane's ACCOUNT: see `resumeLogin`.
     func agentResumeCommand(for surfaceID: UUID) -> String? {
         // The probe outranks the stored kind: a pane can carry a stale kind
         // from the era when hook events matched by directory, which is what
         // once produced `codex resume <claude id>`.
         guard let kind = probedResumableKind(for: surfaceID) else { return nil }
-        let environment = resumeEnvironment(for: surfaceID, kind: kind)
+        let login = resumeLogin(for: surfaceID, kind: kind)
 
-        // Only a hook session of the PROBED kind: `environment` is that
+        // Only a hook session of the PROBED kind: `login` is that
         // harness's login, and a stale kind would get the other one's.
         let state = agentDetector.state(for: surfaceID)
         if state.kind == kind,
-           let command = AgentResume.command(for: state, environment: environment) {
+           let command = AgentResume.command(for: state, login: login) {
             return command
         }
         if let cached = lookedUpResumeSessions[surfaceID], cached.kind == kind {
             return AgentResume.command(
                 for: AgentState(kind: kind, status: nil, session: cached.session),
-                environment: environment)
+                login: login)
         }
 
         guard let target = sessionLookupTarget(for: surfaceID, kind: kind),
               let found = AgentSessionLookup.fallbackSessions(for: [target], claimed: [])[surfaceID]
         else { return nil }
         return AgentResume.command(for: AgentState(kind: kind, status: nil, session: found),
-                                   environment: environment)
+                                   login: login)
     }
 
     /// The login `kind` is running under in this pane.
@@ -1880,20 +1929,22 @@ final class TerminalViewController: NSViewController {
             home: NSHomeDirectory())
     }
 
-    /// Environment the resume must carry so the agent comes back under the
-    /// login it was running as.
+    /// What the resume must change so the agent comes back under the login it
+    /// was running as.
     ///
-    /// Only a `zetty run` override needs it: the pane's shell still holds the
-    /// SPAWN account's env, so a bare `claude --resume` there would reopen the
-    /// conversation under the wrong login. When the running login is the spawn
-    /// one the shell already has it, and adding nothing also leaves a
-    /// hand-typed project env var alone.
-    private func resumeEnvironment(for surfaceID: UUID, kind: AgentKind) -> [String: String] {
-        let account = harnessAccount(for: surfaceID, kind: kind)
-        guard !account.isDefault,
-              account.accountID == workspace.surface(with: surfaceID)?.runningAccountID
-        else { return [:] }
-        return account.env
+    /// Only a running login that differs from the spawn one needs anything:
+    /// the pane's shell still holds the SPAWN account's env, so a bare
+    /// `claude --resume` there would reopen the conversation under the wrong
+    /// login — an account's variable is assigned, and the default login in a
+    /// pane spawned on an account has that variable removed.
+    private func resumeLogin(for surfaceID: UUID, kind: AgentKind) -> ResumeLogin {
+        guard let surface = workspace.surface(with: surfaceID) else { return .inherited }
+        return AgentAccountResolver.resumeLogin(
+            agentID: kind.rawValue,
+            runningAccountID: surface.runningAccountID,
+            spawnedAccountID: surface.accountID,
+            accounts: accountsProvider?() ?? [],
+            home: NSHomeDirectory())
     }
 
     /// What `AgentSessionLookup` needs for this pane, in the store of the login
@@ -2411,6 +2462,9 @@ final class TerminalViewController: NSViewController {
                    .flatMap({ $0.layout.surfaces })
                    .first(where: { $0.id == surfaceID }) {
                 apply(event, to: surface, in: project)
+                // Live events only: the startup replay describes sessions that
+                // may be long gone, and the override it would set is persisted.
+                if notify { applyReportedAccount(from: event, to: surface) }
                 continue
             }
             // Fallback: an older helper, or a pane Zetty no longer has — every
@@ -2435,6 +2489,40 @@ final class TerminalViewController: NSViewController {
                 acknowledgeAttention(for: focused)
             }
         }
+    }
+
+    /// Makes the pane's account follow the login its harness REPORTS, which is
+    /// the only account of what is really running: `zetty run` reports just the
+    /// launches that went through it, so a harness started by hand, or a plain
+    /// one started straight after an account's, used to keep the wrong name.
+    ///
+    /// Only an exactly-routed event reaches here — a cwd match can name several
+    /// panes, and a login belongs to one.
+    private func applyReportedAccount(from event: AgentEvent, to surface: Surface) {
+        let accounts = accountsProvider?() ?? []
+        let next: String?
+        if event.event == .ended {
+            // The harness has gone, so the shell is back on the spawn login. A
+            // restart quits it on purpose and brings it back under the same
+            // one, and an override another harness set is not this one's to
+            // clear.
+            guard agentRestartTimers[surface.id] == nil,
+                  let running = surface.runningAccountID,
+                  running == AgentAccountSupport.defaultID
+                    || accounts.first(where: { $0.id == running })?.agentID == event.agent.rawValue
+            else { return }
+            next = nil
+        } else {
+            guard let directory = event.configDirectory,
+                  let reported = AgentAccountResolver.accountID(
+                      forReportedConfigDirectory: directory, agentID: event.agent.rawValue,
+                      accounts: accounts, home: NSHomeDirectory())
+            else { return }
+            next = AgentAccountResolver.runningOverride(reported: reported,
+                                                        spawned: surface.accountID)
+        }
+        guard next != surface.runningAccountID else { return }
+        updateSurfaceAnywhere(surface.id) { $0.runningAccountID = next }
     }
 
     /// Recomputes the UNREAD attention count and fires the callback — always,
@@ -4329,14 +4417,10 @@ final class TerminalViewController: NSViewController {
         return nil
     }
 
-    // MARK: - Open in editor (status bar)
+    // MARK: - Open in editor (per pane)
 
-    private func focusedDirectoryURL() -> URL {
-        directoryURL(for: paneTree.focusedSurface?.id)
-    }
-
-    /// One pane's working directory. Tile mode needs this per tile, and the
-    /// distinction is the whole point: a tile's button must open ITS pane, not
+    /// One pane's working directory. Every Open button is per pane, and the
+    /// distinction is the whole point: a button must open ITS pane, not
     /// whichever pane happens to hold focus.
     private func directoryURL(for surfaceID: UUID?) -> URL {
         let surface = surfaceID.flatMap { workspace.surface(with: $0) }
@@ -4346,15 +4430,9 @@ final class TerminalViewController: NSViewController {
         return URL(fileURLWithPath: path, isDirectory: true)
     }
 
-    /// The "Open" picker: installed editors + Reveal in Finder. Nothing
-    /// happens until an item is selected.
-    private func showEditorMenu(from anchor: NSView) {
-        // Anchor above the pill (the status bar sits at the window bottom).
-        editorMenu().popUp(positioning: nil, at: NSPoint(x: 0, y: -6), in: anchor)
-    }
-
-    /// A tile's own Open button. Drops DOWN from the button, which sits in the
-    /// tile's header rather than at the window's bottom edge.
+    /// The "Open" picker for one pane: installed editors + Reveal in Finder.
+    /// Nothing happens until an item is selected. Drops DOWN from the button,
+    /// which sits in the pane's gutter or the tile's header.
     func showEditorMenu(from anchor: NSView, forSurface surfaceID: UUID) {
         editorMenu(for: directoryURL(for: surfaceID))
             .popUp(positioning: nil, at: NSPoint(x: 0, y: anchor.bounds.height + 4), in: anchor)
@@ -4368,10 +4446,6 @@ final class TerminalViewController: NSViewController {
         let app: URL?
         let directory: URL
     }
-
-    /// The picker as a detached menu. The compact status bar hangs this off its
-    /// `⋯` menu as a submenu, so built separately from showing it.
-    private func editorMenu() -> NSMenu { editorMenu(for: focusedDirectoryURL()) }
 
     private func editorMenu(for directory: URL) -> NSMenu {
         // This is built on EVERY click, so it logs what it cost. The editor
@@ -5443,7 +5517,8 @@ final class TerminalViewController: NSViewController {
         guard tileMode != on else { return }
         tileMode = on
         defer { tileManagerView?.reload() }
-        // `Open ▾` folds away while the grid is up; each tile carries its own.
+        // The location cluster leaves the bar while the grid is up; each tile
+        // carries its own footer.
         statusBarView?.isTileMode = on
         // The bar stopped probing while the grid was up, so its git state is
         // as old as the grid session. Forget the directory so the refresh on
@@ -5622,6 +5697,16 @@ final class TerminalViewController: NSViewController {
             if filled { $0.detach(at: index) } else { $0.close(at: index) }
         }
         tileFocusedSurfaceID = tileFocusableIDs.first
+    }
+
+    /// A tile's header dropped on another tile: the two trade places, and the
+    /// layout keeps its shape. Focus follows the pane that was dragged, since
+    /// that is the one in hand.
+    func swapTileSlots(_ source: Int, _ target: Int) {
+        guard tileMode else { return }
+        let moved = tileGridView?.surfaceID(atSlot: source)
+        mutateActiveTileProfile { $0.swapSlots(source, target) }
+        if let moved { focusTile(moved) }
     }
 
     /// The header's Remove Split: detach the pane (it keeps running) and
@@ -7440,6 +7525,9 @@ final class TerminalViewController: NSViewController {
                 self?.presentAddProjectPanelForTile(slot: index)
             }
             grid.onAccountClicked = { [weak self] _ in self?.onOpenAccountSettings?() }
+            grid.onSwapSlots = { [weak self] source, target in
+                self?.swapTileSlots(source, target)
+            }
             grid.onDropSidebarTab = { [weak self] projectIndex, tabIndex, slot in
                 self?.attachSidebarTabToTile(projectIndex: projectIndex,
                                              tabIndex: tabIndex, slot: slot) ?? false
@@ -7494,7 +7582,10 @@ final class TerminalViewController: NSViewController {
                     self?.addSurfaceToTileView(surfaceID, profileID: profileID)
                 },
                 canRefreshAgent: { [weak self] id in self?.canRefreshAgent(surfaceID: id) ?? false },
-                onRefreshAgent: { [weak self] id in self?.refreshAgentPane(surfaceID: id) }
+                onRefreshAgent: { [weak self] id in self?.refreshAgentPane(surfaceID: id) },
+                onOpen: { [weak self] id, anchor in
+                    self?.showEditorMenu(from: anchor, forSurface: id)
+                }
             ),
             onRatioChange: { [weak self] path, ratio in
                 // Write the dragged divider position back to the model (no

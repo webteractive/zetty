@@ -101,21 +101,37 @@ private func accountEntry(_ account: String?) -> RestartRecovery.Entry {
 }
 
 @Test func aZettyRunAccountIsPinnedBackOntoTheResume() {
-    let pinned = RestartRecovery.pinnedAccount(
+    let pinned = RestartRecovery.pinnedLogin(
         for: accountEntry("work"), spawnedAccountID: nil, accounts: [workClaude], home: "/Users/g")
     #expect(pinned?.accountID == "work")
     #expect(RestartRecovery.resumeCommand(agent: .claude, sessionID: "8d1e", cwd: "/p",
-                                          environment: pinned?.env ?? [:])
+                                          environment: pinned?.login.environment ?? [:])
             == "cd '/p' && CLAUDE_CONFIG_DIR='/Users/g/.zetty/accounts/work' claude --resume '8d1e'")
 }
 
 @Test func theSpawnAccountOrAGoneAccountPinsNothing() {
     // The respawned shell already carries its spawn account.
-    #expect(RestartRecovery.pinnedAccount(
+    #expect(RestartRecovery.pinnedLogin(
         for: accountEntry("work"), spawnedAccountID: "work", accounts: [workClaude], home: "/h") == nil)
     // Removed since the power-off: fall through rather than strand the resume.
-    #expect(RestartRecovery.pinnedAccount(
+    #expect(RestartRecovery.pinnedLogin(
         for: accountEntry("work"), spawnedAccountID: nil, accounts: [], home: "/h") == nil)
-    #expect(RestartRecovery.pinnedAccount(
+    #expect(RestartRecovery.pinnedLogin(
         for: accountEntry(nil), spawnedAccountID: "work", accounts: [workClaude], home: "/h") == nil)
+    // The default login in a pane that was never on an account.
+    #expect(RestartRecovery.pinnedLogin(
+        for: accountEntry(AgentAccountSupport.defaultID), spawnedAccountID: nil,
+        accounts: [workClaude], home: "/h") == nil)
+}
+
+@Test func theDefaultLoginIsPinnedBackInAPaneSpawnedOnAnAccount() {
+    // The respawned shell carries the account, so the resume has to drop it.
+    let pinned = RestartRecovery.pinnedLogin(
+        for: accountEntry(AgentAccountSupport.defaultID), spawnedAccountID: "work",
+        accounts: [workClaude], home: "/Users/g")
+    #expect(pinned?.accountID == AgentAccountSupport.defaultID)
+    #expect(RestartRecovery.resumeCommand(agent: .claude, sessionID: "8d1e", cwd: "/p",
+                                          environment: pinned?.login.environment ?? [:],
+                                          unsetting: pinned?.login.unsetting ?? [])
+            == "cd '/p' && env -u CLAUDE_CONFIG_DIR claude --resume '8d1e'")
 }

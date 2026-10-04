@@ -32,7 +32,7 @@ public enum RestartRecovery {
         public let agentCwd: String?
         /// The account the harness was RUNNING under, when not the default
         /// login — which, after `zetty run`, is not the account the pane was
-        /// spawned with. See `pinnedAccount(for:spawnedAccountID:accounts:home:)`.
+        /// spawned with. See `pinnedLogin(for:spawnedAccountID:accounts:home:)`.
         public let agentAccount: String?
 
         public init(surface: UUID, snapshot: String?, agent: AgentKind?,
@@ -141,22 +141,29 @@ public enum RestartRecovery {
         }
     }
 
+    /// The login a recovered resume is pinned to: the account to show for the
+    /// pane, and what the resume line must change to get there.
+    public struct PinnedLogin: Equatable, Sendable {
+        public let accountID: String
+        public let login: ResumeLogin
+    }
+
     /// The login a recovered resume must be pinned to, or nil when the pane's
     /// own spawn env already is that login.
     ///
     /// A recovered pane spawns a fresh shell carrying the account it was
-    /// SPAWNED with, so an agent that was running under a `zetty run` override
-    /// would otherwise come back under the spawn login, and look for its
-    /// conversation in the wrong config dir. An account removed since the
+    /// SPAWNED with, so an agent that was running under another login — an
+    /// account from `zetty run`, or the default one in a pane spawned on an
+    /// account — would otherwise come back under the spawn login, and look for
+    /// its conversation in the wrong config dir. An account removed since the
     /// power-off falls through to nil, never strands the resume.
-    public static func pinnedAccount(for entry: Entry, spawnedAccountID: String?,
-                                     accounts: [AgentAccount], home: String) -> AccountResolution? {
-        guard let agent = entry.agent, let running = entry.agentAccount,
-              running != spawnedAccountID else { return nil }
-        let account = AgentAccountResolver.harnessAccount(
-            agentID: agent.rawValue, runningAccountID: running, spawnedAccountID: nil,
-            accounts: accounts, home: home)
-        return account.isDefault ? nil : account
+    public static func pinnedLogin(for entry: Entry, spawnedAccountID: String?,
+                                   accounts: [AgentAccount], home: String) -> PinnedLogin? {
+        guard let agent = entry.agent, let running = entry.agentAccount else { return nil }
+        let login = AgentAccountResolver.resumeLogin(
+            agentID: agent.rawValue, runningAccountID: running,
+            spawnedAccountID: spawnedAccountID, accounts: accounts, home: home)
+        return login == .inherited ? nil : PinnedLogin(accountID: running, login: login)
     }
 
     /// The line typed into a recovered pane to pick the harness session back
@@ -169,10 +176,16 @@ public enum RestartRecovery {
     ///
     /// `environment` is prefixed onto the harness alone (`KEY='v' claude …`),
     /// for a harness the pane's shell would otherwise start under the wrong
-    /// login — see `AgentAccountResolver.harnessAccount`. A pair that is not a
+    /// login — see `AgentAccountResolver.resumeLogin`. A pair that is not a
     /// plain shell name and a safe value is dropped rather than typed.
+    ///
+    /// `unsetting` removes variables for the harness alone (`env -u KEY claude
+    /// …`): the default login is the variable being ABSENT, and an empty
+    /// assignment is not that — Codex refuses a `CODEX_HOME` naming no
+    /// directory. `env` is what makes it one line in any shell.
     public static func resumeCommand(agent: AgentKind, sessionID: String, cwd: String,
-                                     environment: [String: String] = [:]) -> String? {
+                                     environment: [String: String] = [:],
+                                     unsetting: [String] = []) -> String? {
         guard AgentEvent.isValidSessionID(sessionID) else { return nil }
         let quotedID = ShellQuote.singleQuoted(sessionID)
         let resume: String
@@ -186,7 +199,9 @@ public enum RestartRecovery {
             .sorted { $0.key < $1.key }
             .map { "\($0.key)=\(ShellQuote.singleQuoted($0.value)) " }
             .joined()
-        return "cd \(ShellQuote.singleQuoted(cwd)) && \(assignments)\(resume)"
+        let removals = Set(unsetting).filter(isShellName).sorted().map { "-u \($0) " }.joined()
+        let unset = removals.isEmpty ? "" : "env \(removals)"
+        return "cd \(ShellQuote.singleQuoted(cwd)) && \(assignments)\(unset)\(resume)"
     }
 
     /// A name a POSIX shell accepts on the left of a prefix assignment.

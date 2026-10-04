@@ -6,6 +6,11 @@ import Foundation
 /// `ZETTY_SURFACE` or the `ZETTY_CWD_FILE` stem) and `session` (the harness's
 /// own session id — Claude `session_id`, Codex `thread-id`), which is what
 /// restart recovery resumes and what routes an event to one exact pane.
+/// For a harness that hosts accounts it also emits `config`: the value of that
+/// harness's config-dir variable as THIS process sees it ("" when unset, which
+/// is the default login). That is the only report of the login actually in
+/// use — it is right however the harness was started, where `zetty run`'s own
+/// report covers only launches that went through it.
 ///
 /// Written in Python (reliably present; Claude/Hermes/Codex all run in
 /// Python-capable environments) so it can robustly read `cwd` from the harness's
@@ -17,15 +22,27 @@ import Foundation
 public enum AgentHookScript {
     public static let fileName = "zetty-hook.py"
 
+    /// `{"claude": "CLAUDE_CONFIG_DIR", …}` as a Python literal, from the agent
+    /// catalog — the one place a harness's variable name is recorded.
+    static var configVariablesLiteral: String {
+        let pairs = SpawnableAgent.accountCapable.compactMap { agent in
+            agent.configDirEnvVar.map { "\"\(agent.id)\": \"\($0)\"" }
+        }
+        return "{" + pairs.joined(separator: ", ") + "}"
+    }
+
     public static let contents = ##"""
     #!/usr/bin/env python3
-    # Zetty agent hook — appends {cwd, agent, event, surface?, session?} to the
+    # Zetty agent hook — appends {cwd, agent, event, surface?, session?, config?} to the
     # event sink. Only reports sessions hosted INSIDE Zetty: Zetty sets ZETTY=1
     # in its panes' environment, so hooks fired from other terminals stay silent.
     import sys, os, json
 
     SINK = os.path.expanduser("~/.zetty/agent-events.jsonl")
     IN_ZETTY = bool(os.environ.get("ZETTY"))
+    # The variable that selects each harness's login. Its value HERE is the
+    # login this harness is really running under, however it was launched.
+    CONFIG_VARS = \##(configVariablesLiteral)
 
     def surface_id():
         # ZETTY_SURFACE is injected per pane; ZETTY_CWD_FILE (<panes>/<uuid>.cwd)
@@ -49,6 +66,10 @@ public enum AgentHookScript {
             record["surface"] = surface
         if session:
             record["session"] = str(session)
+        config_var = CONFIG_VARS.get(agent)
+        if config_var:
+            # "" is a real answer: the variable is unset, so the default login.
+            record["config"] = os.environ.get(config_var, "")
         os.makedirs(os.path.dirname(SINK), exist_ok=True)
         with open(SINK, "a") as f:
             f.write(json.dumps(record) + "\n")

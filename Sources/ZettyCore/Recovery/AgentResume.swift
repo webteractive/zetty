@@ -16,13 +16,14 @@ public enum AgentResume {
     /// yet, or an id that fails validation. Callers show the control exactly
     /// when this is non-nil, so an offered action can never fail to build.
     ///
-    /// `environment` pins the login the harness comes back under; see
+    /// `login` pins the login the harness comes back under; see
     /// `RestartRecovery.resumeCommand`.
     public static func command(for state: AgentState,
-                               environment: [String: String] = [:]) -> String? {
+                               login: ResumeLogin = .inherited) -> String? {
         guard let kind = state.kind, let session = state.session else { return nil }
         return RestartRecovery.resumeCommand(agent: kind, sessionID: session.id,
-                                             cwd: session.cwd, environment: environment)
+                                             cwd: session.cwd, environment: login.environment,
+                                             unsetting: login.unsetting)
     }
 
     /// What to type to make this harness quit cleanly, or nil when it has no

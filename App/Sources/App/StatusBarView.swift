@@ -18,12 +18,6 @@ final class StatusBarView: NSView {
     var onSelectAppearance: ((AppearanceMode) -> Void)?
     /// Selects a color scheme (within the current axis) from the status-bar menu.
     var onSelectScheme: ((ZColorScheme) -> Void)?
-    /// Shows the "Open in…" picker (editors + Finder); opening happens only
-    /// when an item is selected. The anchor view positions the menu.
-    var onShowEditorMenu: ((NSView) -> Void)?
-    /// The same picker as a detached menu, so the compact bar can hang it off
-    /// the `⋯` menu as a submenu rather than popping a second menu.
-    var onBuildEditorMenu: (() -> NSMenu)?
 
     private let topBorder = NSView()
 
@@ -39,6 +33,12 @@ final class StatusBarView: NSView {
     /// anchored to the leading edge with nothing clickable to its right, so it
     /// may vary freely.
     private let tilesChip = NSTextField(labelWithString: "")
+    /// The focused Claude pane's context-window fill, from Zetty's mod. LAST in
+    /// the left cluster, for the reason above: it changes while an agent works.
+    /// `ContextMeter.label` pads the figure, so in the bar's mono font even the
+    /// label's own width holds still.
+    private let contextLabel = NSTextField(labelWithString: "")
+    private var shownContext: ContextMeter?
     private let broadcastPill = NSView()
     private let broadcastButton = NSButton()
 
@@ -98,8 +98,7 @@ final class StatusBarView: NSView {
     private var cachedGitWidth: CGFloat = 0
     private var renderedLocationChipToken: String?
 
-    // Right: "Open ▾" pill · appearance · scheme · shell · zetty build · libghostty.
-    private let editorPill = NSView()
+    // Right: appearance · scheme · shell · zetty build · libghostty.
     /// Version pill (bottom-right): shows the build version as a button; click
     /// checks for updates. Switches to an accent "↑ Update X" state when a newer
     /// release is known.
@@ -115,7 +114,6 @@ final class StatusBarView: NSView {
     private var cliStatus: CLIStatus = .current
     var onCLIReinstallClicked: (() -> Void)?
 
-    private let editorButton = NSButton()
     private let appearanceButton = NSButton()
     private let sep0 = NSTextField(labelWithString: "·")
     private let schemeDot = NSView()
@@ -143,9 +141,9 @@ final class StatusBarView: NSView {
     /// It shows the scheme rather than rotating through the stats, and the
     /// distinction matters. `pillStack` hugs its content, so anything that
     /// changes width in here resizes the stack and drags its neighbours
-    /// sideways — an earlier version rotated every 4s and moved `Open ▾` out
-    /// from under the pointer mid-click. A scheme name changes only when
-    /// someone changes the scheme, and by then `Open ▾` and the account have
+    /// sideways — an earlier version rotated every 4s and moved its neighbours
+    /// out from under the pointer mid-click. A scheme name changes only when
+    /// someone changes the scheme, and by then the account has
     /// folded away, so in the ordinary compact bar this pill is the only thing
     /// in the stack and nothing can shift. Do not reintroduce anything that
     /// changes width on a timer.
@@ -165,14 +163,12 @@ final class StatusBarView: NSView {
     /// `layout()`, through `StatusBarCompaction`'s hysteresis.
     private var isCompact = false
 
-    /// While the grid is up `Open \u{25be}` folds away and each tile carries its
-    /// own button instead. One bar-wide Open across a grid of panes cannot say
-    /// WHICH directory it means, and the status bar follows whichever tile has
-    /// focus — so the answer changes under you as you move around.
+    /// While the grid is up the location cluster leaves the bar: each tile
+    /// carries its own footer, and the status bar follows whichever tile has
+    /// focus — so one bar-wide answer changes under you as you move around.
     var isTileMode = false {
         didSet {
             guard isTileMode != oldValue else { return }
-            updateEditorVisibility()
             updateLocationVisibility()
         }
     }
@@ -205,6 +201,7 @@ final class StatusBarView: NSView {
     /// Cached by the chip's rendered text plus its mode, so the 4s rotation
     /// repaints but an unchanged refresh tick does not.
     private var renderedChipToken: String?
+    private var renderedContext: ContextMeter?
 
     /// Drops every cached render token so the next call actually re-renders.
     private func invalidateRenderCaches() {
@@ -219,11 +216,12 @@ final class StatusBarView: NSView {
         renderedChipToken = nil
         renderedLocationChipToken = nil
         renderedSessionsToken = nil
+        renderedContext = nil
     }
 
     private var plainLabels: [NSTextField] {
         [branchLabel, aheadLabel, behindLabel, changesLabel,
-         cwdLabel, sep0, sep1, shellLabel, sep2, sep3, ghosttyLabel]
+         cwdLabel, sep0, sep1, shellLabel, sep2, sep3, ghosttyLabel, contextLabel]
     }
 
     override init(frame frameRect: NSRect) {
@@ -260,27 +258,6 @@ final class StatusBarView: NSView {
         appearanceButton.imagePosition = .imageLeading
         appearanceButton.imageHugsTitle = true
         configureSwitch(schemeButton, action: #selector(schemeClicked))
-        // "Open ▾" — a bordered pill (bg2 surface) so it reads as a button,
-        // not another status field. Clicking shows the Open-in picker; the
-        // action happens only on selection.
-        configureSwitch(editorButton, action: #selector(editorClicked))
-        editorButton.imagePosition = .imageTrailing
-        editorButton.imageHugsTitle = true
-        if #available(macOS 11.0, *) {
-            editorButton.image = NSImage(systemSymbolName: "chevron.down", accessibilityDescription: "Open in…")?
-                .withSymbolConfiguration(NSImage.SymbolConfiguration(pointSize: 8, weight: .semibold))
-        }
-        editorPill.wantsLayer = true
-        editorPill.layer?.cornerRadius = 10
-        editorPill.layer?.borderWidth = 1
-        editorPill.translatesAutoresizingMaskIntoConstraints = false
-        editorPill.addSubview(editorButton)
-        NSLayoutConstraint.activate([
-            editorPill.heightAnchor.constraint(equalToConstant: 20),
-            editorButton.leadingAnchor.constraint(equalTo: editorPill.leadingAnchor, constant: 9),
-            editorButton.trailingAnchor.constraint(equalTo: editorPill.trailingAnchor, constant: -8),
-            editorButton.centerYAnchor.constraint(equalTo: editorPill.centerYAnchor),
-        ])
 
         for chip in [modeChip, zoomChip, tilesChip] {
             chip.wantsLayer = true
@@ -290,7 +267,7 @@ final class StatusBarView: NSView {
             chip.isHidden = true
         }
 
-        // Broadcast: a clickable pill (like "Open ▾") showing the antenna icon
+        // Broadcast: a clickable pill showing the antenna icon
         // + scope; clicking cycles the scope. Always visible so it doubles as
         // the on/off control.
         configureSwitch(broadcastButton, action: #selector(broadcastClicked))
@@ -364,7 +341,11 @@ final class StatusBarView: NSView {
         configureStack(gitStack, views: [branchIcon, branchLabel, aheadLabel, behindLabel, changesLabel])
         gitStack.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
 
-        configureStack(leftStack, views: [modeChip, zoomChip, tilesChip, accountPill, cwdLabel, gitStack, locationChip])
+        configureStack(leftStack, views: [modeChip, zoomChip, tilesChip, accountPill, cwdLabel, gitStack,
+                                          locationChip, contextLabel])
+        leftStack.setCustomSpacing(10, after: gitStack)
+        leftStack.setCustomSpacing(10, after: locationChip)
+        contextLabel.isHidden = true
         leftStack.setCustomSpacing(10, after: tilesChip)
         leftStack.setCustomSpacing(10, after: cwdLabel)
         // The cwd is the one label allowed to give way FIRST: the path
@@ -377,12 +358,12 @@ final class StatusBarView: NSView {
         // whatever the stack's own resistance says. The account pill was the
         // worst of them: its width follows an account name nobody bounded.
         for squeezable in [accountPill, modeChip, zoomChip, tilesChip, aheadLabel,
-                           behindLabel, changesLabel] as [NSView] {
+                           behindLabel, changesLabel, contextLabel] as [NSView] {
             squeezable.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         }
         accountButton.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         broadcastButton.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-        // Version pill — a bordered button (like "Open ▾") showing the build
+        // Version pill — a bordered button showing the build
         // version; click checks for updates.
         versionButton.isBordered = false
         versionButton.font = ZTheme.monoFont(size: 11)
@@ -502,11 +483,10 @@ final class StatusBarView: NSView {
             sessionsDot.heightAnchor.constraint(equalToConstant: 6),
         ])
 
-        configureStack(pillStack, views: [broadcastPill, cliPill, sessionsPill, editorPill, infoChip])
+        configureStack(pillStack, views: [broadcastPill, cliPill, sessionsPill, infoChip])
         pillStack.setCustomSpacing(10, after: sessionsPill)
         pillStack.setCustomSpacing(10, after: broadcastPill)
         pillStack.setCustomSpacing(10, after: cliPill)
-        pillStack.setCustomSpacing(10, after: editorPill)
 
         addSubview(topBorder)
         addSubview(leftStack)
@@ -710,10 +690,7 @@ final class StatusBarView: NSView {
         infoStack.isHidden = isCompact
         infoChip.isHidden = !isCompact
         // Compact is two pills, and everything else earns its place by being
-        // in a state that would be wrong to hide. `Open ▾` never is — it is a
-        // menu, and folding a menu into a menu costs one click and loses
-        // nothing — so it always folds.
-        updateEditorVisibility()
+        // in a state that would be wrong to hide.
         // Same inputs, different labels — the cached renderers would no-op.
         renderedBroadcastScope = nil
         renderedChipToken = nil
@@ -721,8 +698,14 @@ final class StatusBarView: NSView {
         renderBroadcastPill()
         updateAccountVisibility()
         updateSessionsVisibility()
-        styleEditorButton()
+        updateContextVisibility()
         renderInfoChip()
+    }
+
+    /// The context readout is the first thing a narrow bar gives up: compact
+    /// keeps two pills, and the figure moves into the `⋯` menu.
+    private func updateContextVisibility() {
+        contextLabel.isHidden = isCompact || shownContext == nil
     }
 
     /// Broadcast is the one control that must not fold away silently: while it
@@ -748,13 +731,6 @@ final class StatusBarView: NSView {
     private func updateLocationVisibility() {
         applyLocationCollapse()
         updateAccountVisibility()
-    }
-
-    /// Two inputs decide this, so it lives here rather than in the renderer —
-    /// same reason as the two above. Compact folds it into the `\u{22ef}` menu;
-    /// tile mode removes it outright, since the tiles carry their own.
-    private func updateEditorVisibility() {
-        editorPill.isHidden = isCompact || isTileMode
     }
 
     private func renderInfoChip() {
@@ -806,24 +782,12 @@ final class StatusBarView: NSView {
         menu.addItem(withTitle: "Color Scheme", action: nil, keyEquivalent: "")
             .submenu = schemeMenu()
 
-        // The two controls that folded away. Each keeps the behaviour its pill
-        // had — broadcast cycles, Open opens its own picker — rather than
-        // growing a second way to do the same thing.
+        // The control that folded away keeps the behaviour its pill had —
+        // broadcast cycles — rather than growing a second way to do it.
         let broadcast = NSMenuItem(title: "Broadcast: \(shownBroadcastScope.displayLabel)",
                                    action: #selector(broadcastClicked), keyEquivalent: "")
         broadcast.target = self
         menu.addItem(broadcast)
-
-        // A submenu, not a second popup: every other entry here opens sideways,
-        // and an item that closes this menu to open one of its own reads as a
-        // different kind of control.
-        // Not in tile mode: folding it in here would keep offering the exact
-        // control the grid just took away, and still without saying which
-        // pane it means.
-        if !isTileMode, let editors = onBuildEditorMenu?() {
-            menu.addItem(withTitle: "Open Directory In", action: nil, keyEquivalent: "")
-                .submenu = editors
-        }
 
         let sessions = NSMenuItem(title: sessionsOpen ? "Hide Sessions" : "Sessions…",
                                   action: #selector(sessionsClicked), keyEquivalent: "")
@@ -831,6 +795,9 @@ final class StatusBarView: NSView {
         menu.addItem(sessions)
 
         menu.addItem(.separator())
+        if let context = shownContext {
+            menu.addItem(withTitle: context.menuTitle, action: nil, keyEquivalent: "")
+        }
         for item in [StatusInfoItem.shell, .ghostty] where !infoValues.label(for: item).isEmpty {
             menu.addItem(withTitle: infoValues.label(for: item), action: nil, keyEquivalent: "")
         }
@@ -917,10 +884,6 @@ final class StatusBarView: NSView {
         guard let raw = sender.representedObject as? String,
               let scheme = ZColorScheme(rawValue: raw) else { return }
         onSelectScheme?(scheme)
-    }
-
-    @objc private func editorClicked() {
-        onShowEditorMenu?(editorPill)
     }
 
     @objc private func versionClicked() {
@@ -1041,6 +1004,25 @@ final class StatusBarView: NSView {
         if wasHidden { styleChips() }
     }
 
+    /// Shows the focused pane's context fill, or hides the readout when the
+    /// pane has none. Colour carries the meaning (DESIGN rule 8): idle grey,
+    /// then attention, then error as the window fills.
+    func setContext(_ meter: ContextMeter?) {
+        shownContext = meter
+        updateContextVisibility()
+        guard renderedContext != meter else { return }
+        renderedContext = meter
+        guard let meter else { return }
+        let theme = ZTheme.current
+        contextLabel.stringValue = meter.label
+        contextLabel.toolTip = meter.tooltip
+        switch meter.level {
+        case .normal: contextLabel.textColor = theme.fg3Color
+        case .attention: contextLabel.textColor = theme.yellowColor
+        case .critical: contextLabel.textColor = theme.redColor
+        }
+    }
+
     /// Shows/hides the `ZOOM` chip (a pane is temporarily maximized).
     func setZoomed(_ zoomed: Bool) {
         guard zoomChip.isHidden != !zoomed else { return }
@@ -1104,7 +1086,6 @@ final class StatusBarView: NSView {
         sep1.textColor = theme.fg3Color
         sep2.textColor = theme.fg3Color
         sep3.textColor = theme.fg3Color
-        styleEditorButton()
 
         styleAppearanceButton()
         styleSchemeButton(schemeButton.title)
@@ -1112,23 +1093,7 @@ final class StatusBarView: NSView {
         renderInfoChip()
         renderLocationChip()
         renderSessionsPill()
-    }
-
-    /// "Open ▾", or just the chevron once the bar is compact — at that width
-    /// every label the bar can drop is one the terminal gets back.
-    private func styleEditorButton() {
-        let theme = ZTheme.current
-        editorPill.layer?.backgroundColor = theme.bg2Color.cgColor
-        editorPill.layer?.borderColor = theme.borderColor.cgColor
-        editorButton.contentTintColor = theme.fg2Color
-        editorButton.attributedTitle = NSAttributedString(
-            string: isCompact ? "" : "Open ",
-            attributes: [
-                .font: ZTheme.monoFont(size: 11, weight: .medium),
-                .foregroundColor: theme.fgColor,
-            ]
-        )
-        editorButton.toolTip = "Open the focused pane's directory in an editor or Finder"
+        setContext(shownContext)
     }
 
     /// Chips are bg3 pills with accent text and a soft accent glow (design

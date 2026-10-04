@@ -89,6 +89,11 @@ let project = Project(
                 // GHOSTTY_RESOURCES_DIR (main.swift) points here; terminfo keeps
                 // xterm-ghostty resolvable so keys (backspace) don't break.
                 .folderReference(path: "App/Resources/ghostty"),
+                // Zetty's Claude Code mod, a folder reference for the same
+                // reason: `.claude-plugin/` is a dotfolder. `ModInstaller`
+                // copies it out to ~/.zetty/mods — it is never loaded from
+                // inside the bundle, where Claude Code would write beside it.
+                .folderReference(path: "Mods"),
             ],
             scripts: [
                 .post(script: stampBuildCommit,

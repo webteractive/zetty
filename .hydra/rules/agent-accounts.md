@@ -230,6 +230,37 @@ Gotchas, all deliberate:
   purpose and coming back under the same login. **With
   `preserve-sessions` off there is no probe**, so an override there clears only
   at the next launch.
+- **A hook's report is the truth; `zetty run`'s is the head start.** The
+  launcher's report covers only launches that went through it, so a harness
+  started by hand (`CLAUDE_CONFIG_DIR=… claude`) kept the spawn account's name,
+  and a plain harness started inside one probe tick of an account's exit kept
+  the ACCOUNT's (the probe saw `claude` both times and never cleared). The hook
+  helper now emits `config` — its harness's config-dir variable as that process
+  sees it — and `applyReportedAccount` sets `runningAccountID` from it through
+  `AgentAccountResolver.accountID(forReportedConfigDirectory:)` and
+  `runningOverride`. Six things are deliberate:
+  - **`""` and a missing field are different answers.** Empty is the variable
+    unset, i.e. the default login; missing is an older helper or a harness with
+    no accounts. Reading the second as the first would move every pane to
+    Default the day the app is upgraded.
+  - **`runningAccountID` can now be `@default`**: the default login running in
+    a pane spawned on an account. `harnessAccount` returns `.default` for it
+    rather than falling through to the spawn account, and the probe clears it
+    when the foreground is none of `SpawnableAgent.accountCapable` — the
+    default login belongs to no one harness.
+  - **An unknown directory names nothing** and leaves the chip alone. There is
+    no account to show, and guessing is how the chip came to be wrong.
+  - **Only an exactly-routed event applies** (it names `surface`). A cwd match
+    can light several panes; a login belongs to one.
+  - **The startup replay is skipped.** It describes sessions that may be long
+    gone, and the override it would set is persisted.
+  - **`ended` clears the override, except mid-restart** (`agentRestartTimers`)
+    and except one another harness set. A refresh quits the agent on purpose.
+  The variable names in the helper are generated from the catalog
+  (`AgentHookScript.configVariablesLiteral`), so a new account-capable harness
+  reports without a second list. Codex's only hook is turn-ended, so there the
+  launcher's report is all there is until the first reply finishes; with hooks
+  off it is all there is, full stop.
 - **Deriving the running account from the process environment was tried and
   rejected.** `ps -E` on the foreground pid would be self-clearing and need no
   stored field, but on macOS it returns a full environment only for user-owned,

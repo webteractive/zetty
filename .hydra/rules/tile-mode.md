@@ -322,12 +322,14 @@ its layout tree with no back-link, so there is no way to ask which layout a
 view came from — and the tree is a tree everywhere, so the affordance is right
 everywhere.
 
-**The tile header is uniform icons**: open · refresh · split-down ·
+**The tile header is uniform icons**: refresh · open · split-down ·
 split-right · remove-split · ×. `Open ▾`'s label plus a menu-popping split
 button ran ~160pt of a 24pt header, which is most of a tile in a 4x4 grid.
 Icons cost ~90pt (~110pt with remove-split) and keep the pane's NAME readable,
 which is what you navigate by. Refresh sits away from × deliberately: it ends
-the running agent and must not neighbour close. `buildHeaderButton` configures
+the running agent and must not neighbour close. It LEADS because it is hidden
+whenever no agent can be resumed and still holds its place — second, that was
+a hole between open and the splits; first, it is blank space beside the title. `buildHeaderButton` configures
 them all, because near-identical blocks are how buttons drift apart.
 **Remove-split** (`collapseTileSlot`) is × and then × again in ONE press: it
 detaches the pane and collapses its split through `TileProfile.close`. That is
@@ -338,21 +340,19 @@ because tiles are rebuilt on every structural change, so `canRemove` cannot go
 stale on a live tile. A filled tile's right-click menu offers **Remove Split**
 too, beside **Detach Pane**.
 
-**`Open ▾` left the status bar and arrives per tile.** `StatusBarView
-.isTileMode` folds the pill away (and drops the `⋯` menu's "Open Directory In"
-submenu with it) through `updateEditorVisibility()` — its own function beside
-`updateBroadcastVisibility`/`updateAccountVisibility`, because two inputs decide
-it and a renderer that also owned `isHidden` would fight `applyCompactState`.
-Each `TileView` header carries a `folder` icon instead, hidden for a
-`.missing` slot.
+**Open is per tile, as it is per pane.** The status bar has no `Open ▾` pill
+in either mode any more (see `chrome-layout.md`): each `TileView` header
+carries a `folder` icon, hidden for a `.missing` slot, and each pane's gutter
+carries the same one outside the grid. Both end in
+`showEditorMenu(from:forSurface:)`.
 
 **The menu item carries its DIRECTORY, not just its app.** `editorMenuPicked`
 used to call `focusedDirectoryURL()`, which reads `paneTree.focusedSurface` —
 global focus. Wire a per-tile button to that and every one of them opens
 whichever tile currently HAS focus, so clicking tile 7's button gives you tile
 3's directory. `editorMenu(for:)` bakes the url into each item's
-`EditorTarget`, and `focusedDirectoryURL()` is now just
-`directoryURL(for:)` applied to the focused pane. Finder went through the same
+`EditorTarget`; `focusedDirectoryURL()` went with the status-bar pill, so
+nothing resolves a directory from focus now. Finder went through the same
 item for the same reason; it no longer has an action of its own.
 
 **The status bar's account · cwd · git left too, onto a footer per tile.**
@@ -418,7 +418,7 @@ grid buttons — hiding the whole bar took the sidebar toggle with it, which is
 why only the pills fold. The running/idle count is a status-bar chip in the
 LEFT cluster, never `pillStack`: it changes on the probe's 3s tick, and
 anything in the trailing stack that changes width on a timer slides Broadcast
-and `Open ▾` out from under the pointer. Tiles carry a 1pt border and a 12pt
+out from under the pointer. Tiles carry a 1pt border and a 12pt
 gap, with the border going accent on focus so there is one accent cue, not two.
 
 **`TileGridView` and `TileAttachPicker` are both in `probeWindowFloor()`'s
@@ -483,6 +483,24 @@ defers a reload while a name is being edited, since `reloadData` would destroy
 the field under the caret. Its selection fills `bg3` through a custom row view.
 The system selection is accent, which here would read as "the showing view".
 
+**Dragging a tile's HEADER onto another tile swaps the two slots**
+(`TileProfile.swapSlots`, through `swapTileSlots`). The tree is untouched, so
+the panes trade places and the layout keeps its shape; one side may be a hole,
+which makes it a move. Four things are deliberate:
+
+- **It has to be the header**, for the same reason the double-click does: the
+  body is the terminal view and never sends its mouse events to `TileView`. An
+  empty cell has no header and nothing to move, so it is a drop target only.
+- **The payload has its own pasteboard type** (`TileView.slotDragType`), not
+  the sidebar's. The grid tells a tile from a tab row by it, and the terminal
+  underneath, which accepts files and text, never claims the drop.
+- **The swap runs after `performDragOperation` returns.** It rebuilds every
+  tile, and the dragged one is still the session's source at that point.
+- **The drop target is marked with `fg2` and a `bg3` header, not accent.**
+  Accent is the focus cue, and the tile in hand is usually the focused one.
+
+Focus follows the dragged pane. Both indices must be inside `capacity`.
+
 Deferred: import/export or sharing profiles through `.zetty/project.json`;
-per-profile theme or font; nested grids; drag-reordering slots within a view;
-reordering the library from the manager.
+per-profile theme or font; nested grids; a `zetty tiles swap` verb and a
+keyboard way to move a slot; reordering the library from the manager.

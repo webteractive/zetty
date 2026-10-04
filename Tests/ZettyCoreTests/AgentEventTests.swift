@@ -60,3 +60,12 @@ import Testing
     #expect(AgentEvent.isValidSessionID("") == false)
     #expect(AgentEvent.isValidSessionID(String(repeating: "a", count: 129)) == false)
 }
+
+@Test func agentEventKeepsAMissingConfigDistinctFromAnEmptyOne() {
+    let old = AgentEvent.parse(line: #"{"cwd":"/x","agent":"claude","event":"idle"}"#)
+    let unset = AgentEvent.parse(line: #"{"cwd":"/x","agent":"claude","event":"idle","config":""}"#)
+    let set = AgentEvent.parse(line: #"{"cwd":"/x","agent":"claude","event":"idle","config":"/a/b"}"#)
+    #expect(old?.configDirectory == nil)
+    #expect(unset?.configDirectory == "")
+    #expect(set?.configDirectory == "/a/b")
+}

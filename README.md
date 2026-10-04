@@ -33,8 +33,8 @@ by the tool it's running.
 - **Narrow windows** — the window shrinks to **320 × 320**, roughly a
   log-watching width. On the way down the status bar folds its ambient
   readouts (appearance · scheme · shell · libghostty · version) into a single
-  chip showing the active **color scheme** (`● Nord`), and `Open ▾` and the
-  account fold in with them — click it for the rest. The left cluster
+  chip showing the active **color scheme** (`● Nord`), and the account folds
+  in with them — click it for the rest. The left cluster
   folds the same way once the path would stop being readable: working directory
   and branch become one pill (`zetty ⏇ main ●`), with the full path, the
   ahead/behind/changed counts, and the pane's account in its dropup. So a narrow
@@ -71,20 +71,21 @@ by the tool it's running.
     so a **Freeform** view grows and shrinks without needing the right-click
     menu or `Ctrl+B %`. Removing is offered only when there is a split to
     collapse — a one-slot view has nothing to remove.
-    Each tile's header carries **open · refresh · split down · split right ·
+    Each tile's header carries **refresh · open · split down · split right ·
     remove split · close**, and `⌘D` / `⇧⌘D` split the focused slot too.
     **Remove split** detaches the pane and collapses its split in one press.
     It only appears when there is a split to remove. Attaching focuses
     what you just attached.
+    **Drag a tile by its header onto another tile** to swap the two; the
+    layout keeps its shape and the panes trade places. Dropping on an empty
+    slot moves the pane there.
     A tile's `×` (and `⌘W`) detaches the slot — the pane keeps running; press
     it again on the now-empty slot to remove the slot itself. Clicking a
     project or tab in the **sidebar** focuses its tile when that tab is in the
     view on screen. For a project row that is the tile of its active tab, or
     else its first tile. If the view has none, the click leaves the grid and
     opens that project or tab normally. **Double-click a tile's header** to leave the grid for that pane, and use its **folder
-    button** to open that pane's own directory in an editor or Finder — the
-    status bar's `Open ▾` folds away while the grid is up, because one bar-wide
-    Open cannot say which of the panes on screen it means.
+    button** to open that pane's own directory in an editor or Finder.
   - **Or start something new.** The same list ends each project with a
     **New session** row, so a slot can be filled without first making a tab
     somewhere else. It goes through the project's own agent chooser when one
@@ -178,8 +179,9 @@ by the tool it's running.
   it, as do `Esc`, `⌘B`, and a click on the scrim; the **pin** button just
   outside its edge puts it back alongside the terminal.
 - **Pane gutter buttons** — every pane carries a thin top strip with a focus
-  dot and click targets for **split vertically** and **split horizontally**;
-  panes in a multi-pane tab additionally get **break into tab** and **close**.
+  dot and click targets for **open** (a folder button that opens that pane's
+  own directory in an editor or Finder), **split vertically** and **split
+  horizontally**; panes in a multi-pane tab additionally get **break into tab** and **close**.
   Right-clicking the strip opens those actions as a menu, plus **Scroll to
   Bottom** (also ⌘↓).
 - **Project clones** — right-click a project → **Clone Project…** (or the
@@ -268,6 +270,9 @@ by the tool it's running.
 - **AI agent status** — hook-driven status dots per tab and per project:
   green = running, yellow = needs attention, dim = idle — with optional
   sound / Dock badge / Notification Center alerts when an agent needs you.
+- **Claude context readout** — the status bar shows how full the focused
+  Claude pane's context window is (`ctx 15%`), turning yellow from 80% and red
+  from 95%. Hover for the token count, model and session cost.
 - **Launch agents per project** — enable coding agents (Claude Code, Codex,
   Hermes, Gemini, opencode, Pi, Cursor) in a project's **Agents** settings;
   opening a new tab/split then offers a keyboard-driven chooser to launch one
@@ -563,6 +568,7 @@ seeds a documented starter file on first launch. Format is plain
 | `restore-scrollback` | `true` | Replay preserved panes' scrollback history on relaunch (with `preserve-sessions`) |
 | `check-updates` | `true` | Notify when a newer Zetty release is available |
 | `notify-sound` / `notify-badge` / `notify-system` | `true` | Agent needs-attention alerts |
+| `zetty-claude-mod` | `true` | Load Zetty's Claude Code mod into new Claude panes (the context readout) |
 | `editor` | — | App used by Settings → "Open in Editor" |
 | `viewer-highlight-command` | `bat --style=plain --color=always --paging=never` | Command the file viewer pipes a file through for syntax highlighting; `off` disables it. Zetty sets `BAT_THEME` to match the active scheme's light/dark axis — pass your own `--theme` here to override |
 | `viewer-max-bytes` | `2097152` | Largest file the viewer will render; bigger files open in their default app instead |
@@ -727,6 +733,26 @@ sequence — many panes running agents at once cost the same as one. Scrolling
 the sidebar is unaffected by those updates: it only scrolls to reveal a project
 when the active project or tab actually changes.
 
+### Claude Code integration
+
+Zetty ships a small Claude Code **mod** (`zetty-bridge`) and loads it into
+every Claude pane. It runs inside Claude Code and reports what the hooks above
+cannot see — context-window fill, session cost and rate limits — which the
+status bar shows for the focused pane as `ctx 15%` (yellow from 80%, red from
+95%; hover for tokens, model and cost). On a narrow window the figure moves
+into the `⋯` menu.
+
+- **Nothing to install.** Zetty copies the mod to `~/.zetty/mods/zetty-bridge`
+  and points Claude Code at it through `CLAUDE_CODE_PLUGIN_DIRS`, keeping any
+  folders you list there yourself.
+- **It applies to agents started after it is enabled.** A Claude that was
+  already running — including one inside a preserved session — shows no
+  readout until it is restarted in a new pane.
+- **Turn it off** with **Settings (⌘,) → Agents → Context readout**, or
+  `zetty-claude-mod = false`. The status dots do not depend on it.
+- It reports only from inside Zetty panes, and needs a Claude Code recent
+  enough to load mods; an older one ignores it.
+
 ### Memory: background pane pruning temporarily disabled
 
 Each live pane costs roughly **37 MB of GPU memory** (the terminal's render
@@ -813,6 +839,10 @@ Choosing an account applies to **new panes only** — a pane keeps the environme
 it started with, which is why `Account ▸` respawns rather than switching in
 place. The account chip reports the login *running* in a pane, so a pane handed
 to `zetty run` shows the account actually in use and reverts when it exits.
+With **Agent Status Hooks** on, the harness itself reports which login it is
+running under, so the chip is also right when you start an account by hand
+(`CLAUDE_CONFIG_DIR=… claude`) or start the plain harness straight after an
+account's. Claude reports as it starts; Codex only reports when a turn ends.
 
 **What gets shared**
 

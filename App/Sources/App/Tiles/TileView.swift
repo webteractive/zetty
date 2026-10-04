@@ -61,7 +61,7 @@ final class ClickRowView: NSView {
 /// the normal pane layout hosts — so typing into a focused tile reaches the pty
 /// with no forwarding of any kind. That is the whole mechanism.
 @MainActor
-final class TileView: NSView, AgentRestartPresenting {
+final class TileView: NSView, AgentRestartPresenting, NSDraggingSource {
 
     // MARK: - AgentRestartPresenting
 
@@ -101,6 +101,18 @@ final class TileView: NSView, AgentRestartPresenting {
     private var hasStatusLine = false
     /// The footer's height, zeroed when the tile is too short for one.
     private var footerHeightConstraint: NSLayoutConstraint?
+
+    /// A header drag's payload: the slot index being moved. Its own type, so
+    /// the grid can tell a tile from a sidebar tab row, and so a terminal
+    /// underneath — which accepts files and text — never claims the drop.
+    static let slotDragType = NSPasteboard.PasteboardType("co.webteractive.zetty.tile-slot")
+    /// How far the pointer travels before a press on the header is a drag
+    /// rather than the click that focuses the tile.
+    private static let dragThreshold: CGFloat = 4
+
+    /// Where a press on the header began, while it may still become a drag.
+    private var dragOrigin: NSPoint?
+    private var isDropTarget = false
 
     private let canRemove: Bool
     private var isFocused: Bool
@@ -231,25 +243,22 @@ final class TileView: NSView, AgentRestartPresenting {
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
         header.addSubview(titleLabel)
 
-        // The status bar's `Open ▾` folds away in tile mode, so this pill is
-        // the only way to reach a pane's directory from the grid. It carries
-        // the same anatomy the bar's pill had — icon, label, chevron — so it
-        // reads as the control people already know.
+        // Open is per tile, as it is per pane in the gutter: it is the only
+        // way to reach a pane's directory from the grid. Hidden for a
+        // `.missing` slot, which has no pane and therefore no directory.
         //
-        // An NSTextField and a click recogniser rather than an NSButton with
-        // an `attributedTitle`: that setter leaks an AppKit KVO dependency
-        // quartet per assignment, which is the same reason the status bar's
-        // own chip is a text field. Hidden for a `.missing` slot, which has no
-        // pane and therefore no directory.
-        // Five uniform 13pt icons rather than a labelled pill and a menu:
-        // `Open ▾`'s label and the split MENU together ran ~160pt of a 24pt
+        // Uniform 13pt icons rather than a labelled pill and a menu: an
+        // `Open ▾` label and a split MENU together ran ~160pt of a 24pt
         // header, which is most of a tile in a 4x4 grid. Icons keep the pane's
         // name readable, which is the thing you actually navigate by.
         //
-        // Order is open · refresh · split-down · split-right · remove-split · ×
+        // Order is refresh · open · split-down · split-right · remove-split · ×
         // (remove-split only when there is a split to remove), and the two
         // destructive-ish ones sit apart: a refresh ends the running agent, so
-        // it must not neighbour close.
+        // it must not neighbour close. Refresh leads because it is hidden
+        // whenever no agent can be resumed and still holds its place: at the
+        // front that is blank space beside the title, where second it was a
+        // hole between open and the splits.
         buildHeaderButton(openButton, symbol: "folder", fallback: "▤",
                           tip: "Open this pane's directory in an editor or Finder",
                           action: #selector(openClicked), hidden: !canOpen)
@@ -315,7 +324,7 @@ final class TileView: NSView, AgentRestartPresenting {
             titleLabel.centerYAnchor.constraint(equalTo: header.centerYAnchor),
             titleLabel.leadingAnchor.constraint(equalTo: iconView.trailingAnchor, constant: 6),
             titleLabel.trailingAnchor.constraint(
-                lessThanOrEqualTo: openButton.leadingAnchor, constant: -6),
+                lessThanOrEqualTo: refreshButton.leadingAnchor, constant: -6),
 
             openButton.widthAnchor.constraint(equalToConstant: 13),
             openButton.heightAnchor.constraint(equalToConstant: 13),
@@ -323,11 +332,11 @@ final class TileView: NSView, AgentRestartPresenting {
             refreshButton.widthAnchor.constraint(equalToConstant: 13),
             refreshButton.heightAnchor.constraint(equalToConstant: 13),
             refreshButton.centerYAnchor.constraint(equalTo: header.centerYAnchor),
-            refreshButton.leadingAnchor.constraint(equalTo: openButton.trailingAnchor, constant: 7),
+            openButton.leadingAnchor.constraint(equalTo: refreshButton.trailingAnchor, constant: 7),
             splitDownButton.widthAnchor.constraint(equalToConstant: 13),
             splitDownButton.heightAnchor.constraint(equalToConstant: 13),
             splitDownButton.centerYAnchor.constraint(equalTo: header.centerYAnchor),
-            splitDownButton.leadingAnchor.constraint(equalTo: refreshButton.trailingAnchor, constant: 7),
+            splitDownButton.leadingAnchor.constraint(equalTo: openButton.trailingAnchor, constant: 7),
             splitRightButton.widthAnchor.constraint(equalToConstant: 13),
             splitRightButton.heightAnchor.constraint(equalToConstant: 13),
             splitRightButton.centerYAnchor.constraint(equalTo: header.centerYAnchor),
@@ -605,6 +614,14 @@ final class TileView: NSView, AgentRestartPresenting {
         applyTheme()
     }
 
+    /// Marks the tile a dragged one would land on. Not accent: that is the
+    /// focus cue, and the dragged tile is usually the focused one.
+    func setDropTarget(_ target: Bool) {
+        guard isDropTarget != target else { return }
+        isDropTarget = target
+        applyTheme()
+    }
+
     override func setFrameSize(_ newSize: NSSize) {
         super.setFrameSize(newSize)
         updateFooterFit()
@@ -644,9 +661,13 @@ final class TileView: NSView, AgentRestartPresenting {
         // A grid of sixteen terminals needs the separation two panes do not,
         // and borders are chrome's sanctioned depth mechanism. The border also
         // carries focus, so there is one accent signal rather than two.
-        layer?.borderColor = (isFocused ? theme.accentColor : theme.borderColor).cgColor
+        let border = isDropTarget ? theme.fg2Color
+            : (isFocused ? theme.accentColor : theme.borderColor)
+        layer?.borderColor = border.cgColor
+        layer?.borderWidth = isDropTarget ? Self.borderWidth * 2 : Self.borderWidth
         // Selection/active fills are bg3 — never a saturated accent block.
-        header.layer?.backgroundColor = (isFocused ? theme.bg3Color : theme.bg0Color).cgColor
+        header.layer?.backgroundColor =
+            (isFocused || isDropTarget ? theme.bg3Color : theme.bg0Color).cgColor
         body.layer?.backgroundColor = theme.bg1Color.cgColor
         statusDot.layer?.backgroundColor = status.color(theme).cgColor
         titleLabel.textColor = isFocused ? theme.fgColor : theme.fg2Color
@@ -673,7 +694,49 @@ final class TileView: NSView, AgentRestartPresenting {
         } else {
             onActivate()
         }
+        // Only the header starts a drag: the body is the terminal, which
+        // never sends its mouse events here, and an empty cell has no pane to
+        // move. The header's buttons consume their own presses.
+        let point = convert(event.locationInWindow, from: nil)
+        dragOrigin = header.superview != nil && header.frame.contains(point)
+            ? event.locationInWindow : nil
         super.mouseDown(with: event)
+    }
+
+    override func mouseDragged(with event: NSEvent) {
+        guard let origin = dragOrigin else { super.mouseDragged(with: event); return }
+        let now = event.locationInWindow
+        guard hypot(now.x - origin.x, now.y - origin.y) >= Self.dragThreshold else { return }
+        dragOrigin = nil
+
+        let item = NSPasteboardItem()
+        item.setString(String(slotIndex), forType: Self.slotDragType)
+        let dragItem = NSDraggingItem(pasteboardWriter: item)
+        dragItem.setDraggingFrame(header.frame, contents: headerSnapshot())
+        beginDraggingSession(with: [dragItem], event: event, source: self)
+    }
+
+    override func mouseUp(with event: NSEvent) {
+        dragOrigin = nil
+        super.mouseUp(with: event)
+    }
+
+    /// The header as it looks now, to travel with the pointer: the pane's
+    /// name is what says which tile is in hand.
+    private func headerSnapshot() -> NSImage? {
+        guard let rep = header.bitmapImageRepForCachingDisplay(in: header.bounds) else { return nil }
+        header.cacheDisplay(in: header.bounds, to: rep)
+        let image = NSImage(size: header.bounds.size)
+        image.addRepresentation(rep)
+        return image
+    }
+
+    // MARK: - NSDraggingSource
+
+    /// A tile moves within its own grid and nowhere else.
+    func draggingSession(_ session: NSDraggingSession,
+                         sourceOperationMaskFor context: NSDraggingContext) -> NSDragOperation {
+        context == .withinApplication ? .move : []
     }
 
     @objc private func headerDoubleClicked() {

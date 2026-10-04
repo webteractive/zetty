@@ -82,6 +82,9 @@ public struct AppConfig: Equatable, Sendable {
     /// macOS Notification Center alerts when an agent needs attention and
     /// Zetty is in the background.
     public var notifySystem: Bool
+    /// Loads Zetty's Claude Code mod into new Claude panes — the source of the
+    /// context readout. Off leaves the classic hooks as the only integration.
+    public var claudeMod: Bool
     /// Which side of the window the project sidebar sits on.
     public var sidebarPosition: SidebarPosition
     /// Directory the permanent Home project is rooted at, as written in the
@@ -166,6 +169,7 @@ public struct AppConfig: Equatable, Sendable {
         notifySound: Bool = true,
         notifyBadge: Bool = true,
         notifySystem: Bool = true,
+        claudeMod: Bool = true,
         sidebarPosition: SidebarPosition = .left,
         homePath: String? = nil,
         sessionsView: SessionsViewMode = .drawer,
@@ -190,6 +194,7 @@ public struct AppConfig: Equatable, Sendable {
         self.notifySound = notifySound
         self.notifyBadge = notifyBadge
         self.notifySystem = notifySystem
+        self.claudeMod = claudeMod
         self.sidebarPosition = sidebarPosition
         self.homePath = homePath
         self.sessionsView = sessionsView
@@ -270,6 +275,8 @@ public struct AppConfig: Equatable, Sendable {
                 config.notifyBadge = ["true", "yes", "on", "1"].contains(value.lowercased())
             case "notify-system":
                 config.notifySystem = ["true", "yes", "on", "1"].contains(value.lowercased())
+            case "zetty-claude-mod":
+                config.claudeMod = ["true", "yes", "on", "1"].contains(value.lowercased())
             case "sidebar-position":
                 if let position = SidebarPosition(rawValue: value.lowercased()) {
                     config.sidebarPosition = position
@@ -458,6 +465,10 @@ public struct AppConfig: Equatable, Sendable {
         notify-badge  = \(notifyBadge)
         notify-system = \(notifySystem)
 
+        # Claude Code integration: loads Zetty's mod into new Claude panes, which
+        # reports context fill, cost and rate limits back to the chrome.
+        zetty-claude-mod = \(claudeMod)
+
         # Which side of the window the project sidebar sits on: left | right
         sidebar-position = \(sidebarPosition.rawValue)
 
@@ -551,6 +562,10 @@ public struct AppConfig: Equatable, Sendable {
     notify-sound  = true
     notify-badge  = true
     notify-system = true
+
+    # Claude Code integration: loads Zetty's mod into new Claude panes, which
+    # reports context fill, cost and rate limits back to the chrome.
+    zetty-claude-mod = true
 
     # Which side of the window the project sidebar sits on: left | right
     sidebar-position = left

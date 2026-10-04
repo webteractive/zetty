@@ -40,8 +40,8 @@ because `urlPathAllowed` permits `&`/`=` and a filename like `Q&A.md` would
 otherwise corrupt the query). Editors with no scheme get a plain `NSWorkspace`
 open, which cannot carry a line. The menu also lists the system default app
 after a separator (suffixed `(default)` on the editor entry instead when it's
-already in the roster, so it never appears twice). The status bar's own
-`Open ▾` pill is untouched and still opens the focused pane's *directory*.
+already in the roster, so it never appears twice). The pane gutter's
+folder button is untouched and still opens that pane's *directory*.
 
 Pure logic in `ZettyCore/Viewer/`: `FilePathToken` (token extraction + the
 `path:line:col` grammar, also used by the CLI), `PathResolution` (ordered

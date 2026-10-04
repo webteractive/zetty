@@ -67,7 +67,7 @@ private func state(_ kind: AgentKind?, id: String?, cwd: String = "/w/proj") -> 
     // resume has to name the running login itself.
     let command = AgentResume.command(
         for: state(.claude, id: "abc-123"),
-        environment: ["CLAUDE_CONFIG_DIR": "/Users/g/.zetty/accounts/work"])
+        login: ResumeLogin(environment: ["CLAUDE_CONFIG_DIR": "/Users/g/.zetty/accounts/work"]))
     #expect(command
             == "cd '/w/proj' && CLAUDE_CONFIG_DIR='/Users/g/.zetty/accounts/work' claude --resume 'abc-123'")
 }
@@ -77,6 +77,22 @@ private func state(_ kind: AgentKind?, id: String?, cwd: String = "/w/proj") -> 
     // character would end the line early.
     let command = AgentResume.command(
         for: state(.codex, id: "019a"),
-        environment: ["rm -rf ~;X": "1", "CODEX_HOME": "/a\nb", "1BAD": "x"])
+        login: ResumeLogin(environment: ["rm -rf ~;X": "1", "CODEX_HOME": "/a\nb", "1BAD": "x"]))
     #expect(command == "cd '/w/proj' && codex resume '019a'")
+}
+
+@Test func aResumeCanDropTheShellsAccountToReachTheDefaultLogin() {
+    // The default login in a pane spawned on an account: the variable has to
+    // be ABSENT for the harness, not assigned something else.
+    let command = AgentResume.command(
+        for: state(.claude, id: "abc-123"),
+        login: ResumeLogin(unsetting: ["CLAUDE_CONFIG_DIR"]))
+    #expect(command == "cd '/w/proj' && env -u CLAUDE_CONFIG_DIR claude --resume 'abc-123'")
+}
+
+@Test func anUnsafeNameToUnsetIsDroppedNotTyped() {
+    let command = AgentResume.command(
+        for: state(.codex, id: "019a"),
+        login: ResumeLogin(unsetting: ["X; rm -rf ~", "CODEX_HOME"]))
+    #expect(command == "cd '/w/proj' && env -u CODEX_HOME codex resume '019a'")
 }
