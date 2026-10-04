@@ -10,6 +10,7 @@ commands:
     - "claude plugin validate"
     - "claude plugin test"
 triggers:
+    - "changing any file of a mod under Mods/ — bump version in its plugin.json in the same change"
     - "changing Zetty's Claude Code mod or what it reports"
     - "changing the context readout, or adding chrome fed by agent usage"
     - "the context readout is missing or stale"
@@ -29,6 +30,29 @@ Pure model in `ZettyCore`: `AgentUsage` + `AgentUsageStore` (the snapshot and
 its change detection), `ContextMeter` (label, level, tooltip), `ModInstall`
 (when to copy, what the variable holds). App layer: `ModInstaller`,
 `AgentUsageWatcher`, `StatusBarView.setContext`.
+
+## Any change to a mod bumps its version  ← not optional
+
+**If any file under `Mods/<name>/` changes, bump `version` in
+`Mods/<name>/.claude-plugin/plugin.json` in the same change.** Hooks, the
+manifest, `hooks.json`, a contract under `types/` — all of it. Only `tests/`
+is exempt, because tests are never copied out.
+
+`ModInstall.needsInstall` compares the bundled version with the installed one
+and nothing else. A mod edited under an unchanged version is therefore never
+copied to `~/.zetty/mods`: the app builds, installs and restarts cleanly, and
+every Claude pane goes on running the OLD mod. Nothing fails and nothing logs,
+so it reads as "my change did nothing".
+
+- Patch for a fix, minor for a new field or hook. A change to the snapshot
+  that an older reader cannot parse also bumps `v` in the snapshot and
+  `AgentUsage.supportedVersion` — that is a different number with a different
+  job.
+- Check before committing: `git diff --stat HEAD -- Mods/` lists a mod file
+  other than a test, so `git diff HEAD -- 'Mods/*/.claude-plugin/plugin.json'`
+  must show the `version` line changed.
+- After installing, confirm the copy took:
+  `grep version ~/.zetty/mods/zetty-bridge/.claude-plugin/plugin.json`.
 
 ## The path, end to end
 
@@ -50,9 +74,6 @@ its change detection), `ContextMeter` (label, level, tooltip), `ModInstall`
   loads from disk; inside the bundle that breaks the signature. Both are
   gitignored under `Mods/` for the same reason — loading the repo copy with
   `--plugin-dir` lays them there.
-- **Bump `version` in `plugin.json` with every change to the mod.**
-  `ModInstall.needsInstall` compares versions, so an edited mod under an
-  unchanged version is never copied out and the app keeps running the old one.
 - **The copy overwrites file by file, manifest LAST.** A running Claude watches
   the folder and hot-reloads when it settles; deleting the folder first hands
   it a missing module, and writing the manifest first would make a copy that
