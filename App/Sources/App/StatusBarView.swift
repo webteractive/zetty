@@ -33,12 +33,6 @@ final class StatusBarView: NSView {
     /// anchored to the leading edge with nothing clickable to its right, so it
     /// may vary freely.
     private let tilesChip = NSTextField(labelWithString: "")
-    /// The focused Claude pane's context-window fill, from Zetty's mod. LAST in
-    /// the left cluster, for the reason above: it changes while an agent works.
-    /// `ContextMeter.label` pads the figure, so in the bar's mono font even the
-    /// label's own width holds still.
-    private let contextLabel = NSTextField(labelWithString: "")
-    private var shownContext: ContextMeter?
     private let broadcastPill = NSView()
     private let broadcastButton = NSButton()
 
@@ -61,6 +55,7 @@ final class StatusBarView: NSView {
     private let accountPill = NSView()
     private let accountButton = NSButton()
     private var shownAccount: AccountResolution?
+    private var shownAccountLimit: AccountLimitLabel?
     /// Opens Settings → Accounts; the chip is the discoverable way in.
     var onAccountClicked: (() -> Void)?
     private var shownBroadcastScope: BroadcastScope = .off
@@ -201,7 +196,6 @@ final class StatusBarView: NSView {
     /// Cached by the chip's rendered text plus its mode, so the 4s rotation
     /// repaints but an unchanged refresh tick does not.
     private var renderedChipToken: String?
-    private var renderedContext: ContextMeter?
 
     /// Drops every cached render token so the next call actually re-renders.
     private func invalidateRenderCaches() {
@@ -216,12 +210,11 @@ final class StatusBarView: NSView {
         renderedChipToken = nil
         renderedLocationChipToken = nil
         renderedSessionsToken = nil
-        renderedContext = nil
     }
 
     private var plainLabels: [NSTextField] {
         [branchLabel, aheadLabel, behindLabel, changesLabel,
-         cwdLabel, sep0, sep1, shellLabel, sep2, sep3, ghosttyLabel, contextLabel]
+         cwdLabel, sep0, sep1, shellLabel, sep2, sep3, ghosttyLabel]
     }
 
     override init(frame frameRect: NSRect) {
@@ -341,11 +334,7 @@ final class StatusBarView: NSView {
         configureStack(gitStack, views: [branchIcon, branchLabel, aheadLabel, behindLabel, changesLabel])
         gitStack.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
 
-        configureStack(leftStack, views: [modeChip, zoomChip, tilesChip, accountPill, cwdLabel, gitStack,
-                                          locationChip, contextLabel])
-        leftStack.setCustomSpacing(10, after: gitStack)
-        leftStack.setCustomSpacing(10, after: locationChip)
-        contextLabel.isHidden = true
+        configureStack(leftStack, views: [modeChip, zoomChip, tilesChip, accountPill, cwdLabel, gitStack, locationChip])
         leftStack.setCustomSpacing(10, after: tilesChip)
         leftStack.setCustomSpacing(10, after: cwdLabel)
         // The cwd is the one label allowed to give way FIRST: the path
@@ -358,7 +347,7 @@ final class StatusBarView: NSView {
         // whatever the stack's own resistance says. The account pill was the
         // worst of them: its width follows an account name nobody bounded.
         for squeezable in [accountPill, modeChip, zoomChip, tilesChip, aheadLabel,
-                           behindLabel, changesLabel, contextLabel] as [NSView] {
+                           behindLabel, changesLabel] as [NSView] {
             squeezable.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         }
         accountButton.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
@@ -698,14 +687,7 @@ final class StatusBarView: NSView {
         renderBroadcastPill()
         updateAccountVisibility()
         updateSessionsVisibility()
-        updateContextVisibility()
         renderInfoChip()
-    }
-
-    /// The context readout is the first thing a narrow bar gives up: compact
-    /// keeps two pills, and the figure moves into the `⋯` menu.
-    private func updateContextVisibility() {
-        contextLabel.isHidden = isCompact || shownContext == nil
     }
 
     /// Broadcast is the one control that must not fold away silently: while it
@@ -795,9 +777,6 @@ final class StatusBarView: NSView {
         menu.addItem(sessions)
 
         menu.addItem(.separator())
-        if let context = shownContext {
-            menu.addItem(withTitle: context.menuTitle, action: nil, keyEquivalent: "")
-        }
         for item in [StatusInfoItem.shell, .ghostty] where !infoValues.label(for: item).isEmpty {
             menu.addItem(withTitle: infoValues.label(for: item), action: nil, keyEquivalent: "")
         }
@@ -1004,25 +983,6 @@ final class StatusBarView: NSView {
         if wasHidden { styleChips() }
     }
 
-    /// Shows the focused pane's context fill, or hides the readout when the
-    /// pane has none. Colour carries the meaning (DESIGN rule 8): idle grey,
-    /// then attention, then error as the window fills.
-    func setContext(_ meter: ContextMeter?) {
-        shownContext = meter
-        updateContextVisibility()
-        guard renderedContext != meter else { return }
-        renderedContext = meter
-        guard let meter else { return }
-        let theme = ZTheme.current
-        contextLabel.stringValue = meter.label
-        contextLabel.toolTip = meter.tooltip
-        switch meter.level {
-        case .normal: contextLabel.textColor = theme.fg3Color
-        case .attention: contextLabel.textColor = theme.yellowColor
-        case .critical: contextLabel.textColor = theme.redColor
-        }
-    }
-
     /// Shows/hides the `ZOOM` chip (a pane is temporarily maximized).
     func setZoomed(_ zoomed: Bool) {
         guard zoomChip.isHidden != !zoomed else { return }
@@ -1093,7 +1053,6 @@ final class StatusBarView: NSView {
         renderInfoChip()
         renderLocationChip()
         renderSessionsPill()
-        setContext(shownContext)
     }
 
     /// Chips are bg3 pills with accent text and a soft accent glow (design
@@ -1153,8 +1112,10 @@ final class StatusBarView: NSView {
 
     /// The focused pane's account. `nil` (or the default account with no
     /// accounts configured) hides the chip.
-    func setAccount(_ resolution: AccountResolution?, hasAccounts: Bool) {
+    func setAccount(_ resolution: AccountResolution?, hasAccounts: Bool,
+                    limit: AccountLimitLabel? = nil) {
         shownAccount = hasAccounts ? resolution : nil
+        shownAccountLimit = limit
         renderAccountPill()
     }
 
@@ -1164,6 +1125,7 @@ final class StatusBarView: NSView {
     private func renderAccountPill() {
         let token = shownAccount.map {
             "\($0.accountID)|\($0.colorID ?? "")|\($0.agentID ?? "")"
+                + "|\(shownAccountLimit?.chip ?? "")|\(shownAccountLimit?.summary ?? "")"
         } ?? ""
         guard renderedAccountToken != token else { return }
         renderedAccountToken = token
@@ -1184,20 +1146,40 @@ final class StatusBarView: NSView {
         // "Default" or "<Account> (<Agent>)" — the harness is named in text
         // rather than shown as a logo. The default login isn't tied to one
         // harness, so it carries no suffix.
-        let label = Self.accountDisplayName(account)
-        accountButton.attributedTitle = NSAttributedString(
-            string: " \(label)",
-            attributes: [
-                .font: ZTheme.monoFont(size: 10, weight: .semibold),
-                .foregroundColor: tint,
-            ])
-        accountButton.toolTip = account.isDefault
-            ? "This pane uses your default login — click to manage accounts"
-            : "This pane runs as \(account.displayName) — click to manage accounts"
+        accountButton.attributedTitle = Self.accountTitle(
+            account, limit: shownAccountLimit, tint: tint,
+            font: ZTheme.monoFont(size: 10, weight: .semibold), leading: " ")
+        accountButton.toolTip = Self.accountToolTip(account, limit: shownAccountLimit)
         accountPill.layer?.backgroundColor =
             (account.isDefault ? theme.bg2Color : theme.bg3Color).cgColor
         accountPill.layer?.borderColor =
             (account.isDefault ? theme.borderColor : tint).cgColor
+    }
+
+    /// The chip's text: the account in its own hue, then — only once a
+    /// rate-limit window is near (`AccountLimitLabel.chip`) — that window in
+    /// the attention or error token. Colour carries the meaning (DESIGN rule
+    /// 8), and the name keeps its hue so identity never changes with usage.
+    /// Shared by the status bar and each tile's footer.
+    static func accountTitle(_ account: AccountResolution, limit: AccountLimitLabel?,
+                             tint: NSColor, font: NSFont, leading: String = "") -> NSAttributedString {
+        let title = NSMutableAttributedString(
+            string: leading + accountDisplayName(account),
+            attributes: [.font: font, .foregroundColor: tint])
+        if let limit, let chip = limit.chip {
+            let theme = ZTheme.current
+            let color = limit.level == .critical ? theme.redColor : theme.yellowColor
+            title.append(NSAttributedString(
+                string: " · \(chip)", attributes: [.font: font, .foregroundColor: color]))
+        }
+        return title
+    }
+
+    static func accountToolTip(_ account: AccountResolution, limit: AccountLimitLabel?) -> String {
+        let base = account.isDefault
+            ? "This pane uses your default login — click to manage accounts"
+            : "This pane runs as \(account.displayName) — click to manage accounts"
+        return limit.map { "\(base)\nRate limits: \($0.summary)" } ?? base
     }
 
     /// "Default", or "<Account> (<Agent>)". The harness is named in text rather

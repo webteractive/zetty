@@ -191,9 +191,6 @@ are authoritative.
   (purple) with ahead/behind/changes, working directory, shell, and libghostty
   version, plus pills for appearance and scheme switchers, an "Update available" pill when one is
   waiting, and mode chips — `PREFIX`, `COPY`, `ZOOM`, `BROADCAST` (yellow).
-  A focused Claude pane adds a plain context readout last in the left cluster
-  (`ctx 15%`, figure padded to a fixed width): `fg3` normally, yellow from 80%,
-  red from 95%. It is the first thing a compact bar drops.
   **Compact** (a narrow window): the ambient readouts — appearance, scheme,
   shell, libghostty, version — collapse into one `bg2` pill carrying the scheme
   (accent dot + name + chevron, the same anatomy as the location pill) that

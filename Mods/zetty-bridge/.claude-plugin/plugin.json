@@ -1,6 +1,6 @@
 {
   "name": "zetty-bridge",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Reports this pane's turn state, context fill, cost and rate limits to Zetty.",
   "author": { "name": "Zetty" }
 }

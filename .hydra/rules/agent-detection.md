@@ -14,7 +14,11 @@ triggers:
 
 Zetty surfaces running AI agents as **status dots** in the sidebar (per-tab
 dots + a per-project roll-up on the diamond): **green = running, yellow =
-needs-attention, dim = idle**. The engine is pure/tested in `ZettyCore`
+needs-attention, dim = idle**, plus **red = the last turn failed**, which is
+NOT a hook state — it is `AgentStatus.errored`, produced only by
+`AgentStatus.displayed` from the Claude Code mod's snapshot (see
+`claude-mod.md`). Every dot reads `displayedStatus(for:)`, never
+`agentDetector` directly. The engine is pure/tested in `ZettyCore`
 (`AgentRegistry`, `AgentStateMachine`, `AgentDetector`, `AgentEvent`).
 Hooks drive the **status dots only** — tab names/logos come from the
 foreground-process probe (see "Tab identity" above). At startup the existing

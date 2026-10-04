@@ -115,6 +115,16 @@ final class TileGridView: NSView {
         }
     }
 
+    /// Retunes each tile's status dot in place. Without this a dot only moved
+    /// when the grid was rebuilt, so an agent that started waiting, or whose
+    /// turn failed, kept its old colour until something structural changed.
+    func updateStatuses(_ status: (UUID) -> TileStatus) {
+        for tile in tiles {
+            guard let id = tile.surfaceID else { continue }
+            tile.setStatus(status(id))
+        }
+    }
+
     func updateRefreshButtons(_ canRefresh: (UUID) -> Bool) {
         for tile in tiles {
             guard let id = tile.surfaceID else { continue }

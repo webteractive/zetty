@@ -124,6 +124,16 @@ final class TerminalViewController: NSViewController {
     /// limits) — things the hooks above cannot see.
     private var agentUsage = AgentUsageStore()
     private var agentUsageWatcher: AgentUsageWatcher?
+    /// Rate limits per ACCOUNT, fed by every Claude pane's snapshot and kept
+    /// across launches so an account has a figure with no pane running on it.
+    private var accountLimits = AccountLimits()
+    /// Where those are kept; set by AppDelegate before the watcher starts.
+    var accountLimitsStore: AccountLimitsStore? {
+        didSet { if let store = accountLimitsStore { accountLimits = store.load() } }
+    }
+    /// An agent's turn ended in an API error or a refusal: surface, its
+    /// project, and a few words for the notification.
+    var onAgentTurnFailed: ((Surface, ProjectRuntime, String) -> Void)?
 
     /// Foreground command per preserved pane, from the zmx/ps probe. This is
     /// the identity used for tab logos/names; hook events only drive the
@@ -183,8 +193,9 @@ final class TerminalViewController: NSViewController {
     private struct ChromeRefreshNeeds {
         var tabBar = false
         var sidebar = false
-        /// The status bar alone. A tab-bar refresh reaches it too, but returns
-        /// early in tile mode and re-evaluates every pill on the way.
+        /// The status bar alone (in tile mode, the tile footers). A tab-bar
+        /// refresh reaches it too, but returns early in tile mode and
+        /// re-evaluates every pill on the way.
         var statusBar = false
         var isEmpty: Bool { !tabBar && !sidebar && !statusBar }
     }
@@ -237,6 +248,7 @@ final class TerminalViewController: NSViewController {
         // containers at all while the grid is up — walking only it is why the
         // button never appeared for a workspace that lives in tile mode.
         if tileMode, let grid = tileGridView {
+            grid.updateStatuses { [weak self] id in self?.tileStatus(for: id) ?? .idle }
             grid.updateRefreshButtons { [weak self] id in
                 guard let self else { return false }
                 // A restart in flight keeps its button: the probe stops seeing
@@ -1286,7 +1298,6 @@ final class TerminalViewController: NSViewController {
         )
         statusBar.setZoomed(paneTree.zoomedSurfaceID != nil)
         statusBar.setBroadcasting(broadcastScope)
-        statusBar.setContext(contextMeter(for: focused))
         // Tile mode hides the bar's account and git — each tile carries its
         // own — so neither is worth a resolve or a `git` process here. This
         // same coalesced cadence feeds the tile footers instead.
@@ -1298,8 +1309,9 @@ final class TerminalViewController: NSViewController {
         // that is actually running rather than what the project would give a
         // new pane. Cached identity only — never a probe on this path.
         let accounts = accountsProvider?() ?? []
-        statusBar.setAccount(focused.map { paneAccount(for: $0, accounts: accounts) },
-                             hasAccounts: !accounts.isEmpty)
+        let account = focused.map { paneAccount(for: $0, accounts: accounts) }
+        statusBar.setAccount(account, hasAccounts: !accounts.isEmpty,
+                             limit: account.flatMap { accountLimitLabel(for: $0.accountID) })
         scheduleGitProbe(for: cwd, surfaceID: focused?.id)
     }
 
@@ -1367,7 +1379,8 @@ final class TerminalViewController: NSViewController {
             let account = accounts.isEmpty ? nil : paneAccount(for: surface, accounts: accounts)
             lines[id] = TileStatusLine(cwd: Self.abbreviatingHome(directory),
                                        git: tileGitProber.status(for: directory),
-                                       account: account)
+                                       account: account,
+                                       limit: account.flatMap { accountLimitLabel(for: $0.accountID) })
         }
         tileGitProber.track(directories)
         if let retryAfter { scheduleTileDirectoryRetry(after: retryAfter) }
@@ -1587,32 +1600,109 @@ final class TerminalViewController: NSViewController {
     private func startAgentUsageWatcher() {
         let watcher = AgentUsageWatcher(
             knownSurfaces: { [weak self] in Set(self?.allSurfaceIDs ?? []) },
-            onUsage: { [weak self] usages in
-                guard let self else { return }
-                // `session.measure` fires several times a turn. Only a change a
-                // view shows is worth a refresh, and it goes through the
-                // coalescer like every other machine-driven one.
-                var changed = false
-                for usage in usages where self.agentUsage.apply(usage) { changed = true }
-                if changed { self.setNeedsChromeRefresh(statusBar: true) }
+            onUsage: { [weak self] usages, isInitial in
+                self?.applyAgentUsage(usages, isInitial: isInitial)
             },
             onRemoved: { [weak self] surfaces in
                 guard let self else { return }
-                var changed = false
-                for surface in surfaces where self.agentUsage.remove(surface) { changed = true }
-                if changed { self.setNeedsChromeRefresh(statusBar: true) }
+                var failedGone = false
+                for surface in surfaces {
+                    if self.agentUsage.usage(for: surface)?.turnFailed == true { failedGone = true }
+                    self.agentUsage.remove(surface)
+                }
+                if failedGone { self.setNeedsChromeRefresh(tabBar: true, sidebar: true) }
             })
         watcher.start()
         agentUsageWatcher = watcher
     }
 
-    /// The status bar's context readout for a pane, or nil when it has none
-    /// worth showing — no snapshot, a session that ended, or a pane whose
-    /// foreground is no longer Claude.
-    private func contextMeter(for surface: Surface?) -> ContextMeter? {
-        guard let surface, let usage = agentUsage.usage(for: surface.id),
-              usage.isShown(foreground: foregroundBySurface[surface.id]) else { return nil }
-        return ContextMeter(usage: usage)
+    /// Takes in a batch of snapshots from the Claude Code mod.
+    ///
+    /// `session.measure` fires several times a turn, so nothing here refreshes
+    /// the chrome unless something a view SHOWS moved, and then only through
+    /// the coalescer: a failed turn flips a dot, a limit moves a chip.
+    private func applyAgentUsage(_ usages: [AgentUsage], isInitial: Bool) {
+        let accounts = accountsProvider?() ?? []
+        var dotsChanged = false
+        var limitsChanged = false
+        for usage in usages {
+            let wasFailed = agentUsage.usage(for: usage.surface)?.turnFailed ?? false
+            agentUsage.apply(usage)
+            if usage.turnFailed != wasFailed {
+                dotsChanged = true
+                // The first batch describes turns that ended before this
+                // launch — the same reason the hook replay never notifies.
+                if usage.turnFailed, !isInitial,
+                   usage.isShown(foreground: foregroundBySurface[usage.surface]),
+                   let project = workspace.project(containing: usage.surface),
+                   let surface = workspace.surface(with: usage.surface),
+                   let failure = usage.failureDescription {
+                    onAgentTurnFailed?(surface, project, failure)
+                }
+            }
+            // A missing `config` says nothing about the login; "" is the default.
+            if let directory = usage.configDirectory,
+               let accountID = AgentAccountResolver.accountID(
+                   forReportedConfigDirectory: directory, agentID: AgentKind.claude.rawValue,
+                   accounts: accounts, home: NSHomeDirectory()),
+               accountLimits.record(accountID: accountID, limits: usage.rateLimits,
+                                    observedAt: Date(timeIntervalSince1970: usage.updatedAt)) {
+                limitsChanged = true
+            }
+        }
+        if dotsChanged { setNeedsChromeRefresh(tabBar: true, sidebar: true) }
+        if limitsChanged {
+            // A deleted account's reading must not resurface under a reused id.
+            accountLimits.prune(keeping: Set(accounts.map(\.id) + [AgentAccountSupport.defaultID]))
+            try? accountLimitsStore?.save(accountLimits)
+            setNeedsChromeRefresh(statusBar: true)
+        }
+    }
+
+    /// A pane's snapshot, when it still describes what is running there.
+    private func shownUsage(for surfaceID: UUID) -> AgentUsage? {
+        guard let usage = agentUsage.usage(for: surfaceID),
+              usage.isShown(foreground: foregroundBySurface[surfaceID]) else { return nil }
+        return usage
+    }
+
+    /// The status a pane's dot shows: the hooks' word, with an idle agent
+    /// whose last turn failed shown as errored. Every dot reads this, never
+    /// `agentDetector` directly, or one surface would disagree with another.
+    func displayedStatus(for surfaceID: UUID) -> AgentStatus? {
+        AgentStatus.displayed(agentDetector.state(for: surfaceID).status,
+                              usage: agentUsage.usage(for: surfaceID),
+                              foreground: foregroundBySurface[surfaceID])
+    }
+
+    private func tileStatus(for surfaceID: UUID) -> TileStatus {
+        switch displayedStatus(for: surfaceID) {
+        case .needsAttention: return .attention
+        case .errored: return .errored
+        default:
+            let running = foregroundBySurface[surfaceID].map { !$0.isEmpty } ?? false
+            return running ? .running : .idle
+        }
+    }
+
+    /// How an account's rate limits read right now, or nil when it has no
+    /// live window — an account nothing has reported for, or a harness that
+    /// reports none.
+    func accountLimitLabel(for accountID: String) -> AccountLimitLabel? {
+        AccountLimitLabel(windows: accountLimits.windows(for: accountID, now: Date()))
+    }
+
+    /// What a needs-attention in this pane is waiting on, in the harness's own
+    /// words. Read from the snapshot file directly: the mod writes it BEFORE
+    /// the hook that raises the event runs, but the watcher's own poll may not
+    /// have come round yet.
+    func attentionMessage(for surfaceID: UUID) -> String? {
+        let url = AgentUsageWatcher.directory
+            .appendingPathComponent(AgentUsage.fileName(for: surfaceID))
+        if let data = try? Data(contentsOf: url), let usage = AgentUsage.parse(data: data) {
+            return usage.attention?.message
+        }
+        return agentUsage.usage(for: surfaceID)?.attention?.message
     }
 
     /// Trims the hook-event log to a bounded tail, synchronously and BEFORE the
@@ -1707,6 +1797,7 @@ final class TerminalViewController: NSViewController {
             agents: agents,
             accounts: accountsProvider?() ?? [],
             defaultAccountID: projectAccountProvider?(project),
+            limitSummary: { [weak self] id in self?.accountLimitLabel(for: id)?.summary },
             on: window
         ) { [weak self] outcome in
             switch outcome {
@@ -1905,6 +1996,13 @@ final class TerminalViewController: NSViewController {
            let command = AgentResume.command(for: state, login: login) {
             return command
         }
+        // The mod's word next: it reports the session as the process starts
+        // and again after a /clear, where a hook only names it on the next
+        // prompt. Cheaper and more exact than scanning transcripts below.
+        if let session = modReportedSession(for: surfaceID, kind: kind) {
+            return AgentResume.command(
+                for: AgentState(kind: kind, status: nil, session: session), login: login)
+        }
         if let cached = lookedUpResumeSessions[surfaceID], cached.kind == kind {
             return AgentResume.command(
                 for: AgentState(kind: kind, status: nil, session: cached.session),
@@ -2006,7 +2104,19 @@ final class TerminalViewController: NSViewController {
         guard let kind = probedResumableKind(for: surfaceID),
               AgentResume.canRestart(kind) else { return false }
         return AgentResume.command(for: agentDetector.state(for: surfaceID)) != nil
+            || modReportedSession(for: surfaceID, kind: kind) != nil
             || lookedUpResumeSessions[surfaceID] != nil
+    }
+
+    /// The Claude session Zetty's mod reports for this pane. Only for a pane
+    /// the probe sees Claude in, and only while the snapshot still describes
+    /// it — the same two checks every other reader of the snapshot makes.
+    private func modReportedSession(for surfaceID: UUID, kind: AgentKind) -> AgentSession? {
+        guard kind == .claude, let usage = shownUsage(for: surfaceID),
+              let id = usage.session else { return nil }
+        let cwd = PaneCwdStore.read(surfaceID)
+            ?? workspace.surface(with: surfaceID)?.workingDir ?? NSHomeDirectory()
+        return AgentSession(id: id, cwd: usage.cwd ?? cwd)
     }
 
     /// The resumable harness the probe sees in this pane, if any.
@@ -2245,16 +2355,22 @@ final class TerminalViewController: NSViewController {
         let current = workspace.surface(with: surfaceID)?.accountID ?? AgentAccountSupport.defaultID
         var entries: [(id: String, title: String, color: NSColor?, isCurrent: Bool)] = [(
             id: AgentAccountSupport.defaultID,
-            title: "Default",
+            title: accountMenuTitle("Default", accountID: AgentAccountSupport.defaultID),
             color: nil,
             isCurrent: current == AgentAccountSupport.defaultID)]
         for account in accounts {
             entries.append((id: account.id,
-                            title: account.name,
+                            title: accountMenuTitle(account.name, accountID: account.id),
                             color: ZTheme.projectColor(id: account.colorID),
                             isCurrent: current == account.id))
         }
         return entries
+    }
+
+    /// An account's name with its rate limits beside it, when it has any: the
+    /// moment of choosing an account is when the figure is worth having.
+    private func accountMenuTitle(_ name: String, accountID: String) -> String {
+        accountLimitLabel(for: accountID).map { "\(name)  —  \($0.summary)" } ?? name
     }
 
     /// Sidebar "Rename…" — payload is the project runtime (the receiver
@@ -3483,7 +3599,7 @@ final class TerminalViewController: NSViewController {
                         title: displayTitle(for: surface),
                         cwd: PaneCwdStore.read(surface.id) ?? registry.workingDirectory(for: surface) ?? surface.workingDir,
                         tool: foregroundBySurface[surface.id].flatMap { $0.isEmpty ? nil : $0 },
-                        agentStatus: agentDetector.state(for: surface.id).status?.rawValue,
+                        agentStatus: displayedStatus(for: surface.id)?.rawValue,
                         isFocused: tileFocus.map { $0 == surface.id }
                             ?? (isActiveTab && surface.id == tree.focusedSurfaceID),
                         live: registry.isLive(surface.id),
@@ -5598,11 +5714,7 @@ final class TerminalViewController: NSViewController {
                 } else {
                     content = .attaching
                 }
-                let state = agentDetector.state(for: id)
-                let running = foregroundBySurface[id].map { !$0.isEmpty } ?? false
-                let status: TileStatus = state.status == .needsAttention
-                    ? .attention
-                    : (running ? .running : .idle)
+                let status = tileStatus(for: id)
                 return TileDescriptor(slotIndex: index, surfaceID: id,
                                       label: paneLabel(for: id) ?? "pane",
                                       icon: surface.flatMap { agentIcon(for: $0) },
@@ -5921,6 +6033,7 @@ final class TerminalViewController: NSViewController {
             sampler: sessionSampler,
             rowsProvider: { [weak self] in self?.taskRows() ?? [] },
             footprintProvider: { ProcessFootprint.current() },
+            costProvider: { [weak self] id in self?.shownUsage(for: id)?.costUSD },
             onReveal: { [weak self] row in self?.revealPane(row) },
             onInterrupt: { [weak self] row in self?.interruptSession(row) },
             onKill: { [weak self] row in self?.killSession(row) },
@@ -6096,9 +6209,7 @@ final class TerminalViewController: NSViewController {
             guard !project.isHibernated else { return nil }
             let isActiveProject = projectIndex == workspace.activeIndex
             let tabs = project.tabList.trees.enumerated().map { tabIndex, tree in
-                let status = tree.focusedSurface.flatMap {
-                    agentDetector.state(for: $0.id).status
-                }
+                let status = tree.focusedSurface.flatMap { displayedStatus(for: $0.id) }
                 return MenuBarTabSnapshot(
                     index: tabIndex,
                     title: tabDisplayTitle(for: tree, at: tabIndex),
@@ -6169,7 +6280,7 @@ final class TerminalViewController: NSViewController {
             let trees = project.tabList.trees
             // Agent status per tab (from the tab's focused surface).
             let statuses: [AgentStatus?] = trees.map { tree in
-                tree.focusedSurface.flatMap { agentDetector.state(for: $0.id).status }
+                tree.focusedSurface.flatMap { displayedStatus(for: $0.id) }
             }
             let rollup = statuses.compactMap { $0 }.max { Self.severity($0) < Self.severity($1) }
 
@@ -6273,7 +6384,8 @@ final class TerminalViewController: NSViewController {
     /// Severity ranking for rolling up multiple tab statuses to a project glyph.
     private static func severity(_ status: AgentStatus) -> Int {
         switch status {
-        case .needsAttention: return 3
+        case .needsAttention: return 4
+        case .errored:        return 3
         case .running:        return 2
         case .idle:           return 1
         }

@@ -414,13 +414,13 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         stack.addArrangedSubview(spacer())
         stack.addArrangedSubview(sectionHeader("Claude Code Integration"))
         stack.addArrangedSubview(caption(
-            "Loads Zetty's mod into Claude Code, which reports each pane's context "
-            + "fill to the status bar. Applies to agents started from now on; a "
+            "Loads Zetty's mod into Claude Code, which reports each pane's usage and "
+            + "rate limits to Zetty. Applies to agents started from now on; a "
             + "running one keeps what it started with."
         ))
         claudeModSwitch.target = self
         claudeModSwitch.action = #selector(claudeModToggled(_:))
-        addFullWidth(switchRow("Context readout", control: claudeModSwitch), to: stack)
+        addFullWidth(switchRow("Load Zetty's mod", control: claudeModSwitch), to: stack)
 
         stack.addArrangedSubview(spacer())
         stack.addArrangedSubview(sectionHeader("Status Hooks"))

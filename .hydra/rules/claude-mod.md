@@ -3,17 +3,16 @@ paths:
     - "Mods/**"
     - "Sources/ZettyCore/Agents/AgentUsage.swift"
     - "Sources/ZettyCore/Agents/ModInstall.swift"
-    - "Sources/ZettyCore/StatusBar/ContextMeter.swift"
     - "App/Sources/App/AgentUsageWatcher.swift"
     - "App/Sources/App/ModInstaller.swift"
+    - "Sources/ZettyCore/Accounts/AccountLimits.swift"
 commands:
     - "claude plugin validate"
     - "claude plugin test"
 triggers:
     - "changing any file of a mod under Mods/ — bump version in its plugin.json in the same change"
     - "changing Zetty's Claude Code mod or what it reports"
-    - "changing the context readout, or adding chrome fed by agent usage"
-    - "the context readout is missing or stale"
+    - "adding chrome fed by agent usage (rate limits, cost, context, turn outcome)"
 ---
 
 # Claude Code mod (zetty-bridge)
@@ -23,13 +22,32 @@ triggers:
 
 Zetty ships a Claude Code **mod** — a TypeScript hooks module that runs INSIDE
 the Claude Code process — at `Mods/zetty-bridge/`. It reports what the classic
-hooks cannot see (context fill, cost, rate limits, why a turn ended). The
-status bar's `ctx 15%` readout is its first consumer.
+hooks cannot see (context fill, cost, rate limits, why a turn ended).
+
+What reads it: the account chip and pickers (rate limits), every status dot
+(a failed turn), the needs-attention notification (its message), the Sessions
+view (cost), and the agent resume line (session id).
 
 Pure model in `ZettyCore`: `AgentUsage` + `AgentUsageStore` (the snapshot and
-its change detection), `ContextMeter` (label, level, tooltip), `ModInstall`
-(when to copy, what the variable holds). App layer: `ModInstaller`,
-`AgentUsageWatcher`, `StatusBarView.setContext`.
+its change detection), `AccountLimits` + `AccountLimitLabel` (limits per
+account, and how they read), `AgentStatus.displayed` (the errored overlay),
+`ModInstall` (when to copy, what the variable holds). App layer:
+`ModInstaller`, `AgentUsageWatcher`, `TerminalViewController.applyAgentUsage`.
+
+## Do not show the context window in Zetty's chrome
+
+A status-bar readout (`ctx 15%`) shipped in v0.1.49 and was removed the same
+day. **Claude Code's own status line already shows context fill, inside the
+pane it describes**, so a second copy in Zetty's bar was a duplicate one line
+away, and it only ever described the focused pane. The same reasoning covers a
+context figure in a tile's status line or the Sessions view: the tile already
+contains the pane that shows it.
+
+What Zetty's chrome is for is what Claude Code CANNOT show: state across
+panes and across accounts. Rate limits belong to an account rather than a
+pane, and an errored turn matters in a pane you are not looking at. Before
+adding chrome fed by the snapshot, check whether the harness's own status line
+already carries it for the pane in view.
 
 ## Any change to a mod bumps its version  ← not optional
 
@@ -60,9 +78,11 @@ so it reads as "my change did nothing".
    sets `CLAUDE_CODE_PLUGIN_DIRS` process-wide, so every pane inherits it.
 2. Claude Code loads the mod. On session start, turn start/end and every
    `session.measure` it rewrites `~/.zetty/agent-usage/<SURFACE-UUID>.json`.
-3. `AgentUsageWatcher` polls that directory (1s, mtime-gated) into
-   `AgentUsageStore`; a visible change requests a coalesced status-bar refresh.
-4. `refreshStatusBar` hands `StatusBarView` a `ContextMeter` for the focused pane.
+3. `AgentUsageWatcher` polls that directory (1s, mtime-gated) and hands each
+   batch to `applyAgentUsage`, which stores it and requests a coalesced
+   refresh ONLY for what moved: dots when a turn's failed state flipped, the
+   status bar (tile footers in tile mode) when an account's limits moved a
+   whole point.
 
 ## Rules
 
@@ -92,18 +112,12 @@ so it reads as "my change did nothing".
 - **`session.measure` is a machine-driven event source** and falls under the
   Chrome refresh rules. `AgentUsageStore.apply` reports a change only when
   something a view SHOWS moved: token counts and cost tick many times inside
-  one percent and are tooltip detail, so they are excluded from the comparison
-  (`AgentUsage.visible`). A cost crossing a cent boundary once woke the chrome
-  mid-turn in a test; that is what the exclusion is for.
-- **The readout sits LAST in the status bar's left cluster and pads its
-  figure.** It changes while an agent works, and anything in `pillStack` that
-  changes width on a timer slides Broadcast out from under the pointer (see
-  `chrome-layout.md`). `ContextMeter.label` pads the number to three columns so
-  in the mono font the label's own width holds too. It is in the `squeezable`
-  list so it cannot raise the window floor, and compact hides it.
-- **`setNeedsChromeRefresh(statusBar:)` exists for this.** A tab-bar refresh
-  reaches the status bar too, but returns early in tile mode and re-evaluates
-  every pill on the way.
+  one percent and are excluded from the comparison (`AgentUsage.visible`). A
+  cost crossing a cent boundary once woke the chrome mid-turn in a test; that
+  is what the exclusion is for. The first view to read the store must refresh
+  only on a `true` from `apply`, through `setNeedsChromeRefresh`, and anything
+  it puts in the status bar must hold its width (see `chrome-layout.md`:
+  nothing in `pillStack` may change width on a timer).
 - **A pane's environment is captured once.** `zetty-claude-mod` and the
   variable apply to panes spawned afterwards; an agent already running, or any
   agent in a preserved session created earlier, keeps what it started with.
@@ -115,6 +129,45 @@ so it reads as "my change did nothing".
   `HOME`, `ZETTY_SURFACE`, `ZETTY_CWD_FILE`, `CLAUDE_CONFIG_DIR`) — the engine
   refuses a computed name. The surface is validated as a UUID before it becomes
   a path, in the mod and again in `AgentUsage.parse`.
+
+## What the chrome shows, and the rules behind each
+
+- **Limits belong to an ACCOUNT, not a pane.** Every Claude pane on a login
+  reports the same windows, so `AccountLimits` keeps the newest report per
+  account id (`@default` for the default login) and persists it
+  (`account-limits.json`, beside the accounts file) — the moment of choosing
+  an account for a new pane is exactly when none may be running on it. A
+  report with NO windows is ignored, never stored: the harness reports none
+  before its first response, and that must not wipe what another pane said. A
+  window whose `resetsAt` has passed is dropped on read.
+- **The account is resolved from the snapshot's `config`**, through the same
+  `AgentAccountResolver.accountID(forReportedConfigDirectory:)` the hook's
+  report uses. A missing `config` names nothing and records nothing.
+- **The chip is quiet below 70%.** `AccountLimitLabel.chip` is nil until the
+  highest window is worth a glance; the name keeps the account's own hue and
+  only the appended window takes the attention / error token, so identity
+  never changes colour with usage. `StatusBarView.accountTitle` is shared by
+  the status bar and `TileStatusLineView`.
+- **Errored is an overlay on idle, never a hook state.** `AgentStateMachine`
+  and the hooks are untouched; `AgentStatus.displayed` returns `.errored` only
+  for an idle (or stateless) pane whose snapshot says the last turn ended in
+  `error` or `refusal`. Running and needs-attention always win, and `aborted`
+  is the user's own interrupt. Roll-up order: needs-attention, errored,
+  running, idle.
+- **A failed turn notifies, but does not badge.** The Dock badge counts panes
+  waiting on you and clears when one is visited; an error does neither.
+- **The first batch never notifies.** `AgentUsageWatcher` flags the read made
+  at `start()`: those snapshots describe turns that ended before this launch,
+  the same reason the hook replay stays silent.
+- **The attention message is read from the FILE at notification time**
+  (`attentionMessage(for:)`), not from the store. The mod's
+  `classic.Notification` hook writes the snapshot BEFORE calling `next`, and
+  the settings hook beneath it is what raises needs-attention — so the file is
+  already there, while the watcher's 1s poll may not have come round. The
+  message is flattened to one line and capped at 200 characters in
+  `AgentUsage.parse`, because it lands in a notification.
+- **Tile dots are retuned in place** (`TileGridView.updateStatuses`, on the
+  coalesced refresh). Before this they only moved when the grid was rebuilt.
 
 ## Verifying
 

@@ -17,7 +17,11 @@ type Turn = {
 
 type Usage = Pick<SessionUsage, 'context' | 'rateLimits' | 'cost'>
 
+// What a needs-attention is waiting on, in the harness's own words.
+type Attention = { message: string; type: string }
+
 let turn: Turn = { state: 'idle' }
+let attention: Attention | undefined
 // Events can land back to back; one write at a time keeps the file whole.
 let writes: Promise<void> = Promise.resolve()
 
@@ -48,6 +52,7 @@ async function write($: EngineInterface, measured?: Usage): Promise<void> {
     config: (await $.env.get('CLAUDE_CONFIG_DIR')) ?? '',
     model: await $.session.model(),
     turn,
+    attention,
     context: {
       tokens: usage.context.tokens,
       window: usage.context.window,
@@ -80,6 +85,7 @@ export const register: Register = on => {
   on('turn.start', async ($, e, next) => {
     const started = await next(e)
     turn = { state: 'running' }
+    attention = undefined
     await publish($)
     return started
   })
@@ -89,9 +95,18 @@ export const register: Register = on => {
     // A subagent's run is a turn too; only the main loop decides the pane's state.
     if (e.agentId === undefined) {
       turn = { state: 'idle', reason: e.reason, durationMs: e.durationMs }
+      attention = undefined
       await publish($)
     }
     return completed
+  })
+
+  // Written BEFORE `next`: the settings hook beneath is what raises
+  // needs-attention in Zetty, which reads this file the moment it does.
+  on('classic.Notification', async ($, e, next) => {
+    attention = { message: e.message, type: e.notification_type }
+    await publish($)
+    return next(e)
   })
 
   on('session.measure', async ($, e, next) => {

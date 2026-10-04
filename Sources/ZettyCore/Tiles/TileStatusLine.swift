@@ -10,11 +10,15 @@ public struct TileStatusLine: Equatable, Sendable {
     public var cwd: String
     public var git: GitStatus
     public var account: AccountResolution?
+    /// The account's rate limits; shown beside its name once one is near.
+    public var limit: AccountLimitLabel?
 
-    public init(cwd: String, git: GitStatus, account: AccountResolution?) {
+    public init(cwd: String, git: GitStatus, account: AccountResolution?,
+                limit: AccountLimitLabel? = nil) {
         self.cwd = cwd
         self.git = git
         self.account = account
+        self.limit = limit
     }
 
     public struct Parts: Equatable, Sendable {

@@ -19,14 +19,16 @@ final class AgentUsageWatcher {
     /// The panes Zetty has. A snapshot for any other is a leftover — its pane
     /// closed, or it predates this launch — and is deleted.
     private let knownSurfaces: () -> Set<UUID>
-    private let onUsage: ([AgentUsage]) -> Void
+    /// The second argument is true for the batch read at `start()`: snapshots
+    /// that were on disk before this launch, describing the past.
+    private let onUsage: ([AgentUsage], Bool) -> Void
     private let onRemoved: ([UUID]) -> Void
     private var timer: Timer?
     private var modified: [UUID: Date] = [:]
 
     init(directory: URL = AgentUsageWatcher.directory,
          knownSurfaces: @escaping () -> Set<UUID>,
-         onUsage: @escaping ([AgentUsage]) -> Void,
+         onUsage: @escaping ([AgentUsage], Bool) -> Void,
          onRemoved: @escaping ([UUID]) -> Void) {
         self.directory = directory
         self.knownSurfaces = knownSurfaces
@@ -36,9 +38,9 @@ final class AgentUsageWatcher {
 
     func start() {
         stop()
-        poll()   // agents inside preserved sessions wrote theirs before this launch
+        poll(isInitial: true)   // agents inside preserved sessions wrote theirs before this launch
         let timer = Timer(timeInterval: 1, repeats: true) { [weak self] _ in
-            self?.poll()
+            self?.poll(isInitial: false)
         }
         RunLoop.main.add(timer, forMode: .common)
         self.timer = timer
@@ -49,7 +51,7 @@ final class AgentUsageWatcher {
         timer = nil
     }
 
-    private func poll() {
+    private func poll(isInitial: Bool) {
         let fileManager = FileManager.default
         let entries = (try? fileManager.contentsOfDirectory(
             at: directory, includingPropertiesForKeys: [.contentModificationDateKey])) ?? []
@@ -80,6 +82,6 @@ final class AgentUsageWatcher {
         let removed = modified.keys.filter { !seen.contains($0) }
         for surface in removed { modified.removeValue(forKey: surface) }
         if !removed.isEmpty { onRemoved(removed) }
-        if !changed.isEmpty { onUsage(changed) }
+        if !changed.isEmpty { onUsage(changed, isInitial) }
     }
 }

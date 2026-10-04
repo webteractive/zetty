@@ -52,6 +52,27 @@ test('a turn writes running, then idle with why it ended', async ($, on) => {
   }))
 })
 
+test('a notification is written before the hooks beneath run, and a new turn clears it', async ($, on) => {
+  const written = world(on, IN_PANE)
+  let writtenWhenBeneathRan = -1
+  on('classic.Notification', () => {
+    writtenWhenBeneathRan = written.length
+    return {}
+  })
+
+  await $.classic.Notification({
+    message: 'Claude needs your permission to use Bash', notification_type: 'permission_prompt',
+  })
+
+  expect(writtenWhenBeneathRan).toBe(1)
+  expect(written[0]?.snapshot.attention).toEqual({
+    message: 'Claude needs your permission to use Bash', type: 'permission_prompt',
+  })
+
+  await $.turn.start({ text: 'ok', turnId: 't1' })
+  expect(written[1]?.snapshot.attention).toBe(undefined)
+})
+
 test('a subagent finishing leaves the pane running', async ($, on) => {
   const written = world(on, IN_PANE)
 

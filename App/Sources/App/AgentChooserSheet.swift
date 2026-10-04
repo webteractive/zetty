@@ -37,11 +37,13 @@ final class AgentChooserSheet: NSObject {
         agents: [ResolvedSpawnAgent],
         accounts: [AgentAccount] = [],
         defaultAccountID: String? = nil,
+        limitSummary: @escaping (String) -> String? = { _ in nil },
         on window: NSWindow,
         completion: @escaping (Outcome) -> Void
     ) {
         let sheet = AgentChooserSheet(agents: agents, accounts: accounts,
                                       defaultAccountID: defaultAccountID,
+                                      limitSummary: limitSummary,
                                       host: window, completion: completion)
         active = sheet
         window.beginSheet(sheet.panel)
@@ -51,6 +53,7 @@ final class AgentChooserSheet: NSObject {
         agents: [ResolvedSpawnAgent],
         accounts: [AgentAccount],
         defaultAccountID: String?,
+        limitSummary: (String) -> String?,
         host: NSWindow,
         completion: @escaping (Outcome) -> Void
     ) {
@@ -94,11 +97,17 @@ final class AgentChooserSheet: NSObject {
                 outcomes.append(.agent(command: resolved.command, accountID: nil))
                 continue
             }
-            items.append(.init(title: "\(resolved.agent.displayName) — Default", icon: icon))
+            // Limits come from Claude's reports, so only its Default row —
+            // the default login of another harness has none to show.
+            let defaultLimits = resolved.agent.id == AgentKind.claude.rawValue
+                ? limitSummary(AgentAccountSupport.defaultID) : nil
+            items.append(.init(title: Self.rowTitle("\(resolved.agent.displayName) — Default",
+                                                    limits: defaultLimits), icon: icon))
             outcomes.append(.agent(command: resolved.command,
                                    accountID: AgentAccountSupport.defaultID))
             for account in hosts {
-                items.append(.init(title: "\(resolved.agent.displayName) — \(account.name)",
+                items.append(.init(title: Self.rowTitle("\(resolved.agent.displayName) — \(account.name)",
+                                                        limits: limitSummary(account.id)),
                                    icon: icon,
                                    dot: ZTheme.projectColor(id: account.colorID)))
                 outcomes.append(.agent(command: resolved.command, accountID: account.id))
@@ -117,6 +126,11 @@ final class AgentChooserSheet: NSObject {
         let fit = panel.contentView?.fittingSize ?? .zero
         panel.setContentSize(fit == .zero ? NSSize(width: 320, height: 200) : fit)
         panel.initialFirstResponder = listView
+    }
+
+    /// A row's name with its account's rate limits after it, when it has any.
+    private static func rowTitle(_ name: String, limits: String?) -> String {
+        limits.map { "\(name)  ·  \($0)" } ?? name
     }
 
     private func buildLayout() {

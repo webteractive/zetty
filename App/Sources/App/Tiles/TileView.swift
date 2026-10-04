@@ -25,12 +25,15 @@ enum TileStatus: Equatable {
     case running
     case attention
     case idle
+    /// The agent's last turn ended in an API error or a refusal.
+    case errored
 
     func color(_ theme: ZTheme) -> NSColor {
         switch self {
         case .running: return theme.greenColor
         case .attention: return theme.yellowColor
         case .idle: return theme.fg3Color
+        case .errored: return theme.redColor
         }
     }
 }

@@ -82,8 +82,8 @@ public struct AppConfig: Equatable, Sendable {
     /// macOS Notification Center alerts when an agent needs attention and
     /// Zetty is in the background.
     public var notifySystem: Bool
-    /// Loads Zetty's Claude Code mod into new Claude panes — the source of the
-    /// context readout. Off leaves the classic hooks as the only integration.
+    /// Loads Zetty's Claude Code mod into new Claude panes, which reports
+    /// usage and rate limits. Off leaves the classic hooks as the only integration.
     public var claudeMod: Bool
     /// Which side of the window the project sidebar sits on.
     public var sidebarPosition: SidebarPosition
@@ -466,7 +466,7 @@ public struct AppConfig: Equatable, Sendable {
         notify-system = \(notifySystem)
 
         # Claude Code integration: loads Zetty's mod into new Claude panes, which
-        # reports context fill, cost and rate limits back to the chrome.
+        # reports each pane's usage and rate limits back to Zetty.
         zetty-claude-mod = \(claudeMod)
 
         # Which side of the window the project sidebar sits on: left | right
@@ -564,7 +564,7 @@ public struct AppConfig: Equatable, Sendable {
     notify-system = true
 
     # Claude Code integration: loads Zetty's mod into new Claude panes, which
-    # reports context fill, cost and rate limits back to the chrome.
+    # reports each pane's usage and rate limits back to Zetty.
     zetty-claude-mod = true
 
     # Which side of the window the project sidebar sits on: left | right

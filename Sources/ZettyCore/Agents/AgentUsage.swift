@@ -32,8 +32,23 @@ public struct AgentUsage: Equatable, Sendable {
         }
     }
 
+    /// What a needs-attention is waiting on, in the harness's own words.
+    public struct Attention: Equatable, Sendable {
+        public let message: String
+        /// The harness's `notification_type`, e.g. `permission_prompt`.
+        public let type: String?
+
+        public init(message: String, type: String? = nil) {
+            self.message = message
+            self.type = type
+        }
+    }
+
     public let surface: UUID
     public var session: String?
+    /// The session's working directory as the harness reports it, which is
+    /// where a resume has to run; the pane's shell may live elsewhere.
+    public var cwd: String?
     public var model: String?
     /// The harness's config-dir variable as the mod saw it: "" is the default
     /// login, nil a snapshot that said nothing.
@@ -48,17 +63,19 @@ public struct AgentUsage: Equatable, Sendable {
     public var contextPercent: Int?
     public var costUSD: Double?
     public var rateLimits: [RateLimit]
+    public var attention: Attention?
     /// Seconds since the epoch.
     public var updatedAt: TimeInterval
 
-    public init(surface: UUID, session: String? = nil, model: String? = nil,
+    public init(surface: UUID, session: String? = nil, cwd: String? = nil, model: String? = nil,
                 configDirectory: String? = nil, turnState: TurnState = .idle,
                 turnReason: String? = nil, contextTokens: Int? = nil,
                 contextWindow: Int? = nil, contextPercent: Int? = nil,
                 costUSD: Double? = nil, rateLimits: [RateLimit] = [],
-                updatedAt: TimeInterval = 0) {
+                attention: Attention? = nil, updatedAt: TimeInterval = 0) {
         self.surface = surface
         self.session = session
+        self.cwd = cwd
         self.model = model
         self.configDirectory = configDirectory
         self.turnState = turnState
@@ -68,7 +85,21 @@ public struct AgentUsage: Equatable, Sendable {
         self.contextPercent = contextPercent
         self.costUSD = costUSD
         self.rateLimits = rateLimits
+        self.attention = attention
         self.updatedAt = updatedAt
+    }
+
+    /// Whether the last turn ended in a way the user did not ask for: an API
+    /// error or a refusal. An interrupt (`aborted`) is the user's own doing,
+    /// and a running turn has not ended at all.
+    public var turnFailed: Bool {
+        turnState == .idle && (turnReason == "error" || turnReason == "refusal")
+    }
+
+    /// `API error` / `refused`, for a notification; nil when the turn did not fail.
+    public var failureDescription: String? {
+        guard turnFailed else { return nil }
+        return turnReason == "refusal" ? "refused" : "API error"
     }
 
     /// `<SURFACE-UUID>.json`, the name the mod writes.
@@ -103,10 +134,18 @@ public struct AgentUsage: Equatable, Sendable {
         }
         let session = (object["session"] as? String)
             .flatMap { AgentEvent.isValidSessionID($0) ? $0 : nil }
+        let attention = (object["attention"] as? [String: Any]).flatMap { raw -> Attention? in
+            guard let message = (raw["message"] as? String)?
+                .trimmingCharacters(in: .whitespacesAndNewlines), !message.isEmpty else { return nil }
+            // It goes into a notification and a tooltip: one line, bounded.
+            let line = message.split(whereSeparator: \.isNewline).joined(separator: " ")
+            return Attention(message: String(line.prefix(200)), type: raw["type"] as? String)
+        }
 
         return AgentUsage(
             surface: surface,
             session: session,
+            cwd: (object["cwd"] as? String).flatMap { $0.isEmpty ? nil : $0 },
             model: object["model"] as? String,
             configDirectory: object["config"] as? String,
             turnState: (turn["state"] as? String).flatMap(TurnState.init(rawValue:)) ?? .idle,
@@ -116,6 +155,7 @@ public struct AgentUsage: Equatable, Sendable {
             contextPercent: (context["percent"] as? NSNumber).map { min(max($0.intValue, 0), 100) },
             costUSD: (object["costUSD"] as? NSNumber)?.doubleValue,
             rateLimits: limits,
+            attention: attention,
             updatedAt: ((object["updatedAt"] as? NSNumber)?.doubleValue ?? 0) / 1000)
     }
 

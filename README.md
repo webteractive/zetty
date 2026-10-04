@@ -167,7 +167,8 @@ by the tool it's running.
   Whichever form you leave it in is remembered — the buttons rewrite
   `zetty-sessions-view`. It lists
   every zmx session Zetty spawned: which pane owns it, what it is running, its
-  live CPU, and the resident memory of its own processes. Above the list,
+  live CPU, the resident memory of its own processes, and — for a Claude
+  session — what it has cost so far. Above the list,
   Zetty's measured footprint. Per row: **Reveal Pane**, **Interrupt** (Ctrl-C),
   and **Kill Session…**. The status-bar pill carries a dot that turns yellow
   when a session is busy; it folds into the compact bar's menu on a narrow
@@ -276,11 +277,9 @@ by the tool it's running.
   added, or on demand from Project Settings. A hand-editable global default
   lives in Application Support.
 - **AI agent status** — hook-driven status dots per tab and per project:
-  green = running, yellow = needs attention, dim = idle — with optional
+  green = running, yellow = needs attention, red = stopped on an error, dim =
+  idle — with optional
   sound / Dock badge / Notification Center alerts when an agent needs you.
-- **Claude context readout** — the status bar shows how full the focused
-  Claude pane's context window is (`ctx 15%`), turning yellow from 80% and red
-  from 95%. Hover for the token count, model and session cost.
 - **Launch agents per project** — enable coding agents (Claude Code, Codex,
   Hermes, Gemini, opencode, Pi, Cursor) in a project's **Agents** settings;
   opening a new tab/split then offers a keyboard-driven chooser to launch one
@@ -288,7 +287,9 @@ by the tool it's running.
 - **Multiple Claude accounts** — run a work login in one tab and a personal one
   in the next. Each account keeps its own credentials, settings and history in
   its own directory; set a default per project, override it per pane, and see
-  which is which from a status-bar chip and colored dots.
+  which is which from a status-bar chip and colored dots. The chip also warns
+  when an account is near a rate limit, and the account pickers list each
+  account's usage.
 - **Update notifications** — Zetty checks GitHub for newer releases and shows
   an "Update available" pill in the status bar (plus **Check for Updates…**);
   opt out with `check-updates = false`.
@@ -576,7 +577,7 @@ seeds a documented starter file on first launch. Format is plain
 | `restore-scrollback` | `true` | Replay preserved panes' scrollback history on relaunch (with `preserve-sessions`) |
 | `check-updates` | `true` | Notify when a newer Zetty release is available |
 | `notify-sound` / `notify-badge` / `notify-system` | `true` | Agent needs-attention alerts |
-| `zetty-claude-mod` | `true` | Load Zetty's Claude Code mod into new Claude panes (the context readout) |
+| `zetty-claude-mod` | `true` | Load Zetty's Claude Code mod into new Claude panes |
 | `editor` | — | App used by Settings → "Open in Editor" |
 | `viewer-highlight-command` | `bat --style=plain --color=always --paging=never` | Command the file viewer pipes a file through for syntax highlighting; `off` disables it. Zetty sets `BAT_THEME` to match the active scheme's light/dark axis — pass your own `--theme` here to override |
 | `viewer-max-bytes` | `2097152` | Largest file the viewer will render; bigger files open in their default app instead |
@@ -723,6 +724,8 @@ events the harness pings Zetty, which lights the sidebar dots:
 - 🟢 **green** — agent is working
 - 🟡 **yellow** — agent needs your attention (optional sound, Dock badge, and
   macOS notification that focuses the pane when clicked)
+- 🔴 **red** — Claude's last turn ended in an API error or a refusal, until
+  its next turn starts (reported by the Claude Code integration below)
 - **dim** — agent is idle
 
 Restart the agent after installing a hook. Events name the exact pane they
@@ -745,19 +748,37 @@ when the active project or tab actually changes.
 
 Zetty ships a small Claude Code **mod** (`zetty-bridge`) and loads it into
 every Claude pane. It runs inside Claude Code and reports what the hooks above
-cannot see — context-window fill, session cost and rate limits — which the
-status bar shows for the focused pane as `ctx 15%` (yellow from 80%, red from
-95%; hover for tokens, model and cost). On a narrow window the figure moves
-into the `⋯` menu.
+cannot see. Zetty shows the parts Claude Code itself cannot show you — state
+across panes and across accounts:
+
+- **Rate limits per account.** Once an account is within 30% of a limit, its
+  chip in the status bar (and in each tile's footer) gains the highest window,
+  `Work · 5h 82%`, in yellow, and red from 95%. The **Account ▸** menu and the
+  new-pane agent chooser list every account's windows (`5h 14% · 7d 12%`) and,
+  for one that is nearly spent, when it resets. The figures are remembered, so
+  an account shows its last reading even with no pane running on it.
+- **A red dot for a turn that failed.** When Claude stops on an API error or a
+  refusal, the tab, its project and its tile turn red until the next turn
+  starts, and you get the same sound and macOS notification as a
+  needs-attention ("Claude stopped: API error"). Interrupting it yourself does
+  not count.
+- **Notifications that say what is wanted.** A needs-attention notification
+  carries Claude's own message ("Claude needs your permission to use Bash")
+  instead of only the project name.
+- **Cost per session** in the Sessions view, side by side for every Claude
+  pane. On a subscription it is an estimate at list price, not a charge.
+- **Restarting an agent** finds its conversation sooner, including straight
+  after a `/clear`.
+
+The context window is deliberately not shown: Claude Code's own status line
+already has it, in the pane it belongs to.
 
 - **Nothing to install.** Zetty copies the mod to `~/.zetty/mods/zetty-bridge`
   and points Claude Code at it through `CLAUDE_CODE_PLUGIN_DIRS`, keeping any
   folders you list there yourself.
-- **It applies to agents started after it is enabled.** A Claude that was
-  already running — including one inside a preserved session — shows no
-  readout until it is restarted in a new pane.
-- **Turn it off** with **Settings (⌘,) → Agents → Context readout**, or
-  `zetty-claude-mod = false`. The status dots do not depend on it.
+- **It applies to agents started after it is enabled**, in a new pane.
+- **Turn it off** with **Settings (⌘,) → Agents → Load Zetty's mod**, or
+  `zetty-claude-mod = false`. The green / yellow / dim dots do not depend on it.
 - It reports only from inside Zetty panes, and needs a Claude Code recent
   enough to load mods; an older one ignores it.
 

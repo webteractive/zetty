@@ -241,6 +241,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         tvc.onRenameProject = { [weak self] project in self?.promptRenameProject(project) }
         tvc.onOpenProjectSettings = { [weak self] project in self?.presentProjectSettings(project) }
         tvc.accountsProvider = { [weak self] in self?.agentAccounts.accounts ?? [] }
+        tvc.accountLimitsStore = AccountLimitsStore(directory: appSupportDirectory)
+        tvc.onAgentTurnFailed = { [weak self] surface, project, failure in
+            self?.agentTurnFailed(surface: surface, project: project, failure: failure)
+        }
         tvc.onOpenAccountSettings = { [weak self] in self?.openSettings(tab: .accounts) }
         // Routed through resolvedSettings so a clone inherits its source's
         // account along with the rest of its settings.
@@ -1545,11 +1549,44 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             }
         }
         guard resolved.notifySystem, !NSApp.isActive else { return }
+        // Read on main, before the authorization callback hops off it.
+        let message = terminalViewController?.attentionMessage(for: surface.id)
         let center = UNUserNotificationCenter.current()
         center.requestAuthorization(options: [.alert, .sound]) { granted, _ in
             guard granted else { return }
             let content = UNMutableNotificationContent()
             content.title = "\(kind.displayName.capitalized) needs attention"
+            // What it is waiting on, in the harness's own words, when Zetty's
+            // mod reported it; the project then moves up to the subtitle.
+            if let message {
+                content.subtitle = project.name
+                content.body = message
+            } else {
+                content.body = "\(project.name) — \(surface.workingDir)"
+            }
+            content.userInfo = ["pane": SessionPersistence.shortID(for: surface.id)]
+            center.add(UNNotificationRequest(identifier: UUID().uuidString, content: content, trigger: nil))
+        }
+    }
+
+    /// An agent's turn ended in an API error or a refusal. Same gates as
+    /// needs-attention (sound, and a macOS notification while Zetty is in the
+    /// background), but NOT the Dock badge: that counts panes waiting on you,
+    /// and it clears when a pane is visited, which an error does not.
+    private func agentTurnFailed(surface: Surface, project: ProjectRuntime, failure: String) {
+        let resolved = resolvedSettings(for: project)
+        if resolved.notifySound {
+            NSSound(named: "Ping")?.play()
+            if !NSApp.isActive {
+                NSApp.requestUserAttention(.informationalRequest)
+            }
+        }
+        guard resolved.notifySystem, !NSApp.isActive else { return }
+        let center = UNUserNotificationCenter.current()
+        center.requestAuthorization(options: [.alert, .sound]) { granted, _ in
+            guard granted else { return }
+            let content = UNMutableNotificationContent()
+            content.title = "Claude stopped: \(failure)"
             content.body = "\(project.name) — \(surface.workingDir)"
             content.userInfo = ["pane": SessionPersistence.shortID(for: surface.id)]
             center.add(UNNotificationRequest(identifier: UUID().uuidString, content: content, trigger: nil))
@@ -2838,6 +2875,7 @@ private extension AgentStatus {
         case .running: return "running"
         case .needsAttention: return "needs attention"
         case .idle: return "idle"
+        case .errored: return "stopped on an error"
         }
     }
 }

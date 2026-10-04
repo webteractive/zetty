@@ -26,6 +26,10 @@ final class SessionsView: NSView {
         // way, and the header was jargon for a number every task manager calls
         // memory. The precision lives in the column's tooltip instead.
         case rss = "RAM"
+        /// What the agent session in this pane has cost so far, from Zetty's
+        /// Claude Code mod. Each pane's own status line shows its own; this is
+        /// the one place every session's figure sits side by side.
+        case cost = "COST"
         case actions = ""
 
         var width: CGFloat {
@@ -35,6 +39,7 @@ final class SessionsView: NSView {
             case .running: return 110
             case .cpu: return 70
             case .rss: return 100
+            case .cost: return 64
             case .actions: return 40
             }
         }
@@ -43,6 +48,7 @@ final class SessionsView: NSView {
     private let sampler: SessionSampler
     private let rowsProvider: () -> [TaskRow]
     private let footprintProvider: () -> Int64?
+    private let costProvider: (UUID) -> Double?
     private let onReveal: (TaskRow) -> Void
     private let onInterrupt: (TaskRow) -> Void
     private let onKill: (TaskRow) -> Void
@@ -63,6 +69,7 @@ final class SessionsView: NSView {
          sampler: SessionSampler,
          rowsProvider: @escaping () -> [TaskRow],
          footprintProvider: @escaping () -> Int64?,
+         costProvider: @escaping (UUID) -> Double? = { _ in nil },
          onReveal: @escaping (TaskRow) -> Void,
          onInterrupt: @escaping (TaskRow) -> Void,
          onKill: @escaping (TaskRow) -> Void,
@@ -71,6 +78,7 @@ final class SessionsView: NSView {
         self.sampler = sampler
         self.rowsProvider = rowsProvider
         self.footprintProvider = footprintProvider
+        self.costProvider = costProvider
         self.onReveal = onReveal
         self.onInterrupt = onInterrupt
         self.onKill = onKill
@@ -123,10 +131,15 @@ final class SessionsView: NSView {
             let item = NSTableColumn(identifier: NSUserInterfaceItemIdentifier(column.rawValue))
             item.title = column.rawValue
             item.width = column.width
-            if column == .cpu || column == .rss {
+            if column == .cpu || column == .rss || column == .cost {
                 // The cells were right-aligned but the headers were not, which
                 // reads as the column itself being misaligned.
                 item.headerCell.alignment = .right
+            }
+            if column == .cost {
+                item.headerToolTip = "What this pane's Claude session has cost so far, as "
+                    + "Claude Code totals it. On a subscription it is an estimate at list "
+                    + "price, not a charge."
             }
             if column == .rss {
                 item.headerToolTip = "Resident memory of this session's own processes. "
@@ -318,7 +331,7 @@ final class SessionsView: NSView {
         if label.stringValue != value { label.stringValue = value }
         label.font = ZTheme.chromeFont(size: 12)
         label.textColor = colour(for: entry, column: column, theme: ZTheme.current)
-        label.alignment = (column == .cpu || column == .rss) ? .right : .natural
+        label.alignment = (column == .cpu || column == .rss || column == .cost) ? .right : .natural
         label.lineBreakMode = .byTruncatingTail
         label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
     }
@@ -465,6 +478,10 @@ extension SessionsView: NSTableViewDataSource, NSTableViewDelegate {
             guard let percent = entry.load.cpuPercent else { return "—" }
             return String(format: "%.1f%%", percent)
         case .rss: return ByteFormat.short(entry.load.rssBytes)
+        case .cost:
+            // Empty, never "$0.00": most rows are not Claude sessions at all.
+            guard let cost = entry.surfaceID.flatMap(costProvider) else { return "" }
+            return String(format: "$%.2f", cost)
         case .actions: return ""
         }
     }

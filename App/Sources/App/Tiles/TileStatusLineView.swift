@@ -125,6 +125,7 @@ final class TileStatusLineView: NSView {
             return
         }
         let token = "\(account.accountID)|\(account.colorID ?? "")|\(account.agentID ?? "")|\(account.isDefault)"
+            + "|\(line.limit?.chip ?? "")|\(line.limit?.summary ?? "")"
         guard token != chipToken else { return }
         chipToken = token
         let theme = ZTheme.current
@@ -133,11 +134,10 @@ final class TileStatusLineView: NSView {
                                     accessibilityDescription: "Account")?
             .withSymbolConfiguration(NSImage.SymbolConfiguration(pointSize: 8, weight: .semibold))
         accountIcon.contentTintColor = tint
-        accountLabel.stringValue = StatusBarView.accountDisplayName(account)
-        accountLabel.textColor = tint
-        accountPill.toolTip = account.isDefault
-            ? "This pane uses your default login — click to manage accounts"
-            : "This pane runs as \(account.displayName) — click to manage accounts"
+        accountLabel.attributedStringValue = StatusBarView.accountTitle(
+            account, limit: line.limit, tint: tint, font: accountLabel.font ?? ZTheme.monoFont(size: 9))
+        accountPill.toolTip = StatusBarView.accountToolTip(account, limit: line.limit)
+        needsLayout = true   // the label's width follows the limit
         accountPill.layer?.backgroundColor =
             (account.isDefault ? theme.bg2Color : theme.bg3Color).cgColor
         accountPill.layer?.borderColor =

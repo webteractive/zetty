@@ -56,6 +56,7 @@ func agentStatusColor(_ status: AgentStatus?) -> NSColor? {
     case .running:        return ZTheme.current.greenColor
     case .needsAttention: return ZTheme.current.yellowColor
     case .idle:           return ZTheme.current.fg3Color
+    case .errored:        return ZTheme.current.redColor
     case nil:             return nil
     }
 }

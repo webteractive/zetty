@@ -17,6 +17,7 @@ private func parse(_ json: String) -> AgentUsage? {
     let usage = try #require(parse(live))
     #expect(usage.surface == surface)
     #expect(usage.session == "5508e3ae-4e6c-41f8-88ee-c96d558026b1")
+    #expect(usage.cwd == "/Users/me/zetty")
     #expect(usage.model == "claude-opus-5-5")
     #expect(usage.configDirectory == "/Users/me/.zetty/accounts/work")
     #expect(usage.turnState == .idle)
@@ -120,43 +121,6 @@ private func parse(_ json: String) -> AgentUsage? {
     #expect(store.usage(for: surface) == nil)
 }
 
-// MARK: - ContextMeter
-
-@Test func contextMeterNeedsAFill() {
-    #expect(ContextMeter(usage: AgentUsage(surface: surface, contextWindow: 200_000)) == nil)
-}
-
-@Test func contextMeterLabelHoldsOneWidth() {
-    let labels = [5, 15, 100].map {
-        ContextMeter(usage: AgentUsage(surface: surface, contextPercent: $0))?.label
-    }
-    #expect(labels == ["ctx   5%", "ctx  15%", "ctx 100%"])
-}
-
-@Test func contextMeterLevelsFollowTheThresholds() {
-    func level(_ percent: Int) -> ContextMeter.Level? {
-        ContextMeter(usage: AgentUsage(surface: surface, contextPercent: percent))?.level
-    }
-    #expect(level(79) == .normal)
-    #expect(level(80) == .attention)
-    #expect(level(94) == .attention)
-    #expect(level(95) == .critical)
-}
-
-@Test func contextMeterTooltipCarriesTheDetail() {
-    let meter = ContextMeter(usage: AgentUsage(
-        surface: surface, model: "claude-opus-5-5", contextTokens: 150_268,
-        contextWindow: 1_000_000, contextPercent: 15, costUSD: 2.024))
-    #expect(meter?.tooltip == """
-        Context window 15% full (150k of 1M tokens)
-        claude-opus-5-5
-        Session cost about $2.02
-        """)
-    #expect(meter?.menuTitle == "Context 15% full")
-    #expect(ContextMeter.compact(1_500_000) == "1.5M")
-    #expect(ContextMeter.compact(900) == "900")
-}
-
 // MARK: - ModInstall
 
 @Test func modInstallCopiesWhenTheVersionDiffers() {
@@ -196,4 +160,47 @@ private func parse(_ json: String) -> AgentUsage? {
     #expect(!off.ghostty.contains { $0.key == "zetty-claude-mod" })
     #expect(!off.unsupportedKeys.contains("zetty-claude-mod"))
     #expect(AppConfig.parse(off.rendered()).claudeMod == false)
+}
+
+// MARK: - Attention and failed turns
+
+@Test func agentUsageReadsTheAttentionMessageAsOneBoundedLine() throws {
+    let usage = try #require(parse(
+        #"{"v":1,"agent":"claude","surface":"\#(surface.uuidString)","attention":{"message":"  Claude needs your permission\nto use Bash  ","type":"permission_prompt"}}"#))
+    #expect(usage.attention == .init(message: "Claude needs your permission to use Bash",
+                                     type: "permission_prompt"))
+    let long = String(repeating: "x", count: 500)
+    let clipped = parse(#"{"v":1,"agent":"claude","surface":"\#(surface.uuidString)","attention":{"message":"\#(long)"}}"#)
+    #expect(clipped?.attention?.message.count == 200)
+    // An empty message is no message.
+    #expect(parse(#"{"v":1,"agent":"claude","surface":"\#(surface.uuidString)","attention":{"message":"  "}}"#)?.attention == nil)
+}
+
+@Test func agentUsageCallsAnErrorOrRefusalAFailedTurn() {
+    func usage(_ state: AgentUsage.TurnState, _ reason: String?) -> AgentUsage {
+        AgentUsage(surface: surface, turnState: state, turnReason: reason)
+    }
+    #expect(usage(.idle, "error").turnFailed)
+    #expect(usage(.idle, "refusal").turnFailed)
+    #expect(usage(.idle, "error").failureDescription == "API error")
+    #expect(usage(.idle, "refusal").failureDescription == "refused")
+    // The user's own interrupt, a normal answer, and a turn still running.
+    #expect(!usage(.idle, "aborted").turnFailed)
+    #expect(!usage(.idle, "answer").turnFailed)
+    #expect(!usage(.running, "error").turnFailed)
+    #expect(usage(.idle, "answer").failureDescription == nil)
+}
+
+@Test func displayedStatusMarksAnIdleAgentWhoseTurnFailed() {
+    let failed = AgentUsage(surface: surface, turnState: .idle, turnReason: "error")
+    #expect(AgentStatus.displayed(.idle, usage: failed, foreground: "claude") == .errored)
+    #expect(AgentStatus.displayed(nil, usage: failed, foreground: nil) == .errored)
+    // The hooks' word wins: a new turn, or a wait on the user, is more current.
+    #expect(AgentStatus.displayed(.running, usage: failed, foreground: "claude") == .running)
+    #expect(AgentStatus.displayed(.needsAttention, usage: failed, foreground: "claude") == .needsAttention)
+    // A snapshot left by a Claude that is gone marks nothing.
+    #expect(AgentStatus.displayed(.idle, usage: failed, foreground: "zsh") == .idle)
+    let fine = AgentUsage(surface: surface, turnState: .idle, turnReason: "answer")
+    #expect(AgentStatus.displayed(.idle, usage: fine, foreground: "claude") == .idle)
+    #expect(AgentStatus.displayed(.idle, usage: nil, foreground: "claude") == .idle)
 }
