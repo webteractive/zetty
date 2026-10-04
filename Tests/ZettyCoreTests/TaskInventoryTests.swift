@@ -84,3 +84,92 @@ private func session(for id: UUID) -> String { SessionPersistence.sessionName(fo
                                   running: ["zetty-aaaaaaaa": ""], loads: [:])
     #expect(rows[0].running == "shell")
 }
+
+// MARK: - Grouping by project
+
+private func row(_ id: UUID?, _ session: String, cpu: Double? = nil, rss: Int64 = 0) -> TaskRow {
+    TaskRow(session: session, surfaceID: id, paneLabel: nil, running: "shell",
+            load: SessionLoad(cpuPercent: cpu, rssBytes: rss, processCount: 1))
+}
+
+private func project(_ name: String, _ surfaces: [UUID], canHibernate: Bool = true,
+                     hibernated: Bool = false) -> TaskProjectRef {
+    TaskProjectRef(id: UUID(), name: name, surfaceIDs: Set(surfaces),
+                   canHibernate: canHibernate, isHibernated: hibernated)
+}
+
+@Test func groupsFollowProjectOrderNotLoad() {
+    // Sidebar order, so a group's Hibernate button never slides away while the
+    // pointer is on its way to it.
+    let a = UUID(), b = UUID()
+    let api = project("api", [a]), web = project("web", [b])
+    let groups = TaskInventory.groups(
+        rows: [row(b, "zetty-b", cpu: 90), row(a, "zetty-a", cpu: 1)],
+        projects: [api, web])
+    #expect(groups.map(\.title) == ["api", "web"])
+    #expect(groups[0].owner == .project(api.id))
+}
+
+@Test func rowsKeepTheirIncomingOrderInsideAGroup() {
+    let hot = UUID(), cold = UUID()
+    let groups = TaskInventory.groups(
+        rows: [row(hot, "zetty-hot", cpu: 50), row(cold, "zetty-cold", cpu: 1)],
+        projects: [project("api", [cold, hot])])
+    #expect(groups[0].rows.map(\.session) == ["zetty-hot", "zetty-cold"])
+}
+
+@Test func aProjectWithNoSessionsGetsNoGroup() {
+    let a = UUID()
+    let groups = TaskInventory.groups(
+        rows: [row(a, "zetty-a")],
+        projects: [project("empty", []), project("api", [a])])
+    #expect(groups.map(\.title) == ["api"])
+}
+
+@Test func orphansCollectInATrailingGroupWithNoHibernate() {
+    let a = UUID()
+    let groups = TaskInventory.groups(
+        rows: [row(nil, "zetty-dead"), row(a, "zetty-a")],
+        projects: [project("api", [a])])
+    #expect(groups.map(\.title) == ["api", "Orphaned"])
+    #expect(groups[1].owner == .orphaned)
+    #expect(groups[1].canHibernate == false)
+}
+
+@Test func homeAndScratchOfferNoHibernate() {
+    let h = UUID()
+    let groups = TaskInventory.groups(
+        rows: [row(h, "zetty-h")],
+        projects: [project("Home", [h], canHibernate: false)])
+    #expect(groups[0].canHibernate == false)
+}
+
+@Test func aHibernatedProjectWithLiveSessionsReadsAsHibernating() {
+    // Its sessions are still ending (the teardown's grace period), so it shows
+    // — but hibernating it again would be a dead button.
+    let a = UUID()
+    let groups = TaskInventory.groups(
+        rows: [row(a, "zetty-a")],
+        projects: [project("api", [a], hibernated: true)])
+    #expect(groups[0].isHibernating)
+    #expect(groups[0].canHibernate == false)
+}
+
+@Test func groupTotalsSumMeasuredLoadOnly() {
+    let a = UUID(), b = UUID(), c = UUID()
+    let groups = TaskInventory.groups(
+        rows: [row(a, "zetty-a", cpu: 10, rss: 100),
+               row(b, "zetty-b", cpu: 2.5, rss: 50),
+               row(c, "zetty-c", cpu: nil, rss: 25)],
+        projects: [project("api", [a, b, c])])
+    let expectedRSS: Int64 = 175
+    #expect(groups[0].cpuPercent == 12.5)
+    #expect(groups[0].rssBytes == expectedRSS)
+}
+
+@Test func aGroupWithNothingMeasuredHasNoCpu() {
+    let a = UUID()
+    let groups = TaskInventory.groups(rows: [row(a, "zetty-a")],
+                                      projects: [project("api", [a])])
+    #expect(groups[0].cpuPercent == nil)
+}

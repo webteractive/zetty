@@ -1299,8 +1299,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             tvc.onSurfacesClosed = { ids in
                 ZmxRunner.kill(sessions: ids.map(SessionPersistence.sessionName(for:)), zmxPath: zmx)
             }
+            tvc.onSurfacesHibernating = { plan, completion in
+                ZmxRunner.endSessions(plan, zmxPath: zmx, completion: completion)
+            }
         } else {
             tvc.onSurfacesClosed = nil
+            tvc.onSurfacesHibernating = nil
         }
     }
 

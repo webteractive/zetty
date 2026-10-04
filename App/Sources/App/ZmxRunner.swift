@@ -77,6 +77,28 @@ enum ZmxRunner {
         }
     }
 
+    /// Ends a hibernating project's sessions gracefully: types `exit` into the
+    /// idle shells, waits up to the grace period for them to go, then kills
+    /// whatever is still listed. `completion` runs on main once nothing of the
+    /// plan is left alive — only then may the caller free the panes' surfaces,
+    /// since freeing a live preserved surface can block the main thread.
+    static func endSessions(_ plan: HibernationTeardown.Plan, zmxPath: String,
+                            completion: @escaping @MainActor () -> Void) {
+        DispatchQueue.global(qos: .userInitiated).async {
+            for session in plan.exit {
+                _ = send(session: session, text: HibernationTeardown.exitInput, zmxPath: zmxPath)
+            }
+            var listed = Set(listZettySessions(zmxPath: zmxPath))
+            let deadline = Date() + HibernationTeardown.gracePeriod
+            while !plan.exitsFinished(listed: listed), Date() < deadline {
+                Thread.sleep(forTimeInterval: 0.2)
+                listed = Set(listZettySessions(zmxPath: zmxPath))
+            }
+            killAndWait(sessions: plan.remaining(listed: listed), zmxPath: zmxPath)
+            DispatchQueue.main.async { MainActor.assumeIsolated { completion() } }
+        }
+    }
+
     /// Kills the given sessions and waits for zmx to finish — for the quit
     /// path, where an async kill could race app termination.
     static func killAndWait(sessions: [String], zmxPath: String) {

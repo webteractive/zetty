@@ -166,11 +166,16 @@ by the tool it's running.
   its header detaches it into its own window, and the ⤠ button docks it back.
   Whichever form you leave it in is remembered — the buttons rewrite
   `zetty-sessions-view`. It lists
-  every zmx session Zetty spawned: which pane owns it, what it is running, its
+  every zmx session Zetty spawned, **grouped by project** in sidebar order:
+  which pane owns it, what it is running, its
   live CPU, the resident memory of its own processes, and — for a Claude
-  session — what it has cost so far. Above the list,
-  Zetty's measured footprint. Per row: **Reveal Pane**, **Interrupt** (Ctrl-C),
-  and **Kill Session…**. The status-bar pill carries a dot that turns yellow
+  session — what it has cost so far. Each project's header totals its sessions'
+  CPU and memory and carries a **Hibernate** button, so putting idle projects
+  away is one click each without visiting them (Home and scratch terminals have
+  none; sessions no pane owns trail under **Orphaned**). Above the list,
+  Zetty's measured footprint. Per row: **Reveal Pane** (in tile mode it
+  focuses the pane's tile, attaching its tab when the view lacks it),
+  **Interrupt** (Ctrl-C), and **Kill Session…**. The status-bar pill carries a dot that turns yellow
   when a session is busy; it folds into the compact bar's menu on a narrow
   window unless something is busy. CPU is measured *between refreshes* rather than taken
   from `ps`'s lifetime average, so the first reading after opening shows `—`
@@ -238,7 +243,11 @@ by the tool it's running.
   section. Home, scratch terminals, and clones are never members — a clone
   always follows its source's Space.
 - **Hibernating projects** — right-click a project → **Hibernate Project** (or
-  `zetty hibernate`) to free its sessions/processes while keeping its layout.
+  `zetty hibernate`, or its **Hibernate** button in the Sessions view) to free
+  its sessions/processes while keeping its layout. Shells sitting idle at a
+  prompt are sent `exit` first, so they leave cleanly (history written, logout
+  hooks run); anything still running — or still alive a few seconds later — is
+  killed. Waking a project during those seconds wakes it once they are over.
   Hibernated projects collect at the bottom of the sidebar in a **Hibernating**
   section that is **collapsible** (click the header to tuck the dormant rows
   away) and **sorted by name**. Dormancy never blocks the CLI: `zetty status`

@@ -391,6 +391,20 @@ final class TerminalViewController: NSViewController {
     /// `reconcileSessions()`, which is the actual guarantee.
     var onSurfacesClosed: (([UUID]) -> Void)?
 
+    /// Hibernation's teardown: exits idle shells, kills the rest, and calls
+    /// back on main once the plan's sessions are gone. Wired only when zmx
+    /// exists; without it hibernation falls back to `onSurfacesClosed`.
+    var onSurfacesHibernating: ((HibernationTeardown.Plan, @escaping @MainActor () -> Void) -> Void)?
+
+    /// Panes of a hibernated project whose sessions are still ending. Their
+    /// surfaces stay in `retainedSurfaceIDs` until then: freeing a surface
+    /// whose `zmx attach` client is still live can block the main thread (why
+    /// `free-background-panes-after` is disabled).
+    private var surfacesAwaitingTeardown: Set<UUID> = []
+    /// Projects woken during their own teardown; woken once it finishes, so
+    /// the fresh shells never attach to a session that is about to die.
+    private var wakeAfterTeardown: Set<UUID> = []
+
     // NOTE: `registry.onSurfacesRemoved` is deliberately left unset. Surfaces
     // leaving the registry means their GPU resources are freed — it does NOT
     // mean their sessions should die. Those were once the same event, which was
@@ -500,6 +514,7 @@ final class TerminalViewController: NSViewController {
     private var retainedSurfaceIDs: Set<UUID> {
         var keep = Set(allSurfaceIDs)
         if tileMode { keep.formUnion(tileFocusableIDs) }
+        keep.formUnion(surfacesAwaitingTeardown)
         return keep
     }
 
@@ -6032,12 +6047,13 @@ final class TerminalViewController: NSViewController {
         SessionsView(
             mode: mode,
             sampler: sessionSampler,
-            rowsProvider: { [weak self] in self?.taskRows() ?? [] },
+            groupsProvider: { [weak self] in self?.taskGroups() ?? [] },
             footprintProvider: { ProcessFootprint.current() },
             costProvider: { [weak self] id in self?.shownUsage(for: id)?.costUSD },
             onReveal: { [weak self] row in self?.revealPane(row) },
             onInterrupt: { [weak self] row in self?.interruptSession(row) },
             onKill: { [weak self] row in self?.killSession(row) },
+            onHibernate: { [weak self] id in self?.hibernateProject(id: id) },
             onToggleMode: { [weak self] in self?.onToggleSessionsMode?() }
         )
     }
@@ -6116,6 +6132,25 @@ final class TerminalViewController: NSViewController {
                                   paneLabels: labels,
                                   running: running,
                                   loads: sessionSampler.loads)
+    }
+
+    /// The task manager's rows grouped under their projects, in sidebar order.
+    func taskGroups() -> [TaskGroup] {
+        let projects = workspace.projects.map { project in
+            TaskProjectRef(
+                id: project.id, name: project.name,
+                surfaceIDs: Set(project.tabList.trees.flatMap { $0.layout.surfaces.map(\.id) }),
+                canHibernate: !project.isHome && !project.isScratch,
+                isHibernated: project.isHibernated)
+        }
+        return TaskInventory.groups(rows: taskRows(), projects: projects)
+    }
+
+    /// The Sessions view's per-project Hibernate. Asks first when something
+    /// is still running, like every other GUI hibernate.
+    func hibernateProject(id: UUID) {
+        guard let project = workspace.projects.first(where: { $0.id == id }) else { return }
+        hibernateProject(project)
     }
 
     /// Focuses the pane a session belongs to, so triage can start by looking
@@ -7179,7 +7214,7 @@ final class TerminalViewController: NSViewController {
         // A Space orders its members awake-before-dormant, so hibernating one
         // has to re-sort its Space. WorkspaceModel doesn't own this write.
         workspace.reapplyOrdering()
-        onSurfacesClosed?(surfaceIDs)          // kill zmx sessions
+        endSessionsForHibernation(of: project, surfaceIDs: surfaceIDs)
         onActiveProjectChanged?()
         refreshTabBar()
         refreshSidebar()
@@ -7188,10 +7223,43 @@ final class TerminalViewController: NSViewController {
         if let focused = focusedTerminalView() { view.window?.makeFirstResponder(focused) }
     }
 
+    /// Ends a hibernated project's sessions. With zmx, idle shells are asked
+    /// to `exit` first and the panes' surfaces are held until every session is
+    /// gone; the project is already marked hibernated, so the sidebar, the CLI
+    /// and `zetty status` agree from the first moment.
+    private func endSessionsForHibernation(of project: ProjectRuntime, surfaceIDs: [UUID]) {
+        guard let teardown = onSurfacesHibernating else {
+            onSurfacesClosed?(surfaceIDs)
+            return
+        }
+        let busyAgents = Set(surfaceIDs.filter {
+            let status = agentDetector.state(for: $0).status
+            return status == .running || status == .needsAttention
+        })
+        let plan = HibernationTeardown.plan(surfaceIDs: surfaceIDs,
+                                            foreground: foregroundBySurface,
+                                            agentBusy: busyAgents)
+        surfacesAwaitingTeardown.formUnion(surfaceIDs)
+        teardown(plan) { [weak self] in
+            guard let self else { return }
+            surfacesAwaitingTeardown.subtract(surfaceIDs)
+            rebuildSurfaceNodeView()               // now prune may free them
+            if wakeAfterTeardown.remove(project.id) != nil { wakeProject(project) }
+        }
+    }
+
     /// Wakes a hibernated project: fresh shells at each pane's cwd, layout intact.
     func wakeProject(_ project: ProjectRuntime) {
         guard project.isHibernated,
               let index = workspace.projects.firstIndex(where: { $0.id == project.id }) else { return }
+        let panes = project.tabList.trees.flatMap { $0.layout.surfaces.map(\.id) }
+        if panes.contains(where: surfacesAwaitingTeardown.contains) {
+            // Its sessions are still ending, and the retained surfaces are
+            // attached to them — waking now would show dead panes. Seconds at
+            // most; the teardown's completion wakes it.
+            wakeAfterTeardown.insert(project.id)
+            return
+        }
         project.isHibernated = false
         workspace.reapplyOrdering()   // waking lifts it back above its Space's dormant members
         lastActiveAt[project.id] = Date()

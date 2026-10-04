@@ -55,6 +55,19 @@ Four things here will look like tidy-ups and are not:
   `TaskInventory.rows`, or the sampler still burns CPU measurement on sessions
   that can never be shown.
 
+**Rows are grouped by project, in sidebar order — not by load.**
+`TaskInventory.groups` (pure, tested) puts each project's rows under a header
+with its Hibernate button, keeping the CPU sort only *inside* a group. Sorting
+the groups by load would slide a header's button out from under the pointer
+every few seconds. Group headers are `NSTableView` group rows with
+`floatsGroupRows = false` and their own row view: the system group-row style
+paints a non-theme fill. `updateInPlace` compares entry KEYS (a header by its
+owner, a session by its name), so an unchanged tick still only rewrites text.
+Hibernate goes through `hibernateProject(_:)` with the busy confirmation —
+it is a GUI click, not a CLI call. A project that is hibernated but whose
+sessions are still ending (see `.hydra/rules/surfaces-and-memory.md`) shows
+"hibernating…" and no button.
+
 **Reveal Pane branches on tile mode**, exactly like the CLI's `focus`:
 `focusPaneInTiles` with the grid up, `focusPane(at:)` otherwise. The latter
 alone selects the project BEHIND the grid, so in tile mode Reveal did nothing

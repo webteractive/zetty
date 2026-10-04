@@ -68,7 +68,20 @@ owns the surface and releases it on the main thread, that freezes the entire app
 Until teardown can be made non-blocking safely, `rebuildSurfaceNodeView` keeps
 every live surface belonging to an awake project attached by pruning against
 `allSurfaceIDs`.
-Manual hibernation still frees a project's surfaces after ending its sessions.
+Manual hibernation still frees a project's surfaces after ending its sessions
+— and now strictly AFTER. `hibernateProject` marks the project dormant at once
+(so the sidebar, CLI and `zetty status` agree immediately) but, with zmx, hands
+a `HibernationTeardown.Plan` to `ZmxRunner.endSessions`: idle shells (probe
+says `""`, no busy agent — a MISSING probe entry is not idle) get
+`HibernationTeardown.exitInput` via `zmx send`, the rest wait up to
+`gracePeriod`, then whatever is still listed is `killAndWait`ed. Until the
+completion runs, the project's panes sit in `surfacesAwaitingTeardown`, which
+`retainedSurfaceIDs` keeps — freeing a surface whose `zmx attach` client is
+live is the main-thread block above. It used to fire `zmx kill` async and
+prune in the same turn, i.e. race it. A wake during the window is queued in
+`wakeAfterTeardown`: waking at once would reuse surfaces attached to dying
+sessions. A shell exiting on its own does not close its pane — Zetty never
+sets the surface's `onClose` — so the layout survives the `exit`.
 The pure `BackgroundPanePolicy` and config parsing remain for a future safe
 reintroduction; do not wire them back to `SurfaceRegistry.prune` without proving
 that preserved `zmx attach` teardown cannot block the main thread.
