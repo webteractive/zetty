@@ -85,6 +85,10 @@ public struct AppConfig: Equatable, Sendable {
     /// Loads Zetty's Claude Code mod into new Claude panes, which reports
     /// usage and rate limits. Off leaves the classic hooks as the only integration.
     public var claudeMod: Bool
+    /// Lets the mod register tools the MODEL can call (show a file, list this
+    /// project's panes, open a pane, read one it opened). The slash commands
+    /// and the reporting stay on without it.
+    public var claudeTools: Bool
     /// Which side of the window the project sidebar sits on.
     public var sidebarPosition: SidebarPosition
     /// Directory the permanent Home project is rooted at, as written in the
@@ -170,6 +174,7 @@ public struct AppConfig: Equatable, Sendable {
         notifyBadge: Bool = true,
         notifySystem: Bool = true,
         claudeMod: Bool = true,
+        claudeTools: Bool = true,
         sidebarPosition: SidebarPosition = .left,
         homePath: String? = nil,
         sessionsView: SessionsViewMode = .drawer,
@@ -195,6 +200,7 @@ public struct AppConfig: Equatable, Sendable {
         self.notifyBadge = notifyBadge
         self.notifySystem = notifySystem
         self.claudeMod = claudeMod
+        self.claudeTools = claudeTools
         self.sidebarPosition = sidebarPosition
         self.homePath = homePath
         self.sessionsView = sessionsView
@@ -277,6 +283,8 @@ public struct AppConfig: Equatable, Sendable {
                 config.notifySystem = ["true", "yes", "on", "1"].contains(value.lowercased())
             case "zetty-claude-mod":
                 config.claudeMod = ["true", "yes", "on", "1"].contains(value.lowercased())
+            case "zetty-claude-tools":
+                config.claudeTools = ["true", "yes", "on", "1"].contains(value.lowercased())
             case "sidebar-position":
                 if let position = SidebarPosition(rawValue: value.lowercased()) {
                     config.sidebarPosition = position
@@ -468,6 +476,9 @@ public struct AppConfig: Equatable, Sendable {
         # Claude Code integration: loads Zetty's mod into new Claude panes, which
         # reports each pane's usage and rate limits back to Zetty.
         zetty-claude-mod = \(claudeMod)
+        # Whether that mod may also give the MODEL tools: show a file in the
+        # viewer, list this project's panes, open a pane, read one it opened.
+        zetty-claude-tools = \(claudeTools)
 
         # Which side of the window the project sidebar sits on: left | right
         sidebar-position = \(sidebarPosition.rawValue)
@@ -566,6 +577,9 @@ public struct AppConfig: Equatable, Sendable {
     # Claude Code integration: loads Zetty's mod into new Claude panes, which
     # reports each pane's usage and rate limits back to Zetty.
     zetty-claude-mod = true
+    # Whether that mod may also give the MODEL tools: show a file in the
+    # viewer, list this project's panes, open a pane, read one it opened.
+    zetty-claude-tools = true
 
     # Which side of the window the project sidebar sits on: left | right
     sidebar-position = left

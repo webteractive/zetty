@@ -578,6 +578,7 @@ seeds a documented starter file on first launch. Format is plain
 | `check-updates` | `true` | Notify when a newer Zetty release is available |
 | `notify-sound` / `notify-badge` / `notify-system` | `true` | Agent needs-attention alerts |
 | `zetty-claude-mod` | `true` | Load Zetty's Claude Code mod into new Claude panes |
+| `zetty-claude-tools` | `true` | Let that mod give Claude tools to show a file, list this project's panes, open a pane and read one it opened |
 | `editor` | — | App used by Settings → "Open in Editor" |
 | `viewer-highlight-command` | `bat --style=plain --color=always --paging=never` | Command the file viewer pipes a file through for syntax highlighting; `off` disables it. Zetty sets `BAT_THEME` to match the active scheme's light/dark axis — pass your own `--theme` here to override |
 | `viewer-max-bytes` | `2097152` | Largest file the viewer will render; bigger files open in their default app instead |
@@ -772,6 +773,25 @@ across panes and across accounts:
 
 The context window is deliberately not shown: Claude Code's own status line
 already has it, in the pane it belongs to.
+
+Inside the Claude pane itself the mod adds:
+
+- **`/zetty` commands.** `/zetty panes` lists the panes of this project;
+  `/zetty fleet` opens them as a sidebar where pressing one takes you to it;
+  `/zetty peek <path>[:line]` opens a file in Zetty's viewer;
+  `/zetty split [--down] [command…]` opens a pane beside this one, optionally
+  running a command in it.
+- **Tools Claude can call.** `show_file` opens a file in the viewer for you to
+  look at, `list_panes` shows it this project's panes, `open_pane` starts a
+  visible pane (a dev server, a test watcher) instead of a hidden background
+  shell, and `read_pane` reads back a pane it opened. It cannot close panes,
+  type into panes it did not open, or see other projects. Turn the tools off
+  with **Settings → Agents → Let Claude open and read panes**, or
+  `zetty-claude-tools = false`; the commands stay.
+- **A rate-limit warning above the prompt.** Once a window is 90% used a row
+  appears with the figure, when it resets, and a **New pane on <account>**
+  button for each of your other Claude accounts, plus Dismiss. The new pane
+  starts a fresh conversation on that account; it does not move this one.
 
 - **Nothing to install.** Zetty copies the mod to `~/.zetty/mods/zetty-bridge`
   and points Claude Code at it through `CLAUDE_CODE_PLUGIN_DIRS`, keeping any

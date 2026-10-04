@@ -1,6 +1,9 @@
 {
   "name": "zetty-bridge",
-  "version": "0.2.0",
-  "description": "Reports this pane's turn state, context fill, cost and rate limits to Zetty.",
-  "author": { "name": "Zetty" }
+  "version": "0.3.0",
+  "description": "Connects Claude Code to Zetty: reports usage and turn state, adds /zetty commands, pane tools and a rate-limit warning.",
+  "author": {
+    "name": "Zetty"
+  },
+  "types": "./types/index.d.ts"
 }

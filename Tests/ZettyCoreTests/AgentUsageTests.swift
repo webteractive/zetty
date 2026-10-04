@@ -162,6 +162,15 @@ private func parse(_ json: String) -> AgentUsage? {
     #expect(AppConfig.parse(off.rendered()).claudeMod == false)
 }
 
+@Test func claudeToolsKeyIsZettysOwnAndDefaultsOn() {
+    #expect(AppConfig.parse("").claudeTools)
+    let off = AppConfig.parse("zetty-claude-tools = false")
+    #expect(!off.claudeTools)
+    #expect(off.claudeMod)   // the tools switch does not take the mod with it
+    #expect(!off.ghostty.contains { $0.key == "zetty-claude-tools" })
+    #expect(AppConfig.parse(off.rendered()).claudeTools == false)
+}
+
 // MARK: - Attention and failed turns
 
 @Test func agentUsageReadsTheAttentionMessageAsOneBoundedLine() throws {

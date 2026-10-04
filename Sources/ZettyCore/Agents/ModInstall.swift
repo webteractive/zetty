@@ -14,6 +14,15 @@ public enum ModInstall {
     /// `--plugin-dir` flag can be given.
     public static let pluginDirsVariable = "CLAUDE_CODE_PLUGIN_DIRS"
 
+    /// The app binary, which doubles as the control CLI. The mod runs it for
+    /// everything it asks of Zetty, so it never depends on the optional
+    /// `~/.local/bin/zetty` symlink or on `PATH`.
+    public static let binaryVariable = "ZETTY_BIN"
+
+    /// `"0"` when `zetty-claude-tools` is off; the mod then registers no tools
+    /// for the model. Anything else, unset included, is on.
+    public static let toolsVariable = "ZETTY_CLAUDE_TOOLS"
+
     /// `~/.zetty/mods/zetty-bridge`.
     public static func installedPath(home: String) -> String {
         "\(home)/.zetty/mods/\(name)"

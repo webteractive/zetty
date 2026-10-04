@@ -61,18 +61,46 @@ struct ModInstaller {
                   relative != manifestPath else { continue }
             files.append(relative)
         }
-        for relative in files + [manifestPath] {
+        func copy(_ relative: String) throws {
             let target = destination.appendingPathComponent(relative)
             try fileManager.createDirectory(at: target.deletingLastPathComponent(),
                                             withIntermediateDirectories: true)
             try Data(contentsOf: source.appendingPathComponent(relative))
                 .write(to: target, options: .atomic)
         }
+        // New files first, then the sweep, then the manifest: a running Claude
+        // watching this folder never sees `hooks.json` name a module that is
+        // not there yet.
+        for relative in files { try copy(relative) }
+        // Source files a newer mod no longer has: a renamed module left behind
+        // (register.ts beside register.tsx) is dead weight the engine may still
+        // read. Only the mod's own
+        // folders are swept — `.claude-plugin/types` and `tsconfig.json` are
+        // Claude Code's, laid beside the mod every time it loads.
+        let shipped = Set(files)
+        for folder in ["hooks", "types"] {
+            let root = destination.appendingPathComponent(folder)
+            guard let installed = fileManager.enumerator(atPath: root.path) else { continue }
+            for case let name as String in installed {
+                let relative = "\(folder)/\(name)"
+                var isDirectory: ObjCBool = false
+                fileManager.fileExists(atPath: root.appendingPathComponent(name).path,
+                                       isDirectory: &isDirectory)
+                if !isDirectory.boolValue, !shipped.contains(relative) {
+                    try? fileManager.removeItem(at: root.appendingPathComponent(name))
+                }
+            }
+        }
+        try copy(manifestPath)
     }
 
     /// Sets (or clears) the plugin-folder variable for every pane spawned from
     /// now on. A running agent keeps what it started with.
-    func applyEnvironment(enabled: Bool) {
+    func applyEnvironment(enabled: Bool, tools: Bool) {
+        if let binary = Bundle.main.executablePath {
+            setenv(ModInstall.binaryVariable, binary, 1)
+        }
+        setenv(ModInstall.toolsVariable, tools ? "1" : "0", 1)
         let variable = ModInstall.pluginDirsVariable
         let value = ModInstall.pluginDirs(
             existing: getenv(variable).map { String(cString: $0) },

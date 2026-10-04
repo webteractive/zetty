@@ -169,6 +169,48 @@ so it reads as "my change did nothing".
 - **Tile dots are retuned in place** (`TileGridView.updateStatuses`, on the
   coalesced refresh). Before this they only moved when the grid was rebuilt.
 
+## Writing the mod: what the engine refuses
+
+Each of these failed validation or a load before it was learned; none is
+obvious from the API's types.
+
+- **Everything that touches `$` or `on` lives in ONE file,
+  `hooks/register.tsx`.** The engine follows `$` only into functions declared
+  in the same file, never across an import — a helper in another module that
+  takes `$` makes the whole mod fail to load. `hooks/panes.ts` is therefore
+  PURE (parsing, labels, the limit rule) and is the only other module.
+- **One unmatched hook per event.** A second `on("session.start", …)` without
+  a matcher is refused, so the pieces expose `startCommands` / `startTools` /
+  `startBand` and the single `session.start` hook calls each, with its own
+  `.catch`, so one failing to start costs neither the others nor the session.
+- **Matchers are literals.** `{ tool: name("show_file") }` validates as
+  `tool=?` and matches nothing the engine can name; each tool's full name
+  (`mcp__zetty-bridge__show_file`) is spelled out.
+- **`$.env.get` takes a string literal.** The variables are `ZETTY`, `HOME`,
+  `ZETTY_SURFACE`, `ZETTY_CWD_FILE`, `CLAUDE_CONFIG_DIR`, `ZETTY_BIN`,
+  `ZETTY_CLAUDE_TOOLS`. `ModInstaller.applyEnvironment` sets the last two
+  process-wide.
+- **State a drawing reads is in `$.state`**, declared in `types/index.d.ts`
+  (named by `plugin.json`'s `types`), never a module variable: a hot reload
+  keeps the former and restarts the latter. A render hook only reads; writes
+  come from handlers and other events through `update`.
+- **A file with JSX is `.tsx`**, and `hooks.json` names it. When a module is
+  renamed, `ModInstaller.copyTree` sweeps what the bundle no longer ships out
+  of `hooks/` and `types/` — after the new files, before the manifest.
+
+**In-pane UI is Claude Code's surface, not Zetty's**: it uses the surface's own
+elements (`$.ui.resolve(e)`), not `ZTheme`. Every render hook returns
+`next(e)` when it has nothing to show. Tests mount each drawing on both
+`terminal` and `desktop`, which validates the tree against each surface's
+rules — it does not show what it looks like, and nothing here has been looked
+at in a real pane yet.
+
+**The mod reaches Zetty only through the control CLI** (`zetty(...)` runs
+`ZETTY_BIN`): no new IPC. `list_panes` and the fleet sidebar filter
+`zetty status --json` to the project containing this pane, so the rest of the
+workspace is never handed to the model. `read_pane` answers only for panes
+`open_pane` returned in this load of the mod.
+
 ## Verifying
 
 ```sh
@@ -177,7 +219,9 @@ claude plugin test Mods/zetty-bridge
 ```
 
 Loading was verified headless: with `ZETTY=1`, a `ZETTY_SURFACE` and
-`CLAUDE_CODE_PLUGIN_DIRS` set, `claude -p` wrote a snapshot with no prompt.
+`CLAUDE_CODE_PLUGIN_DIRS` set, `claude -p` wrote a snapshot with no prompt,
+`claude -p "/zetty panes"` listed the real project's panes through the
+installed app, and the model named all four tools when asked.
 The mod API is early access and moves between Claude Code releases; a module
 that fails to load is skipped and nothing else changes, which is why no
 existing hook was removed.

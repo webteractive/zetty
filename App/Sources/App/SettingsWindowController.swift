@@ -35,6 +35,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     private let notifyBadgeSwitch = NSSwitch()
     private let notifySystemSwitch = NSSwitch()
     private let claudeModSwitch = NSSwitch()
+    private let claudeToolsSwitch = NSSwitch()
 
     // Command Line section controls.
     private let cliStatusLabel = NSTextField(labelWithString: "")
@@ -421,6 +422,9 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         claudeModSwitch.target = self
         claudeModSwitch.action = #selector(claudeModToggled(_:))
         addFullWidth(switchRow("Load Zetty's mod", control: claudeModSwitch), to: stack)
+        claudeToolsSwitch.target = self
+        claudeToolsSwitch.action = #selector(claudeToolsToggled(_:))
+        addFullWidth(switchRow("Let Claude open and read panes", control: claudeToolsSwitch), to: stack)
 
         stack.addArrangedSubview(spacer())
         stack.addArrangedSubview(sectionHeader("Status Hooks"))
@@ -878,6 +882,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         notifyBadgeSwitch.state = config.notifyBadge ? .on : .off
         notifySystemSwitch.state = config.notifySystem ? .on : .off
         claudeModSwitch.state = config.claudeMod ? .on : .off
+        claudeToolsSwitch.state = config.claudeTools ? .on : .off
         loginItemSwitch.state = SMAppService.mainApp.status == .enabled ? .on : .off
 
         // Which zmx binary backs the feature is an implementation detail; the
@@ -1026,6 +1031,13 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         let store = ConfigStore(fileURL: configURL)
         var config = store.load()
         config.claudeMod = sender.state == .on
+        store.save(config)
+    }
+
+    @objc private func claudeToolsToggled(_ sender: NSSwitch) {
+        let store = ConfigStore(fileURL: configURL)
+        var config = store.load()
+        config.claudeTools = sender.state == .on
         store.save(config)
     }
 

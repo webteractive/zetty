@@ -138,7 +138,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         appConfig = configStore.load()
         // Before any pane spawns, like ZETTY above: a pane's environment is
         // captured once, when its shell starts.
-        modInstaller.applyEnvironment(enabled: appConfig.claudeMod)
+        modInstaller.applyEnvironment(enabled: appConfig.claudeMod, tools: appConfig.claudeTools)
         ZTheme.scheme = resolvedScheme()
         applyChromeFontFromConfig()             // chrome font before any view reads monoFont
         NSApp.appearance = appearanceOverride
@@ -800,7 +800,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     /// the theme + terminal overrides to every live pane — no relaunch needed.
     @objc func reloadConfiguration(_ sender: Any?) {
         appConfig = configStore.load()
-        modInstaller.applyEnvironment(enabled: appConfig.claudeMod)   // new panes only
+        modInstaller.applyEnvironment(enabled: appConfig.claudeMod,
+                                      tools: appConfig.claudeTools)   // new panes only
         // A menu action, so this always runs on main — but the delegate itself
         // is nonisolated, hence the explicit assumption rather than an await.
         MainActor.assumeIsolated { EditorCatalog.invalidate() }  // pick up an editor installed since launch
