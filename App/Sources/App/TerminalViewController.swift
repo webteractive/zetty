@@ -5609,6 +5609,7 @@ final class TerminalViewController: NSViewController {
                                       status: status, content: content,
                                       canRemove: canRemove,
                                       canRefresh: canRefreshAgent(surfaceID: id),
+                                      endAction: tileEndAction(for: id),
                                       statusLine: lines[id])
             }
         }
@@ -5697,6 +5698,70 @@ final class TerminalViewController: NSViewController {
             if filled { $0.detach(at: index) } else { $0.close(at: index) }
         }
         tileFocusedSurfaceID = tileFocusableIDs.first
+    }
+
+    /// What ending the session of the pane a tile shows would do — see
+    /// `TileEndAction`. nil when the pane is gone or nothing can be offered.
+    private func tileEndAction(for surfaceID: UUID) -> TileEndAction? {
+        guard let project = workspace.project(containing: surfaceID),
+              let tree = project.tabList.trees.first(where: {
+                  $0.layout.surfaces.contains { $0.id == surfaceID }
+              }) else { return nil }
+        return TileEndAction.resolve(
+            panesInTab: tree.layout.surfaces.count,
+            tabsInProject: project.tabList.trees.count,
+            canHibernate: !project.isHome && !project.isScratch && !project.isHibernated)
+    }
+
+    /// The tile header's end-session button. Ending a session is closing its
+    /// pane — the same rule the Sessions view follows — and a project's only
+    /// pane cannot be closed, so there the project hibernates instead.
+    ///
+    /// Resolved again HERE rather than trusted from the button: a tab added or
+    /// closed since the tile was drawn changes what the press should do.
+    func endTileSession(surfaceID: UUID, slot: Int) {
+        guard tileMode, let action = tileEndAction(for: surfaceID),
+              let project = workspace.project(containing: surfaceID) else { return }
+        let closing: [UUID]
+        switch action {
+        case .closePane:
+            closing = [surfaceID]
+        case .closeTab:
+            closing = project.tabList.trees
+                .first { $0.layout.surfaces.contains { $0.id == surfaceID } }?
+                .layout.surfaces.map(\.id) ?? [surfaceID]
+        case .hibernateProject:
+            closing = project.tabList.trees.flatMap { $0.layout.surfaces.map(\.id) }
+        }
+        // One dialog, here, naming what is still running; the paths below are
+        // told not to ask again.
+        guard confirmClosingBusyPanes(closing, what: action.confirmationSubject) else { return }
+
+        switch action {
+        case .closePane:
+            // The tile follows its TAB, so it moves on to the tab's next pane.
+            if let error = closePane(target: .pane(SessionPersistence.shortID(for: surfaceID)),
+                                     wholeTab: false) {
+                ZettyLog.lifecycle.log("tiles: end session failed: \(error)")
+            }
+        case .closeTab:
+            if let error = closePane(target: .pane(SessionPersistence.shortID(for: surfaceID)),
+                                     wholeTab: true) {
+                ZettyLog.lifecycle.log("tiles: end session failed: \(error)")
+                return
+            }
+            // The tab is gone, so the slot would read as missing with a
+            // Reattach button — for something just ended on purpose.
+            mutateActiveTileProfile { $0.detach(at: slot) }
+            reseedTileFocusIfGone()
+        case .hibernateProject:
+            // Detach FIRST: a pane attached to a tile is retained through
+            // hibernation (`retainedSurfaceIDs`), so the tile would respawn a
+            // fresh shell the moment its session ended.
+            mutateActiveTileProfile { $0.detach(at: slot) }
+            hibernateProject(project, confirmIfBusy: false)
+            reseedTileFocusIfGone()
+        }
     }
 
     /// A tile's header dropped on another tile: the two trade places, and the
@@ -7516,6 +7581,7 @@ final class TerminalViewController: NSViewController {
                     self?.mutateActiveTileProfile { $0.split(at: index, direction: direction) }
                 },
                 onRemoveSplit: { [weak self] index in self?.collapseTileSlot(at: index) })
+            grid.onEnd = { [weak self] id, index in self?.endTileSession(surfaceID: id, slot: index) }
             grid.onSetRatio = { [weak self] divider, ratio, isFinal in
                 self?.mutateActiveTileProfile(persist: isFinal) {
                     $0.setRatio(atDivider: divider, to: ratio)

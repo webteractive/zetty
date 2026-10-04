@@ -86,6 +86,7 @@ final class TileView: NSView, AgentRestartPresenting, NSDraggingSource {
     private let titleLabel = NSTextField(labelWithString: "")
     private let openButton = NSButton()
     private let refreshButton = NSButton()
+    private let endButton = NSButton()
     private let splitDownButton = NSButton()
     private let splitRightButton = NSButton()
     private let removeSplitButton = NSButton()
@@ -115,12 +116,16 @@ final class TileView: NSView, AgentRestartPresenting, NSDraggingSource {
     private var isDropTarget = false
 
     private let canRemove: Bool
+    /// What the end-session button does, nil when there is nothing to offer —
+    /// then it is never added to the header, like remove-split.
+    private let endAction: TileEndAction?
     private var isFocused: Bool
     private var status: TileStatus
     private let onActivate: () -> Void
     private let onGoToPane: () -> Void
     private let onOpen: (NSView) -> Void
     private let onRefresh: () -> Void
+    private let onEnd: () -> Void
     private let onDetach: () -> Void
     private let onSplit: (SplitDirection) -> Void
     private let onRemoveSplit: () -> Void
@@ -135,10 +140,12 @@ final class TileView: NSView, AgentRestartPresenting, NSDraggingSource {
          content: TileContent,
          canRemove: Bool = false,
          canRefresh: Bool = false,
+         endAction: TileEndAction? = nil,
          onActivate: @escaping () -> Void,
          onGoToPane: @escaping () -> Void,
          onOpen: @escaping (NSView) -> Void = { _ in },
          onRefresh: @escaping () -> Void = {},
+         onEnd: @escaping () -> Void = {},
          onDetach: @escaping () -> Void = {},
          onSplit: @escaping (SplitDirection) -> Void = { _ in },
          onRemoveSplit: @escaping () -> Void = {},
@@ -153,11 +160,13 @@ final class TileView: NSView, AgentRestartPresenting, NSDraggingSource {
         self.onGoToPane = onGoToPane
         self.onOpen = onOpen
         self.onRefresh = onRefresh
+        self.onEnd = onEnd
         self.onDetach = onDetach
         self.onSplit = onSplit
         self.onRemoveSplit = onRemoveSplit
         self.onAddProject = onAddProject
         self.canRemove = canRemove
+        self.endAction = endAction
         super.init(frame: .zero)
         wantsLayer = true
         layer?.cornerRadius = 8
@@ -252,10 +261,11 @@ final class TileView: NSView, AgentRestartPresenting, NSDraggingSource {
         // header, which is most of a tile in a 4x4 grid. Icons keep the pane's
         // name readable, which is the thing you actually navigate by.
         //
-        // Order is refresh · open · split-down · split-right · remove-split · ×
-        // (remove-split only when there is a split to remove), and the two
-        // destructive-ish ones sit apart: a refresh ends the running agent, so
-        // it must not neighbour close. Refresh leads because it is hidden
+        // Order is refresh · end · open · split-down · split-right ·
+        // remove-split · × (end and remove-split only when they apply), and
+        // the destructive ones sit apart from ×: a refresh ends the running
+        // agent and end closes the pane outright, so neither may neighbour the
+        // button that only detaches. Refresh leads because it is hidden
         // whenever no agent can be resumed and still holds its place: at the
         // front that is blank space beside the title, where second it was a
         // hole between open and the splits.
@@ -265,6 +275,14 @@ final class TileView: NSView, AgentRestartPresenting, NSDraggingSource {
         buildHeaderButton(refreshButton, symbol: "arrow.clockwise", fallback: "⟳",
                           tip: "Restart the agent on its existing conversation",
                           action: #selector(refreshClicked), hidden: !canRefresh)
+        // End session: closes the pane, or its tab, or — for a project's only
+        // pane, which cannot be closed — hibernates the project. The glyph and
+        // tip say which, and the controller resolves it again on the click.
+        if let endAction {
+            buildHeaderButton(endButton, symbol: endAction.symbol,
+                              fallback: endAction.fallbackGlyph, tip: endAction.tooltip,
+                              action: #selector(endClicked), hidden: false)
+        }
         buildHeaderButton(splitDownButton, symbol: "rectangle.split.1x2", fallback: "⊟",
                           tip: "Split this slot downwards (⇧⌘D)",
                           action: #selector(splitDown), hidden: false)
@@ -332,7 +350,8 @@ final class TileView: NSView, AgentRestartPresenting, NSDraggingSource {
             refreshButton.widthAnchor.constraint(equalToConstant: 13),
             refreshButton.heightAnchor.constraint(equalToConstant: 13),
             refreshButton.centerYAnchor.constraint(equalTo: header.centerYAnchor),
-            openButton.leadingAnchor.constraint(equalTo: refreshButton.trailingAnchor, constant: 7),
+            openButton.leadingAnchor.constraint(
+                equalTo: (endAction == nil ? refreshButton : endButton).trailingAnchor, constant: 7),
             splitDownButton.widthAnchor.constraint(equalToConstant: 13),
             splitDownButton.heightAnchor.constraint(equalToConstant: 13),
             splitDownButton.centerYAnchor.constraint(equalTo: header.centerYAnchor),
@@ -350,6 +369,15 @@ final class TileView: NSView, AgentRestartPresenting, NSDraggingSource {
         ])
         // splitRight → (removeSplit →) ×. The optional button is never added
         // to the header when absent, so it cannot anchor anything.
+        if endAction != nil {
+            NSLayoutConstraint.activate([
+                endButton.widthAnchor.constraint(equalToConstant: 13),
+                endButton.heightAnchor.constraint(equalToConstant: 13),
+                endButton.centerYAnchor.constraint(equalTo: header.centerYAnchor),
+                endButton.leadingAnchor.constraint(
+                    equalTo: refreshButton.trailingAnchor, constant: 7),
+            ])
+        }
         if canRemove {
             NSLayoutConstraint.activate([
                 removeSplitButton.widthAnchor.constraint(equalToConstant: 13),
@@ -595,6 +623,8 @@ final class TileView: NSView, AgentRestartPresenting, NSDraggingSource {
 
     @objc private func refreshClicked() { onRefresh() }
 
+    @objc private func endClicked() { onEnd() }
+
     // Restart chrome (button visibility, spinner, cover) comes from
     // `AgentRestartPresenting` — see the conformance below.
 
@@ -674,7 +704,7 @@ final class TileView: NSView, AgentRestartPresenting, NSDraggingSource {
         messageLabel.textColor = theme.fg3Color
         iconView.contentTintColor = isFocused ? theme.fgColor : theme.fg2Color
         goToPaneButton.contentTintColor = theme.fg3Color
-        for button in [openButton, refreshButton, splitDownButton, splitRightButton,
+        for button in [openButton, refreshButton, endButton, splitDownButton, splitRightButton,
                        removeSplitButton] {
             button.contentTintColor = theme.fg3Color
         }

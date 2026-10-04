@@ -71,8 +71,16 @@ by the tool it's running.
     so a **Freeform** view grows and shrinks without needing the right-click
     menu or `Ctrl+B %`. Removing is offered only when there is a split to
     collapse — a one-slot view has nothing to remove.
-    Each tile's header carries **refresh · open · split down · split right ·
-    remove split · close**, and `⌘D` / `⇧⌘D` split the focused slot too.
+    Each tile's header carries **refresh · end session · open · split down ·
+    split right · remove split · close**, and `⌘D` / `⇧⌘D` split the focused
+    slot too.
+    **End session** (the stop glyph) closes that pane for real, unlike `×`,
+    which only detaches it: the pane's session ends, and if it was its tab's
+    only pane the tab closes and the slot empties. A project's only pane cannot
+    be closed, so there the button becomes a moon and **hibernates the
+    project** instead — the session ends, the layout is kept, and the tile
+    empties. Either way you are asked first if something is still running.
+    Home's last pane and scratch terminals have no such button.
     **Remove split** detaches the pane and collapses its split in one press.
     It only appears when there is a split to remove. Attaching focuses
     what you just attached.

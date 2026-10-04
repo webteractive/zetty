@@ -20,6 +20,8 @@ struct TileDescriptor {
     /// Whether this pane's agent can be restarted on its existing
     /// conversation — exactly "a resume line can be built".
     let canRefresh: Bool
+    /// What the header's end-session button does; nil builds no button.
+    var endAction: TileEndAction? = nil
     /// The tile's footer; nil for anything but a live pane.
     var statusLine: TileStatusLine? = nil
 }
@@ -55,6 +57,9 @@ final class TileGridView: NSView {
     private let onOpen: (UUID, NSView) -> Void
     /// Restart that pane's agent on its existing conversation.
     private let onRefresh: (UUID) -> Void
+    /// End that pane's session: close it, or hibernate a project's only pane.
+    /// The slot comes along because the tile empties with it.
+    var onEnd: ((UUID, Int) -> Void)?
     /// A hole or a missing slot was clicked — open the picker for that index.
     private let onAttach: (Int) -> Void
     /// Remove that slot from the view. The pane keeps running.
@@ -222,6 +227,7 @@ final class TileGridView: NSView {
                 content: descriptor.content,
                 canRemove: descriptor.canRemove,
                 canRefresh: descriptor.canRefresh,
+                endAction: descriptor.endAction,
                 // A hole or a missing slot activates the picker; a live tile
                 // takes focus. Reattach on a missing tile lands here too.
                 onActivate: { [weak self] in
@@ -231,6 +237,7 @@ final class TileGridView: NSView {
                 onGoToPane: { [weak self] in if let id { self?.onGoToPane(id) } },
                 onOpen: { [weak self] anchor in if let id { self?.onOpen(id, anchor) } },
                 onRefresh: { [weak self] in if let id { self?.onRefresh(id) } },
+                onEnd: { [weak self] in if let id { self?.onEnd?(id, index) } },
                 onDetach: { [weak self] in self?.onDetach(index) },
                 onSplit: { [weak self] direction in self?.onSplit(index, direction) },
                 onRemoveSplit: { [weak self] in self?.onRemoveSplit(index) },

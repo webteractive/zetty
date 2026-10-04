@@ -55,7 +55,7 @@ Eight things here will look like tidy-ups and are not:
   that key only seeds a new view. Reading the global one there silently renders
   every profile at the default shape.
 - **⌘W detaches, it does not close the pane**; ⇧⌘W closes the view. Killing the
-  real pane stays on the tile's own menu, because doing it by accident from a
+  real pane is the header's end-session button, never a key, because doing it by accident from a
   grid of sixteen is expensive. Both are native menu equivalents, resolved
   before the surface sees them, so their `@objc` actions branch as well as the
   prefix layer.
@@ -322,7 +322,7 @@ its layout tree with no back-link, so there is no way to ask which layout a
 view came from — and the tree is a tree everywhere, so the affordance is right
 everywhere.
 
-**The tile header is uniform icons**: refresh · open · split-down ·
+**The tile header is uniform icons**: refresh · end · open · split-down ·
 split-right · remove-split · ×. `Open ▾`'s label plus a menu-popping split
 button ran ~160pt of a 24pt header, which is most of a tile in a 4x4 grid.
 Icons cost ~90pt (~110pt with remove-split) and keep the pane's NAME readable,
@@ -339,6 +339,47 @@ button with no position leaves the chain of constraints ambiguous. That is safe
 because tiles are rebuilt on every structural change, so `canRemove` cannot go
 stale on a live tile. A filled tile's right-click menu offers **Remove Split**
 too, beside **Detach Pane**.
+
+**End session is the tile's one way to kill the real pane**, and what it does
+is decided by the pure `TileEndAction.resolve` (`ZettyCore/Tiles/`), from how
+much else the pane's project holds:
+
+- other panes in its tab → **close the pane**; the tile follows its TAB, so it
+  moves on to the tab's next pane.
+- its tab's only pane, other tabs exist → **close the tab**, then DETACH the
+  slot. Without the detach the slot resolves `.missing` and grows a Reattach
+  button, for something that was just ended on purpose.
+- the project's only pane → **hibernate the project**, and the glyph is a moon
+  rather than a stop. The last pane of a project cannot be closed (`closePane`
+  answers "cannot close the project's only tab"), and hibernating is the thing
+  that ends its session while keeping the layout.
+- the only pane of Home, of a scratch terminal, or of a project already
+  dormant → nil, and the button is NOT BUILT, the same way remove-split is not:
+  a hidden button with no position leaves the constraint chain ambiguous.
+
+Four things are deliberate:
+
+- **Hibernate detaches the slot FIRST.** A pane attached to a tile is retained
+  through hibernation (`retainedSurfaceIDs`, see "prune must spare the tiles"),
+  so a tile left attached respawns a fresh shell the instant its session is
+  killed and the hibernate reads as having done nothing. Only the pressed slot
+  is detached; another open view still pointing at that project wakes its pane
+  when shown, which is the existing "attached outranks hibernation" rule.
+- **Ending a session is closing the pane, never `zmx kill`.** The same rule the
+  Sessions view follows (`killSession`): lifetime follows model ownership, and
+  a session killed under a pane the model still owns leaves it attached to a
+  corpse nothing respawns. `endTileSession` goes through the CLI's
+  `closePane(target:wholeTab:)`, which already handles a pane in a project
+  that is not the active one by selecting it and restoring afterwards.
+- **The action is resolved AGAIN on the click**, not read from the button.
+  Tiles are rebuilt on every structural change, so a stale glyph is unlikely,
+  but a tab added or closed in between changes what the press must do, and
+  acting on what was drawn would close the wrong thing.
+- **One confirmation, in `endTileSession`.** It names what is still running;
+  the close and hibernate paths below are called with `confirmIfBusy: false`
+  so one press never raises two dialogs. The button sits beside refresh, away
+  from ×: both end a running agent, and neither may neighbour the button that
+  only detaches.
 
 **Open is per tile, as it is per pane.** The status bar has no `Open ▾` pill
 in either mode any more (see `chrome-layout.md`): each `TileView` header
