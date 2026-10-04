@@ -55,6 +55,11 @@ Four things here will look like tidy-ups and are not:
   `TaskInventory.rows`, or the sampler still burns CPU measurement on sessions
   that can never be shown.
 
+**Reveal Pane branches on tile mode**, exactly like the CLI's `focus`:
+`focusPaneInTiles` with the grid up, `focusPane(at:)` otherwise. The latter
+alone selects the project BEHIND the grid, so in tile mode Reveal did nothing
+visible.
+
 **Docked or detached, one view.** `zetty-sessions-view = drawer | window`
 (default `drawer`). `SessionsView` is the whole thing; the bottom drawer and
 `TaskManagerWindowController` are both just hosts for it, because a second

@@ -6124,7 +6124,14 @@ final class TerminalViewController: NSViewController {
         guard let id = row.surfaceID, let found = location(ofSurface: id) else { return }
         // The same reveal the CLI's `focus` verb uses: project, tab, then the
         // pane itself, with first responder moved so it is genuinely focused.
-        focusPane(at: found)
+        // With the grid up that means the pane's TILE (attaching its tab when
+        // the view lacks it) — `focusPane(at:)` would select the project
+        // behind the grid, which changes nothing on screen.
+        if tileMode {
+            focusPaneInTiles(at: found)
+        } else {
+            focusPane(at: found)
+        }
         view.window?.makeKeyAndOrderFront(nil)
     }
 
