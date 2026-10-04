@@ -5737,31 +5737,26 @@ final class TerminalViewController: NSViewController {
         // told not to ask again.
         guard confirmClosingBusyPanes(closing, what: action.confirmationSubject) else { return }
 
-        switch action {
-        case .closePane:
-            // The tile follows its TAB, so it moves on to the tab's next pane.
-            if let error = closePane(target: .pane(SessionPersistence.shortID(for: surfaceID)),
-                                     wholeTab: false) {
-                ZettyLog.lifecycle.log("tiles: end session failed: \(error)")
-            }
-        case .closeTab:
-            if let error = closePane(target: .pane(SessionPersistence.shortID(for: surfaceID)),
-                                     wholeTab: true) {
-                ZettyLog.lifecycle.log("tiles: end session failed: \(error)")
-                return
-            }
-            // The tab is gone, so the slot would read as missing with a
-            // Reattach button — for something just ended on purpose.
-            mutateActiveTileProfile { $0.detach(at: slot) }
-            reseedTileFocusIfGone()
-        case .hibernateProject:
+        if action == .hibernateProject {
             // Detach FIRST: a pane attached to a tile is retained through
             // hibernation (`retainedSurfaceIDs`), so the tile would respawn a
             // fresh shell the moment its session ended.
             mutateActiveTileProfile { $0.detach(at: slot) }
             hibernateProject(project, confirmIfBusy: false)
             reseedTileFocusIfGone()
+            return
         }
+        if let error = closePane(target: .pane(SessionPersistence.shortID(for: surfaceID)),
+                                 wholeTab: action == .closeTab) {
+            ZettyLog.lifecycle.log("tiles: end session failed: \(error)")
+            return
+        }
+        // A closed pane leaves the tile on its TAB's next one. A closed tab
+        // leaves a slot that would read as missing, with a Reattach button,
+        // for something just ended on purpose — so it is emptied instead.
+        guard action == .closeTab else { return }
+        mutateActiveTileProfile { $0.detach(at: slot) }
+        reseedTileFocusIfGone()
     }
 
     /// A tile's header dropped on another tile: the two trade places, and the
