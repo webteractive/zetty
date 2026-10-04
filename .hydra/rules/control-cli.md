@@ -68,6 +68,40 @@ Commands (see `zetty --help` for full grammar and agent notes):
   `quit [--kill-sessions]` (no dialog; the flag kills every preserved
   session first — full shutdown).
 
+### `--help` never acts
+
+**`ControlCLI.run` answers `--help`/`-h` for every verb BEFORE dispatch**, wherever
+the flag sits among the verb's arguments, and returns 0 having touched nothing —
+no socket, no file. Each verb used to parse the flag itself, and the ones that
+did not ACTED: `scratch-clear --help` cleared every scratch terminal on the
+machine of an agent that was only reading the usage, and
+`quit --kill-sessions --help` would have killed every session. Rules that keep
+it that way:
+
+- **`ControlCLI.verbs` is the one list of verbs**; `recognizes` reads it, and
+  `CLIHelpTests` runs every entry as `X --help`, `X <acting args> --help`,
+  `X --help <args>` and `X <args> -h` through a recording transport, asserting
+  no request is sent. A new verb must be added to `verbs`, to `commandHelp`, and
+  to the test's `actingArguments` (a test fails until it is).
+- **Every verb has its own help** (`help(for:)`): usage, what it does, its flags,
+  and a last line saying whether it destroys anything — `DESTRUCTIVE: …` for
+  `remove-project`, `hibernate`, `close`, `scratch-clear`, `quit`. Not the whole
+  usage dump: an agent asking about one verb should not have to find it.
+- **Don't re-add per-verb `--help` cases** in the parsers. They are unreachable,
+  and a copy that drifts is how the bug started. `parseTiles` still returns
+  `.help` because it is a pure, separately tested parser.
+- **The one exception is `run`**: only the word right after `run` is checked.
+  Everything after the account name belongs to the harness, so
+  `zetty run work --help` execs the agent with `--help` — its own help.
+- **A bare `-h` or `--help` token is never data.** `zetty send ls -h --enter`
+  prints send's help rather than typing `ls -h`; quote it with other text
+  (`zetty send 'ls -h' --enter`) to send it.
+- **The seams are task-local** (`ControlCLI.$transport`, `$helpOutput`), so a
+  test binds them for its own task only and parallel tests cannot steal each
+  other's traffic; nil — always, in the shipped CLI — means the real socket and
+  stdout. `theTransportSeamDoesCatchARealCommand` guards against the help tests
+  passing vacuously.
+
 Errors go to stderr with exit 0/1/2; pane targets resolve by unique id
 prefix, unique cwd, or default to the focused pane. Server handlers run on
 the main thread (`ControlSocketServer` → `AppDelegate.startControlSocket` →

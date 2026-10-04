@@ -163,6 +163,10 @@ public enum ControlCLI {
 
       zetty --version | -v | version        print the version and build commit
 
+    Every command takes --help (or -h): `zetty <command> --help` prints that
+    command's own help — its flags and whether it destroys anything — and never
+    runs it, wherever the flag appears among its arguments.
+
     Notes (script/agent friendly):
       - The default send/capture/split target is the focused pane. Send text
         arguments are joined with spaces and sent verbatim; keys append after.
@@ -195,17 +199,33 @@ public enum ControlCLI {
       - Requires the zetty app to be running (socket: ~/.zetty/zetty.sock).
     """
 
+    /// Every verb `run` dispatches, aliases included. The one list both
+    /// `recognizes` and the help tests read, so a verb added to the dispatch
+    /// but not here is not a CLI verb at all — and one added here is covered
+    /// by the "--help never acts" test automatically.
+    public static let verbs: [String] = [
+        "status", "ls", "send", "capture", "view", "new-tab", "add-project", "new-project",
+        "clone", "update-clone", "merge-clone", "push-clone",
+        "remove-project", "hibernate", "wake", "split", "break", "focus", "close", "reload", "tiles",
+        "scratch", "scratch-clear", "quit", "accounts", "run",
+        "new-space", "rename-space", "remove-space", "move-to-space",
+    ]
+
     /// True when `arguments` look like a CLI invocation (used by the app
     /// binary to decide CLI mode vs. launching the GUI).
     public static func recognizes(_ arguments: [String]) -> Bool {
         guard let first = arguments.first else { return false }
-        return ["status", "ls", "send", "capture", "view", "new-tab", "add-project", "new-project", "clone", "update-clone", "merge-clone", "push-clone",
-                "remove-project", "hibernate", "wake", "split", "break", "focus", "close", "reload", "tiles",
-                "scratch", "scratch-clear", "quit", "accounts", "run",
-                "new-space", "rename-space", "remove-space", "move-to-space",
-                "help", "--help", "-h",
-                "version", "--version", "-v"].contains(first)
+        return (verbs + ["help", "--help", "-h", "version", "--version", "-v"]).contains(first)
     }
+
+    /// Replaces the app's socket for the current task — the test seam that
+    /// proves a command did or did not reach the app. Task-local, so a test
+    /// that binds it cannot capture another test's traffic. nil (always, in
+    /// the shipped CLI) means the real socket.
+    @TaskLocal public static var transport: (@Sendable (ControlRequest) -> ControlResponse)?
+
+    /// Where help text goes for the current task; nil means stdout.
+    @TaskLocal public static var helpOutput: (@Sendable (String) -> Void)?
 
     public static func run(_ arguments: [String]) -> Int32 {
         var arguments = arguments
@@ -214,6 +234,17 @@ public enum ControlCLI {
             return 2
         }
         arguments.removeFirst()
+
+        // Before anything else, for every verb: `<verb> … --help` prints that
+        // verb's help and touches nothing — no socket, no file. Each verb used
+        // to handle the flag itself, and the ones that forgot ACTED on it:
+        // `scratch-clear --help` cleared every scratch terminal, and
+        // `quit --kill-sessions --help` would have killed every session.
+        if verbs.contains(command), asksForHelp(command, arguments),
+           let text = help(for: command) {
+            printHelp(text)
+            return 0
+        }
 
         switch command {
         case "help", "--help", "-h":
@@ -292,6 +323,372 @@ public enum ControlCLI {
         }
     }
 
+    // MARK: - Per-command help
+
+    /// True when `--help`/`-h` appears among a verb's own arguments. For `run`
+    /// only the word right after the verb counts: everything after the account
+    /// name is the harness's, so `zetty run work --help` asks the HARNESS.
+    private static func asksForHelp(_ verb: String, _ arguments: [String]) -> Bool {
+        let isHelp: (String) -> Bool = { $0 == "--help" || $0 == "-h" }
+        if verb == "run" { return arguments.first.map(isHelp) ?? false }
+        return arguments.contains(where: isHelp)
+    }
+
+    /// A verb's own help: what it does, its flags, and whether it destroys
+    /// anything. nil for an unknown verb. Every verb in `verbs` has one.
+    public static func help(for verb: String) -> String? {
+        commandHelp[verb == "ls" ? "status" : verb]
+    }
+
+    private static func printHelp(_ text: String) {
+        if let helpOutput { helpOutput(text) } else { print(text) }
+    }
+
+    private static let readOnly = "Read-only: changes nothing."
+
+    private static let commandHelp: [String: String] = [
+        "status": """
+        usage: zetty status [--json]      (alias: zetty ls)
+
+        Print the workspace: projects → tabs → panes, with each pane's 8-hex id,
+        title, working directory, running tool, agent status and focus.
+
+          --json    the full machine-readable tree, including `hibernated` per
+                    project, `live` per pane (true = a terminal is behind it and
+                    `send` reaches it) and `tiles` (grid state, slots, views)
+
+        \(readOnly)
+        """,
+        "send": """
+        usage: zetty send [--pane <id> | --cwd <path>] [--key <name>]… [--enter] [text …]
+
+        Type into a pane's terminal. Text arguments are joined with spaces and
+        sent verbatim; keys and the Enter follow it. Default target: the focused
+        pane (the focused tile while the grid is up). A pane with no terminal yet
+        is spawned on demand — waking its project if needed — and the input is
+        queued, so exit 0 means "delivered or queued".
+
+          --pane <id>     target a pane by (unique prefix of) its 8-hex id
+          --cwd <path>    target the single pane whose working dir is <path>
+          --key <name>    append a key: Enter, Escape, Tab, BTab, Up, Down, Left,
+                          Right, Home, End, PageUp, PageDown, Delete, BSpace,
+                          Space, C-a … C-z; repeatable, applied in order
+          --enter, -e     append a carriage return
+
+        Not destructive in itself, but the pane runs whatever you type into it.
+        """,
+        "capture": """
+        usage: zetty capture [--pane <id> | --cwd <path>] [--lines <n>]
+
+        Print a pane's recent output, read from its preserved zmx session.
+        Default target: the focused pane. Errors for a hibernated project (its
+        session was freed) instead of waking it.
+
+          --pane <id>     target a pane by (unique prefix of) its 8-hex id
+          --cwd <path>    target the single pane whose working dir is <path>
+          --lines <n>     how many lines to print
+
+        \(readOnly)
+        """,
+        "view": """
+        usage: zetty view <path>[:line[:col]]
+
+        Peek a text file in the app's read-only overlay, scrolled to the line;
+        anything that is not text opens in its default app. Relative paths
+        resolve against this shell's directory.
+
+        \(readOnly)
+        """,
+        "new-tab": """
+        usage: zetty new-tab [--project <name>] [--account <name>] [--focus]
+
+        Open a tab and spawn its shell, in the background by default. Prints the
+        new pane's id.
+
+          --project <name>   the project to open it in (default: the active one)
+          --account <name>   run the pane under that agent account; an unknown
+                             name is an error, never a silent fallback
+          --focus            switch to it (with the tile grid up: put it in the
+                             focused tile)
+
+        Creates a tab; destroys nothing.
+        """,
+        "add-project": """
+        usage: zetty add-project <path> [--name <name>] [--space <name>] [--focus]
+
+        Add an existing directory as a project, in the background by default,
+        and spawn its panes. Prints its first pane's id.
+
+          --name <name>    display name (default: the directory's name)
+          --space <name>   file it into an existing Space (unknown = error)
+          --focus          switch to it
+
+        Adds a project; destroys nothing.
+        """,
+        "new-project": """
+        usage: zetty new-project <path> [--name <name>] [--git] [--focus]
+
+        Create a NEW directory and add it as a project, in the background by
+        default. Prints its first pane's id.
+
+          --name <name>   display name (default: the directory's name)
+          --git           run `git init` in it
+          --focus         switch to it
+
+        Creates a directory and a project; destroys nothing.
+        """,
+        "clone": """
+        usage: zetty clone [--project <name>] [--name <clone-name>] [--focus]
+
+        Fork a project into an isolated copy-on-write clone under
+        ~/.zetty/clones, on its own git branch <clone-name>, in the background.
+        Prints the clone's first pane id.
+
+          --project <name>   the project to clone (default: the active one)
+          --name <name>      the clone's name and branch
+          --focus            switch to it
+
+        Creates a copy and a branch; destroys nothing.
+        """,
+        "update-clone": """
+        usage: zetty update-clone <name>
+
+        Merge the clone's SOURCE branch into the clone. Conflicts are left in
+        the clone for you to resolve. Prints a one-line summary.
+
+        Writes to the clone's working tree (a merge commit); the source is untouched.
+        """,
+        "merge-clone": """
+        usage: zetty merge-clone <name>
+
+        Land the clone's work in its SOURCE: update the clone, then merge it
+        into the source repository locally. Refuses on a dirty source; a
+        conflict there is aborted and the source left as it was.
+
+        Writes to the SOURCE repository (a merge). Nothing is pushed.
+        """,
+        "push-clone": """
+        usage: zetty push-clone <name>
+
+        Update the clone, then push its branch to origin, ready for a PR.
+
+        Pushes to the remote — outward-facing.
+        """,
+        "remove-project": """
+        usage: zetty remove-project <name> [--fetch | --discard]
+
+        Remove a project: closes all its tabs and ENDS their sessions (running
+        processes are killed). No confirmation. The last project can't be
+        removed, and neither can Home.
+
+          --fetch     clones only: land the clone's branch in the original repo
+                      first, then delete it
+          --discard   clones only: delete without fetching
+                      (a clone with unsaved work requires one of the two)
+
+        DESTRUCTIVE: kills the project's sessions; a clone's directory is deleted.
+        """,
+        "hibernate": """
+        usage: zetty hibernate (<name> | --space <name>)
+
+        Free a project's — or every project in a Space's — sessions, processes
+        and panes, keeping its layout. Idle shells are asked to exit first.
+        Home can't be hibernated.
+
+          --space <name>   hibernate every project in that Space
+
+        DESTRUCTIVE: ends every process running in those panes.
+        """,
+        "wake": """
+        usage: zetty wake (<name> | --space <name>)
+
+        Wake a hibernated project or Space, with fresh shells. Rarely needed by
+        hand: send/new-tab/split/break/focus wake what they target.
+
+          --space <name>   wake every project in that Space
+
+        Starts shells; destroys nothing.
+        """,
+        "new-space": """
+        usage: zetty new-space <name> [--color <id>] [--icon <symbol>]
+
+        Create a Space: a named, collapsible sidebar section.
+
+          --color <id>      its color
+          --icon <symbol>   its icon (an SF Symbol name)
+
+        Destroys nothing.
+        """,
+        "rename-space": """
+        usage: zetty rename-space <old> <new>
+               zetty rename-space <old words…> --to <new words…>
+
+        Rename a Space. Quote a name containing spaces, or use --to to separate
+        two unquoted multi-word names.
+
+        Destroys nothing.
+        """,
+        "remove-space": """
+        usage: zetty remove-space <name>
+
+        Delete a Space. Its projects are kept, ungrouped.
+
+        Removes the Space only; its projects and sessions are untouched.
+        """,
+        "move-to-space": """
+        usage: zetty move-to-space <project> (<space> | --none)
+
+        Move a project into a Space, or out of every Space with --none. Home,
+        scratch terminals and clones can't join a Space.
+
+          --none   ungroup the project
+
+        Destroys nothing.
+        """,
+        "split": """
+        usage: zetty split [--pane <id> | --cwd <path>] [--horizontal] [--account <name>] [--focus]
+
+        Split a pane (vertical by default) in the background and spawn the new
+        half. Prints the new pane's id. Default target: the focused pane.
+
+          --pane <id>        the pane to split
+          --cwd <path>       the single pane whose working dir is <path>
+          --horizontal       stack the halves instead
+          --account <name>   run the new pane under that agent account
+          --focus            move focus to the new pane (with the grid up: its tile)
+
+        Creates a pane; destroys nothing.
+        """,
+        "break": """
+        usage: zetty break [--pane <id> | --cwd <path>] [--focus]
+
+        Move a pane into a new adjacent tab, in the background. Prints the moved
+        pane's id. Default target: the focused pane.
+
+          --pane <id>     the pane to move
+          --cwd <path>    the single pane whose working dir is <path>
+          --focus         switch to it (with the grid up: its tile)
+
+        Moves a pane; destroys nothing.
+        """,
+        "focus": """
+        usage: zetty focus (--pane <id> | --cwd <path>)
+
+        Focus a pane, selecting its project and tab (waking a hibernated
+        project). With the tile grid up it focuses the pane's tile instead,
+        attaching it to the shown view first when it is not in it.
+
+        Moves the view; destroys nothing.
+        """,
+        "close": """
+        usage: zetty close (--pane <id> | --cwd <path>) [--tab]
+
+        Close a pane and END its session (its process is killed). A tab's last
+        pane closes the tab; a project's only tab can't be closed. No
+        confirmation.
+
+          --pane <id>     the pane to close
+          --cwd <path>    the single pane whose working dir is <path>
+          --tab           close the pane's whole tab
+
+        DESTRUCTIVE: kills what is running in the pane (or every pane of the tab).
+        """,
+        "reload": """
+        usage: zetty reload
+
+        Re-read the zetty config and re-apply theme and terminal settings to
+        every live pane (⇧⌘, equivalent).
+
+        Destroys nothing.
+        """,
+        "tiles": """
+        usage: zetty tiles [--on | --off] [--profile <name>]
+               zetty tiles list [--json]
+               zetty tiles open <name>
+               zetty tiles new [<name>]
+               zetty tiles rename <old> <new> | rename <old> --to <new>
+               zetty tiles duplicate <name> [<new>]
+               zetty tiles delete <name>
+               zetty tiles attach [--pane <id> | --cwd <path>] [--slot <n>] [--view <name>]
+               zetty tiles detach [--slot <n>] [--collapse] [--view <name>]
+               zetty tiles split [--slot <n>] [--horizontal] [--view <name>]
+
+        The grid of running sessions (⇧⌘G) and its saved views.
+
+          (no subcommand)   toggle the grid; --on/--off set it; --profile opens
+                            a saved view by name
+          list              saved views (● showing, ○ open); read-only
+          open / new        open a view, or create one, and show the grid
+          rename / duplicate / delete
+                            manage saved views (delete keeps the panes running)
+          attach            show a pane's tab in a tile: its slot if already there,
+                            else --slot, else the first hole, else split the
+                            focused tile. Prints the slot (1-based)
+          detach            empty a slot (default: the focused tile); --collapse
+                            also merges its split away
+          split             split a slot (stacked with --horizontal); prints the
+                            new slot number
+        attach/detach/split edit a view without bringing the grid up.
+
+        Destroys no session. `delete` removes a saved view for good.
+        """,
+        "scratch": """
+        usage: zetty scratch [--focus]
+
+        Open a project-less, ephemeral terminal rooted at home (the Scratch
+        section), in the background by default, and spawn its shell. Prints its
+        pane id. Scratch terminals are never saved and die with the app.
+
+          --focus   switch to it (with the tile grid up: put it in the focused tile)
+
+        Creates a terminal; destroys nothing.
+        """,
+        "scratch-clear": """
+        usage: zetty scratch-clear
+
+        Close EVERY scratch terminal at once and end their sessions. No
+        confirmation from the CLI.
+
+        DESTRUCTIVE: kills whatever is running in all scratch terminals.
+        """,
+        "quit": """
+        usage: zetty quit [--kill-sessions | --simulate-restart]
+
+        Quit the zetty app. No confirmation dialog. Preserved sessions keep
+        running and reattach on the next launch unless a flag says otherwise.
+
+          --kill-sessions      also kill every preserved zmx session (full shutdown)
+          --simulate-restart   run the restart-recovery snapshot, then kill the
+                               sessions as a real restart would (testing aid)
+
+        DESTRUCTIVE: closes the app every pane lives in; with either flag, every
+        running process in every pane is killed.
+        """,
+        "accounts": """
+        usage: zetty accounts [--probe] [--json]
+
+        List agent accounts (e.g. Claude logins) and where each one's config
+        lives.
+
+          --probe   also ask each account who it is signed in as (one process per
+                    account, so it is opt-in)
+          --json    machine-readable output
+
+        \(readOnly)
+        """,
+        "run": """
+        usage: zetty run <account> [args …]
+
+        Run that account's agent in THIS terminal (execs it; the app need not be
+        running). Everything after the account name — `--help` included — is
+        passed to the harness, so `zetty run work --help` shows the harness's
+        own help. An unknown account name is an error, never the default login.
+        A `<harness>-<account>` shortcut (`claude-work`) exists for each account.
+
+        Starts an agent; destroys nothing.
+        """,
+    ]
+
     // MARK: - Commands
 
     private static func runStatus(_ arguments: [String]) -> Int32 {
@@ -329,9 +726,6 @@ public enum ControlCLI {
                 keys.append(arguments[index])
             case "--enter", "-e":
                 enter = true
-            case "--help", "-h":
-                print(usage)
-                return 0
             default:
                 textParts.append(arguments[index])
             }
@@ -364,9 +758,6 @@ public enum ControlCLI {
                     return failure("--lines needs a positive number")
                 }
                 lines = count
-            case "--help", "-h":
-                print(usage)
-                return 0
             default:
                 return failure("unknown argument \"\(arguments[index])\"")
             }
@@ -391,9 +782,6 @@ public enum ControlCLI {
                 probe = true
             case "--json":
                 json = true
-            case "--help", "-h":
-                print(usage)
-                return 0
             default:
                 return failure("unknown argument \"\(arguments[index])\"")
             }
@@ -455,7 +843,7 @@ public enum ControlCLI {
             directory: ZettyPaths.applicationSupportDirectory(home: home))
         let accounts = store.load().accounts
 
-        guard let name = arguments.first, name != "--help", name != "-h" else {
+        guard let name = arguments.first else {
             print("usage: zetty run <account> [args …]")
             if accounts.isEmpty {
                 print("no accounts configured — add one in Settings (⌘,) → Accounts")
@@ -528,9 +916,6 @@ public enum ControlCLI {
                 account = arguments[index]
             case "--focus":
                 focus = true
-            case "--help", "-h":
-                print(usage)
-                return 0
             default:
                 return failure("unknown argument \"\(arguments[index])\"")
             }
@@ -546,9 +931,6 @@ public enum ControlCLI {
             switch arguments[index] {
             case "--focus":
                 focus = true
-            case "--help", "-h":
-                print(usage)
-                return 0
             default:
                 return failure("unknown argument \"\(arguments[index])\"")
             }
@@ -558,16 +940,8 @@ public enum ControlCLI {
     }
 
     private static func runView(_ arguments: [String]) -> Int32 {
-        var parts: [String] = []
-        for argument in arguments {
-            if argument == "--help" || argument == "-h" {
-                print(usage)
-                return 0
-            }
-            parts.append(argument)
-        }
         // Positional path — joined so unquoted paths with spaces still work.
-        let raw = parts.joined(separator: " ").trimmingCharacters(in: .whitespaces)
+        let raw = arguments.joined(separator: " ").trimmingCharacters(in: .whitespaces)
         guard !raw.isEmpty else { return failure("view needs a file path") }
         guard let token = FilePathToken.parse(raw) else {
             return failure("not a usable path: \(raw)")
@@ -597,9 +971,6 @@ public enum ControlCLI {
                 space = arguments[index]
             case "--focus":
                 focus = true
-            case "--help", "-h":
-                print(usage)
-                return 0
             default:
                 pathParts.append(arguments[index])
             }
@@ -631,9 +1002,6 @@ public enum ControlCLI {
                 index += 1
                 guard index < arguments.count else { return failure("--icon needs a value") }
                 glyph = arguments[index]
-            case "--help", "-h":
-                print(usage)
-                return 0
             default:
                 nameParts.append(arguments[index])
             }
@@ -645,10 +1013,6 @@ public enum ControlCLI {
     }
 
     private static func runRenameSpace(_ arguments: [String]) -> Int32 {
-        if arguments.contains("--help") || arguments.contains("-h") {
-            print(usage)
-            return 0
-        }
         // Two free-form names can't be split by position alone once either
         // contains a space ("Client Acme"), so `--to` is the separator. The
         // quoted two-token form still works, which is what the usage line shows.
@@ -674,10 +1038,6 @@ public enum ControlCLI {
     }
 
     private static func runRemoveSpace(_ arguments: [String]) -> Int32 {
-        if arguments.contains("--help") || arguments.contains("-h") {
-            print(usage)
-            return 0
-        }
         let name = arguments.joined(separator: " ").trimmingCharacters(in: .whitespaces)
         guard !name.isEmpty else { return failure("remove-space needs a Space name") }
         return expectOK(.removeSpace(name: name), success: nil)
@@ -690,9 +1050,6 @@ public enum ControlCLI {
             switch argument {
             case "--none":
                 none = true
-            case "--help", "-h":
-                print(usage)
-                return 0
             default:
                 positional.append(argument)
             }
@@ -727,9 +1084,6 @@ public enum ControlCLI {
                 gitInit = true
             case "--focus":
                 focus = true
-            case "--help", "-h":
-                print(usage)
-                return 0
             default:
                 pathParts.append(arguments[index])
             }
@@ -763,9 +1117,6 @@ public enum ControlCLI {
                 name = arguments[index]
             case "--focus":
                 focus = true
-            case "--help", "-h":
-                print(usage)
-                return 0
             default:
                 return failure("unknown argument \"\(arguments[index])\"")
             }
@@ -778,10 +1129,6 @@ public enum ControlCLI {
     /// one-line summary out.
     private static func runCloneVerb(_ arguments: [String], verb: String,
                                      _ request: (String) -> ControlRequest) -> Int32 {
-        if arguments.contains("--help") || arguments.contains("-h") {
-            print(usage)
-            return 0
-        }
         let name = arguments.joined(separator: " ").trimmingCharacters(in: .whitespaces)
         guard !name.isEmpty else {
             return failure("\(verb) needs a clone name")
@@ -796,10 +1143,6 @@ public enum ControlCLI {
     }
 
     private static func runRemoveProject(_ arguments: [String]) -> Int32 {
-        if arguments.contains("--help") || arguments.contains("-h") {
-            print(usage)
-            return 0
-        }
         var fetch = false
         var discard = false
         var nameParts: [String] = []
@@ -826,10 +1169,6 @@ public enum ControlCLI {
     private static func runProjectByName(_ arguments: [String], verb: String,
                                          _ make: (String) -> ControlRequest,
                                          space makeSpace: ((String) -> ControlRequest)? = nil) -> Int32 {
-        if arguments.contains("--help") || arguments.contains("-h") {
-            print(usage)
-            return 0
-        }
         var wantsSpace = false
         var parts: [String] = []
         for argument in arguments {
@@ -872,9 +1211,6 @@ public enum ControlCLI {
                 account = arguments[index]
             case "--focus":
                 focus = true
-            case "--help", "-h":
-                print(usage)
-                return 0
             default:
                 return failure("unknown argument \"\(arguments[index])\"")
             }
@@ -899,9 +1235,6 @@ public enum ControlCLI {
                 target = .cwd(arguments[index])
             case "--focus":
                 focus = true
-            case "--help", "-h":
-                print(usage)
-                return 0
             default:
                 return failure("unknown argument \"\(arguments[index])\"")
             }
@@ -933,9 +1266,6 @@ public enum ControlCLI {
                 target = .cwd(arguments[index])
             case "--tab":
                 wholeTab = true
-            case "--help", "-h":
-                print(usage)
-                return 0
             default:
                 return failure("unknown argument \"\(arguments[index])\"")
             }
@@ -1083,7 +1413,7 @@ public enum ControlCLI {
     private static func runTiles(_ arguments: [String]) -> Int32 {
         switch parseTiles(arguments) {
         case .help:
-            print(usage)
+            printHelp(help(for: "tiles") ?? usage)
             return 0
         case .failure(let message):
             return failure(message)
@@ -1194,6 +1524,7 @@ public enum ControlCLI {
     /// report is advisory. A 250ms connect/send budget keeps a hung app from
     /// delaying a launch.
     private static func notify(_ request: ControlRequest) {
+        if let transport { _ = transport(request); return }
         let path = (NSHomeDirectory() as NSString).appendingPathComponent(".zetty/zetty.sock")
         let fd = socket(AF_UNIX, SOCK_STREAM, 0)
         guard fd >= 0 else { return }
@@ -1226,6 +1557,7 @@ public enum ControlCLI {
 
     /// One request → one response over the app's Unix socket.
     private static func roundTrip(_ request: ControlRequest) -> ControlResponse {
+        if let transport { return transport(request) }
         let path = (NSHomeDirectory() as NSString).appendingPathComponent(".zetty/zetty.sock")
         let fd = socket(AF_UNIX, SOCK_STREAM, 0)
         guard fd >= 0 else { return .error("cannot create socket") }

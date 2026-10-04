@@ -1082,6 +1082,13 @@ where the old name ends). Home, scratch terminals, and clones can never join a
 Space — `move-to-space` and the `Move to Space ▸` menu both refuse them; a
 clone always renders in whatever Space its source is in.
 
+**`zetty <command> --help` is always safe.** Every command prints its own help
+— usage, flags, and whether it destroys anything — and does nothing else,
+wherever `--help` (or `-h`) appears among its arguments. The one exception is
+`zetty run <account> …`, which passes everything after the account name to the
+agent, so `zetty run work --help` shows the agent's help. A bare `-h` is never
+sent as text: `zetty send 'ls -h' --enter`, not `zetty send ls -h --enter`.
+
 `new-tab`, `split`, `break`, and `scratch` never change the active project or
 keyboard focus by default — an agent can reshape your workspace while you keep
 typing. Pass `--focus` to switch to the result. While the **tile grid** is up,
