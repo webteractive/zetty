@@ -1058,7 +1058,9 @@ final class TerminalViewController: NSViewController {
         sidebar.onDeleteSpace = { [weak self] id in self?.confirmDeleteSpace(id) }
         sidebar.onHibernateSpace = { [weak self] id, hibernate in
             guard let self, let space = self.workspace.spaces.first(where: { $0.id == id }) else { return }
-            _ = hibernate ? self.hibernateSpaceNamed(space.name) : self.wakeSpaceNamed(space.name)
+            // A click, not a script: no busy refusal, as before.
+            _ = hibernate ? self.hibernateSpaceNamed(space.name, force: true)
+                : self.wakeSpaceNamed(space.name)
         }
 
         sidebar.onTogglePin = { [weak self] index in
@@ -3631,7 +3633,7 @@ final class TerminalViewController: NSViewController {
         for space in workspace.spaces {
             let name = space.name
             commands.append(PaletteCommand(glyph: "☾", label: "Hibernate All in Space: \(name)", kbd: "") { [weak self] in
-                _ = self?.hibernateSpaceNamed(name)
+                _ = self?.hibernateSpaceNamed(name, force: true)   // a deliberate pick
             })
             commands.append(PaletteCommand(glyph: "☀", label: "Wake All in Space: \(name)", kbd: "") { [weak self] in
                 _ = self?.wakeSpaceNamed(name)
@@ -4178,7 +4180,7 @@ final class TerminalViewController: NSViewController {
     /// ending their zmx sessions, no confirmation dialog (the CLI call IS the
     /// confirmation). A clone target defers its git work to phase 2/3 instead
     /// of running it here, off-main.
-    func planRemoveProject(name: String, fetch: Bool, discard: Bool) -> RemoveProjectPlan {
+    func planRemoveProject(name: String, fetch: Bool, discard: Bool, force: Bool) -> RemoveProjectPlan {
         let matches = workspace.projects.enumerated().filter {
             $0.element.name.lowercased() == name.lowercased()
         }
@@ -4191,6 +4193,8 @@ final class TerminalViewController: NSViewController {
         guard !match.element.isHome else {
             return .failed("Home can't be removed")
         }
+        let surfaces = match.element.tabList.trees.flatMap { $0.layout.surfaces.map(\.id) }
+        if let refusal = cliRefusal(closing: surfaces, force: force) { return .failed(refusal) }
 
         guard let sourceRoot = match.element.cloneSource else {
             // Ordinary project — the clone flags don't apply.
@@ -4253,10 +4257,16 @@ final class TerminalViewController: NSViewController {
     /// session cleanup) apply, then restores the user's prior selection —
     /// an agent closing a background pane must not yank the visible view to
     /// another project. Returns an error message, or nil on success.
-    func closePane(target: PaneSelector, wholeTab: Bool) -> String? {
+    func closePane(target: PaneSelector, wholeTab: Bool, force: Bool) -> String? {
         do {
             let pane = try target.resolve(in: statusSnapshot().panes)
             guard let location = locate(shortID: pane.id) else { return "pane \(pane.id) not found" }
+            // Refuse before anything moves: what closes is the pane, or its
+            // whole tab when asked for or when it is the tab's last pane.
+            let tab = workspace.projects[location.projectIndex].tabList.trees[location.tabIndex]
+            let tabSurfaces = tab.layout.surfaces.map(\.id)
+            let closing = wholeTab || tabSurfaces.count == 1 ? tabSurfaces : [location.surfaceID]
+            if let refusal = cliRefusal(closing: closing, force: force) { return refusal }
             // Identity, not index: closing never removes a project, but the
             // sidebar is sorted, so resolve back by id when restoring.
             let previousProjectID = workspace.activeProject.id
@@ -6086,8 +6096,9 @@ final class TerminalViewController: NSViewController {
             reseedTileFocusIfGone()
             return
         }
+        // Confirmed above, in the user's own dialog.
         if let error = closePane(target: .pane(SessionPersistence.shortID(for: surfaceID)),
-                                 wholeTab: action == .closeTab) {
+                                 wholeTab: action == .closeTab, force: true) {
             ZettyLog.lifecycle.log("tiles: end session failed: \(error)")
             return
         }
@@ -6835,10 +6846,28 @@ final class TerminalViewController: NSViewController {
     /// their shells and returning focus to the first pinned project. No-op when
     /// there are no scratch terminals.
     @objc func closeAllScratchTerminals(_ sender: Any? = nil) {
-        let surfaces = workspace.projects.filter(\.isScratch)
-            .flatMap { $0.tabList.trees.flatMap { $0.layout.surfaces.map(\.id) } }
+        let surfaces = scratchSurfaceIDs
         guard !surfaces.isEmpty else { return }
         guard confirmClosingBusyPanes(surfaces, what: "scratch terminals") else { return }
+        removeAllScratchTerminals(surfaces)
+    }
+
+    /// CLI `scratch-clear`: never a dialog. Busy scratch terminals are refused
+    /// unless `force`. Returns an error message, or nil once cleared.
+    func clearScratchTerminals(force: Bool) -> String? {
+        let surfaces = scratchSurfaceIDs
+        guard !surfaces.isEmpty else { return nil }
+        if let refusal = cliRefusal(closing: surfaces, force: force) { return refusal }
+        removeAllScratchTerminals(surfaces)
+        return nil
+    }
+
+    private var scratchSurfaceIDs: [UUID] {
+        workspace.projects.filter(\.isScratch)
+            .flatMap { $0.tabList.trees.flatMap { $0.layout.surfaces.map(\.id) } }
+    }
+
+    private func removeAllScratchTerminals(_ surfaces: [UUID]) {
         workspace.removeScratchProjects()
         detachDeadScratchTileSlots()
         onActiveProjectChanged?()
@@ -7241,6 +7270,14 @@ final class TerminalViewController: NSViewController {
             return command
         }
         guard !running.isEmpty else { return true }
+        // A modal here, mid control request, blocks the socket — and with it
+        // every zetty command — until someone clicks. CLI paths refuse busy
+        // panes through `cliRefusal` before they get this far; this is the
+        // backstop if a new one forgets: treated as Cancel, never shown.
+        guard !isServingControlRequest else {
+            ZettyLog.lifecycle.log("refused a confirmation dialog during a control request: \(what)")
+            return false
+        }
         // Pluralize off the DEDUPED names actually shown, not `running` — two
         // panes on the same command list once but counted twice, so the old
         // `running.count` read "node. Closing kills the sessions."
@@ -7252,6 +7289,21 @@ final class TerminalViewController: NSViewController {
         alert.addButton(withTitle: "Close")
         alert.addButton(withTitle: "Cancel")
         return alert.runModal() == .alertFirstButtonReturn
+    }
+
+    /// Set by `AppDelegate` while it handles a control-socket request on the
+    /// main thread, so nothing on that path can put up a modal.
+    var isServingControlRequest = false
+
+    /// The CLI's answer to destructive work on `surfaceIDs`: nil to go ahead,
+    /// or an error naming the busy panes (anything but a bare shell in front,
+    /// the same rule the GUI's dialog uses). `force` skips the check.
+    func cliRefusal(closing surfaceIDs: [UUID], force: Bool) -> String? {
+        let busy = surfaceIDs.compactMap { id -> BusyPaneGate.BusyPane? in
+            guard let command = foregroundBySurface[id], !command.isEmpty else { return nil }
+            return .init(pane: SessionPersistence.shortID(for: id), command: command)
+        }
+        return BusyPaneGate.refusal(busy: busy, force: force)
     }
 
     /// Close the tab at an explicit index (called by the tab bar × button).
@@ -7565,7 +7617,7 @@ final class TerminalViewController: NSViewController {
 
     /// Hibernate the named project (CLI, case-insensitive). No confirmation —
     /// the CLI call IS the confirmation. Returns an error message or nil.
-    func hibernateProjectNamed(_ name: String) -> String? {
+    func hibernateProjectNamed(_ name: String, force: Bool) -> String? {
         let matches = workspace.projects.filter { $0.name.lowercased() == name.lowercased() }
         guard let project = matches.first else { return "no project named \"\(name)\"" }
         guard matches.count == 1 else { return "\(matches.count) projects named \"\(name)\" — use the sidebar" }
@@ -7574,6 +7626,8 @@ final class TerminalViewController: NSViewController {
         guard !project.isHome else { return "Home can't be hibernated" }
         guard workspace.projects.count > 1 else { return "cannot hibernate the only project" }
         guard !project.isHibernated else { return "project \"\(project.name)\" is already hibernated" }
+        let surfaces = project.tabList.trees.flatMap { $0.layout.surfaces.map(\.id) }
+        if let refusal = cliRefusal(closing: surfaces, force: force) { return refusal }
         hibernateProject(project, confirmIfBusy: false)
         return nil
     }
@@ -7701,11 +7755,15 @@ final class TerminalViewController: NSViewController {
     /// Hibernate every awake project in a Space (CLI `hibernate-space`). Reuses
     /// the existing per-project hibernate entry point, so session teardown and
     /// `reconcileSessions()` keep their usual behavior.
-    func hibernateSpaceNamed(_ name: String) -> String? {
+    func hibernateSpaceNamed(_ name: String, force: Bool) -> String? {
         guard let space = workspace.space(named: name) else {
             return "no Space named \"\(name)\""
         }
-        for project in workspace.projects(inSpace: space.id) where !project.isHibernated {
+        let awake = workspace.projects(inSpace: space.id).filter { !$0.isHibernated }
+        let surfaces = awake.flatMap { $0.tabList.trees.flatMap { $0.layout.surfaces.map(\.id) } }
+        // All or nothing: a Space half-hibernated by a refusal is worse than none.
+        if let refusal = cliRefusal(closing: surfaces, force: force) { return refusal }
+        for project in awake {
             hibernateProject(project, confirmIfBusy: false)
         }
         return nil

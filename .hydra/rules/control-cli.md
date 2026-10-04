@@ -68,6 +68,45 @@ Commands (see `zetty --help` for full grammar and agent notes):
   `quit [--kill-sessions]` (no dialog; the flag kills every preserved
   session first — full shutdown).
 
+### A socket request never waits on a dialog
+
+**Nothing handling a control request may call `NSAlert.runModal`.** The handler
+runs on the main thread inside the socket's `main.sync`, so a modal there holds
+the socket — every zetty command, from every agent, times out — until someone
+clicks in the Zetty window. It happened: the morning ritual's cleanup ran
+`scratch-clear` while its own claude was still busy, `closeAllScratchTerminals`
+raised `confirmClosingBusyPanes`, and the CLI froze for everyone.
+
+- **Destructive verbs refuse busy panes instead.** `close`, `remove-project`,
+  `hibernate` (and `--space`), `scratch-clear`, and `quit` when it ends sessions
+  (`--kill-sessions`, `--simulate-restart`, any scratch, or a project that does
+  not preserve sessions) answer with `BusyPaneGate.refusal` — "N busy panes:
+  <id> (<command>), … — pass --force to close them anyway" — through
+  `TerminalViewController.cliRefusal(closing:force:)`. Busy means what the
+  dialog means: anything but a bare shell in the foreground probe. `--force`
+  goes ahead without asking.
+- **The check comes before anything moves.** `closePane` works out whether it
+  will take the pane or its whole tab first; `hibernate --space` is all or
+  nothing, because a Space half-hibernated by a refusal is worse than none.
+- **The GUI keeps its dialog.** `closeAllScratchTerminals(_:)` (menu, palette)
+  still confirms; the CLI goes through `clearScratchTerminals(force:)`. GUI
+  callers of the CLI-shaped helpers (`endTileSession` → `closePane`, the
+  sidebar's and palette's Space hibernate) pass `force: true`, having either
+  asked already or never asked before.
+- **`isServingControlRequest` is the backstop.** `AppDelegate` sets it around
+  `handleOnMain`, and `confirmClosingBusyPanes` returns false (Cancel) without
+  showing anything while it is set, logging the refusal. A new CLI path that
+  forgets the gate therefore fails closed instead of freezing the socket.
+- **Verbs that took no arguments now parse them.** `scratch-clear --bogus` and
+  `quit --kil-sessions` used to ignore what they did not recognise and act;
+  `parseFlags` rejects it with exit 2. `wake --force` is an error, not part of a
+  project name.
+- `force` is decoded with `decodeIfPresent ?? false`, so an older CLI that
+  never sends it gets the refusal: silence reads as "not forced". Tests:
+  `CLIForceTests` (gate, flag → request for every gated verb, unknown flags
+  send nothing, wire round-trip). The handler wiring itself is in
+  `AppDelegate`/`TerminalViewController`, which no test target hosts.
+
 ### `--help` never acts
 
 **`ControlCLI.run` answers `--help`/`-h` for every verb BEFORE dispatch**, wherever

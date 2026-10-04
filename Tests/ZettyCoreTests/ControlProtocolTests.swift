@@ -16,7 +16,7 @@ import Foundation
     #expect(try ControlWire.decodeRequest(ControlWire.encodeLine(ControlRequest.reload)) == .reload)
     #expect(try ControlWire.decodeRequest(ControlWire.encodeLine(ControlRequest.scratch(focus: false))) == .scratch(focus: false))
     #expect(try ControlWire.decodeRequest(ControlWire.encodeLine(ControlRequest.scratch(focus: true))) == .scratch(focus: true))
-    #expect(try ControlWire.decodeRequest(ControlWire.encodeLine(ControlRequest.scratchClear)) == .scratchClear)
+    #expect(try ControlWire.decodeRequest(ControlWire.encodeLine(ControlRequest.scratchClear(force: false))) == .scratchClear(force: false))
     #expect(try ControlWire.decodeRequest(ControlWire.encodeLine(ControlRequest.newTab(project: "glen", focus: true, account: nil))) == .newTab(project: "glen", focus: true, account: nil))
     #expect(try ControlWire.decodeRequest(ControlWire.encodeLine(ControlRequest.newTab(project: nil, focus: false, account: nil))) == .newTab(project: nil, focus: false, account: nil))
     #expect(try ControlWire.decodeRequest(ControlWire.encodeLine(ControlRequest.addProject(path: "/Users/x/proj", name: "proj", space: nil, focus: true)))

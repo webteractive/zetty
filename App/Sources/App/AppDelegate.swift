@@ -1860,7 +1860,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
                     let tail = lines.map { Array(allLines.suffix(max(0, $0))) } ?? Array(allLines)
                     return .text(tail.joined(separator: "\n"))
                 }
-            case .quit(let killSessions, let simulateRestart):
+            case .quit(let killSessions, let simulateRestart, let force):
+                // Refuse first when the quit would end busy panes: scratch
+                // sessions always die with the app, and so does every pane
+                // whose project does not preserve sessions.
+                let refusal = DispatchQueue.main.sync { () -> String? in
+                    guard let tvc = self.terminalViewController else { return nil }
+                    let ending = tvc.workspace.projects.filter { project in
+                        !project.isHibernated && (killSessions || simulateRestart || project.isScratch
+                            || !self.resolvedSettings(for: project).preserveSessions)
+                    }.flatMap { $0.tabList.trees.flatMap { $0.layout.surfaces.map(\.id) } }
+                    return tvc.cliRefusal(closing: ending, force: force)
+                }
+                if let refusal { return .error(refusal) }
                 // Respond first; the shared helpers perform any kill-wait
                 // off-main, then terminate without displaying a GUI prompt.
                 DispatchQueue.main.async {
@@ -1910,7 +1922,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
                         }
                     }
                 }
-            case .removeProject(let name, let fetch, let discard):
+            case .removeProject(let name, let fetch, let discard, let force):
                 // Plan on main (workspace state); a clone's git probe/fetch-back
                 // runs on this socket queue so a slow `git fetch` can't beachball
                 // the app; the actual removal happens back on main.
@@ -1918,7 +1930,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
                     guard let tvc = self.terminalViewController else {
                         return .failure(.protocolError("Zetty is still starting up"))
                     }
-                    return .success(tvc.planRemoveProject(name: name, fetch: fetch, discard: discard))
+                    return .success(tvc.planRemoveProject(name: name, fetch: fetch, discard: discard,
+                                                          force: force))
                 }
                 switch planned {
                 case .failure(let error):
@@ -2024,7 +2037,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
                     }
                 }
             default:
-                return DispatchQueue.main.sync { self.handleOnMain(request) }
+                return DispatchQueue.main.sync {
+                    // Nothing on this path may raise a modal: it would hold
+                    // the socket, and every zetty command, until clicked.
+                    let tvc = self.terminalViewController
+                    tvc?.isServingControlRequest = true
+                    defer { tvc?.isServingControlRequest = false }
+                    return self.handleOnMain(request)
+                }
             }
         }
         server.start()
@@ -2081,8 +2101,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             return .ok
         case .scratch(let focus):
             return .pane(tvc.newScratchTerminal(focus: focus))
-        case .scratchClear:
-            tvc.closeAllScratchTerminals()
+        case .scratchClear(let force):
+            if let message = tvc.clearScratchTerminals(force: force) { return .error(message) }
             return .ok
         case .send(let target, let text, let enter, let keys):
             if let message = tvc.sendInput(target: target, text: text, enter: enter, keys: keys) {
@@ -2118,14 +2138,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         case .moveToSpace(let project, let space):
             if let message = tvc.moveProjectNamed(project, toSpace: space) { return .error(message) }
             return .ok
-        case .hibernateSpace(let name):
-            if let message = tvc.hibernateSpaceNamed(name) { return .error(message) }
+        case .hibernateSpace(let name, let force):
+            if let message = tvc.hibernateSpaceNamed(name, force: force) { return .error(message) }
             return .ok
         case .wakeSpace(let name):
             if let message = tvc.wakeSpaceNamed(name) { return .error(message) }
             return .ok
-        case .hibernateProject(let name):
-            if let message = tvc.hibernateProjectNamed(name) { return .error(message) }
+        case .hibernateProject(let name, let force):
+            if let message = tvc.hibernateProjectNamed(name, force: force) { return .error(message) }
             return .ok
         case .wakeProject(let name):
             if let message = tvc.wakeProjectNamed(name) { return .error(message) }
@@ -2135,8 +2155,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             case .success(let pane): return .pane(pane)
             case .failure(let error): return .error(error.localizedDescription)
             }
-        case .close(let target, let wholeTab):
-            if let message = tvc.closePane(target: target, wholeTab: wholeTab) {
+        case .close(let target, let wholeTab, let force):
+            if let message = tvc.closePane(target: target, wholeTab: wholeTab, force: force) {
                 return .error(message)
             }
             return .ok

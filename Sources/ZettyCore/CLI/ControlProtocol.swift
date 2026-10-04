@@ -47,7 +47,12 @@ public enum ControlRequest: Equatable, Sendable {
     /// switches to it. Response `.pane` with the new pane's short id.
     case scratch(focus: Bool)
     /// Close and clear every scratch terminal at once. Response `.ok`.
-    case scratchClear
+    ///
+    /// `force`: busy panes (anything but a bare shell in front) are REFUSED
+    /// with an error naming them unless this is set. A socket request never
+    /// raises a confirmation dialog — a modal on the main thread froze every
+    /// zetty command until someone clicked it.
+    case scratchClear(force: Bool = false)
     /// Inject input into a pane: `text` first (verbatim), then each key in
     /// `keys` (see `KeyNotation`), then a carriage return when `enter` is set.
     case send(target: PaneSelector, text: String?, enter: Bool, keys: [String])
@@ -92,7 +97,12 @@ public enum ControlRequest: Equatable, Sendable {
     /// For clones: `fetch` lands the clone's branch in the source repo before
     /// deleting, `discard` skips that; a clone with unsaved work refuses
     /// removal unless one of the two is passed.
-    case removeProject(name: String, fetch: Bool, discard: Bool)
+    ///
+    /// `force`: busy panes (anything but a bare shell in front) are REFUSED
+    /// with an error naming them unless this is set. A socket request never
+    /// raises a confirmation dialog — a modal on the main thread froze every
+    /// zetty command until someone clicked it.
+    case removeProject(name: String, fetch: Bool, discard: Bool, force: Bool = false)
     /// Create a new directory at `path` (which must NOT already exist) and add
     /// it as a project named `name` (nil → the last path component); `gitInit`
     /// runs `git init` in the new folder. Added in the background by default;
@@ -101,7 +111,12 @@ public enum ControlRequest: Equatable, Sendable {
     case newProject(path: String, name: String?, gitInit: Bool, focus: Bool)
     /// Hibernate the named project (case-insensitive): free its sessions,
     /// processes, and panes, keeping its layout. Response `.ok`.
-    case hibernateProject(name: String)
+    ///
+    /// `force`: busy panes (anything but a bare shell in front) are REFUSED
+    /// with an error naming them unless this is set. A socket request never
+    /// raises a confirmation dialog — a modal on the main thread froze every
+    /// zetty command until someone clicked it.
+    case hibernateProject(name: String, force: Bool = false)
     /// Wake the named hibernated project — fresh shells, layout intact. `.ok`.
     case wakeProject(name: String)
     /// Create a Space (a user-defined sidebar section). `colorID` is a curated
@@ -118,19 +133,28 @@ public enum ControlRequest: Equatable, Sendable {
     /// (`--none`). Errors for Home, Scratch, and clones. `.ok`.
     case moveToSpace(project: String, space: String?)
     /// Hibernate every project in the named Space (`hibernate --space`). `.ok`.
-    case hibernateSpace(name: String)
+    /// `force` as for `hibernateProject`, across every project in the Space.
+    case hibernateSpace(name: String, force: Bool = false)
     /// Wake every hibernated project in the named Space (`wake --space`). `.ok`.
     case wakeSpace(name: String)
     /// Close the targeted pane (its tab when it's the last pane), or the
     /// whole tab containing it when `wholeTab` is set.
-    case close(target: PaneSelector, wholeTab: Bool)
+    ///
+    /// `force`: busy panes (anything but a bare shell in front) are REFUSED
+    /// with an error naming them unless this is set. A socket request never
+    /// raises a confirmation dialog — a modal on the main thread froze every
+    /// zetty command until someone clicked it.
+    case close(target: PaneSelector, wholeTab: Bool, force: Bool = false)
     /// Quit the app (bypasses the quit confirmation — the CLI call IS the
     /// confirmation). With `killSessions`, every preserved zmx session is
     /// killed first: a full shutdown, nothing survives to reattach. With
     /// `simulateRestart`, the power-off path runs first — snapshot, recovery
     /// manifest, then every session killed as a real restart would — so
     /// restart recovery can be verified without rebooting.
-    case quit(killSessions: Bool, simulateRestart: Bool)
+    ///
+    /// `force`: when the quit would end sessions (either flag, or
+    /// preserve-sessions off) and panes are busy, it is refused unless set.
+    case quit(killSessions: Bool, simulateRestart: Bool, force: Bool = false)
     /// Split the targeted pane (vertical = side by side). Background by default —
     /// the split appears but keyboard focus stays on the current pane; `focus`
     /// moves focus to the new pane. Response `.pane` with the new pane's short id.
@@ -162,11 +186,16 @@ public enum ControlRequest: Equatable, Sendable {
 
 extension ControlRequest: Codable {
     private enum CodingKeys: String, CodingKey {
-        case command, target, text, enter, keys, project, wholeTab, killSessions, simulateRestart, vertical, lines, path, name, gitInit, focus, fetch, discard, line, column, space, newName, color, icon, account, probe, surface, on, profile, slot, collapse, view
+        case command, target, text, enter, keys, project, wholeTab, killSessions, simulateRestart, vertical, lines, path, name, gitInit, focus, fetch, discard, line, column, space, newName, color, icon, account, probe, surface, on, profile, slot, collapse, view, force
     }
 
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
+        // Absent means not forced: an older CLI never sends it, and the safe
+        // reading of silence is "refuse if busy".
+        func decodeForce() throws -> Bool {
+            try container.decodeIfPresent(Bool.self, forKey: .force) ?? false
+        }
         switch try container.decode(String.self, forKey: .command) {
         case "status": self = .status
         case "accounts":
@@ -207,7 +236,7 @@ extension ControlRequest: Codable {
                 vertical: try container.decodeIfPresent(Bool.self, forKey: .vertical) ?? true,
                 view: try container.decodeIfPresent(String.self, forKey: .view))
         case "scratch": self = .scratch(focus: try container.decodeIfPresent(Bool.self, forKey: .focus) ?? false)
-        case "scratch-clear": self = .scratchClear
+        case "scratch-clear": self = .scratchClear(force: try decodeForce())
         case "send":
             self = .send(
                 target: try container.decodeIfPresent(PaneSelector.self, forKey: .target) ?? .focused,
@@ -247,7 +276,8 @@ extension ControlRequest: Codable {
                 space: try container.decodeIfPresent(String.self, forKey: .space)
             )
         case "hibernate-space":
-            self = .hibernateSpace(name: try container.decode(String.self, forKey: .name))
+            self = .hibernateSpace(name: try container.decode(String.self, forKey: .name),
+                                   force: try decodeForce())
         case "wake-space":
             self = .wakeSpace(name: try container.decode(String.self, forKey: .name))
         case "clone":
@@ -266,10 +296,12 @@ extension ControlRequest: Codable {
             self = .removeProject(
                 name: try container.decode(String.self, forKey: .project),
                 fetch: try container.decodeIfPresent(Bool.self, forKey: .fetch) ?? false,
-                discard: try container.decodeIfPresent(Bool.self, forKey: .discard) ?? false
+                discard: try container.decodeIfPresent(Bool.self, forKey: .discard) ?? false,
+                force: try decodeForce()
             )
         case "hibernate":
-            self = .hibernateProject(name: try container.decode(String.self, forKey: .project))
+            self = .hibernateProject(name: try container.decode(String.self, forKey: .project),
+                                     force: try decodeForce())
         case "wake":
             self = .wakeProject(name: try container.decode(String.self, forKey: .project))
         case "new-project":
@@ -282,12 +314,14 @@ extension ControlRequest: Codable {
         case "close":
             self = .close(
                 target: try container.decode(PaneSelector.self, forKey: .target),
-                wholeTab: try container.decodeIfPresent(Bool.self, forKey: .wholeTab) ?? false
+                wholeTab: try container.decodeIfPresent(Bool.self, forKey: .wholeTab) ?? false,
+                force: try decodeForce()
             )
         case "quit":
             self = .quit(
                 killSessions: try container.decodeIfPresent(Bool.self, forKey: .killSessions) ?? false,
-                simulateRestart: try container.decodeIfPresent(Bool.self, forKey: .simulateRestart) ?? false)
+                simulateRestart: try container.decodeIfPresent(Bool.self, forKey: .simulateRestart) ?? false,
+                force: try decodeForce())
         case "split":
             self = .split(
                 target: try container.decodeIfPresent(PaneSelector.self, forKey: .target) ?? .focused,
@@ -368,8 +402,9 @@ extension ControlRequest: Codable {
         case .scratch(let focus):
             try container.encode("scratch", forKey: .command)
             try container.encode(focus, forKey: .focus)
-        case .scratchClear:
+        case .scratchClear(let force):
             try container.encode("scratch-clear", forKey: .command)
+            try container.encode(force, forKey: .force)
         case .send(let target, let text, let enter, let keys):
             try container.encode("send", forKey: .command)
             try container.encode(target, forKey: .target)
@@ -403,9 +438,10 @@ extension ControlRequest: Codable {
             try container.encode("move-to-space", forKey: .command)
             try container.encode(project, forKey: .project)
             try container.encodeIfPresent(space, forKey: .space)
-        case .hibernateSpace(let name):
+        case .hibernateSpace(let name, let force):
             try container.encode("hibernate-space", forKey: .command)
             try container.encode(name, forKey: .name)
+            try container.encode(force, forKey: .force)
         case .wakeSpace(let name):
             try container.encode("wake-space", forKey: .command)
             try container.encode(name, forKey: .name)
@@ -423,14 +459,16 @@ extension ControlRequest: Codable {
         case .pushClone(let name):
             try container.encode("push-clone", forKey: .command)
             try container.encode(name, forKey: .project)
-        case .removeProject(let name, let fetch, let discard):
+        case .removeProject(let name, let fetch, let discard, let force):
             try container.encode("remove-project", forKey: .command)
             try container.encode(name, forKey: .project)
             try container.encode(fetch, forKey: .fetch)
             try container.encode(discard, forKey: .discard)
-        case .hibernateProject(let name):
+            try container.encode(force, forKey: .force)
+        case .hibernateProject(let name, let force):
             try container.encode("hibernate", forKey: .command)
             try container.encode(name, forKey: .project)
+            try container.encode(force, forKey: .force)
         case .wakeProject(let name):
             try container.encode("wake", forKey: .command)
             try container.encode(name, forKey: .project)
@@ -440,14 +478,16 @@ extension ControlRequest: Codable {
             try container.encodeIfPresent(name, forKey: .name)
             try container.encode(gitInit, forKey: .gitInit)
             try container.encode(focus, forKey: .focus)
-        case .close(let target, let wholeTab):
+        case .close(let target, let wholeTab, let force):
             try container.encode("close", forKey: .command)
             try container.encode(target, forKey: .target)
             try container.encode(wholeTab, forKey: .wholeTab)
-        case .quit(let killSessions, let simulateRestart):
+            try container.encode(force, forKey: .force)
+        case .quit(let killSessions, let simulateRestart, let force):
             try container.encode("quit", forKey: .command)
             try container.encode(killSessions, forKey: .killSessions)
             try container.encode(simulateRestart, forKey: .simulateRestart)
+            try container.encode(force, forKey: .force)
         case .split(let target, let vertical, let focus, let account):
             try container.encode("split", forKey: .command)
             try container.encode(target, forKey: .target)

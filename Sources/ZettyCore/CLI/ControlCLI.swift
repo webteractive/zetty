@@ -86,14 +86,15 @@ public enum ControlCLI {
                                               aborted and the source left as it was
       zetty push-clone <name>                 update the clone, then push its
                                               branch to origin for a PR
-      zetty remove-project <name> [--fetch | --discard]
+      zetty remove-project <name> [--fetch | --discard] [--force]
                                               remove a project (closes its tabs and
-                                              ends their sessions; no confirmation).
+                                              ends their sessions; busy panes need
+                                              --force).
                                               For clones: --fetch lands the clone's
                                               branch in the original repo first,
                                               --discard deletes without fetching; a
                                               clone with unsaved work requires one
-      zetty hibernate (<name> | --space <name>)
+      zetty hibernate (<name> | --space <name>) [--force]
                                               free a project's (or every project in
                                               a Space's) sessions/processes/panes
                                               (keeps its layout)
@@ -124,7 +125,7 @@ public enum ControlCLI {
                                               With the grid up it focuses the pane's
                                               tile instead, attaching it to the shown
                                               view first when it is not in it
-      zetty close (--pane <id> | --cwd <path>) [--tab]
+      zetty close (--pane <id> | --cwd <path>) [--tab] [--force]
                                               close a pane (a tab's last pane closes
                                               the tab; --tab closes the whole tab)
       zetty reload                          reload zetty config (⇧⌘, equivalent)
@@ -152,8 +153,8 @@ public enum ControlCLI {
                                               (Scratch section) in the background;
                                               --focus switches to it. Prints its
                                               pane id
-      zetty scratch-clear                   close and clear all scratch terminals
-      zetty quit [--kill-sessions | --simulate-restart]
+      zetty scratch-clear [--force]         close and clear all scratch terminals
+      zetty quit [--kill-sessions | --simulate-restart] [--force]
                                             quit the app (no confirmation dialog);
                                               --kill-sessions also kills every
                                               preserved zmx session (full shutdown);
@@ -162,6 +163,10 @@ public enum ControlCLI {
                                               sessions like a real restart (testing aid)
 
       zetty --version | -v | version        print the version and build commit
+
+    Destructive commands (close, remove-project, hibernate, scratch-clear, and
+    quit when it ends sessions) refuse busy panes with an error naming them;
+    --force goes ahead. They never wait on a dialog in the app.
 
     Every command takes --help (or -h): `zetty <command> --help` prints that
     command's own help — its flags and whether it destroys anything — and never
@@ -283,13 +288,13 @@ public enum ControlCLI {
         case "remove-project":
             return runRemoveProject(arguments)
         case "hibernate":
-            return runProjectByName(arguments, verb: "hibernate",
-                                    { .hibernateProject(name: $0) },
-                                    space: { .hibernateSpace(name: $0) })
+            return runProjectByName(arguments, verb: "hibernate", takesForce: true,
+                                    { .hibernateProject(name: $0, force: $1) },
+                                    space: { .hibernateSpace(name: $0, force: $1) })
         case "wake":
-            return runProjectByName(arguments, verb: "wake",
-                                    { .wakeProject(name: $0) },
-                                    space: { .wakeSpace(name: $0) })
+            return runProjectByName(arguments, verb: "wake", takesForce: false,
+                                    { name, _ in .wakeProject(name: name) },
+                                    space: { name, _ in .wakeSpace(name: name) })
         case "new-space":
             return runNewSpace(arguments)
         case "rename-space":
@@ -313,10 +318,14 @@ public enum ControlCLI {
         case "scratch":
             return runScratch(arguments)
         case "scratch-clear":
-            return expectOK(.scratchClear, success: "cleared")
+            guard let flags = parseFlags(arguments, allowed: ["--force"]) else { return 2 }
+            return expectOK(.scratchClear(force: flags.contains("--force")), success: "cleared")
         case "quit":
-            return expectOK(.quit(killSessions: arguments.contains("--kill-sessions"),
-                                  simulateRestart: arguments.contains("--simulate-restart")),
+            guard let flags = parseFlags(arguments, allowed: ["--kill-sessions", "--simulate-restart", "--force"])
+            else { return 2 }
+            return expectOK(.quit(killSessions: flags.contains("--kill-sessions"),
+                                  simulateRestart: flags.contains("--simulate-restart"),
+                                  force: flags.contains("--force")),
                             success: nil)
         default:
             return failure("unknown command \"\(command)\"\n\n\(usage)")
@@ -475,27 +484,34 @@ public enum ControlCLI {
         Pushes to the remote — outward-facing.
         """,
         "remove-project": """
-        usage: zetty remove-project <name> [--fetch | --discard]
+        usage: zetty remove-project <name> [--fetch | --discard] [--force]
 
-        Remove a project: closes all its tabs and ENDS their sessions (running
-        processes are killed). No confirmation. The last project can't be
-        removed, and neither can Home.
+        Remove a project: closes all its tabs and ENDS their sessions. The last
+        project can't be removed, and neither can Home.
+        Busy panes (anything but a bare shell in front) are refused with an
+        error naming them; --force closes them anyway. It never waits on a
+        dialog.
 
           --fetch     clones only: land the clone's branch in the original repo
                       first, then delete it
           --discard   clones only: delete without fetching
                       (a clone with unsaved work requires one of the two)
+          --force     remove even when its panes are busy
 
-        DESTRUCTIVE: kills the project's sessions; a clone's directory is deleted.
+        DESTRUCTIVE: ends the project's sessions; a clone's directory is deleted.
         """,
         "hibernate": """
-        usage: zetty hibernate (<name> | --space <name>)
+        usage: zetty hibernate (<name> | --space <name>) [--force]
 
         Free a project's — or every project in a Space's — sessions, processes
         and panes, keeping its layout. Idle shells are asked to exit first.
         Home can't be hibernated.
+        Busy panes (anything but a bare shell in front) are refused with an
+        error naming them; --force closes them anyway. It never waits on a
+        dialog.
 
           --space <name>   hibernate every project in that Space
+          --force          hibernate even when panes are busy
 
         DESTRUCTIVE: ends every process running in those panes.
         """,
@@ -581,15 +597,18 @@ public enum ControlCLI {
         Moves the view; destroys nothing.
         """,
         "close": """
-        usage: zetty close (--pane <id> | --cwd <path>) [--tab]
+        usage: zetty close (--pane <id> | --cwd <path>) [--tab] [--force]
 
-        Close a pane and END its session (its process is killed). A tab's last
-        pane closes the tab; a project's only tab can't be closed. No
-        confirmation.
+        Close a pane and END its session. A tab's last pane closes the tab; a
+        project's only tab can't be closed.
+        Busy panes (anything but a bare shell in front) are refused with an
+        error naming them; --force closes them anyway. It never waits on a
+        dialog.
 
           --pane <id>     the pane to close
           --cwd <path>    the single pane whose working dir is <path>
           --tab           close the pane's whole tab
+          --force         close even when the pane (or tab) is busy
 
         DESTRUCTIVE: kills what is running in the pane (or every pane of the tab).
         """,
@@ -644,22 +663,29 @@ public enum ControlCLI {
         Creates a terminal; destroys nothing.
         """,
         "scratch-clear": """
-        usage: zetty scratch-clear
+        usage: zetty scratch-clear [--force]
 
-        Close EVERY scratch terminal at once and end their sessions. No
-        confirmation from the CLI.
+        Close EVERY scratch terminal at once and end their sessions.
+        Busy panes (anything but a bare shell in front) are refused with an
+        error naming them; --force closes them anyway. It never waits on a
+        dialog.
+
+          --force   clear them even when some are busy
 
         DESTRUCTIVE: kills whatever is running in all scratch terminals.
         """,
         "quit": """
-        usage: zetty quit [--kill-sessions | --simulate-restart]
+        usage: zetty quit [--kill-sessions | --simulate-restart] [--force]
 
         Quit the zetty app. No confirmation dialog. Preserved sessions keep
         running and reattach on the next launch unless a flag says otherwise.
+        When the quit would END sessions — either flag, or preserve-sessions
+        off — busy panes are refused with an error naming them unless --force.
 
           --kill-sessions      also kill every preserved zmx session (full shutdown)
           --simulate-restart   run the restart-recovery snapshot, then kill the
                                sessions as a real restart would (testing aid)
+          --force              quit even when that ends busy panes
 
         DESTRUCTIVE: closes the app every pane lives in; with either flag, every
         running process in every pane is killed.
@@ -688,6 +714,17 @@ public enum ControlCLI {
         Starts an agent; destroys nothing.
         """,
     ]
+
+    /// The flags of a verb that takes nothing else, or nil — having said why —
+    /// when anything unknown is present. `scratch-clear --bogus` and
+    /// `quit --kil-sessions` used to ignore what they did not recognise and act.
+    private static func parseFlags(_ arguments: [String], allowed: Set<String>) -> Set<String>? {
+        for argument in arguments where !allowed.contains(argument) {
+            _ = failure("unknown argument \"\(argument)\"")
+            return nil
+        }
+        return Set(arguments)
+    }
 
     // MARK: - Commands
 
@@ -1145,11 +1182,13 @@ public enum ControlCLI {
     private static func runRemoveProject(_ arguments: [String]) -> Int32 {
         var fetch = false
         var discard = false
+        var force = false
         var nameParts: [String] = []
         for argument in arguments {
             switch argument {
             case "--fetch":   fetch = true
             case "--discard": discard = true
+            case "--force":   force = true
             default:          nameParts.append(argument)
             }
         }
@@ -1161,18 +1200,26 @@ public enum ControlCLI {
         guard !name.isEmpty else {
             return failure("remove-project needs a project name")
         }
-        return expectOK(.removeProject(name: name, fetch: fetch, discard: discard), success: nil)
+        return expectOK(.removeProject(name: name, fetch: fetch, discard: discard, force: force),
+                        success: nil)
     }
 
     /// Shared handler for name-targeted project commands (hibernate/wake).
     /// `--space <name>` targets every project in a Space instead of one project.
-    private static func runProjectByName(_ arguments: [String], verb: String,
-                                         _ make: (String) -> ControlRequest,
-                                         space makeSpace: ((String) -> ControlRequest)? = nil) -> Int32 {
+    private static func runProjectByName(_ arguments: [String], verb: String, takesForce: Bool,
+                                         _ make: (String, Bool) -> ControlRequest,
+                                         space makeSpace: ((String, Bool) -> ControlRequest)? = nil) -> Int32 {
         var wantsSpace = false
+        var force = false
         var parts: [String] = []
         for argument in arguments {
-            if argument == "--space" { wantsSpace = true } else { parts.append(argument) }
+            switch argument {
+            case "--space": wantsSpace = true
+            case "--force":
+                guard takesForce else { return failure("\(verb) does not take --force") }
+                force = true
+            default: parts.append(argument)
+            }
         }
         let name = parts.joined(separator: " ").trimmingCharacters(in: .whitespaces)
         guard !name.isEmpty else {
@@ -1180,9 +1227,9 @@ public enum ControlCLI {
         }
         if wantsSpace {
             guard let makeSpace else { return failure("\(verb) does not take --space") }
-            return expectOK(makeSpace(name), success: nil)
+            return expectOK(makeSpace(name, force), success: nil)
         }
-        return expectOK(make(name), success: nil)
+        return expectOK(make(name, force), success: nil)
     }
 
     private static func runSplit(_ arguments: [String]) -> Int32 {
@@ -1253,6 +1300,7 @@ public enum ControlCLI {
     private static func runClose(_ arguments: [String]) -> Int32 {
         var target: PaneSelector?
         var wholeTab = false
+        var force = false
         var index = 0
         while index < arguments.count {
             switch arguments[index] {
@@ -1266,6 +1314,8 @@ public enum ControlCLI {
                 target = .cwd(arguments[index])
             case "--tab":
                 wholeTab = true
+            case "--force":
+                force = true
             default:
                 return failure("unknown argument \"\(arguments[index])\"")
             }
@@ -1274,7 +1324,7 @@ public enum ControlCLI {
         guard let target else {
             return failure("close needs an explicit target: --pane <id> or --cwd <path>")
         }
-        return expectOK(.close(target: target, wholeTab: wholeTab), success: nil)
+        return expectOK(.close(target: target, wholeTab: wholeTab, force: force), success: nil)
     }
 
     // MARK: - tiles

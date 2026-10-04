@@ -1083,6 +1083,13 @@ where the old name ends). Home, scratch terminals, and clones can never join a
 Space — `move-to-space` and the `Move to Space ▸` menu both refuse them; a
 clone always renders in whatever Space its source is in.
 
+**Destructive commands never wait on a dialog.** `close`, `remove-project`,
+`hibernate`, `scratch-clear`, and `quit` when it would end sessions refuse
+panes that are busy — anything but a bare shell running — with an error that
+names them, and `--force` goes ahead anyway. Clicking in the app still asks
+first; a script never blocks the app (and every other `zetty` command) on a
+confirmation nobody is there to answer.
+
 **`zetty <command> --help` is always safe.** Every command prints its own help
 — usage, flags, and whether it destroys anything — and does nothing else,
 wherever `--help` (or `-h`) appears among its arguments. The one exception is

@@ -6,34 +6,6 @@ import Testing
 /// and cleared every scratch terminal on the machine of an agent that was only
 /// reading the usage; `quit --help` would have quit the app.
 
-/// Records every request a command tries to send. The transport is bound
-/// task-locally, so nothing here can reach the real app's socket.
-private final class Recorder: @unchecked Sendable {
-    private let lock = NSLock()
-    private var _requests: [ControlRequest] = []
-    private var _output = ""
-
-    var requests: [ControlRequest] { lock.withLock { _requests } }
-    var output: String { lock.withLock { _output } }
-
-    func record(_ request: ControlRequest) -> ControlResponse {
-        lock.withLock { _requests.append(request) }
-        return .error("test transport: no app")
-    }
-
-    func write(_ text: String) { lock.withLock { _output += text + "\n" } }
-}
-
-private func runIsolated(_ arguments: [String]) -> (exit: Int32, recorder: Recorder) {
-    let recorder = Recorder()
-    let exit = ControlCLI.$transport.withValue({ recorder.record($0) }) {
-        ControlCLI.$helpOutput.withValue({ recorder.write($0) }) {
-            ControlCLI.run(arguments)
-        }
-    }
-    return (exit, recorder)
-}
-
 /// Arguments that would make each verb DO something if `--help` were ignored.
 /// Every verb in `ControlCLI.verbs` must appear: a new verb without an entry
 /// fails `everyVerbHasRealisticArguments`.
@@ -123,5 +95,5 @@ func helpNeverReachesTheApp(verb: String) {
     // Guards the tests above: if the seam were bypassed they would pass
     // vacuously.
     let (_, recorder) = runIsolated(["scratch-clear"])
-    #expect(recorder.requests == [.scratchClear])
+    #expect(recorder.requests == [.scratchClear(force: false)])
 }
