@@ -222,6 +222,55 @@ are in `.hydra/rules/surfaces-and-memory.md`.
   auto-generated "Full Changelog" link. Group by feature/fix and phrase it for
   users, mirroring the same changes documented in `README.md`.
 
+## Checking libghostty before a change  ← every feature, fix or other change
+
+**Before starting any feature, bug fix or other change to the app, run
+`scripts/check-libghostty.sh`** — once per working session is enough. It
+compares the `libghostty-spm` pin in `Project.swift` with upstream's release
+tags and changes nothing. Zetty IS libghostty with chrome around it, so a
+terminal fix that already exists upstream is the cheapest fix available, and
+the pin only moves when somebody looks.
+
+- **When the script reports anything newer, delegate the research to a
+  subagent before touching the pin** — one read-only agent, briefed with the
+  pinned version and revision, the newer tag(s), and where Zetty's bridge code
+  lives (`App/Sources/ZettyGhostty/`). It must come back with, each backed by
+  a tag, commit or quoted release note: what changed between the two versions,
+  split into the Swift wrapper's API and the bundled upstream ghostty build;
+  any symbol Zetty uses that was removed, renamed or changed; anything
+  touching what Zetty is sensitive to (per-surface memory, `ghostty_surface_free`,
+  config validation, key handling, rendering, shell-integration resources);
+  and whether an existing tag was moved. It is delegated because the answer
+  is a read across release notes, commit ranges and upstream ghostty, and
+  only the conclusion belongs in the session doing the actual work.
+- **Show Glen what the new version contains BEFORE bumping**, in the reply,
+  not only in a commit message: the changes, what was verified against what
+  was inferred, and where upstream recorded nothing. "A newer version exists"
+  is not a reason to bump, and an empty release note is a finding to state
+  rather than to skip past.
+- **A newer release on the pinned line** (same `major.minor`, e.g. `1.6.x`):
+  once that has been shown, bump `from:` in `Project.swift` to it, as its OWN
+  commit ahead of the work the session was started for. The requirement is `upToNextMinor`, but
+  `Package.resolved` lives in the generated, gitignored workspace — so without
+  moving `from:` the version a build gets depends on that machine's SwiftPM
+  cache rather than on the repo.
+- **A newer LINE** (e.g. `2.2.x` while pinned to `1.6.x`): not a routine bump.
+  The same research covers it; say what the line is and let Glen decide; a new line can remove API, and the last move
+  across lines (`32ae982`) lost `TerminalSurface.sendText`.
+- **State the result either way** — "libghostty is current" or what is newer —
+  in the summary of the work. A check nobody reports is a check nobody can
+  tell was run.
+- **A bump is a change like any other**: it ends with the install ritual
+  below, and it is not verified until the installed app has been exercised —
+  typing, splits, copy mode, and a preserved session reattaching. `swift test`
+  never links libghostty, so a bump that compiles and passes is still unproven.
+- **Read the resolved revision after bumping**
+  (`zetty.xcworkspace/xcshareddata/swiftpm/Package.resolved`). Upstream has
+  rewritten history under existing tags before, leaving a pin pointing at a
+  revision a fresh clone no longer contains.
+- The script exits 2 when it cannot reach GitHub. Offline is not "up to date":
+  say the check could not be run.
+
 ## Installing after a change  ← not optional, and not only for releases
 
 **Every feature, fix or dependency bump ends with the running app on the new
