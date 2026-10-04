@@ -250,10 +250,14 @@ the pin only moves when somebody looks.
   rather than to skip past.
 - **A newer release on the pinned line** (same `major.minor`, e.g. `1.6.x`):
   once that has been shown, bump `from:` in `Project.swift` to it, as its OWN
-  commit ahead of the work the session was started for. The requirement is `upToNextMinor`, but
-  `Package.resolved` lives in the generated, gitignored workspace — so without
-  moving `from:` the version a build gets depends on that machine's SwiftPM
-  cache rather than on the repo.
+  commit ahead of the work the session was started for. `tuist generate` then
+  rewrites the tracked `.package.resolved`, which belongs in the same commit:
+  it is the lockfile, and a transitive dependency can change with the bump
+  (`1.6.20261003` swapped `MSDisplayLink` for `DisplayLink`).
+- **Clean before building a bump** (`xcodebuild … clean`). The precompiled
+  libghostty module from the old pin is rejected with "ghostty.h has been
+  modified since the module file was built", which reads like a broken
+  release and is only a stale cache.
 - **A newer LINE** (e.g. `2.2.x` while pinned to `1.6.x`): not a routine bump.
   The same research covers it; say what the line is and let Glen decide; a new line can remove API, and the last move
   across lines (`32ae982`) lost `TerminalSurface.sendText`.
@@ -264,8 +268,8 @@ the pin only moves when somebody looks.
   below, and it is not verified until the installed app has been exercised —
   typing, splits, copy mode, and a preserved session reattaching. `swift test`
   never links libghostty, so a bump that compiles and passes is still unproven.
-- **Read the resolved revision after bumping**
-  (`zetty.xcworkspace/xcshareddata/swiftpm/Package.resolved`). Upstream has
+- **Read the resolved revision after bumping** (`.package.resolved`) and
+  compare it with `git ls-remote --tags` for that tag. Upstream has
   rewritten history under existing tags before, leaving a pin pointing at a
   revision a fresh clone no longer contains.
 - The script exits 2 when it cannot reach GitHub. Offline is not "up to date":
