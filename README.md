@@ -1084,12 +1084,16 @@ clone always renders in whatever Space its source is in.
 
 `new-tab`, `split`, `break`, and `scratch` never change the active project or
 keyboard focus by default — an agent can reshape your workspace while you keep
-typing. Pass `--focus` to switch to the result.
+typing. Pass `--focus` to switch to the result. While the **tile grid** is up,
+`--focus` puts the new pane in the active view's focused tile instead of
+leaving the grid (a scratch terminal included), and background panes are still
+spawned, so their ids work there too.
 
 **Dormant panes never dead-end a script.** A pane has no terminal behind it
 until it is viewed (shells spawn lazily), and a hibernated project has none at
 all — `zetty status` shows this as `live: false` on the pane plus `hibernated:
-true` on the project, so a caller can tell the two apart. Either way you don't
+true` on the project, so a caller can tell the two apart. `live: true` means
+a terminal really is behind the pane and `send` will reach it. Either way you don't
 have to act on it: `send` spawns the pane on demand, waking its project if
 needed, and puts your view back where it was, so the pane ids `new-tab`, `split`
 and `break` print are always usable. A pane that had to be spawned needs a

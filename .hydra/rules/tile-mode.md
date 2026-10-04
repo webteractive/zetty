@@ -514,6 +514,25 @@ follow some rules that are easy to get wrong:
   on `focusedTerminalView()` while the grid is up. That view is the ACTIVE
   TAB's pane, and it steals the keyboard from the focused tile.
 
+**Scratch terminals in a tile.** A scratch is rooted at home, and so is Home,
+so a slot keyed by root found Home, missed the tab, and resolved `.missing` —
+the pane was never spawned. `TileSlot.scratch` marks the slot (written only
+when true, so old files and old builds read the same), and `TileResolution`
+resolves such a slot by tab id among scratch projects while leaving scratch
+projects out of the root lookup altogether, so one never shadows Home. Every
+place that mints a slot (`tileSlot(forTabAt:)`, `stampAndAttach`, the attach
+picker) sets the flag from `project.isScratch`. Scratch closes for good and is
+never restored, so `detachDeadScratchTileSlots()` empties a dead scratch's slots
+after `scratch-clear`, after removing a scratch project, and on library load —
+a hole, not a "missing" cell with a Reattach that could never work.
+
+**The spawn queue tests for a VIEW, not liveness.** `enqueueMissingTileSurfaces`,
+`attachNextTileSurface` and `tileDescriptors` use `registry.hasTerminalView`:
+the queue creates the view, the grid shows it, and being shown is what creates
+the surface. With `isLive` there, a tile would wait for a surface that only
+appears once it is shown, and never be shown. See `control-cli.md` → "Live
+means a SURFACE, not a view".
+
 **The tile manager** (`TileManagerView`, ⇧⌘J) is the one place a view can be
 DELETED. Like Sessions it has two hosts, the bottom drawer (default) and
 `TileManagerWindowController`, chosen by `zetty-tile-manager-view`, which its

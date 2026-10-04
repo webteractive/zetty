@@ -177,12 +177,14 @@ public enum ControlCLI {
         `detach` and `split` edit a view without bringing the grid up.
       - new-tab/split/break/scratch run in the BACKGROUND by default: they never
         change the active project or keyboard focus, so an agent can reshape the
-        workspace while you keep typing. Pass --focus to switch to the result.
-      - `live: false` means the pane has no terminal behind it yet — either its
-        project is hibernated or its tab has not been viewed (shells spawn on
-        first view). You do NOT have to fix that yourself: `send` spawns the pane
-        on demand, waking its project if needed, and restores your view. The pane
-        ids new-tab/split/break print are always usable.
+        workspace while you keep typing. Pass --focus to switch to the result;
+        while the tile grid is up, --focus puts it in the focused tile instead.
+      - `live: true` means a terminal is behind the pane and `send` reaches it.
+        `live: false` means there is none yet — its project is hibernated, or the
+        pane has never been shown (shells spawn on first view). You do NOT have
+        to fix that yourself: `send` spawns the pane on demand, waking its
+        project if needed, without moving your view — in the tile grid too. The
+        pane ids new-tab/split/break/scratch print are always usable.
       - a pane that had to be spawned needs ~1s before its shell reads input, so
         `send` queues the payload and returns 0 — success means "delivered or
         queued", not "the shell has already run it".

@@ -141,6 +141,11 @@ public final class SurfaceRegistry {
     /// Defaults to creating a properly-configured `TerminalView` with `.exec` backend.
     private let viewFactory: @MainActor (Surface, any TerminalControlling) -> (NSView, TerminalViewState?)
 
+    /// Whether a pair's terminal has a libghostty surface behind it. Injectable
+    /// because a unit test cannot create a real surface (that needs a window);
+    /// production always uses `hasSurface`.
+    private let surfaceAttached: @MainActor (TerminalViewPair) -> Bool
+
     // MARK: - Init
 
     public init(
@@ -170,10 +175,20 @@ public final class SurfaceRegistry {
             v.configuration = TerminalSurfaceOptions(backend: .exec, workingDirectory: surface.workingDir)
             v.translatesAutoresizingMaskIntoConstraints = false
             return (v, state)
-        }
+        },
+        surfaceAttached: @escaping @MainActor (TerminalViewPair) -> Bool = SurfaceRegistry.hasSurface
     ) {
         self.controllerFactory = controllerFactory
         self.viewFactory = viewFactory
+        self.surfaceAttached = surfaceAttached
+    }
+
+    /// Whether libghostty has created the pair's surface — the default
+    /// `surfaceAttached`. `TerminalViewState.surface` is set when the surface
+    /// attaches and cleared when it is freed, and it is the one public view of
+    /// it (`AppTerminalView.surface` is internal to libghostty-spm).
+    public static func hasSurface(_ pair: TerminalViewPair) -> Bool {
+        pair.viewState?.surface != nil
     }
 
     // MARK: - Public API
@@ -196,8 +211,9 @@ public final class SurfaceRegistry {
     }
 
     /// Injects raw UTF-8 into a surface's pty as synthetic input (control
-    /// socket / CLI `send`). Returns false when the surface has no live
-    /// terminal view yet (e.g. a background tab whose pane never spawned).
+    /// socket / CLI `send`). Returns false when the pane is not live — no
+    /// terminal view yet (a background tab whose pane never spawned), or a view
+    /// libghostty never gave a surface (one never put in a window).
     ///
     /// Delivered via ghostty's `text:` binding action (raw pty write) — NOT
     /// `sendText`/`ghostty_surface_text`, whose paste semantics wrap the
@@ -206,16 +222,35 @@ public final class SurfaceRegistry {
     /// inert pasted characters instead of input.
     @discardableResult
     public func sendText(_ text: String, to surface: Surface) -> Bool {
-        guard let view = pairs[surface.id]?.view as? AppTerminalView else { return false }
+        guard let view = liveView(surface.id) else { return false }
         return view.performBindingAction(GhosttyTextAction.encode(text))
     }
 
-    /// Whether a surface has a live terminal view — i.e. whether `sendText`
-    /// would reach a pty. Deliberately the *same* condition `sendText` guards
-    /// on, so a caller reporting liveness (CLI `status`'s `live` field) can
-    /// never disagree with whether a send actually lands.
+    /// Whether a pane can take input: it has a terminal view AND libghostty has
+    /// created that view's surface. `sendText` guards on exactly this
+    /// (`liveView`), so a caller reporting liveness (CLI `status`'s `live`
+    /// field) can never disagree with whether a send lands.
+    ///
+    /// The view alone is not enough, and treating it as enough was a real bug:
+    /// libghostty creates the surface only once the view is in a window with a
+    /// non-zero size. A view created but never shown — `scratch --focus` with
+    /// the tile grid up made one — reported live while every send to it
+    /// failed with "has no live terminal".
     public func isLive(_ id: UUID) -> Bool {
+        liveView(id) != nil
+    }
+
+    /// Whether the pane has a terminal view, surface or not. This is what the
+    /// tile spawn queue needs: it creates the view and the grid then shows it,
+    /// which is what creates the surface. Use `isLive` for "can it take input".
+    public func hasTerminalView(_ id: UUID) -> Bool {
         pairs[id]?.view is AppTerminalView
+    }
+
+    private func liveView(_ id: UUID) -> AppTerminalView? {
+        guard let pair = pairs[id], let view = pair.view as? AppTerminalView,
+              surfaceAttached(pair) else { return nil }
+        return view
     }
 
     /// Returns the live terminal title for a surface's focused pane, or `nil`

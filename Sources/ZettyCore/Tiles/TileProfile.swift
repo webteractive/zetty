@@ -14,11 +14,37 @@ public struct TileSlot: Codable, Equatable, Sendable {
     /// longer be resolved — so a missing pane says what it was rather than
     /// leaving a silent gap.
     public var label: String
+    /// The tab belongs to a scratch terminal. Scratch is rooted at home, which
+    /// Home also is, so such a slot resolves by tab id among scratch terminals
+    /// rather than by root. Scratch is never persisted, so a scratch slot can
+    /// never outlive the terminal it names — see `detachScratchSlots(keeping:)`.
+    public var scratch: Bool
 
-    public init(projectRoot: String, tabID: UUID, label: String) {
+    public init(projectRoot: String, tabID: UUID, label: String, scratch: Bool = false) {
         self.projectRoot = projectRoot
         self.tabID = tabID
         self.label = label
+        self.scratch = scratch
+    }
+
+    private enum CodingKeys: String, CodingKey { case projectRoot, tabID, label, scratch }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(projectRoot: try container.decode(String.self, forKey: .projectRoot),
+                  tabID: try container.decode(UUID.self, forKey: .tabID),
+                  label: try container.decode(String.self, forKey: .label),
+                  scratch: try container.decodeIfPresent(Bool.self, forKey: .scratch) ?? false)
+    }
+
+    /// `scratch` is written only when true, so an ordinary slot reads the same
+    /// to a build that predates the key.
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(projectRoot, forKey: .projectRoot)
+        try container.encode(tabID, forKey: .tabID)
+        try container.encode(label, forKey: .label)
+        if scratch { try container.encode(true, forKey: .scratch) }
     }
 }
 
@@ -102,6 +128,22 @@ public struct TileProfile: Codable, Equatable, Sendable {
 
     public mutating func setRatio(atDivider index: Int, to ratio: Double) {
         root.setRatio(atDivider: index, to: ratio)
+    }
+
+    /// Empties every scratch slot whose tab is not in `liveTabIDs`, leaving a
+    /// hole as `detach` does. Scratch terminals die with the app and are closed
+    /// for good, so a slot naming a dead one would otherwise sit there as a
+    /// permanent "missing" cell. Returns whether anything changed.
+    @discardableResult
+    public mutating func detachScratchSlots(keeping liveTabIDs: Set<UUID>) -> Bool {
+        var changed = false
+        for index in slots.indices {
+            if let slot = slots[index], slot.scratch, !liveTabIDs.contains(slot.tabID) {
+                slots[index] = nil
+                changed = true
+            }
+        }
+        return changed
     }
 
     private mutating func padToCapacity() {

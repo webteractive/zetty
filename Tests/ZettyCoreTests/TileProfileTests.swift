@@ -154,3 +154,40 @@ private func profile(grid: TilesGrid = TilesGrid(columns: 2, rows: 2)) -> TilePr
     p.swapSlots(0, 0)
     #expect(p == before)
 }
+
+// MARK: - Scratch slots
+
+@Test func aScratchSlotRoundTripsAndAnOldSlotDecodesAsNotScratch() throws {
+    let s = TileSlot(projectRoot: "/tmp/home", tabID: UUID(), label: "scratch / zsh", scratch: true)
+    #expect(try JSONDecoder().decode(TileSlot.self, from: JSONEncoder().encode(s)) == s)
+
+    let id = UUID()
+    let old = #"{"projectRoot":"/tmp/zetty","tabID":"\#(id.uuidString)","label":"zetty / main"}"#
+    let decoded = try JSONDecoder().decode(TileSlot.self, from: Data(old.utf8))
+    #expect(decoded == TileSlot(projectRoot: "/tmp/zetty", tabID: id, label: "zetty / main"))
+    #expect(decoded.scratch == false)
+}
+
+@Test func anOrdinarySlotWritesNoScratchKey() throws {
+    // Files stay readable by a build that predates the key.
+    let text = String(decoding: try JSONEncoder().encode(slot("zetty")), as: UTF8.self)
+    #expect(!text.contains("scratch"))
+}
+
+@Test func detachingDeadScratchSlotsLeavesHolesAndSparesTheRest() {
+    var p = profile()
+    let live = UUID()
+    let ordinary = slot("zetty")
+    p.attach(ordinary, at: 0)
+    p.attach(TileSlot(projectRoot: "/tmp/home", tabID: live, label: "scratch / a", scratch: true), at: 1)
+    p.attach(TileSlot(projectRoot: "/tmp/home", tabID: UUID(), label: "scratch / b", scratch: true), at: 2)
+
+    let changed = p.detachScratchSlots(keeping: [live])
+    #expect(changed)
+    #expect(p.slots[0] == ordinary)
+    #expect(p.slots[1]?.tabID == live)
+    #expect(p.slots[2] == nil)
+    #expect(p.slots.count == 4)              // a hole, not a compaction
+    let again = p.detachScratchSlots(keeping: [live])
+    #expect(!again)                          // nothing left to do
+}

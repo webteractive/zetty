@@ -3726,7 +3726,12 @@ final class TerminalViewController: NSViewController {
             switch ensurePaneIsLive(at: location) {
             case .alreadyLive:
                 guard registry.sendText(payload, to: surface) else {
-                    return "pane \(pane.id) has no live terminal"
+                    // `alreadyLive` means a surface existed a moment ago, so
+                    // this is not the old "a view nobody showed" case — say
+                    // which of the two it was rather than one vague message.
+                    return registry.isLive(surface.id)
+                        ? "pane \(pane.id)'s terminal did not accept the input"
+                        : "pane \(pane.id) lost its terminal while sending"
                 }
             case .spawned:
                 // The shell was just created and isn't reading its pty yet, so an
@@ -3769,7 +3774,15 @@ final class TerminalViewController: NSViewController {
             $0.accountID = self.resolvedAccountID(explicit: accountID, project: project)
         }
 
-        if focus {
+        if focus, tileMode {
+            // The grid is up, so "switch to it" means its tile: the ordinary
+            // path below would select a tab behind the grid, and the pane would
+            // get a view that is never on screen and so never a terminal.
+            // `focusPaneInTiles` wakes a dormant project itself.
+            refreshTabBar()
+            refreshSidebar()
+            focusPaneInTiles(at: (targetIndex, newTabIndex, newPaneID))
+        } else if focus {
             tabList.select(index: newTabIndex)
             if wasHibernated || targetIndex != workspace.activeIndex {
                 revealProject(at: targetIndex)          // wakes or selects; either rebuilds
@@ -4530,12 +4543,27 @@ final class TerminalViewController: NSViewController {
     /// `prune` spares it. That is what lets a CLI verb hand back a pane that is
     /// genuinely live without yanking the user's view — the same
     /// select-then-restore shape `closePane` uses.
+    ///
+    /// **Not while the tile grid is up.** The rebuild then draws the grid, so
+    /// selecting the pane's tab shows nothing and creates no surface — and the
+    /// restore's `focusedTerminalView()` would take the keyboard from the
+    /// focused tile. There the pane is woken in place and its view handed to
+    /// `spawnOffscreen` instead. Normal mode keeps select-then-restore, and
+    /// falls back to `spawnOffscreen` if that still left the pane dead.
     @discardableResult
     private func ensurePaneIsLive(at location: (projectIndex: Int, tabIndex: Int, surfaceID: UUID)) -> PaneLiveness {
         if registry.isLive(location.surfaceID) { return .alreadyLive }
         guard workspace.projects.indices.contains(location.projectIndex) else { return .unavailable }
         let project = workspace.projects[location.projectIndex]
         guard project.tabList.trees.indices.contains(location.tabIndex) else { return .unavailable }
+
+        if tileMode {
+            // Wakes IN PLACE in tile mode; a wake that has to wait out a
+            // teardown leaves it dormant, and the pane is not available yet.
+            if project.isHibernated { wakeProject(project, movesView: false) }
+            guard !project.isHibernated else { return .unavailable }
+            return spawnOffscreen(location.surfaceID) ? .spawned : .unavailable
+        }
 
         let previousProjectID = workspace.activeProject.id
         let previousTabIndex = project.tabList.activeIndex
@@ -4548,7 +4576,7 @@ final class TerminalViewController: NSViewController {
             refreshTabBar()
             rebuildSurfaceNodeView()                    // creates the pane's terminal view
         }
-        let liveness: PaneLiveness = registry.isLive(location.surfaceID) ? .spawned : .unavailable
+        var liveness: PaneLiveness = registry.isLive(location.surfaceID) ? .spawned : .unavailable
 
         // Put back what the user was looking at. The surface just created stays
         // live across the switch (see above).
@@ -4565,7 +4593,53 @@ final class TerminalViewController: NSViewController {
             if let focused = focusedTerminalView() { view.window?.makeFirstResponder(focused) }
         }
         refreshSidebar()
+        if liveness == .unavailable, !project.isHibernated, spawnOffscreen(location.surfaceID) {
+            liveness = .spawned
+        }
         return liveness
+    }
+
+    /// A hidden view in the window that a pane's terminal view visits just long
+    /// enough for libghostty to create its surface. Created lazily, kept for
+    /// the window's life, and never holds a view between calls.
+    private var spawnHost: NSView?
+
+    /// Gives the pane a surface without showing it, and reports whether it is
+    /// now live.
+    ///
+    /// libghostty creates a surface when the view lands in a window with a
+    /// non-zero size (`viewDidMoveToWindow` → `rebuildIfReady`), synchronously,
+    /// and the surface then outlives the view leaving the window — the same
+    /// thing that keeps a background tab's shell running. So the view is put
+    /// in a hidden host and taken straight back out: the user sees nothing,
+    /// the pane is live, and wherever it is shown later simply re-parents it.
+    /// A view already in the window is left where it is.
+    private func spawnOffscreen(_ surfaceID: UUID) -> Bool {
+        guard let surface = workspace.surface(with: surfaceID),
+              let container = contentContainer, container.window != nil else { return false }
+        let terminal = registry.terminalView(for: surface)
+        guard registry.hasTerminalView(surfaceID) else { return false }
+        guard terminal.window == nil else { return registry.isLive(surfaceID) }
+
+        let host: NSView
+        if let existing = spawnHost, existing.superview === container {
+            host = existing
+        } else {
+            host = NSView(frame: .zero)
+            host.isHidden = true
+            container.addSubview(host, positioned: .below, relativeTo: nil)
+            spawnHost = host
+        }
+        // A view that was laid out at zero size and then dropped keeps that
+        // frame, and libghostty will not build a surface for it.
+        if terminal.frame.width <= 0 || terminal.frame.height <= 0 {
+            terminal.setFrameSize(container.bounds.size)
+        }
+        host.addSubview(terminal)
+        terminal.removeFromSuperview()
+        let live = registry.isLive(surfaceID)
+        ZettyLog.lifecycle.log("spawn offscreen: \(SessionPersistence.shortID(for: surfaceID)) live=\(live)")
+        return live
     }
 
     /// Makes the pane at `location` the focused pane of the visible tab. Wakes a
@@ -4862,6 +4936,29 @@ final class TerminalViewController: NSViewController {
         refreshTabBar()
     }
 
+    /// Empties the slots of scratch terminals that no longer exist, in every
+    /// saved view and every open one. Scratch is never persisted and closes for
+    /// good, so without this its tile would sit there as a permanent "missing"
+    /// cell offering a Reattach that can never work.
+    private func detachDeadScratchTileSlots() {
+        let changed = detachDeadScratchSlots(in: &tileLibrary.profiles)
+        _ = detachDeadScratchSlots(in: &openTileViews)
+        guard changed else { return }
+        persistTileLibrary()
+        refreshTileGrid()
+        refreshTabBar()
+    }
+
+    private func detachDeadScratchSlots(in profiles: inout [TileProfile]) -> Bool {
+        let live = Set(workspace.projects.filter(\.isScratch)
+            .flatMap { $0.tabList.trees.map(\.id) })
+        var changed = false
+        for index in profiles.indices where profiles[index].detachScratchSlots(keeping: live) {
+            changed = true
+        }
+        return changed
+    }
+
     private func persistTileLibrary() {
         do { try tileProfileStore?.save(tileLibrary) }
         catch { ZettyLog.chrome.log("tiles: profile save failed — \(error)") }
@@ -4885,6 +4982,9 @@ final class TerminalViewController: NSViewController {
         // By name, not "is it empty": a built-in added in a later build has to
         // reach a library that already has layouts in it, and one the user
         // deleted must stay deleted.
+        // Scratch terminals are never restored, so a slot naming one is dead
+        // the moment the app relaunches.
+        if detachDeadScratchSlots(in: &tileLibrary.profiles) { seeded = true }
         if seeded { persistTileLibrary() }
         // Only what was actually open. Toggling into tile mode opens the
         // CHOOSER, not whatever happened to be first — All Running used to
@@ -4986,7 +5086,8 @@ final class TerminalViewController: NSViewController {
         let tree = tabList.trees[tabIndex]
         let tileSlot = TileSlot(
             projectRoot: project.rootPath, tabID: tree.id,
-            label: "\(project.name) / \(tabDisplayTitle(for: tree, at: tabIndex))")
+            label: "\(project.name) / \(tabDisplayTitle(for: tree, at: tabIndex))",
+            scratch: project.isScratch)
         if tileMode {
             attachTab(tileSlot, showing: tree.focusedSurfaceID ?? paneID, target: target)
         } else if activeTileProfile != nil {
@@ -5012,7 +5113,8 @@ final class TerminalViewController: NSViewController {
         guard project.tabList.trees.indices.contains(tabIndex) else { return nil }
         let tree = project.tabList.trees[tabIndex]
         return TileSlot(projectRoot: project.rootPath, tabID: tree.id,
-                        label: "\(project.name) / \(tabDisplayTitle(for: tree, at: tabIndex))")
+                        label: "\(project.name) / \(tabDisplayTitle(for: tree, at: tabIndex))",
+                        scratch: project.isScratch)
     }
 
     /// Makes `surfaceID` the pane its tab focuses. A tile shows its TAB's
@@ -5444,7 +5546,8 @@ final class TerminalViewController: NSViewController {
                 return TileAttachPicker.Candidate(
                     label: label, detail: detail,
                     action: .attach(TileSlot(projectRoot: project.rootPath,
-                                             tabID: tree.id, label: label)))
+                                             tabID: tree.id, label: label,
+                                             scratch: project.isScratch)))
             } + [
                 TileAttachPicker.Candidate(
                     label: "\(project.name) / New session",
@@ -5828,7 +5931,9 @@ final class TerminalViewController: NSViewController {
                     content = .hibernated(project.name)
                 } else if let reason = tileSpawnFailures[id] {
                     content = .failed(reason)
-                } else if let surface, registry.isLive(id) {
+                } else if let surface, registry.hasTerminalView(id) {
+                    // The view, not a live surface: showing it in the grid is
+                    // what creates the surface.
                     content = .terminal(registry.terminalView(for: surface))
                 } else {
                     content = .attaching
@@ -6033,11 +6138,11 @@ final class TerminalViewController: NSViewController {
         tabBarView?.beginRenameProgrammatically(at: activeTileViewIndex)
     }
 
-    /// Queues every tiled pane that has no surface yet. Already-attached panes
-    /// are untouched — only the missing ones cost anything.
+    /// Queues every tiled pane that has no terminal view yet. Already-attached
+    /// panes are untouched — only the missing ones cost anything.
     private func enqueueMissingTileSurfaces() {
         let missing = tileFocusableIDs
-            .filter { !registry.isLive($0) && tileSpawnFailures[$0] == nil }
+            .filter { !registry.hasTerminalView($0) && tileSpawnFailures[$0] == nil }
         for id in missing where !tileSpawnQueue.contains(id) {
             tileSpawnQueue.append(id)
         }
@@ -6063,11 +6168,12 @@ final class TerminalViewController: NSViewController {
         tileSpawnFailures = [:]
     }
 
-    /// Attaches one queued pane. `pair(for:)` creates the controller, view and
-    /// pty eagerly — no window needed — so this is the whole spawn. It is
-    /// deliberately NOT `ensurePaneIsLive`: while tile mode is on the rebuild
-    /// renders the grid, so selecting a project and tab renders the grid again
-    /// and spawns nothing.
+    /// Attaches one queued pane. `pair(for:)` creates the controller and the
+    /// terminal VIEW; the grid then shows that view, and being put in a window
+    /// is what makes libghostty create the surface and its pty. (A pair alone
+    /// is not a pty — see `SurfaceRegistry.isLive`.) It is deliberately NOT
+    /// `ensurePaneIsLive`: the grid is the one that shows the pane here, and
+    /// spawning it elsewhere first would only be undone by the next refresh.
     private func attachNextTileSurface() {
         guard tileMode else { return stopTileSpawnQueue() }
         guard !tileSpawnQueue.isEmpty else {
@@ -6083,15 +6189,16 @@ final class TerminalViewController: NSViewController {
             return
         }
         _ = registry.terminalView(for: surface)
-        if !registry.isLive(id) {
-            // The pair exists but is not an AppTerminalView — the same guard
-            // `sendText` uses, so a tile can never claim a pty a send would
-            // miss. Say so rather than spinning on "attaching" forever.
+        if !registry.hasTerminalView(id) {
+            // The pair exists but is not an AppTerminalView, so no surface can
+            // ever come of it. Say so rather than spinning on "attaching"
+            // forever. Not `isLive`: the surface only exists once the grid has
+            // shown the view, which is the refresh below.
             tileSpawnFailures[id] = "could not attach"
         }
+        refreshTileGrid()
         ZettyLog.chrome.log("tiles: attached=\(id.uuidString.prefix(8)) "
             + "live=\(registry.isLive(id)) queued=\(tileSpawnQueue.count)")
-        refreshTileGrid()
     }
 
     private var sessionsDrawerVisible = false
@@ -6666,9 +6773,10 @@ final class TerminalViewController: NSViewController {
     }
 
     /// Creates a project-less, ephemeral scratch terminal rooted at home. When
-    /// `focus` is true it becomes active and spawns immediately; when false it is
-    /// added to the Scratch section without stealing the current view (its shell
-    /// spawns when first viewed). Returns the new pane's short id.
+    /// `focus` is true it becomes active and spawns immediately — or, with the
+    /// tile grid up, takes the focused tile; when false it is added to the
+    /// Scratch section without stealing the current view and spawned in the
+    /// background. Returns the new pane's short id.
     ///
     /// `accountID` + `startupCommand` are how an account signs in: a throwaway
     /// pane carrying that account's environment, running its login command.
@@ -6678,7 +6786,12 @@ final class TerminalViewController: NSViewController {
     @discardableResult
     func newScratchTerminal(focus: Bool, accountID: String? = nil,
                             startupCommand: String? = nil) -> String {
-        let project = workspace.addScratchProject(makeActive: focus)
+        // With the grid up, focusing it means giving it the focused tile —
+        // tile mode never changes the active project, and a scratch made
+        // active behind the grid was only ever an invisible view: its pane
+        // had no terminal, and every `send` to it failed.
+        let intoTile = focus && tileMode
+        let project = workspace.addScratchProject(makeActive: focus && !intoTile)
         // Before the rebuild below — the surface environment is read once, when
         // the pane spawns. A scratch pane has no project default to inherit
         // (`projectAccountProvider` refuses scratch), so this is @default unless
@@ -6691,7 +6804,13 @@ final class TerminalViewController: NSViewController {
         }
         refreshTabBar()
         refreshSidebar()
-        if focus {
+        if intoTile {
+            onWorkspaceDidChange?()
+            if let surface = project.tabList.activeTree.layout.surfaces.first,
+               let location = location(ofSurface: surface.id) {
+                focusPaneInTiles(at: location)   // attaches, focuses, spawns
+            }
+        } else if focus {
             onActiveProjectChanged?()
             rebuildSurfaceNodeView()   // spawns the pane
             if let focused = focusedTerminalView() {
@@ -6717,6 +6836,7 @@ final class TerminalViewController: NSViewController {
         guard !surfaces.isEmpty else { return }
         guard confirmClosingBusyPanes(surfaces, what: "scratch terminals") else { return }
         workspace.removeScratchProjects()
+        detachDeadScratchTileSlots()
         onActiveProjectChanged?()
         onSurfacesClosed?(surfaces)   // kill sessions + drop cwd files
         refreshTabBar()
@@ -6805,6 +6925,7 @@ final class TerminalViewController: NSViewController {
         let countBefore = workspace.projects.count
         workspace.removeProject(at: index)
         guard workspace.projects.count != countBefore else { return }   // last project — no-op
+        if wasScratch { detachDeadScratchTileSlots() }
         // Closing the last scratch terminal returns focus to the first pinned
         // project (or the first project if none are pinned), rather than
         // whichever neighbour `removeProject` happened to land on.

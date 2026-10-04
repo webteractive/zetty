@@ -65,3 +65,43 @@ private func project(_ root: String, _ trees: [PaneTree]) -> ProjectRuntime {
         Issue.record("a trailing slash should not break resolution")
     }
 }
+
+// MARK: - Scratch terminals
+
+private func scratch(_ root: String, _ trees: [PaneTree]) -> ProjectRuntime {
+    ProjectRuntime(name: "scratch", rootPath: root, isScratch: true,
+                   tabList: TabList(restoring: trees, defaultWorkingDir: root))
+}
+
+@Test func aScratchSlotResolvesToTheScratchNotToTheProjectSharingItsRoot() {
+    // A scratch terminal is rooted at home, which Home also is. Looked up by
+    // root alone, the slot found Home, missed the tab, and never spawned —
+    // so `scratch --focus` with the grid up left a pane with no terminal.
+    let home = project("/tmp/home", [tree("/tmp/home")])
+    let t = tree("/tmp/home")
+    let s = scratch("/tmp/home", [t])
+    let profile = TileProfile(name: "m", grid: TilesGrid(columns: 1, rows: 1), slots: [
+        TileSlot(projectRoot: "/tmp/home", tabID: t.id, label: "scratch / zsh", scratch: true),
+    ])
+    #expect(TileResolution.resolve(profile: profile, projects: [home, s])
+        == [.pane(projectIndex: 1, tabIndex: 0, surfaceID: t.layout.surfaces[0].id)])
+}
+
+@Test func aScratchNeverShadowsTheProjectAtItsRoot() {
+    let s = scratch("/tmp/home", [tree("/tmp/home")])
+    let h = tree("/tmp/home")
+    let home = project("/tmp/home", [h])
+    let profile = TileProfile(name: "m", grid: TilesGrid(columns: 1, rows: 1), slots: [
+        TileSlot(projectRoot: "/tmp/home", tabID: h.id, label: "Home / main"),
+    ])
+    #expect(TileResolution.resolve(profile: profile, projects: [s, home])
+        == [.pane(projectIndex: 1, tabIndex: 0, surfaceID: h.layout.surfaces[0].id)])
+}
+
+@Test func aClosedScratchIsMissing() {
+    let home = project("/tmp/home", [tree("/tmp/home")])
+    let profile = TileProfile(name: "m", grid: TilesGrid(columns: 1, rows: 1), slots: [
+        TileSlot(projectRoot: "/tmp/home", tabID: UUID(), label: "scratch / zsh", scratch: true),
+    ])
+    #expect(TileResolution.resolve(profile: profile, projects: [home]) == [.missing("scratch / zsh")])
+}

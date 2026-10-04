@@ -86,6 +86,52 @@ final class SurfaceRegistryTests: XCTestCase {
         XCTAssertEqual(CountingView.creationCount, 2, "factory must create a new view after the old one was pruned")
     }
 
+    // MARK: - Liveness means a surface, not a view
+
+    /// A registry whose terminal views are real `AppTerminalView`s but are
+    /// never put in a window, so libghostty never creates their surface —
+    /// what `zetty scratch --focus` produced with the tile grid up.
+    private func registryWithTerminalViews(
+        surfaceAttached: @escaping @MainActor (TerminalViewPair) -> Bool = SurfaceRegistry.hasSurface
+    ) -> SurfaceRegistry {
+        SurfaceRegistry(
+            controllerFactory: { _ in MockTerminalController() },
+            viewFactory: { _, _ in (AppTerminalView(frame: NSRect(x: 0, y: 0, width: 720, height: 480)), nil) },
+            surfaceAttached: surfaceAttached
+        )
+    }
+
+    func testATerminalViewWithNoSurfaceIsNotLive() {
+        let reg = registryWithTerminalViews()
+        let s = Surface(workingDir: "/tmp")
+        _ = reg.terminalView(for: s)
+        XCTAssertTrue(reg.hasTerminalView(s.id), "the view exists")
+        XCTAssertFalse(reg.isLive(s.id), "a view with no surface cannot take input, so it is not live")
+        XCTAssertFalse(reg.sendText("echo hi\r", to: s))
+    }
+
+    func testIsLiveOnceTheSurfaceExists() {
+        let reg = registryWithTerminalViews(surfaceAttached: { _ in true })
+        let s = Surface(workingDir: "/tmp")
+        XCTAssertFalse(reg.isLive(s.id), "no pair yet")
+        XCTAssertFalse(reg.hasTerminalView(s.id))
+        _ = reg.terminalView(for: s)
+        XCTAssertTrue(reg.isLive(s.id))
+        XCTAssertTrue(reg.hasTerminalView(s.id))
+    }
+
+    func testANonTerminalViewIsNeverLive() {
+        let reg = SurfaceRegistry(
+            controllerFactory: { _ in MockTerminalController() },
+            viewFactory: { _, _ in (CountingView(frame: .zero), nil) },
+            surfaceAttached: { _ in true }
+        )
+        let s = Surface(workingDir: "/tmp")
+        _ = reg.terminalView(for: s)
+        XCTAssertFalse(reg.hasTerminalView(s.id))
+        XCTAssertFalse(reg.isLive(s.id))
+    }
+
     func testNewSurfaceAfterPruneGetsNewController() {
         let reg = SurfaceRegistry(
             controllerFactory: { _ in MockTerminalController() }

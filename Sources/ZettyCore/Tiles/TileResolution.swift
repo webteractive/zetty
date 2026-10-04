@@ -20,16 +20,28 @@ public enum TileResolution {
     public static func resolve(profile: TileProfile,
                                projects: [ProjectRuntime]) -> [ResolvedSlot] {
         // Canonicalised once rather than per slot — a profile can hold dozens,
-        // and `canonicalKey` resolves symlinks.
+        // and `canonicalKey` resolves symlinks. Scratch terminals are left out:
+        // they are all rooted at home, which Home is too, so whichever came
+        // first would shadow the others. A scratch slot resolves by tab id.
         let byRoot = Dictionary(
-            projects.enumerated().map {
+            projects.enumerated().filter { !$0.element.isScratch }.map {
                 (ProjectSettingsStore.canonicalKey($0.element.rootPath), $0.offset)
             },
             uniquingKeysWith: { first, _ in first })
 
+        func scratchIndex(holding tabID: UUID) -> Int? {
+            projects.indices.first { index in
+                projects[index].isScratch
+                    && projects[index].tabList.trees.contains { $0.id == tabID }
+            }
+        }
+
         return profile.slots.map { slot in
             guard let slot else { return .empty }
-            guard let projectIndex = byRoot[ProjectSettingsStore.canonicalKey(slot.projectRoot)],
+            let owner = slot.scratch
+                ? scratchIndex(holding: slot.tabID)
+                : byRoot[ProjectSettingsStore.canonicalKey(slot.projectRoot)]
+            guard let projectIndex = owner,
                   let tabIndex = projects[projectIndex].tabList.trees
                       .firstIndex(where: { $0.id == slot.tabID })
             else { return .missing(slot.label) }

@@ -86,8 +86,8 @@ without waking it, so focusing changed `isActive`/`isFocused` and nothing else.
 Two halves fix it, both regression-tested:
 
 - **`StatusSnapshot` reports why.** `Project.hibernated` + `Pane.live` (from
-  `SurfaceRegistry.isLive`, deliberately the same `as? AppTerminalView` guard
-  `sendText` uses so the flag can't disagree with whether a send lands). Both
+  `SurfaceRegistry.isLive`, which is the very predicate `sendText` guards on —
+  `liveView` — so the flag can't disagree with whether a send lands). Both
   decode via hand-written `init(from:)` defaulting to `false`, so an older
   standalone `zetty` build doesn't throw on a newer app's payload. Plain-text
   rendering lives in the pure `ControlCLI.statusLines` (`☾ name (hibernated)`,
@@ -99,6 +99,46 @@ Two halves fix it, both regression-tested:
   `allSurfaceIDs` covers every awake project, so `prune` spares the new pair.
   That's what lets a background verb return a genuinely live pane without
   stealing the view — the same select-then-restore shape `closePane` uses.
+
+### Live means a SURFACE, not a view
+
+**A terminal view is not a terminal.** libghostty creates a pane's surface (and
+with it the pty and shell) only when the `AppTerminalView` lands in a window
+with a non-zero size — `viewDidMoveToWindow` → `rebuildIfReady`, synchronously.
+`registry.terminalView(for:)` alone makes a view and nothing else. `isLive` used
+to test only `view is AppTerminalView` while `sendText` needed the surface, and
+the gap was a real outage: `scratch --focus` with the tile grid up made the
+scratch active BEHIND the grid, `rebuildSurfaceNodeView` drew the grid and never
+showed it, and `focusedTerminalView()` then created its view unattached. `status`
+said `live: true`, every `send` failed "has no live terminal", and a scheduled
+agent pane (schedy) failed every weekday morning for a week and a half. Spec:
+`docs/superpowers/specs/2026-10-04-agent-pane-dead-terminal-fix.md`.
+
+- **Two predicates, and each caller picks deliberately.** `isLive` (view AND
+  surface, via `TerminalViewState.surface` — `AppTerminalView.surface` is
+  internal to libghostty-spm) is "can it take input": `status`, `send`,
+  `ensurePaneIsLive`, resume spawning, Sessions' Ctrl-C. `hasTerminalView` is
+  "does a view exist" and belongs to the tile spawn queue alone, whose job is to
+  create the view so the GRID can show it — showing it is what makes the
+  surface. Swap them in either direction and tiles sit on "attaching" forever,
+  or `status` lies again.
+- **`focusedTerminalView()` CREATES a view.** Calling it for a pane that is not
+  on screen (anything behind the grid) mints exactly the unattached view above.
+  It is harmless now that `isLive` is honest, but it is still the wrong pane to
+  give the keyboard to.
+- **In tile mode `ensurePaneIsLive` cannot select-then-restore** — the rebuild
+  draws the grid, so selecting a tab shows nothing. It wakes the project in place
+  and calls `spawnOffscreen`, which parents the view in a hidden host inside the
+  window and immediately takes it back out. The surface survives leaving the
+  window (that is what keeps every background tab's shell alive), and wherever
+  the pane is shown later re-parents it. Normal mode keeps select-then-restore
+  and only falls back to `spawnOffscreen` when that still left the pane dead.
+  It spawns the pane asked for, not every pane of its tab.
+- **`--focus` with the grid up means a TILE.** `split`, `break` and `focus`
+  already went through `focusPaneInTiles`; `scratch --focus` and
+  `new-tab --focus` now do too, and a scratch made that way is NOT made the
+  active project. Its slot is marked `scratch` and resolves by tab id (see
+  `tile-mode.md` → "Scratch terminals in a tile").
 
 Adoption: `send` always (which also fixes ordinary never-viewed background
 panes); `new-tab`/`split`/`break` when the target project is hibernated;
