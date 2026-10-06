@@ -358,24 +358,17 @@ by the tool it's running.
 1. Open the [Releases](https://github.com/webteractive/zetty/releases) page
    and download the latest `Zetty-<version>.dmg`.
 2. Open the DMG and drag **Zetty** into **Applications**.
-3. Clear the Gatekeeper quarantine flag (see below), then launch Zetty from
-   Applications or Spotlight:
+3. Launch Zetty from Applications or Spotlight.
 
-   ```sh
-   xattr -d com.apple.quarantine /Applications/zetty.app
-   ```
+Releases are signed with a Developer ID and notarized by Apple, so Gatekeeper
+opens them without a prompt — the app and the DMG both carry their
+notarization ticket, so this works offline too.
 
-> **Why step 3?** Builds are not yet signed or notarized by Apple, so macOS
-> quarantines the downloaded app and shows *"Zetty is damaged and can't be
-> opened. You should move it to the Trash."* It isn't damaged — that's
-> Gatekeeper's message for any unsigned download. The command above clears
-> the flag for good on that copy; you won't see the dialog again until you
-> install an **update**, where the freshly downloaded DMG repeats step 3.
->
-> Don't bother hunting for "Open Anyway" in System Settings → Privacy &
-> Security — macOS often doesn't offer it for unsigned apps; the command is
-> the reliable path. Developer ID signing + notarization is planned, which
-> removes this step entirely.
+> **Upgrading from an older release?** Releases up to and including
+> **0.1.52** were ad-hoc signed, not notarized. If macOS says one of those is
+> *"damaged and can't be opened"*, it isn't — clear the quarantine flag with
+> `xattr -d com.apple.quarantine /Applications/zetty.app`, or install a newer
+> release instead.
 
 ### "Zetty would like to access files in…" prompts
 
@@ -402,11 +395,11 @@ After that, the per-folder prompts stop.
 >   example, clearing and restarting an AI agent session (Claude Code's
 >   `/clear`, etc.) makes it re-read the project directory, so the prompt
 >   reappears. Full Disk Access covers all of these at once.
-> - **Unsigned builds change identity.** macOS ties the grant to the app's
->   code signature, and current builds are ad-hoc signed (the signature
->   changes every build), so an **update** can reset the grant and re-prompt.
->   Developer ID signing + notarization (planned) gives Zetty a stable
->   identity so the grant sticks across updates.
+> - **An ad-hoc build changes identity.** macOS ties the grant to the app's
+>   code signature. Releases are Developer ID signed, so the grant sticks
+>   across updates — but the first update from an ad-hoc release (0.1.52 or
+>   earlier) to a signed one is a new identity to macOS and re-prompts once.
+>   A build you compile yourself is ad-hoc signed and re-prompts per build.
 >
 > You do **not** need to "trust" each project — that's an App Sandbox concept,
 > and Zetty is not sandboxed. Granting folder access once is all it takes.
@@ -1157,9 +1150,8 @@ visual spec. Product plans live in [`docs/plans/`](docs/plans/).
 ## Status
 
 Pre-release (`0.1.x`), under active development and daily use. Interfaces and
-config keys may still change. Pre-built (unsigned) apps ship via
-[GitHub Releases](https://github.com/webteractive/zetty/releases); Developer
-ID signing and notarization are planned.
+config keys may still change. Pre-built apps, Developer ID signed and
+notarized, ship via [GitHub Releases](https://github.com/webteractive/zetty/releases).
 
 ## Contributing
 

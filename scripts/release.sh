@@ -69,6 +69,10 @@ gh auth status >/dev/null 2>&1 || die "gh is not authenticated — run: gh auth 
 current_branch=$(git rev-parse --abbrev-ref HEAD)
 [ "$current_branch" = "$BRANCH" ] || die "on branch '$current_branch', expected '$BRANCH'"
 
+# Signing is checked here, before the bump is pushed: package.sh runs after the
+# release commit, and failing there leaves a pushed bump with no tag (v0.1.49).
+./scripts/package.sh --preflight >/dev/null || die "signing is not ready — see scripts/package.sh --preflight"
+
 git fetch --quiet "$REMOTE" "$BRANCH"
 if [ -n "$(git rev-list "HEAD..$REMOTE/$BRANCH")" ]; then
   die "behind $REMOTE/$BRANCH — pull first"
