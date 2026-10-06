@@ -125,6 +125,16 @@ so it reads as "my change did nothing".
   variable without help. A project that sets `CLAUDE_CODE_PLUGIN_DIRS` itself
   replaces the process-wide value in its panes, so `surfaceEnvironmentProvider`
   puts Zetty's path back beside it.
+- **A `settings.json` `env` block beats the process environment.** Claude
+  Code applies `env.CLAUDE_CODE_PLUGIN_DIRS` from a config dir's
+  `settings.json` OVER the variable Zetty sets, so a user who lists their own
+  mods there (warden, hydra) dropped the bridge from every pane: no snapshot
+  was written anywhere and limits, the errored dot and the tools were silently
+  off. `ModInstaller.syncSettings` merges the mod into that list in the
+  default dir and every Claude account dir (`ModInstall.settingsLoadingMod`,
+  pure: a settings file without the key is left alone), at launch, on reload
+  and when an account is created. Testing a mod by exporting the variable is
+  fooled the same way — pass it through `claude --settings '{"env":{…}}'`.
 - **The mod reads only variables spelled as string literals** (`ZETTY`,
   `HOME`, `ZETTY_SURFACE`, `ZETTY_CWD_FILE`, `CLAUDE_CONFIG_DIR`) — the engine
   refuses a computed name. The surface is validated as a UUID before it becomes

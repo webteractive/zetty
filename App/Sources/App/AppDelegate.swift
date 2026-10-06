@@ -157,6 +157,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         // after a fallback every entry would be dropped anyway.
         // Accounts first: a resume pins the login its agent was running under.
         agentAccounts = agentAccountStore.load()
+        syncModIntoClaudeSettings()
         if let manifest = RestartRecoveryRunner.consumeManifest() {
             applyRecoveryManifest(manifest, to: tvc, restoredFromDisk: restoredFromDisk)
         }
@@ -802,6 +803,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         appConfig = configStore.load()
         modInstaller.applyEnvironment(enabled: appConfig.claudeMod,
                                       tools: appConfig.claudeTools)   // new panes only
+        syncModIntoClaudeSettings()
         // A menu action, so this always runs on main — but the delegate itself
         // is nonisolated, hence the explicit assumption rather than an await.
         MainActor.assumeIsolated { EditorCatalog.invalidate() }  // pick up an editor installed since launch
@@ -973,6 +975,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
                     // A new account's settings.json needs Zetty's status hooks
                     // written into it, or its panes would show no agent dots.
                     self.installHooksForAccounts()
+                    self.syncModIntoClaudeSettings()
                     self.settingsWindowController?.refresh()
                     self.reportSeedProblems(results, for: account)
                     if signIn { self.signInToAccount(account) }
@@ -988,6 +991,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     /// only into `~/.claude` are invisible to an account — its panes would show
     /// no status dots at all. Follows the DEFAULT directory's state, so the
     /// Settings toggle stays the single switch for the whole feature.
+    /// Every Claude config dir (default and accounts) whose settings.json
+    /// lists its own plugin dirs gets the mod in that list: Claude applies it
+    /// over the process environment, which is otherwise how the mod arrives.
+    func syncModIntoClaudeSettings() {
+        let home = NSHomeDirectory()
+        let directories = [(home as NSString).appendingPathComponent(".claude")]
+            + agentAccounts.accounts(forAgent: "claude").map {
+                AgentAccountSupport.canonical($0.directory, home: home)
+            }
+        let enabled = appConfig.claudeMod
+        DispatchQueue.global(qos: .utility).async { [modInstaller] in
+            modInstaller.syncSettings(configDirectories: directories, enabled: enabled)
+        }
+    }
+
     func installHooksForAccounts() {
         // Each harness stores hooks in its own config file inside its config
         // dir, so every account needs its own copy. Follows the DEFAULT

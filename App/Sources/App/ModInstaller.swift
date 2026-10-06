@@ -94,6 +94,30 @@ struct ModInstaller {
         try copy(manifestPath)
     }
 
+    /// Puts the mod into (or takes it out of) the plugin list a Claude
+    /// `settings.json` names for itself, in each config dir (default and
+    /// accounts). Claude applies that list over the process environment, so
+    /// without this the mod loads in no pane. Rewrites a file only when it
+    /// changes, and never creates one.
+    func syncSettings(configDirectories: [String], enabled: Bool) {
+        for directory in configDirectories {
+            let url = URL(fileURLWithPath: directory).appendingPathComponent("settings.json")
+            guard let data = try? Data(contentsOf: url),
+                  let settings = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else { continue }
+            let merged = ModInstall.settingsLoadingMod(settings, modPath: installedURL.path, enabled: enabled)
+            guard !NSDictionary(dictionary: merged).isEqual(to: settings),
+                  let out = try? JSONSerialization.data(
+                      withJSONObject: merged, options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes])
+            else { continue }
+            do {
+                try out.write(to: url, options: .atomic)
+                ZettyLog.lifecycle.log("mod: \(enabled ? "added to" : "removed from") plugin dirs in \(url.path)")
+            } catch {
+                ZettyLog.lifecycle.log("mod: could not update \(url.path): \(error.localizedDescription)")
+            }
+        }
+    }
+
     /// Sets (or clears) the plugin-folder variable for every pane spawned from
     /// now on. A running agent keeps what it started with.
     func applyEnvironment(enabled: Bool, tools: Bool) {

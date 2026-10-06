@@ -57,4 +57,20 @@ public enum ModInstall {
         if enabled { paths.append(modPath) }
         return paths.isEmpty ? nil : paths.joined(separator: ":")
     }
+
+    /// A Claude `settings.json` whose `env` names its own plugin dirs, with the
+    /// mod merged in (or taken out). Claude Code applies `env` OVER the process
+    /// environment, so a user who lists other mods there silently drops the one
+    /// Zetty set process-wide: the bridge loaded in no pane at all. Settings
+    /// without the key are returned untouched, since the process environment
+    /// already carries the mod for them.
+    public static func settingsLoadingMod(_ settings: [String: Any], modPath: String,
+                                          enabled: Bool) -> [String: Any] {
+        guard var env = settings["env"] as? [String: Any],
+              let existing = env[pluginDirsVariable] as? String else { return settings }
+        env[pluginDirsVariable] = pluginDirs(existing: existing, modPath: modPath, enabled: enabled)
+        var merged = settings
+        merged["env"] = env
+        return merged
+    }
 }
