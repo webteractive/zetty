@@ -125,6 +125,16 @@ documents at length, and both are easy to undo by accident:
 
    Measured, pinned, at the minimum: `reached=320 sidebar=124 -> OK`.
 
+   **"Nothing competes for this width" holds only while every competitor sits
+   BELOW 250.** `NSSplitView`'s default holding priority is also 250, so a
+   pane split tied with the sidebar's preference and AppKit kept the panes:
+   dragging the sidebar did nothing in any project whose tab had a split, and
+   the new width appeared only after switching to a project without one.
+   `RatioSplitView` therefore holds its panes at `.defaultLow - 1`. Measured
+   by moving the sidebar's width constraints and reading its frame back: with
+   a split on screen, 244 → 244 at 250 and 244 → 394 at 249. Anything new in
+   the content that holds a width must stay under 250 the same way.
+
    **A required CEILING sits beside that low-priority equality**
    (`sidebarWidthCeiling`, same constant, `<=`), and the two are not one
    constraint wearing different hats: "no wider than the chosen width" is an

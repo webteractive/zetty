@@ -671,6 +671,12 @@ private final class RatioSplitView: NSSplitView, NSSplitViewDelegate {
         )
         addArrangedSubview(firstView)
         addArrangedSubview(secondView)
+        // Just under the sidebar's `.defaultLow` width preference. At the
+        // default holding priority (also 250) the panes tied with it, AppKit
+        // kept the panes' widths, and dragging the sidebar did nothing while a
+        // split was on screen — the new width only showed in another project.
+        setHoldingPriority(.defaultLow - 1, forSubviewAt: 0)
+        setHoldingPriority(.defaultLow - 1, forSubviewAt: 1)
     }
 
     @available(*, unavailable)
