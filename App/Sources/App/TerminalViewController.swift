@@ -401,6 +401,9 @@ final class TerminalViewController: NSViewController {
     /// whose `zmx attach` client is still live can block the main thread (why
     /// `free-background-panes-after` is disabled).
     private var surfacesAwaitingTeardown: Set<UUID> = []
+    /// Surfaces whose teardown finished: the next prune frees them. Without
+    /// this the release's own rebuild would hold them again, forever.
+    private var surfacesReleasedFromTeardown: Set<UUID> = []
     /// Projects woken during their own teardown; woken once it finishes, so
     /// the fresh shells never attach to a session that is about to die.
     private var wakeAfterTeardown: [UUID: PendingWake] = [:]
@@ -7552,6 +7555,39 @@ final class TerminalViewController: NSViewController {
         runTeardown(teardown, plan: plan, panes: surfaceIDs, of: project)
     }
 
+    /// Frees the registry's surfaces the layout no longer keeps, except those
+    /// whose session must end first (`SurfaceTeardownGate`): those are held,
+    /// still drained, while the session is killed, then freed. Freeing a
+    /// preserved surface whose `zmx attach` client is mid-write joins a thread
+    /// that never returns, on the main thread — the 2026-10-06 freeze closing a
+    /// busy Claude pane. Every prune goes through here, so every close path
+    /// gets the safe order hibernation always had.
+    private func pruneRegistry() {
+        let held = SurfaceTeardownGate.held(
+            live: registry.liveIDs, retained: retainedSurfaceIDs,
+            released: surfacesReleasedFromTeardown, canEndSessions: onSurfacesHibernating != nil)
+        if let teardown = onSurfacesHibernating, !held.isEmpty {
+            let panes = Array(held)
+            surfacesAwaitingTeardown.formUnion(panes)
+            // No grace: these panes were closed, so everything is killed now.
+            let plan = HibernationTeardown.plan(surfaceIDs: panes, foreground: [:], agentBusy: [])
+            ZettyLog.lifecycle.log("teardown: holding \(panes.count) closed pane(s) until their sessions end")
+            teardown(plan) { [weak self] in self?.releaseAfterTeardown(panes) }
+        }
+        registry.prune(keeping: retainedSurfaceIDs)
+        // Each released surface is now freed, or kept again by the layout
+        // (no longer ours); either way the next close of it must hold again.
+        surfacesReleasedFromTeardown.removeAll()
+    }
+
+    /// A teardown finished: its surfaces may be freed, and the rebuild that
+    /// frees them must not hold them again.
+    private func releaseAfterTeardown(_ panes: [UUID]) {
+        surfacesAwaitingTeardown.subtract(panes)
+        surfacesReleasedFromTeardown.formUnion(panes)
+        rebuildSurfaceNodeView()
+    }
+
     /// Holds `panes`' surfaces until the plan's sessions are gone, then lets
     /// prune free them and honours a wake that arrived meanwhile.
     private func runTeardown(_ teardown: (HibernationTeardown.Plan,
@@ -7561,8 +7597,7 @@ final class TerminalViewController: NSViewController {
         surfacesAwaitingTeardown.formUnion(panes)
         teardown(plan) { [weak self] in
             guard let self else { return }
-            surfacesAwaitingTeardown.subtract(panes)
-            rebuildSurfaceNodeView()               // now prune may free them
+            releaseAfterTeardown(panes)            // now prune may free them
             if let pending = wakeAfterTeardown.removeValue(forKey: project.id) {
                 // The continuations ride the wake rather than running beside
                 // it, so they fire only once the project is truly awake — even
@@ -8081,7 +8116,7 @@ final class TerminalViewController: NSViewController {
                 placeholder.bottomAnchor.constraint(equalTo: bottomGuide),
             ])
             placeholderView = placeholder
-            registry.prune(keeping: retainedSurfaceIDs) // free the frozen surfaces
+            pruneRegistry() // free the frozen surfaces
             onWorkspaceDidChange?()
             return
         }
@@ -8107,7 +8142,7 @@ final class TerminalViewController: NSViewController {
             ])
             tileChooserView = chooser
             statusBarView?.setTiles(running: nil, idle: 0)
-            registry.prune(keeping: retainedSurfaceIDs)
+            pruneRegistry()
             onWorkspaceDidChange?()
             return
         }
@@ -8169,7 +8204,7 @@ final class TerminalViewController: NSViewController {
             grid.update(tiles: tileDescriptors(),
                         focused: tileFocusedSurfaceID,
                         emptyMessage: tileEmptyMessage())
-            registry.prune(keeping: retainedSurfaceIDs)
+            pruneRegistry()
             refreshFileTreeRoots()
             onWorkspaceDidChange?()
             DispatchQueue.main.async { [weak self] in self?.focusTileFirstResponder() }
@@ -8249,7 +8284,7 @@ final class TerminalViewController: NSViewController {
         // Keep any live surface owned by an awake project so background sessions
         // survive project/tab switches. Hibernated projects' surfaces are freed
         // because allSurfaceIDs excludes them.
-        registry.prune(keeping: retainedSurfaceIDs)
+        pruneRegistry()
 
         // Trees are recreated per rebuild; root them at their panes' cwds now
         // rather than waiting for the debounce, and let the expansion cache
