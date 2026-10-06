@@ -63,6 +63,44 @@ idempotent and costs one `zmx list`, so it runs debounced from
 300s backstop. `onSurfacesClosed` remains only as the *fast* path. Adding a new
 close path therefore cannot leak a session — that was the point of moving it.
 
+## Closing a pane: end its session, drain, THEN free
+
+Freeing a surface is `ghostty_surface_free`, which joins the surface's io
+thread on the MAIN thread. Two ways that join never returns, both seen
+2026-10-06 closing a busy pane:
+
+1. **The child cannot exit.** Freeing stops the pty being drained; a
+   `zmx attach` client mid-write (a TUI streaming output) blocks in the full
+   pty and never exits, and `Subprocess.stop` waits for it forever. Ghostty's
+   own `killpg` gets EPERM against the `/usr/bin/login` wrapper, so its
+   SIGHUP never lands. The 2026-09-18 scratch fix assumed a preserved
+   pane's attach client always dies cleanly — only when it is not writing.
+2. **A thread cannot push.** Each pane has its own ghostty app whose mailbox
+   is 64 slots, drained only by `ghostty_app_tick` on main. libghostty-spm
+   stops ticking a DETACHED surface or a backgrounded app; the surface's
+   threads push `.forever` (titles, scrollbar updates while output floods,
+   `child_exited`), so a full mailbox blocks them, and the join waits on
+   them. Upstream: ghostty-org/ghostty#14245, fix PR #14444 not merged as of
+   libghostty-spm `2.2.2026100501` — bumping does not fix it.
+
+So every prune goes through `pruneRegistry`: `SurfaceTeardownGate` names the
+surfaces leaving the layout, they are HELD in `surfacesAwaitingTeardown`
+(still attached to their pty, so it keeps draining), `ZmxRunner.endSessions`
+kills their sessions, then `drainThenRelease` ticks their mailboxes
+(`SurfaceRegistry.drainMailboxes`) for `SurfaceTeardownGate.drainDuration`
+before releasing them, and `pruneRegistry` drains once more right before the
+free. `surfacesReleasedFromTeardown` keeps the releasing rebuild from holding
+them again. A session that never ends leaves its surface held — a leak, never
+a freeze. **Do not free a surface any other way**, and never call
+`ghostty_surface_free` off main (`closeSurface` mutates the app's surface
+list that main's tick reads).
+
+Cause 2 was reasoned from upstream's diagnosis and the wrapper's own comment,
+not reproduced: an isolated test instance (`CFFIXED_USER_HOME` + `ZMX_DIR`,
+short `/tmp` symlinks for the socket path limit) never froze on the old build
+either, while Glen's real instance froze twice. Test a teardown change in
+such an instance, never by force-closing panes in the real one.
+
 ## Freeing background panes' pixels
 
 `free-background-panes-after = <duration|off>` remains a reserved, parsed, and

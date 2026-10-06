@@ -281,6 +281,19 @@ public final class SurfaceRegistry {
         pairs[id]?.viewState
     }
 
+    /// Drains these surfaces' app mailboxes (`ghostty_app_tick` on each one's
+    /// controller; every pair has its own app). libghostty-spm stops ticking a
+    /// DETACHED surface, and a closed pane held for teardown is detached, so
+    /// its own messages (scrollbar updates while output floods, child-exit)
+    /// can fill the 64-slot queue; its threads then block pushing `.forever`,
+    /// and `ghostty_surface_free` joins them on the main thread for good
+    /// (ghostty-org/ghostty#14245). Ticking explicitly keeps room in the queue.
+    public func drainMailboxes(of ids: Set<UUID>) {
+        for id in ids {
+            (pairs[id]?.controller as? TerminalController)?.tick()
+        }
+    }
+
     /// Re-applies `theme` to every LIVE terminal controller and stores it as the
     /// theme for future surfaces. Called when the color scheme changes at runtime
     /// (e.g. the OS toggled appearance in `system` mode) so open panes recolor in

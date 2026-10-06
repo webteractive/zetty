@@ -66,7 +66,10 @@ triggers:
     thread from main. `SIGKILL` cannot clear it (the child is unreapable until
     the pty dies) and recovery is `kill -9` on Zetty. It fired on consecutive
     mornings from a scratch pane running Claude. With a session the pty child is
-    a `zmx attach` LEAF, which dies cleanly. Scratch follows the GLOBAL
+    a `zmx attach` LEAF, which dies cleanly — UNLESS it is mid-write when the
+    surface stops draining: that froze the app 2026-10-06 on a preserved
+    pane. Closing now ends the session before freeing; see
+    `surfaces-and-memory.md` → "Closing a pane". Scratch follows the GLOBAL
     `preserve-sessions` only — it is rooted at home and would otherwise adopt
     the settings of whatever project shares that path — and
     `AppDelegate.killScratchSessions()` ends those sessions in

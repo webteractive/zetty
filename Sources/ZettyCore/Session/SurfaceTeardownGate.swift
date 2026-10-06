@@ -10,6 +10,13 @@ import Foundation
 /// still drained, until its session has ended, and only then freed: the order
 /// hibernation always used, applied to every close path.
 public enum SurfaceTeardownGate {
+    /// After a held surface's session has ended, how long its mailbox is
+    /// drained before it is freed, and how often. Its child is gone by then,
+    /// so the last scrollbar, title and child-exit messages land and are taken
+    /// while the main thread is still free to take them (ghostty#14245).
+    public static let drainDuration: TimeInterval = 1.0
+    public static let drainInterval: TimeInterval = 0.05
+
     /// - Parameters:
     ///   - live: surfaces the registry holds right now.
     ///   - retained: surfaces the layout (or an earlier hold) still keeps.

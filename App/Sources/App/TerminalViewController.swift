@@ -7572,12 +7572,32 @@ final class TerminalViewController: NSViewController {
             // No grace: these panes were closed, so everything is killed now.
             let plan = HibernationTeardown.plan(surfaceIDs: panes, foreground: [:], agentBusy: [])
             ZettyLog.lifecycle.log("teardown: holding \(panes.count) closed pane(s) until their sessions end")
-            teardown(plan) { [weak self] in self?.releaseAfterTeardown(panes) }
+            teardown(plan) { [weak self] in self?.drainThenRelease(panes) }
         }
+        // One last drain right before the free: the join starts with the
+        // queue empty, so no push from the freed surface's threads can block.
+        registry.drainMailboxes(of: surfacesReleasedFromTeardown)
         registry.prune(keeping: retainedSurfaceIDs)
         // Each released surface is now freed, or kept again by the layout
         // (no longer ours); either way the next close of it must hold again.
         surfacesReleasedFromTeardown.removeAll()
+    }
+
+    /// A closed pane's session has ended: keep draining its mailbox for a
+    /// moment, then release it. Its threads' last pushes land while the main
+    /// thread is still running, instead of during the join.
+    private func drainThenRelease(_ panes: [UUID]) {
+        let ids = Set(panes)
+        let ticks = Int(SurfaceTeardownGate.drainDuration / SurfaceTeardownGate.drainInterval)
+        func step(_ remaining: Int) {
+            registry.drainMailboxes(of: ids)
+            guard remaining > 0 else { releaseAfterTeardown(panes); return }
+            DispatchQueue.main.asyncAfter(deadline: .now() + SurfaceTeardownGate.drainInterval) { [weak self] in
+                guard self != nil else { return }
+                MainActor.assumeIsolated { step(remaining - 1) }
+            }
+        }
+        step(ticks)
     }
 
     /// A teardown finished: its surfaces may be freed, and the rebuild that
