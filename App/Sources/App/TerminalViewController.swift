@@ -1573,6 +1573,25 @@ final class TerminalViewController: NSViewController {
         statusBarView?.setKeyMode(mode)
     }
 
+    /// What the pane receiving keystrokes is running, per the last foreground
+    /// probe (nil when idle or unprobed — a pane without a preserved session
+    /// has nothing to probe). Resolved from the first responder rather than
+    /// `paneTree`, so a tile-grid cell answers for itself.
+    func foregroundCommandOfKeyPane() -> String? {
+        var candidate = view.window?.firstResponder as? NSView
+        while let current = candidate, !(current is AppTerminalView) {
+            candidate = current.superview
+        }
+        let id: UUID?
+        if let terminal = candidate as? AppTerminalView {
+            id = allSurfaceIDs.first { registry.appTerminalView(for: $0) === terminal }
+        } else {
+            id = paneTree.focusedSurfaceID
+        }
+        guard let id, let command = foregroundBySurface[id], !command.isEmpty else { return nil }
+        return command
+    }
+
     /// Starts copy mode on the focused pane. False when it has no live view.
     func enterCopyMode() -> Bool {
         guard let id = paneTree.focusedSurfaceID else { return false }

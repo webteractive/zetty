@@ -63,7 +63,8 @@ final class KeyInterceptor: NSObject {
         self.engine = KeyBindingEngine(
             prefix: configuration.prefix,
             prefixTable: configuration.prefixTable,
-            copyTable: configuration.copyTable
+            copyTable: configuration.copyTable,
+            passPrefixToMultiplexer: configuration.passPrefixToMultiplexer
         )
         self.viewController = viewController
         super.init()
@@ -75,7 +76,8 @@ final class KeyInterceptor: NSObject {
         engine = KeyBindingEngine(
             prefix: configuration.prefix,
             prefixTable: configuration.prefixTable,
-            copyTable: configuration.copyTable
+            copyTable: configuration.copyTable,
+            passPrefixToMultiplexer: configuration.passPrefixToMultiplexer
         )
     }
 
@@ -160,7 +162,7 @@ final class KeyInterceptor: NSObject {
         guard let chord = KeyChord(event: event) else { return event }
 
         let modeBefore = engine.mode
-        let resolution = engine.handle(chord)
+        let resolution = engine.handle(chord) { viewController.foregroundCommandOfKeyPane() }
         if engine.mode != modeBefore {
             viewController.keyModeDidChange(engine.mode)
         }

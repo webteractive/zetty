@@ -21,6 +21,16 @@ literal prefix to the pty · Esc cancels. Copy mode is modal and vi-keyed
 (h/j/k/l/w/b/e/0/$/g/G, Ctrl+U/D/F/B paging, `v`/`V` select, `y`/Enter yank,
 `q`/Esc exit).
 
+**A multiplexer in the pane owns the prefix.** Unbound keys after the prefix
+are swallowed (`consumeNoop`), so tmux's `Ctrl+B d` used to vanish entirely.
+`KeyBindingEngine.handle(_:paneForeground:)` passes the prefix through while
+the receiving pane's foreground process is in `prefixOwningMultiplexers`
+(tmux, screen), gated by `zetty-tmux-passthrough` (default true). The
+foreground comes from the 3s zmx/`ps` probe (`foregroundBySurface`), so it
+needs a preserved pane and lags tmux starting; tmux behind `ssh` reads as
+`ssh` and still needs prefix-twice. The closure is evaluated only on the
+prefix chord — keep it that way, it walks the responder chain.
+
 Key routing: one `NSEvent.addLocalMonitorForEvents(.keyDown)` in
 `KeyInterceptor` (App) runs before any view, translates the event to a
 `KeyChord`, and asks `KeyBindingEngine` (`ZettyCore/Keybindings/`, pure +

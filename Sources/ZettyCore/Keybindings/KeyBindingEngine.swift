@@ -37,27 +37,42 @@ public final class KeyBindingEngine {
     /// the literal prefix bytes on prefix-twice.
     public var prefixChord: KeyChord { prefix }
 
+    /// Multiplexers whose own prefix collides with Zetty's: while one is the
+    /// pane's foreground process, the prefix belongs to it (tmux's Ctrl+B d
+    /// must detach, not vanish into Zetty's unbound-key no-op).
+    public static let prefixOwningMultiplexers: Set<String> = ["tmux", "screen"]
+
     private let prefix: KeyChord
     private let prefixTable: [KeyChord: BindingCommand]
     private let copyTable: [KeyChord: BindingCommand]
+    private let passPrefixToMultiplexer: Bool
 
     public init(
         prefix: KeyChord,
         prefixTable: [KeyChord: BindingCommand],
-        copyTable: [KeyChord: BindingCommand]
+        copyTable: [KeyChord: BindingCommand],
+        passPrefixToMultiplexer: Bool = true
     ) {
         self.prefix = prefix.normalized
         self.prefixTable = prefixTable
         self.copyTable = copyTable
+        self.passPrefixToMultiplexer = passPrefixToMultiplexer
     }
 
     /// Resolve one key press against the current mode. Mutates `mode` per the
-    /// design-doc transitions.
-    public func handle(_ chord: KeyChord) -> KeyResolution {
+    /// design-doc transitions. `paneForeground` names what the receiving pane
+    /// is running; it is only asked when the prefix is pressed, so callers
+    /// can afford a lookup there.
+    public func handle(_ chord: KeyChord, paneForeground: () -> String? = { nil }) -> KeyResolution {
         let pressed = chord.normalized
         switch mode {
         case .normal:
             guard pressed == prefix else { return .passthrough }
+            if passPrefixToMultiplexer,
+               let foreground = paneForeground()?.lowercased(),
+               Self.prefixOwningMultiplexers.contains(foreground) {
+                return .passthrough
+            }
             mode = .prefixArmed
             return .consumeNoop
 

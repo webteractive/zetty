@@ -161,3 +161,45 @@ private func chord(_ text: String) -> KeyChord { KeyChord.parse(text)! }
     #expect(engine.handle(chord("ctrl+space")) == .consumeNoop)
     #expect(engine.handle(chord("c")) == .consume(.newTab))
 }
+
+// MARK: - Multiplexer passthrough
+
+@Test func enginePassesPrefixToTmuxInThePane() {
+    let engine = makeEngine()
+    #expect(engine.handle(chord("ctrl+b")) { "tmux" } == .passthrough)
+    #expect(engine.mode == .normal)
+    // tmux's own `d` follows the real Ctrl+B to the pty.
+    #expect(engine.handle(chord("d")) { "tmux" } == .passthrough)
+}
+
+@Test func enginePassesPrefixToScreenCaseInsensitively() {
+    let engine = makeEngine()
+    #expect(engine.handle(chord("ctrl+b")) { "Screen" } == .passthrough)
+    #expect(engine.mode == .normal)
+}
+
+@Test func engineArmsPrefixForOtherForegroundTools() {
+    let engine = makeEngine()
+    #expect(engine.handle(chord("ctrl+b")) { "vim" } == .consumeNoop)
+    #expect(engine.mode == .prefixArmed)
+}
+
+@Test func engineArmsPrefixUnderTmuxWhenPassthroughDisabled() {
+    let engine = KeyBindingEngine(
+        prefix: chord("ctrl+b"),
+        prefixTable: BindingCommand.defaultPrefixTable,
+        copyTable: BindingCommand.defaultCopyTable,
+        passPrefixToMultiplexer: false
+    )
+    #expect(engine.handle(chord("ctrl+b")) { "tmux" } == .consumeNoop)
+    #expect(engine.mode == .prefixArmed)
+}
+
+@Test func engineAsksForegroundOnlyOnThePrefix() {
+    let engine = makeEngine()
+    var asked = 0
+    _ = engine.handle(chord("a")) { asked += 1; return "tmux" }
+    #expect(asked == 0)
+    _ = engine.handle(chord("ctrl+b")) { asked += 1; return nil }
+    #expect(asked == 1)
+}

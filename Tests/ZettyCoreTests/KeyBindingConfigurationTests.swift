@@ -108,3 +108,18 @@ private func chord(_ text: String) -> KeyChord { KeyChord.parse(text)!.normalize
     #expect(config.keybindings.prefix == chord("ctrl+a"))
     #expect(config.ghostty == [GhosttyDirective(key: "keybind", value: "ctrl+d=new_split:right")])
 }
+
+// MARK: - zetty-tmux-passthrough
+
+@Test func keybindingsTmuxPassthroughDefaultsOn() {
+    #expect(AppConfig.parse("").keybindings.passPrefixToMultiplexer)
+    #expect(AppConfig.parse(AppConfig.defaultFileContents).keybindings.passPrefixToMultiplexer)
+}
+
+@Test func keybindingsTmuxPassthroughCanBeDisabledAndSurvivesRender() {
+    let config = AppConfig.parse("zetty-tmux-passthrough = false")
+    #expect(!config.keybindings.passPrefixToMultiplexer)
+    #expect(config.unsupportedKeys.isEmpty)
+    #expect(config.ghostty.isEmpty)
+    #expect(!AppConfig.parse(config.rendered()).keybindings.passPrefixToMultiplexer)
+}

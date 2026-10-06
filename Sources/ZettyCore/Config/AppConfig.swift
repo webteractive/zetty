@@ -325,6 +325,8 @@ public struct AppConfig: Equatable, Sendable {
                     .filter { !$0.isEmpty }
             case "zetty-file-tree-width":
                 if let width = Double(value), width > 0 { config.fileTree.width = width }
+            case "zetty-tmux-passthrough":
+                config.keybindings.passPrefixToMultiplexer = ["true", "yes", "on", "1"].contains(value.lowercased())
             case "prefix":
                 config.keybindings.applyPrefix(value)
             case "bind":
@@ -517,6 +519,12 @@ public struct AppConfig: Equatable, Sendable {
 
             """
         }
+        out += """
+        # While tmux or screen runs in a pane, its prefix goes to it (Ctrl+B d
+        # detaches) instead of arming Zetty's prefix layer. ⌘ shortcuts still work.
+        zetty-tmux-passthrough = \(keybindings.passPrefixToMultiplexer)
+
+        """
         if !keybindings.sourceLines.isEmpty {
             out += """
             # Prefix-key layer (tmux-style). `prefix = <chord>`, then repeated
@@ -594,6 +602,10 @@ public struct AppConfig: Equatable, Sendable {
     #   prefix = ctrl+b
     #   bind = <chord> <command>        (e.g. bind = s split-vertical)
     #   copy-bind = <chord> <command>   (e.g. copy-bind = n copy-cursor-down)
+
+    # While tmux or screen runs in a pane, its prefix goes to it (Ctrl+B d
+    # detaches) instead of arming Zetty's prefix layer. ⌘ shortcuts still work.
+    zetty-tmux-passthrough = true
 
     # Paste your ghostty config below — any non-Zetty key is forwarded to the
     # terminal verbatim, so an existing ghostty config works as-is. For example:

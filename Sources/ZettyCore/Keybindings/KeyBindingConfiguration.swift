@@ -14,19 +14,24 @@ public struct KeyBindingConfiguration: Equatable, Sendable {
     /// `AppConfig.rendered()` re-emits these so runtime persists (theme
     /// switcher, settings) don't drop the user's custom bindings.
     public var sourceLines: [String]
+    /// `zetty-tmux-passthrough`: hand the prefix to a tmux/screen running in
+    /// the pane instead of arming Zetty's layer (default true).
+    public var passPrefixToMultiplexer: Bool
 
     public init(
         prefix: KeyChord = KeyChord(key: .character("b"), modifiers: [.ctrl]),
         prefixTable: [KeyChord: BindingCommand] = BindingCommand.defaultPrefixTable,
         copyTable: [KeyChord: BindingCommand] = BindingCommand.defaultCopyTable,
         issues: [String] = [],
-        sourceLines: [String] = []
+        sourceLines: [String] = [],
+        passPrefixToMultiplexer: Bool = true
     ) {
         self.prefix = prefix
         self.prefixTable = prefixTable
         self.copyTable = copyTable
         self.issues = issues
         self.sourceLines = sourceLines
+        self.passPrefixToMultiplexer = passPrefixToMultiplexer
     }
 
     // MARK: - Config-line application

@@ -269,7 +269,11 @@ by the tool it's running.
   Kitty keyboard + graphics protocols come from full libghostty. Zetty builds
   the multiplexer shell, not the terminal.
 - **tmux-style prefix keys** — `Ctrl+B` then a key drives splits, pane focus,
-  tabs, zoom, and paste; fully remappable, no mouse required.
+  tabs, zoom, and paste; fully remappable, no mouse required. Running tmux
+  (or screen) in a pane? While it's the pane's foreground process, `Ctrl+B`
+  goes to it instead, so `Ctrl+B d` detaches; ⌘ shortcuts keep working.
+  Detection needs `preserve-sessions` and takes up to ~3s after tmux starts;
+  for tmux over `ssh`, press `Ctrl+B` twice to send a literal one.
 - **Vi-keyed copy mode** — `Ctrl+B [` enters a modal copy mode with vi
   motions, visual selection, and yank-to-clipboard, rendered as a native
   Ghostty selection.
@@ -601,6 +605,7 @@ seeds a documented starter file on first launch. Format is plain
 | `zetty-file-tree-ignore` | — | Extra names to hide, comma-separated (e.g. `node_modules, vendor`) |
 | `zetty-file-tree-width` | `220` | Width a file tree opens at, in points |
 | `prefix` / `bind` / `copy-bind` | tmux-canonical | Prefix-key layer remapping |
+| `zetty-tmux-passthrough` | `true` | While tmux or screen is the focused pane's foreground process, hand it the prefix instead of arming Zetty's layer |
 
 `zetty-home-path` moves Home somewhere more useful than `~` — e.g.
 `zetty-home-path = ~/Projects`. You can also set it without touching the file:
