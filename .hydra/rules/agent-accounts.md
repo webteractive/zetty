@@ -216,6 +216,17 @@ Gotchas, all deliberate:
   from a terminal hands the app that shell's env: relaunching Zetty from a
   pane on an account put every Default pane on that account. A new
   account-capable harness's `configDirEnvVar` joins the list automatically.
+  **The same launch clears the relaunching AGENT's session**
+  (`LaunchEnvironment.agentSessionKeys`): the install ritual has an agent run
+  `open -a` from its own pane, and every pane created afterwards carried that
+  conversation's `CLAUDE_CODE_SESSION_ID` and `CLAUDE_CODE_MESSAGING_TOKEN`
+  (found 2026-10-07, after an install). The keys are named one by one, never by
+  prefix: `CLAUDE_CODE_` is shared with settings people export themselves
+  (`CLAUDE_CODE_NO_FLICKER`) and with `CLAUDE_CODE_PLUGIN_DIRS`, which
+  `AppDelegate` maintains. It is a denylist read off claude 2.1.292 and codex
+  0.160.1, so a harness update can add a variable it misses, and anything else
+  in the launching shell (a settings-file `env` entry such as
+  `DISABLE_AUTOUPDATER`) still passes through.
 - **`Surface.runningAccountID` is the account RUNNING in a pane; `accountID` is
   the one it was SPAWNED with.** Both are persisted, and the difference matters:
   the spawn stamp can never be rewritten (the env was captured once, at
