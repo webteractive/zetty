@@ -117,7 +117,7 @@ final class TerminalViewController: NSViewController {
     let copyMode = CopyModeController()
 
     /// Per-session AI-agent state, driven by harness-hook events.
-    private let agentDetector = AgentDetector()
+    let agentDetector = AgentDetector()
     /// Watches the hook event sink (`~/.zetty/agent-events.jsonl`).
     private var agentEventWatcher: AgentEventWatcher?
     /// What Zetty's Claude Code mod reports per pane (context fill, cost, rate
@@ -139,7 +139,7 @@ final class TerminalViewController: NSViewController {
     /// the identity used for tab logos/names; hook events only drive the
     /// status dots. Known agents get brand logos; other tools (vim, nano)
     /// get one when we bundle it.
-    private var foregroundBySurface: [UUID: String] = [:]
+    private(set) var foregroundBySurface: [UUID: String] = [:]
     private var foregroundPollTimer: Timer?
 
     /// Slow re-probe of the focused pane's git state. The per-refresh probe is
@@ -447,8 +447,14 @@ final class TerminalViewController: NSViewController {
     func reconcileSessions() {
         let owned = sessionOwnerSurfaceIDs        // read on main; workspace is main-only
         endLeftoverSessionsOfHibernatedProjects()
+        // A handoff belongs to a pane. A hibernated pane has no surface to
+        // prune, so closing it or removing its project reaches no close hook;
+        // ownership is asked here, where the cwd files' is. `owned` spans
+        // hibernated projects, whose panes are the ones with handoffs.
+        handoffRunner.cancel(notIn: Set(owned))
         let zmx = ZmxRunner.locate()
         DispatchQueue.global(qos: .utility).async { [weak self] in
+            HandoffStore.sweep(keeping: Set(owned))
             let listed = zmx.map { ZmxRunner.listZettySessions(zmxPath: $0) } ?? []
             let candidates = SessionPersistence.orphans(existing: listed, liveSurfaceIDs: owned)
             let names = (try? FileManager.default
@@ -2082,37 +2088,44 @@ final class TerminalViewController: NSViewController {
     ///
     /// The line carries the pane's ACCOUNT: see `resumeLogin`.
     func agentResumeCommand(for surfaceID: UUID) -> String? {
+        guard let (kind, session) = resumableSession(for: surfaceID) else { return nil }
+        return AgentResume.command(for: AgentState(kind: kind, status: nil, session: session),
+                                   login: resumeLogin(for: surfaceID, kind: kind))
+    }
+
+    /// The harness and conversation in a pane, or nil when it has no
+    /// resumable agent or no session can be found.
+    ///
+    /// `foreground` replaces the probe's last reading with one the caller
+    /// just took; see `probedResumableKind`.
+    func resumableSession(for surfaceID: UUID, using foreground: [UUID: String]? = nil)
+        -> (kind: AgentKind, session: AgentSession)? {
         // The probe outranks the stored kind: a pane can carry a stale kind
         // from the era when hook events matched by directory, which is what
         // once produced `codex resume <claude id>`.
-        guard let kind = probedResumableKind(for: surfaceID) else { return nil }
-        let login = resumeLogin(for: surfaceID, kind: kind)
+        guard let kind = probedResumableKind(for: surfaceID, using: foreground) else { return nil }
 
-        // Only a hook session of the PROBED kind: `login` is that
-        // harness's login, and a stale kind would get the other one's.
+        // Only a hook session of the PROBED kind: the login a line is built
+        // with is that harness's, and a stale kind would get the other one's.
         let state = agentDetector.state(for: surfaceID)
-        if state.kind == kind,
-           let command = AgentResume.command(for: state, login: login) {
-            return command
+        if state.kind == kind, let session = state.session,
+           AgentEvent.isValidSessionID(session.id) {
+            return (kind, session)
         }
         // The mod's word next: it reports the session as the process starts
         // and again after a /clear, where a hook only names it on the next
         // prompt. Cheaper and more exact than scanning transcripts below.
         if let session = modReportedSession(for: surfaceID, kind: kind) {
-            return AgentResume.command(
-                for: AgentState(kind: kind, status: nil, session: session), login: login)
+            return (kind, session)
         }
         if let cached = lookedUpResumeSessions[surfaceID], cached.kind == kind {
-            return AgentResume.command(
-                for: AgentState(kind: kind, status: nil, session: cached.session),
-                login: login)
+            return (kind, cached.session)
         }
 
         guard let target = sessionLookupTarget(for: surfaceID, kind: kind),
               let found = AgentSessionLookup.fallbackSessions(for: [target], claimed: [])[surfaceID]
         else { return nil }
-        return AgentResume.command(for: AgentState(kind: kind, status: nil, session: found),
-                                   login: login)
+        return (kind, found)
     }
 
     /// The login `kind` is running under in this pane.
@@ -2134,7 +2147,7 @@ final class TerminalViewController: NSViewController {
     /// `claude --resume` there would reopen the conversation under the wrong
     /// login — an account's variable is assigned, and the default login in a
     /// pane spawned on an account has that variable removed.
-    private func resumeLogin(for surfaceID: UUID, kind: AgentKind) -> ResumeLogin {
+    func resumeLogin(for surfaceID: UUID, kind: AgentKind) -> ResumeLogin {
         guard let surface = workspace.surface(with: surfaceID) else { return .inherited }
         return AgentAccountResolver.resumeLogin(
             agentID: kind.rawValue,
@@ -2223,8 +2236,12 @@ final class TerminalViewController: NSViewController {
     /// The PROBE, never `AgentState.kind` — a pane can carry a stale kind from
     /// the era when hook events matched by directory, which is what once
     /// produced `codex resume <claude id>`.
-    private func probedResumableKind(for surfaceID: UUID) -> AgentKind? {
-        guard let running = foregroundBySurface[surfaceID], !running.isEmpty,
+    ///
+    /// `foreground` is a reading the caller just took. The poll that fills
+    /// `foregroundBySurface` stops while Zetty is in the background, so the
+    /// map can be hours stale exactly when a project is being put away.
+    func probedResumableKind(for surfaceID: UUID, using foreground: [UUID: String]? = nil) -> AgentKind? {
+        guard let running = (foreground ?? foregroundBySurface)[surfaceID], !running.isEmpty,
               let kind = AgentKind(rawValue: running) else { return nil }
         // Resumability is `AgentResume`'s answer, not a list kept beside it.
         guard AgentResume.canRestart(kind) else { return nil }
@@ -7504,6 +7521,8 @@ final class TerminalViewController: NSViewController {
 
     private var lastActiveAt: [UUID: Date] = [:]
     private var hibernationTimer: Timer?
+    /// Writes each hibernated agent pane's handoff, in the background.
+    let handoffRunner = HandoffRunner()
 
     /// Frees a project's sessions, processes, and panes; keeps its layout.
     /// Never hibernates the active project (switches away first), and never
@@ -7511,11 +7530,17 @@ final class TerminalViewController: NSViewController {
     /// hibernate verb for it, so a hibernated Home would have nothing to wake
     /// it. The rule lives here, in the funnel every path goes through; the
     /// checks at the call sites are what keep a dead verb off the screen.
-    func hibernateProject(_ project: ProjectRuntime, confirmIfBusy: Bool = true) {
+    ///
+    /// `handoffs`: each Claude or Codex pane leaves a handoff unless this is
+    /// `.none`. Captured before the teardown and written after it, by forks of
+    /// the sessions, so the memory is freed at once either way.
+    func hibernateProject(_ project: ProjectRuntime, confirmIfBusy: Bool = true,
+                          handoffs: HandoffRequest = .manual) {
         guard let index = workspace.projects.firstIndex(where: { $0.id == project.id }),
               !project.isHome, !project.isHibernated else { return }
         let surfaceIDs = project.tabList.trees.flatMap { $0.layout.surfaces.map(\.id) }
         if confirmIfBusy, !confirmClosingBusyPanes(surfaceIDs, what: "project “\(project.name)”") { return }
+        let records = captureHandoffRecords(for: project, surfaceIDs: surfaceIDs, request: handoffs)
 
         if index == workspace.activeIndex {
             // Switch to another awake project if one exists; otherwise stay put
@@ -7532,6 +7557,7 @@ final class TerminalViewController: NSViewController {
         // has to re-sort its Space. WorkspaceModel doesn't own this write.
         workspace.reapplyOrdering()
         endSessionsForHibernation(of: project, surfaceIDs: surfaceIDs)
+        handoffRunner.enqueue(records)
         onActiveProjectChanged?()
         refreshTabBar()
         refreshSidebar()
@@ -7695,7 +7721,7 @@ final class TerminalViewController: NSViewController {
 
     /// Hibernate the named project (CLI, case-insensitive). No confirmation —
     /// the CLI call IS the confirmation. Returns an error message or nil.
-    func hibernateProjectNamed(_ name: String, force: Bool) -> String? {
+    func hibernateProjectNamed(_ name: String, force: Bool, handoff: Bool = true) -> String? {
         let matches = workspace.projects.filter { $0.name.lowercased() == name.lowercased() }
         guard let project = matches.first else { return "no project named \"\(name)\"" }
         guard matches.count == 1 else { return "\(matches.count) projects named \"\(name)\" — use the sidebar" }
@@ -7706,7 +7732,7 @@ final class TerminalViewController: NSViewController {
         guard !project.isHibernated else { return "project \"\(project.name)\" is already hibernated" }
         let surfaces = project.tabList.trees.flatMap { $0.layout.surfaces.map(\.id) }
         if let refusal = cliRefusal(closing: surfaces, force: force) { return refusal }
-        hibernateProject(project, confirmIfBusy: false)
+        hibernateProject(project, confirmIfBusy: false, handoffs: handoff ? .manual : .none)
         return nil
     }
 
@@ -7833,7 +7859,7 @@ final class TerminalViewController: NSViewController {
     /// Hibernate every awake project in a Space (CLI `hibernate-space`). Reuses
     /// the existing per-project hibernate entry point, so session teardown and
     /// `reconcileSessions()` keep their usual behavior.
-    func hibernateSpaceNamed(_ name: String, force: Bool) -> String? {
+    func hibernateSpaceNamed(_ name: String, force: Bool, handoff: Bool = true) -> String? {
         guard let space = workspace.space(named: name) else {
             return "no Space named \"\(name)\""
         }
@@ -7842,7 +7868,7 @@ final class TerminalViewController: NSViewController {
         // All or nothing: a Space half-hibernated by a refusal is worse than none.
         if let refusal = cliRefusal(closing: surfaces, force: force) { return refusal }
         for project in awake {
-            hibernateProject(project, confirmIfBusy: false)
+            hibernateProject(project, confirmIfBusy: false, handoffs: handoff ? .manual : .none)
         }
         return nil
     }

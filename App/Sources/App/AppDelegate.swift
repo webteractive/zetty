@@ -267,6 +267,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             guard let self, self.appConfig.hibernateHandoffs else { return false }
             return self.resolvedSettings(for: project).preserveSessions
         }
+        // A fork starting or finishing is machine-driven: coalesced.
+        tvc.handoffRunner.onChange = { [weak tvc] in
+            tvc?.setNeedsChromeRefresh(tabBar: false, sidebar: true)
+        }
+        tvc.handoffRunner.accountEnvironment = { [weak self] record in
+            AgentAccountResolver.harnessAccount(
+                agentID: record.agent.rawValue, runningAccountID: record.accountID,
+                spawnedAccountID: nil, accounts: self?.agentAccounts.accounts ?? [],
+                home: NSHomeDirectory()).env
+        }
         tvc.broadcastScopeProvider = { [weak self] project in
             BroadcastScope(code: self?.projectSettings.settings(for: project.settingsKey)?.broadcastScope)
         }
@@ -1826,6 +1836,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     func applicationWillTerminate(_: Notification) {
         controlSocketServer?.stop()
         killScratchSessions()
+        // A fork is the app's child and would outlive it. Its record stays on
+        // disk, and the next launch queues it again.
+        terminalViewController?.handoffRunner.stopForQuit()
         saveWorkspace()
     }
 
@@ -2160,14 +2173,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         case .moveToSpace(let project, let space):
             if let message = tvc.moveProjectNamed(project, toSpace: space) { return .error(message) }
             return .ok
-        case .hibernateSpace(let name, let force, _):
-            if let message = tvc.hibernateSpaceNamed(name, force: force) { return .error(message) }
+        case .hibernateSpace(let name, let force, let handoff):
+            if let message = tvc.hibernateSpaceNamed(name, force: force, handoff: handoff) { return .error(message) }
             return .ok
         case .wakeSpace(let name):
             if let message = tvc.wakeSpaceNamed(name) { return .error(message) }
             return .ok
-        case .hibernateProject(let name, let force, _):
-            if let message = tvc.hibernateProjectNamed(name, force: force) { return .error(message) }
+        case .hibernateProject(let name, let force, let handoff):
+            if let message = tvc.hibernateProjectNamed(name, force: force, handoff: handoff) { return .error(message) }
             return .ok
         case .wakeProject(let name):
             if let message = tvc.wakeProjectNamed(name) { return .error(message) }
