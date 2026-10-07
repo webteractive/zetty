@@ -14,7 +14,9 @@ let package = Package(
         .executableTarget(name: "ZettyCLI", dependencies: ["ZettyCore"]),
         .testTarget(
             name: "ZettyCoreTests",
-            dependencies: ["ZettyCore"]
+            dependencies: ["ZettyCore"],
+            // Captured terminal screens, read as bytes (see PromptBoxTests).
+            resources: [.copy("Fixtures")]
         ),
     ]
 )

@@ -1,0 +1,10 @@
+[0m 
+  $ [0m[38;2;137;180;250mtouch[0m[38;2;205;214;244m ~/zetty-probe-codex-question[0m
+ 
+ 
+[0m[1m[7m› 1. Yes, proceed (y)                                                          [0m
+  2. Yes, and don't ask again for commands that start with `touch ~/zetty-
+     probe-codex-question` ([0m[1mp[0m)
+  3. No, and tell Codex what to do differently ([0m[1mesc[0m)
+
+  [0m[2mPress [0m[1menter[0m[2m to confirm or [0m[1mesc[0m[2m to cancel                                      [0m[0m[=5;1u(B[28;79H
