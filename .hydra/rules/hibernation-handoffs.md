@@ -1,0 +1,162 @@
+---
+paths:
+    - "Sources/ZettyCore/Hibernation/**"
+    - "App/Sources/App/Handoff*.swift"
+    - "App/Sources/App/AgentTranscript.swift"
+    - "App/Sources/App/TerminalViewController+Handoffs.swift"
+commands:
+    - "zetty hibernate"
+    - "zetty wake"
+triggers:
+    - "changing hibernation handoffs or hibernate-after eligibility"
+    - "a hibernated pane wakes without its handoff, or into the wrong conversation"
+    - "a project with an idle agent is not auto-hibernated, or a busy one is"
+---
+
+# Hibernation handoffs and hibernate-after
+
+> Split out of `CLAUDE.md` / `AGENTS.md` (which stay under the agent context
+> limit). This file is authoritative: edit it here, then run `hydra sync`.
+
+Hibernating a project has each Claude or Codex pane leave a short handoff, and
+waking starts a fresh agent from it. `hibernate-after` reaches projects whose
+agents are idle. Spec: `docs/superpowers/specs/2026-10-07-hibernation-handoffs-design.md`.
+Pure logic is in `ZettyCore/Hibernation/`; the app layer is `HandoffStore`,
+`HandoffRunner`, `AgentTranscript` and `TerminalViewController+Handoffs.swift`.
+Needs `preserve-sessions` (`handoffsEnabled`); without zmx both hibernation and
+`hibernate-after` behave as they did before.
+
+## The handoff is written by a FORK, never the live pane
+
+- **`claude -p --resume <id> --fork-session --no-session-persistence --tools ""
+  --permission-prompts none "<request>"`** and **`codex exec fork <id>
+  --ephemeral --skip-git-repo-check "<request>"`**, verified against claude
+  2.1.292 and codex 0.160.1. The reply comes back on stdout; the agent writes no
+  file. That removes a Write permission prompt, a file in the user's repo, and
+  any race with the live session: a fork never appends to the original
+  transcript and works while the pane's agent is alive or after it is gone.
+- **That is what lets hibernation stay instant.** `hibernateProject` captures
+  the records BEFORE the teardown (the probe, the hook state and the running
+  login are gone after it) and queues the forks AFTER it. Do not move the
+  capture, and do not make the teardown wait for a fork.
+- **`--tools ""` is the safety, not the permission mode.** The user's own allow
+  rules could let a tool run for real. `--permission-prompts none` sits between
+  it and the request because `--tools` is variadic and would swallow the
+  request as a tool name; `HandoffForkTests` pins the order.
+- **No `--model`.** A long session may not fit a smaller model's context.
+- **stdin is `/dev/null`.** `claude -p` otherwise waits 3 seconds for piped
+  input.
+- **The fork's environment carries no pane identity, no agent session and no
+  stale login** (`HandoffFork.environment`). `ZETTY` goes because `AppDelegate`
+  sets it on the app itself and the hook helper reports whenever it is set,
+  falling back to matching panes by DIRECTORY when it has no surface: a fork
+  carrying it would flip other panes' dots and consume the wrong handoff.
+  `USER` must survive: without it Claude cannot read an account's Keychain
+  login and answers "Not logged in".
+- **A handoff never blocks anything.** No binary, a failed resume, a timeout
+  (5 minutes), an empty reply or one over 200 000 bytes all end the same way:
+  the record is removed and the pane wakes as a plain shell. A fork under the
+  wrong account fails in about 2 seconds ("No conversation found").
+- **At most two forks run at once** (`HandoffQueue.maxRunning`). Each is a cold
+  read of a whole transcript on one account's rate limit.
+- **A model can decline.** One Haiku fork answered a test question with a
+  refusal and exit 0, which would have been stored as a handoff. Not guarded.
+
+## Files
+
+- `~/.zetty/handoffs/<SURFACE-UUID>.json` is the record (harness, session id,
+  directory, account); `.md` beside it is the wake file. Directory `0700`,
+  files `0600`, written to a temporary name and renamed.
+- **A record with no `.md` is a handoff still owed; with one it is ready.**
+  `HandoffStore.begin` clears a stale `.md` first, so a fork that fails this
+  time cannot wake the pane from last time's text.
+- **The record exists because the wake needs it after a relaunch.** The file
+  name carries no harness, session or login.
+- **The wake file holds the wake line AND the handoff.** A mention inside a
+  mentioned file is not expanded (Tinker learned this).
+- **A hibernated pane has no surface to prune**, so closing it or removing its
+  project reaches no close hook. Its files are swept in `reconcileSessions` by
+  the ownership question the `<uuid>.cwd` files use, and a fork still owed for a
+  pane that is gone is cancelled there.
+
+## Waking
+
+- **`HandoffWake.plan` decides per pane:** a ready handoff starts a fresh
+  agent; a fork still queued or running is CANCELLED and the pane resumes its
+  old conversation (a wake within moments is a change of mind, and the one
+  exception to waking fresh); anything else is a plain shell.
+- **Claude mentions the file** (`claude '@/abs/path'`, absolute, never `~`);
+  **Codex gets its text** (`codex "$(cat '/abs/path')"`), which Claude also
+  gets when the path holds whitespace a mention cannot carry.
+- **Every wake line goes through the guarded startup path**
+  (`queueStartupCommands(_:asAgentResume: true)`): it waits `resumeGracePeriod`
+  and is dropped when the probe shows an agent in the pane. That guard reads
+  `foregroundBySurface`, so hibernating clears the dead panes' entries itself;
+  left stale, a scripted hibernate and wake had every line skipped.
+- **The handoff is consumed only once the agent has provably read it**
+  (`HandoffWake.provesHandoffRead`). Claude reports `SessionStart` as it
+  launches, BEFORE it expands the mention in its first message; deleting the
+  file on that event left the fresh agent holding a path to nothing, on the
+  first real wake. It is consumed on the event AFTER the one that reports the
+  agent running, counted since the wake and never read off the pane's status
+  (which can still say `running` from an agent hibernated mid-turn). Codex is
+  exempt: its shell read the file before Codex started.
+- **Hooks are optional, so there is a second route:** a minute after the line
+  is typed, a fresh probe reading that still shows the harness consumes it.
+- **Until consumed, the file is the only record that a wake is owed.** At
+  launch `restoreHandoffState` queues owed forks again and re-queues a wake
+  line lost with the quit, unless restart recovery already queued a resume for
+  that pane, which describes something later and wins.
+- **Hibernating forgets a pane's remembered session**
+  (`lookedUpResumeSessions`). The agent that comes back is a new conversation;
+  kept, the next hibernation would fork the old one.
+
+## hibernate-after
+
+- **`HibernationEligibility.keepsAwake` replaced "any foreground process is
+  busy"**, which exempted every project with an agent open. A working agent,
+  one waiting on the person, a draft in the prompt box and a non-agent command
+  still keep a project awake. An agent PROVEN idle (hook status `idle`) at an
+  empty prompt box does not. Unknown status keeps it awake.
+- **The busy rule for a hibernate somebody asks for is unchanged on purpose**
+  (`confirmClosingBusyPanes`, `BusyPaneGate`, `--force`).
+- **Codex's hook cannot tell working from idle** (its one hook is turn ended),
+  so `PromptBox.isCodexComposerEmpty` is what keeps a working Codex awake: it
+  refuses any screen with an `esc to interrupt` line. That line is drawn FAINT,
+  so it is searched for with faint text kept. Claude's box, by contrast, is the
+  same empty `❯` while Claude works; there the hook status is the guard, and the
+  fixture test asserts the box reads empty on purpose.
+- **The fixtures are real screens** (`Tests/ZettyCoreTests/Fixtures/promptbox`,
+  `zmx history --vt`, about one screen each because both harnesses draw on the
+  alternate screen). Re-capture them when a harness changes its prompt.
+- **The pass never trusts `foregroundBySurface`.** `pollForegroundAgents`
+  returns early unless `NSApp.isActive`, so the map is frozen while Zetty is in
+  the background, which is when projects go idle: a pane was still reported as
+  running Codex long after Codex quit. `evaluateAutoHibernation` takes its own
+  reading off-main, and a failed reading is unknown, never idle.
+- **A harness's session store is never searched on the main thread from the
+  timer.** `knownResumableSession` is what hooks, the mod and the cache say;
+  `resumeLookupTarget` is searched in the pass's off-main hop.
+- **Idle runs from the latest of** `ProjectRuntime.lastUsedAt` (persisted;
+  stamped while on screen and on every key that reaches a pane) **and each
+  agent's transcript date.** A relaunch no longer resets the clock.
+- **`keptAwake`** is set by a wake somebody asked for and cleared only by a key
+  reaching one of the project's panes. A background CLI verb waking a project
+  (`ensurePaneIsLive`) does not set it: nobody would ever type there to clear it.
+- **An agent quiet for over a week gets no handoff on an AUTOMATIC hibernate**
+  (`HandoffPolicy.handoffWithin`), or the first pass after an update would
+  cold-read every stale transcript in turn. By hand always writes one.
+
+## Known limits
+
+- **A pane's session comes from a hook, the mod, or a search of the harness's
+  store by directory.** The search falls back to the directory the pane was
+  created in and uses physical paths (`/tmp` reports as `/tmp/…`, a rollout
+  records `/private/tmp/…`). An agent started after a `cd` elsewhere, with no
+  hook, gets no handoff.
+- **The interactive mention was only seen in bypass-permissions mode.** It is
+  not a tool call (it expands with `--tools ""`), but a default-mode pane has
+  not been watched.
+- **Typing into a live Codex: text and Enter in one write is read as a paste**,
+  and the Enter becomes a newline. The wake line is typed into a shell, so it
+  is not affected; anything typed into Codex itself would be.

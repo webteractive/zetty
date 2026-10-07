@@ -64,6 +64,12 @@ Commands (see `zetty --help` for full grammar and agent notes):
   detach|split` edit one. Those three work on the active view (or `--view
   <name>`), take 1-based `--slot` numbers, and never bring the grid up. See
   `.hydra/rules/tile-mode.md` → "Scripting the grid".
+- `hibernate (<name> | --space <name>) [--force] [--no-handoff]` · `wake
+  (<name> | --space <name>)` — put a project away and bring it back. Each
+  Claude or Codex pane leaves a handoff unless `--no-handoff`; the flag decodes
+  with `decodeIfPresent ?? true`, so an older CLI that never sends it gets the
+  default (unlike `force`, where silence must mean refuse). See
+  `hibernation-handoffs.md`.
 - `focus (--pane|--cwd)` · `close (--pane|--cwd) [--tab]` · `reload` ·
   `quit [--kill-sessions]` (no dialog; the flag kills every preserved
   session first — full shutdown).
@@ -158,7 +164,9 @@ without waking it, so focusing changed `isActive`/`isFocused` and nothing else.
 
 Two halves fix it, both regression-tested:
 
-- **`StatusSnapshot` reports why.** `Project.hibernated` + `Pane.live` (from
+- **`StatusSnapshot` reports why.** `Pane.handoff` (`writing` / `ready`, on a
+  hibernated project's panes only, optional like `account`) says whether
+  waking will start from a handoff. `Project.hibernated` + `Pane.live` (from
   `SurfaceRegistry.isLive`, which is the very predicate `sendText` guards on —
   `liveView` — so the flag can't disagree with whether a send lands). Both
   decode via hand-written `init(from:)` defaulting to `false`, so an older

@@ -156,7 +156,11 @@ triggers:
     load-bearing, not politeness: each pane costs a GPU surface and starts an
     agent process, and 11 agents launching together took the reference machine
     past load 35. Hibernated projects are skipped — they were dormant before
-    the power-off and waking them would spawn work the user put away.
+    the power-off and waking them would spawn work the user put away. A
+    hibernated pane's own way back is separate: its handoff, queued by
+    `queueHandoffWakes` when the project is woken (see
+    `hibernation-handoffs.md`). When both name one pane at launch, the
+    recovery resume wins.
   - **A resume comes back under the login its agent was RUNNING as.** A
     recovered pane respawns a shell carrying the account it was SPAWNED with,
     so an agent started by `zetty run <account>` would otherwise resume under
