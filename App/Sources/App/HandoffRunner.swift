@@ -48,8 +48,15 @@ final class HandoffRunner {
 
     /// Quit: nothing may outlive the app. The records stay on disk, and the
     /// next launch queues them again.
+    ///
+    /// Killed outright, not asked: `terminate` follows its SIGTERM with a
+    /// SIGKILL a second later, and the app is gone before that second is up.
+    /// A fork given only the first was still running after the app had quit.
+    /// It has nothing to clean up, having been told to persist nothing.
     func stopForQuit() {
-        for process in processes.values { terminate(process) }
+        for process in processes.values where process.isRunning {
+            _ = Darwin.kill(process.processIdentifier, SIGKILL)
+        }
         processes.removeAll()
         queue = HandoffQueue()
         records.removeAll()

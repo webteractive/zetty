@@ -59,6 +59,9 @@ Needs `preserve-sessions` (`handoffsEnabled`); without zmx both hibernation and
   wrong account fails in about 2 seconds ("No conversation found").
 - **At most two forks run at once** (`HandoffQueue.maxRunning`). Each is a cold
   read of a whole transcript on one account's rate limit.
+- **Quitting SIGKILLs running forks.** A fork is the app's child and would
+  outlive it; SIGTERM followed by a delayed SIGKILL loses the second half to
+  the quit. Their records stay, and the next launch queues them again.
 - **A model can decline.** One Haiku fork answered a test question with a
   refusal and exit 0, which would have been stored as a handoff. Not guarded.
 
@@ -154,6 +157,19 @@ Needs `preserve-sessions` (`handoffsEnabled`); without zmx both hibernation and
   created in and uses physical paths (`/tmp` reports as `/tmp/…`, a rollout
   records `/private/tmp/…`). An agent started after a `cd` elsewhere, with no
   hook, gets no handoff.
+- **An idle agent with work still running in the background is eligible.**
+  Claude reports `idle` when its turn ends, and a background shell or
+  subagent it left running does not change that, or its prompt box. Before
+  handoffs any foreground process kept the project awake, so a dev server
+  started by an agent was safe from `hibernate-after`; now only the idle clock
+  protects it (the transcript date moves while the agent writes, not while a
+  server it started just runs).
+- **Claude shows its spinner before it has submitted a prompt given on the
+  command line.** For most of a minute at startup (three launched together)
+  the status was `idle`, the box empty and the spinner turning; `running` only
+  arrived with `UserPromptSubmit`. Harmless to `hibernate-after`, which needs
+  minutes of idleness since the command was typed, but it is one more reason
+  the box alone proves nothing for Claude.
 - **The interactive mention was only seen in bypass-permissions mode.** It is
   not a tool call (it expands with `--tools ""`), but a default-mode pane has
   not been watched.
