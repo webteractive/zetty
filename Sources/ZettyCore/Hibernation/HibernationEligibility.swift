@@ -24,19 +24,33 @@ public enum HibernationEligibility {
     }
 
     public static func keepsAwake(_ pane: Pane) -> Bool {
-        if pane.agentStatus == .running || pane.agentStatus == .needsAttention { return true }
-        guard let foreground = pane.foreground, !foreground.isEmpty else { return false }
+        if pane.agentStatus == .running { return true }
+        guard let foreground = pane.foreground, !foreground.isEmpty else {
+            // Nothing read from the pane: the hook's word is all there is.
+            return pane.agentStatus == .needsAttention
+        }
         // Something holds the foreground. Only an agent that can leave a
-        // handoff, PROVEN idle, at an empty prompt box, may be put away.
-        guard isHandoffAgent(foreground) else { return true }
-        return !(pane.agentStatus == .idle && pane.promptBoxEmpty == true)
+        // handoff, PROVEN to be doing nothing, at an empty prompt box, may be
+        // put away.
+        guard isHandoffAgent(foreground), isAtRest(pane.agentStatus) else { return true }
+        return pane.promptBoxEmpty != true
     }
 
     /// Whether reading this pane's screen could change the answer, so the
     /// caller only pays for `zmx history` where it matters.
     public static func needsPromptBox(_ pane: Pane) -> Bool {
         guard let foreground = pane.foreground, isHandoffAgent(foreground) else { return false }
-        return pane.agentStatus == .idle
+        return isAtRest(pane.agentStatus)
+    }
+
+    /// `needsAttention` counts, and the screen then decides. Claude fires its
+    /// notification hook after a minute of sitting at its prompt ("waiting
+    /// for your input"), which arrives as the same status a permission prompt
+    /// does: read as "waiting on the person", it kept every idle Claude's
+    /// project awake for good. A real question replaces the prompt box with a
+    /// menu, so an EMPTY box under that status is an agent with nothing to ask.
+    private static func isAtRest(_ status: AgentStatus?) -> Bool {
+        status == .idle || status == .needsAttention
     }
 
     private static func isHandoffAgent(_ foreground: String) -> Bool {

@@ -21,11 +21,27 @@ private func pane(_ foreground: String?, _ status: AgentStatus? = nil,
     #expect(!HibernationEligibility.keepsAwake(pane("codex", .idle, box: true)))
 }
 
-@Test func aWorkingOrWaitingAgentKeepsItAwake() {
+@Test func aWorkingAgentKeepsItAwake() {
     #expect(HibernationEligibility.keepsAwake(pane("claude", .running, box: true)))
-    #expect(HibernationEligibility.keepsAwake(pane("claude", .needsAttention, box: true)))
     // Reported by a hook for a pane the probe has not examined.
     #expect(HibernationEligibility.keepsAwake(pane(nil, .running)))
+}
+
+// A question replaces the prompt box with a menu, so the box does not read as
+// empty while one is on screen.
+@Test func anAgentWaitingOnAQuestionKeepsItAwake() {
+    #expect(HibernationEligibility.keepsAwake(pane("claude", .needsAttention, box: false)))
+    #expect(HibernationEligibility.keepsAwake(pane("claude", .needsAttention, box: nil)))
+    #expect(HibernationEligibility.keepsAwake(pane(nil, .needsAttention)))
+}
+
+// Claude fires its notification hook after a minute at its prompt, which
+// arrives as the status a permission prompt does. Read as "waiting on the
+// person", it kept every idle Claude's project awake for good: the first run
+// of hibernate-after put the idle shell away and left the idle agent.
+@Test func claudesIdleNotificationIsNotAQuestion() {
+    #expect(!HibernationEligibility.keepsAwake(pane("claude", .needsAttention, box: true)))
+    #expect(HibernationEligibility.needsPromptBox(pane("claude", .needsAttention)))
 }
 
 @Test func aDraftOrAnUnreadBoxKeepsItAwake() {

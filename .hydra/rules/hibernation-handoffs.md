@@ -119,8 +119,15 @@ Needs `preserve-sessions` (`handoffsEnabled`); without zmx both hibernation and
 - **`HibernationEligibility.keepsAwake` replaced "any foreground process is
   busy"**, which exempted every project with an agent open. A working agent,
   one waiting on the person, a draft in the prompt box and a non-agent command
-  still keep a project awake. An agent PROVEN idle (hook status `idle`) at an
-  empty prompt box does not. Unknown status keeps it awake.
+  still keep a project awake. An agent PROVEN to be at rest, at an empty
+  prompt box, does not. Unknown status keeps it awake.
+- **`needsAttention` is at rest too, and the screen then decides.** Claude
+  fires its notification hook after a minute of sitting at its prompt, which
+  arrives as the same status a permission prompt does. Read as "waiting on the
+  person" it kept every idle Claude's project awake for good: the first real
+  run put the idle shell away and left the idle agent. A real question
+  replaces the prompt box with a menu, so an empty box under that status is an
+  agent with nothing to ask.
 - **The busy rule for a hibernate somebody asks for is unchanged on purpose**
   (`confirmClosingBusyPanes`, `BusyPaneGate`, `--force`).
 - **Codex's hook cannot tell working from idle** (its one hook is turn ended),
