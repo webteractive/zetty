@@ -206,6 +206,11 @@ Needs `preserve-sessions` (`handoffsEnabled`); without zmx both hibernation and
   hibernate. `zetty send --key Escape` had worked in the test that preceded
   it only because Ghostty encodes the key for the protocol; `zmx send` writes
   raw bytes. The bare byte is kept as a second try.
+- **A Codex started within about three seconds of the hibernate is missed.**
+  The plan reads the probe's map when Zetty is in front, and the probe polls
+  every three seconds: a scripted test that hibernated the instant Codex's
+  command appeared found the pane still listed as a shell. Seconds later the
+  same sequence worked.
 - **Only a hibernate does this.** A closed pane's plan carries no probe
   reading, so a Codex pane that is closed leaves its commands running, as
   before.
