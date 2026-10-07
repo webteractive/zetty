@@ -6690,6 +6690,8 @@ final class TerminalViewController: NSViewController {
                 projectColor: identity?.color,
                 customGlyph: identity?.glyph,
                 isHibernated: project.isHibernated,
+                isWritingHandoffs: project.isHibernated && handoffRunner.anyPending(
+                    among: trees.flatMap { $0.layout.surfaces.map(\.id) }),
                 isScratch: project.isScratch,
                 isHome: project.isHome,
                 isClone: project.cloneSource != nil,
@@ -6723,7 +6725,7 @@ final class TerminalViewController: NSViewController {
                 name: pending.displayName,
                 isPinned: false, tabTitles: [], tabStatuses: [], tabIcons: [],
                 icon: nil, status: nil, projectColor: nil, customGlyph: nil,
-                isHibernated: false, isScratch: false, isHome: false,
+                isHibernated: false, isWritingHandoffs: false, isScratch: false, isHome: false,
                 isClone: true, cloneSourceIndex: sourceIndex, isPendingClone: true,
                 spaceID: nil, spaceName: nil,
                 accountColor: nil, accountName: nil, tabAccountColors: []
