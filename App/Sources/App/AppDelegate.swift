@@ -421,6 +421,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
 
         startUpdateChecks()
         refreshCLIStatus()
+        // Handoffs a quit left owed, and wake lines it lost. After the
+        // accounts, settings and recovery manifest above: it reads all three.
+        tvc.restoreHandoffState()
         tvc.startHibernationTimer()
 
         // The workspace is fully restored and the window is up — any ssh:// URL

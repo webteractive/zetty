@@ -2584,6 +2584,12 @@ final class TerminalViewController: NSViewController {
             command + "\r", to: surfaceID,
             after: isResume ? Self.resumeGracePeriod : Self.spawnGracePeriod,
             skipIfAgentRunning: isResume)
+        scheduleHandoffConsume(surfaceID)
+    }
+
+    /// Whether a command is waiting for this pane to spawn.
+    func hasPendingStartupCommand(for surfaceID: UUID) -> Bool {
+        pendingStartupCommands[surfaceID] != nil
     }
 
     /// How long a restart-recovery resume waits after its pane spawns: long
@@ -2697,6 +2703,8 @@ final class TerminalViewController: NSViewController {
                 // Live events only: the startup replay describes sessions that
                 // may be long gone, and the override it would set is persisted.
                 if notify { applyReportedAccount(from: event, to: surface) }
+                // The fresh agent has reported, so it has read its handoff.
+                if notify { consumeHandoff(surfaceID) }
                 continue
             }
             // Fallback: an older helper, or a pane Zetty no longer has — every
@@ -3722,7 +3730,9 @@ final class TerminalViewController: NSViewController {
                         // Named, not id'd — and only when it isn't the default
                         // login, so the field stays absent for anyone who
                         // doesn't use accounts.
-                        account: accountDisplayName(for: surface)
+                        account: accountDisplayName(for: surface),
+                        // Two stat-sized reads, for hibernated projects only.
+                        handoff: project.isHibernated ? handoffState(for: surface.id) : nil
                     )
                 }
                 let title = TabTitle.display(
@@ -7523,6 +7533,9 @@ final class TerminalViewController: NSViewController {
     private var hibernationTimer: Timer?
     /// Writes each hibernated agent pane's handoff, in the background.
     let handoffRunner = HandoffRunner()
+    /// Panes whose queued startup command is a fresh agent reading its
+    /// handoff. The handoff is deleted once that agent shows a sign of life.
+    var handoffWakeSurfaces: Set<UUID> = []
 
     /// Frees a project's sessions, processes, and panes; keeps its layout.
     /// Never hibernates the active project (switches away first), and never
@@ -7557,6 +7570,11 @@ final class TerminalViewController: NSViewController {
         // has to re-sort its Space. WorkspaceModel doesn't own this write.
         workspace.reapplyOrdering()
         endSessionsForHibernation(of: project, surfaceIDs: surfaceIDs)
+        // The plan above was built from the probe's reading; these panes are
+        // now gone, and the poll that would say so stops while Zetty is in the
+        // background. A wake line is only typed into a pane the probe does
+        // not show an agent in.
+        for id in surfaceIDs { foregroundBySurface.removeValue(forKey: id) }
         handoffRunner.enqueue(records)
         onActiveProjectChanged?()
         refreshTabBar()
@@ -7690,6 +7708,7 @@ final class TerminalViewController: NSViewController {
             then?()
             return
         }
+        queueHandoffWakes(for: project)
         project.isHibernated = false
         workspace.reapplyOrdering()   // waking lifts it back above its Space's dormant members
         lastActiveAt[project.id] = Date()
@@ -7710,6 +7729,7 @@ final class TerminalViewController: NSViewController {
     /// Its panes spawn when shown, like any background project's.
     private func wakeInPlace(_ project: ProjectRuntime) {
         guard project.isHibernated else { return }
+        queueHandoffWakes(for: project)
         project.isHibernated = false
         workspace.reapplyOrdering()
         lastActiveAt[project.id] = Date()

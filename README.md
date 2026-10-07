@@ -139,7 +139,11 @@ copy-bind = n copy-cursor-down
 - **Hibernate** — right-click → **Hibernate Project** frees a project's
   processes and keeps its layout; it moves to the **Hibernating** section until
   you wake it. `hibernate-after = 60m` does this automatically for idle
-  projects (never Home).
+  projects (never Home). With preserved sessions, each Claude or Codex pane
+  leaves a short **handoff** as its project is put away, and waking starts a
+  fresh agent from it instead of a bare shell; the old conversation stays on
+  disk. Waking again within moments, before the handoff is written, resumes
+  the old conversation instead.
 - **Layout templates** — save a project's tabs and splits (each pane's folder
   and an optional startup command) to a committable `.zetty/project.json`; it is
   applied when the project is added, or from Project Settings.
@@ -295,6 +299,7 @@ comments are full-line `#`. Reload with **⇧⌘,**.
 | `restore-scrollback` | `true` | Replay preserved panes' scrollback on relaunch |
 | `zetty-restart-recovery` | `true` | Recover panes and agent conversations after a macOS restart |
 | `hibernate-after` | `off` | Hibernate a project after it has been idle this long (e.g. `60m`, `2h`) |
+| `zetty-hibernate-handoffs` | `true` | Hibernating has each Claude or Codex pane leave a handoff, and waking starts a fresh agent from it (needs `preserve-sessions`) |
 | `check-updates` | `true` | Notify when a newer release is available |
 | `notify-sound` / `notify-badge` / `notify-system` | `true` | Agent needs-attention alerts |
 | `zetty-claude-mod` | `true` | Load Zetty's Claude Code mod into new Claude panes |
@@ -342,6 +347,7 @@ zetty add-project ~/work/api             # add a folder as a project
 zetty new-project ~/work/new --git       # create a folder and add it
 zetty remove-project api                 # remove a project
 zetty hibernate api                      # put a project away (keeps its layout)
+zetty hibernate api --no-handoff         # same, without writing handoffs
 zetty wake api                           # bring it back
 zetty clone --project api --name fork-1  # copy-on-write clone on its own branch
 zetty merge-clone fork-1                 # land a clone's work in its source
@@ -361,7 +367,9 @@ zetty quit --kill-sessions               # quit and end preserved sessions
   your focus; add `--focus` to switch to the result. New panes start right away,
   so their ids can be used with `send` and `capture` immediately.
 - **Hibernated or not-yet-viewed panes still work** — `send` and `focus` wake
-  them on demand.
+  them on demand. `status` marks a hibernated pane `‹handoff: writing›` while
+  its handoff is being written and `‹handoff: ready›` once waking will start
+  from it.
 - **Destructive commands never wait on a dialog.** `close`, `remove-project`,
   `hibernate`, `scratch-clear` and `quit --kill-sessions` refuse busy panes with an error naming them; pass
   `--force` to go ahead.
