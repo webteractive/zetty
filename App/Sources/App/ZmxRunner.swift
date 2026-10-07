@@ -139,16 +139,23 @@ enum ZmxRunner {
     /// write of its own, because Codex reads text and Enter arriving together
     /// as a paste and keeps the Enter as a newline.
     private static func stopCodexTerminals(session: String, zmxPath: String, timeout: TimeInterval) {
-        for _ in 0..<3 {   // at most: interrupt, look again, stop
+        // Codex turns on the kitty keyboard protocol, under which Escape
+        // arrives as `CSI 27 u` and a bare ESC byte is ignored: the first
+        // version sent the bare byte, and a working Codex's command outlived
+        // the hibernate. The bare byte is the second try, for a Codex that
+        // has the protocol off.
+        var escapes = ["\u{1B}[27u", "\u{1B}"]
+        for _ in 0..<3 {   // at most: interrupt, interrupt the other way, stop
             guard let history = runData(zmxPath, ["history", session, "--vt"], timeout: timeout)
             else { return }
             switch PromptBox.codexStopStep(vtScreen: PromptBox.tail(of: history)) {
             case .nothing:
                 return
             case .interrupt:
-                guard send(session: session, text: "\u{1B}", zmxPath: zmxPath, timeout: timeout)
+                guard !escapes.isEmpty,
+                      send(session: session, text: escapes.removeFirst(), zmxPath: zmxPath, timeout: timeout)
                 else { return }
-                Thread.sleep(forTimeInterval: 1)
+                Thread.sleep(forTimeInterval: 1.5)
             case .stop:
                 guard send(session: session, text: "/stop", zmxPath: zmxPath, timeout: timeout)
                 else { return }

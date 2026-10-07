@@ -200,6 +200,12 @@ Needs `preserve-sessions` (`handoffsEnabled`); without zmx both hibernation and
   pane was gone. With a draft in the composer the terminal is left running.
 - **The Enter goes in a write of its own.** Codex reads text and Enter
   arriving together as a paste and keeps the Enter as a newline.
+- **Escape is `CSI 27 u`, not a bare ESC byte.** Codex turns on the kitty
+  keyboard protocol, and a bare `0x1B` written to its session did nothing: the
+  first version sent that, and a working Codex's command outlived the
+  hibernate. `zetty send --key Escape` had worked in the test that preceded
+  it only because Ghostty encodes the key for the protocol; `zmx send` writes
+  raw bytes. The bare byte is kept as a second try.
 - **Only a hibernate does this.** A closed pane's plan carries no probe
   reading, so a Codex pane that is closed leaves its commands running, as
   before.
