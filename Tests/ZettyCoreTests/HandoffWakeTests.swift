@@ -61,3 +61,22 @@ private let record = HandoffRecord(surface: UUID(), agent: .claude, sessionID: "
     #expect(HandoffWake.plan(record: record, handoffReady: false, forkPending: false,
                              handoffPath: path, login: .inherited) == .plainShell)
 }
+
+// MARK: - When the handoff is spent
+
+// Claude reports SessionStart as it launches, BEFORE it expands the mention
+// in its first message. Deleting the file on that event left the fresh agent
+// holding a bare path to nothing, on the first real wake.
+@Test func claudeStartingUpDoesNotProveItReadTheHandoff() {
+    #expect(!HandoffWake.provesHandoffRead(agent: .claude, startedWorking: false))
+}
+
+@Test func anEventAfterClaudeStartedWorkingDoes() {
+    #expect(HandoffWake.provesHandoffRead(agent: .claude, startedWorking: true))
+}
+
+// Codex's shell reads the file into the first message before Codex starts,
+// and its one hook is turn ended.
+@Test func anyCodexEventDoes() {
+    #expect(HandoffWake.provesHandoffRead(agent: .codex, startedWorking: false))
+}

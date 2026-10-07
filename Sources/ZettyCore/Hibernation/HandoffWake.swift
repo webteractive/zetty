@@ -60,6 +60,22 @@ public enum HandoffWake {
             + "\(prefix)\(RestartRecovery.harnessCommand(for: agent)) \(message)"
     }
 
+    /// Whether a hook event proves the fresh agent has taken its handoff in,
+    /// so the file can go. `startedWorking` is whether an EARLIER event since
+    /// the wake reported the agent running.
+    ///
+    /// Claude reports `SessionStart` as it launches, BEFORE it expands the
+    /// mention in its first message: deleting the file on that event left the
+    /// agent holding a bare path to nothing. The event after the one that says
+    /// it started working is the first that can only follow the message being
+    /// read. It is counted since the wake, never read off the pane's status,
+    /// which may still say `running` from an agent hibernated mid-turn.
+    /// Codex's shell has read the file before Codex starts, and its one hook
+    /// is turn ended.
+    public static func provesHandoffRead(agent: AgentKind, startedWorking: Bool) -> Bool {
+        agent == .codex || startedWorking
+    }
+
     /// A mention ends at whitespace, and a quote in it would end the shell's.
     private static func isMentionable(_ path: String) -> Bool {
         !path.contains(where: { $0.isWhitespace || $0 == "'" })

@@ -112,7 +112,8 @@ extension TerminalViewController {
         case .fresh(let command):
             // Guarded like a recovery resume: never typed into a live agent.
             queueStartupCommands([id: command], asAgentResume: true)
-            handoffWakeSurfaces.insert(id)
+            handoffWakeSurfaces[id] = record.agent
+            handoffWakeStarted.remove(id)
         case .resume(let command):
             queueStartupCommands([id: command], asAgentResume: true)
             HandoffStore.remove(id)
@@ -137,7 +138,8 @@ extension TerminalViewController {
 
     /// The woken agent has read its first message: the handoff is spent.
     func consumeHandoff(_ surfaceID: UUID) {
-        guard handoffWakeSurfaces.remove(surfaceID) != nil else { return }
+        guard handoffWakeSurfaces.removeValue(forKey: surfaceID) != nil else { return }
+        handoffWakeStarted.remove(surfaceID)
         HandoffStore.remove(surfaceID)
         ZettyLog.lifecycle.log("handoff: \(SessionPersistence.shortID(for: surfaceID)) consumed")
     }
@@ -149,7 +151,7 @@ extension TerminalViewController {
 
     /// The backstop for a pane whose harness never reports through a hook.
     func scheduleHandoffConsume(_ surfaceID: UUID) {
-        guard handoffWakeSurfaces.contains(surfaceID) else { return }
+        guard handoffWakeSurfaces[surfaceID] != nil else { return }
         DispatchQueue.main.asyncAfter(deadline: .now() + Self.handoffConsumeDelay) { [weak self] in
             guard let self, let running = self.foregroundBySurface[surfaceID],
                   AgentKind(rawValue: running).map(HandoffFork.supports) == true else { return }

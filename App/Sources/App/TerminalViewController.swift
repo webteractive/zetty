@@ -2703,8 +2703,16 @@ final class TerminalViewController: NSViewController {
                 // Live events only: the startup replay describes sessions that
                 // may be long gone, and the override it would set is persisted.
                 if notify { applyReportedAccount(from: event, to: surface) }
-                // The fresh agent has reported, so it has read its handoff.
-                if notify { consumeHandoff(surfaceID) }
+                // Not on the first event: Claude reports as it launches,
+                // before it has read the handoff its first message mentions.
+                if notify, let woken = handoffWakeSurfaces[surfaceID] {
+                    if HandoffWake.provesHandoffRead(
+                        agent: woken, startedWorking: handoffWakeStarted.contains(surfaceID)) {
+                        consumeHandoff(surfaceID)
+                    } else if agentDetector.state(for: surfaceID).status == .running {
+                        handoffWakeStarted.insert(surfaceID)
+                    }
+                }
                 continue
             }
             // Fallback: an older helper, or a pane Zetty no longer has — every
@@ -7534,8 +7542,11 @@ final class TerminalViewController: NSViewController {
     /// Writes each hibernated agent pane's handoff, in the background.
     let handoffRunner = HandoffRunner()
     /// Panes whose queued startup command is a fresh agent reading its
-    /// handoff. The handoff is deleted once that agent shows a sign of life.
-    var handoffWakeSurfaces: Set<UUID> = []
+    /// handoff, with the harness. The handoff is deleted once that agent has
+    /// provably read it; see `HandoffWake.provesHandoffRead`.
+    var handoffWakeSurfaces: [UUID: AgentKind] = [:]
+    /// Those of them a hook has reported running since the wake.
+    var handoffWakeStarted: Set<UUID> = []
 
     /// Frees a project's sessions, processes, and panes; keeps its layout.
     /// Never hibernates the active project (switches away first), and never
