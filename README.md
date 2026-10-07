@@ -982,8 +982,7 @@ Zetty checks [GitHub Releases](https://github.com/webteractive/zetty/releases)
 for a newer version on launch and periodically. When one exists, an **"↑ Update
 &lt;version&gt;"** pill appears in the status bar. Click it (or use **App menu →
 Check for Updates…**) and confirm **Install & Restart** — Zetty downloads the
-release DMG, verifies its SHA-256, swaps itself in place, and relaunches (no
-manual download or quarantine step needed for in-app updates). You can still
+release DMG, verifies its SHA-256, swaps itself in place, and relaunches. You can still
 choose **View Release Notes** to open the page instead. Set `check-updates =
 false` to disable the automatic checks (the menu item still works).
 
