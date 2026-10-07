@@ -129,13 +129,54 @@ extension PromptBox {
     /// FAINT placeholder when it is empty, typed text when it is not, and a
     /// menu row (`› 1. Yes, proceed`) while it asks. It has no rules around it.
     ///
-    /// It looks the same while Codex works, so an `esc to interrupt` line
-    /// anywhere on the screen makes it not empty: Codex's one hook (turn
-    /// ended) cannot tell working from idle, and this is the only thing that
-    /// can. Read off codex 0.160.1.
+    /// It looks the same while Codex works, and while a command Codex started
+    /// is still running after its turn, so either hint anywhere on the screen
+    /// makes it not empty. Codex's one hook (turn ended) cannot tell working
+    /// from idle, and it runs its commands under a shared daemon, not under
+    /// the pane, so the process table cannot show one. The screen is the only
+    /// thing that can. Read off codex 0.160.1 and 0.161.0.
     static func isCodexComposerEmpty(vtScreen: String) -> Bool {
-        // The hint is itself drawn faint, so it is looked for with faint text kept.
-        guard !withoutFaintText(vtScreen, keepFaint: true).contains("esc to interrupt") else { return false }
+        !isCodexWorking(vtScreen) && !hasCodexTerminalRunning(vtScreen)
+            && isCodexComposerBlank(vtScreen)
+    }
+
+    /// What to type into a Codex pane so nothing of its is left running when
+    /// the pane's session is ended.
+    public enum CodexStopStep: Equatable, Sendable {
+        /// Mid-turn: Escape interrupts it. Look again afterwards.
+        case interrupt
+        /// At rest with a terminal still running: `/stop` closes them all.
+        case stop
+        case nothing
+    }
+
+    /// Codex's commands belong to its daemon and outlive the pane: a `sleep`
+    /// it had started was still running after its project was hibernated.
+    /// Interrupting stops the turn, not the command; `/stop` ("Stopping all
+    /// background terminals") stops the command.
+    ///
+    /// `.stop` only with a blank composer. Typed after a draft, `/stop` would
+    /// be submitted with it as a prompt, and the daemon would carry on with
+    /// that turn after the pane was gone.
+    public static func codexStopStep(vtScreen: String) -> CodexStopStep {
+        if isCodexWorking(vtScreen) { return .interrupt }
+        return hasCodexTerminalRunning(vtScreen) && isCodexComposerBlank(vtScreen) ? .stop : .nothing
+    }
+
+    /// The hints are themselves drawn faint, so they are looked for with
+    /// faint text kept.
+    private static func isCodexWorking(_ vtScreen: String) -> Bool {
+        withoutFaintText(vtScreen, keepFaint: true).contains("esc to interrupt")
+    }
+
+    /// The whole phrase, since the words alone can be somebody's message.
+    private static func hasCodexTerminalRunning(_ vtScreen: String) -> Bool {
+        let everything = withoutFaintText(vtScreen, keepFaint: true)
+        return everything.contains("background terminal running")
+            || everything.contains("background terminals running")
+    }
+
+    private static func isCodexComposerBlank(_ vtScreen: String) -> Bool {
         let lines = withoutFaintText(vtScreen)
             .split(omittingEmptySubsequences: false, whereSeparator: \.isNewline)
         guard let composer = lines.last(where: { $0.drop(while: \.isWhitespace).first == codexPrompt })

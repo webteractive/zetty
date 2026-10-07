@@ -19,6 +19,10 @@ public enum HibernationTeardown {
     public struct Plan: Equatable, Sendable {
         /// Sessions at a bare shell prompt: sent `exitInput` first.
         public let exit: [String]
+        /// Sessions with Codex in front: told to stop what it has running
+        /// before they are ended. Codex runs its commands under a shared
+        /// daemon, so ending the pane leaves them going.
+        public let stopFirst: [String]
         /// Every session of the project, in pane order.
         public let all: [String]
 
@@ -45,7 +49,9 @@ public enum HibernationTeardown {
                             foreground: [UUID: String],
                             agentBusy: Set<UUID>) -> Plan {
         let exiting = surfaceIDs.filter { foreground[$0] == "" && !agentBusy.contains($0) }
+        let codex = surfaceIDs.filter { foreground[$0] == AgentKind.codex.rawValue }
         return Plan(exit: exiting.map(SessionPersistence.sessionName(for:)),
+                    stopFirst: codex.map(SessionPersistence.sessionName(for:)),
                     all: surfaceIDs.map(SessionPersistence.sessionName(for:)))
     }
 }

@@ -56,3 +56,17 @@ private func name(_ id: UUID) -> String { SessionPersistence.sessionName(for: id
     // run glued to `exit`.
     #expect(HibernationTeardown.exitInput == "\u{05}\u{15}exit\r")
 }
+
+// Codex runs its commands under a shared daemon, so ending its pane leaves
+// them running. Its panes are named so they can be told to stop first.
+@Test func codexPanesAreStoppedBeforeTheirSessionsEnd() {
+    let codex = UUID()
+    let plan = HibernationTeardown.plan(
+        surfaceIDs: [shell, agent, codex],
+        foreground: [shell: "", agent: "claude", codex: "codex"],
+        agentBusy: [])
+    #expect(plan.stopFirst == [name(codex)])
+    #expect(plan.exit == [name(shell)])
+    // A pane closed rather than hibernated carries no probe reading.
+    #expect(HibernationTeardown.plan(surfaceIDs: [codex], foreground: [:], agentBusy: []).stopFirst.isEmpty)
+}

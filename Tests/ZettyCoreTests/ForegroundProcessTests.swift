@@ -164,3 +164,20 @@ private let agentTask = """
     #expect(!ForegroundProcess.hasDetachedWork(forSessionPID: 33333, psOutput: psSample))
     #expect(!ForegroundProcess.hasDetachedWork(forSessionPID: 99999, psOutput: psSample))
 }
+
+// MARK: - A helper's own processes
+
+// A browser an MCP server launched: detached like a task, but it hangs off a
+// helper, not off the agent. It is not work the agent is doing, so it must
+// not hold the project awake. Hibernating closes it anyway: everything
+// beneath a Claude was gone afterwards, even a child in a session of its own
+// that ignored TERM and HUP.
+private let helperBrowser = """
+60001 94691 60001 Ss ?? 0:03.00 90000 /Applications/Google Chrome.app/Contents/MacOS/Google Chrome --remote-debugging-pipe
+60002 60001 60001 S ?? 0:01.00 40000 /Applications/Google Chrome.app/Contents/Frameworks/Helper --type=renderer
+"""
+
+@Test func aHelpersDetachedBrowserIsNotTheAgentsWork() {
+    #expect(!ForegroundProcess.hasDetachedWork(forSessionPID: 30938,
+                                               psOutput: agentHelpers + "\n" + helperBrowser))
+}

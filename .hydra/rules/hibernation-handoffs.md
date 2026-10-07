@@ -132,13 +132,22 @@ Needs `preserve-sessions` (`handoffsEnabled`); without zmx both hibernation and
   2026-10-08). When a turn ends Claude reports `idle` and shows an empty box
   while a dev server it started keeps running, and before handoffs any
   foreground process protected that server from the timer.
-  `ForegroundProcess.hasDetachedWork` finds it: an agent runs each command it
-  starts as a session of its own with NO terminal (`??` in `ps`), while its
-  helpers, MCP servers and a language server, stay on the pane's. A different
-  process GROUP alone is not the sign: Codex keeps its helpers in groups of
-  their own, on the terminal. Subagents run inside Claude's process, so they
-  are caught by the clock instead: `AgentTranscript` takes the newest of the
-  session's transcript and `<session>/subagents/*`.
+  `ForegroundProcess.hasDetachedWork` finds it for Claude: it runs each
+  command it starts as a session of its own with NO terminal (`??` in `ps`),
+  directly beneath it, while its helpers, MCP servers and a language server,
+  stay on the pane's. A different process GROUP alone is not the sign: Codex
+  keeps its helpers in groups of their own, on the terminal. A detached
+  process further DOWN is not either: a browser an MCP server launched hangs
+  off that helper and is not work. Subagents run inside Claude's process, so
+  they are caught by the clock instead: `AgentTranscript` takes the newest of
+  the session's transcript and `<session>/subagents/*`.
+- **Codex runs its commands under a shared daemon, not under the pane**
+  (`codex` → a `codex` daemon with ppid 1 → the command). The process table
+  shows nothing beneath the pane, so its screen is read instead: while a
+  command runs the working line carries `1 background terminal running`, and
+  at rest the line above the composer reads `1 background terminal running ·
+  /ps to view · /stop to close`. `PromptBox` refuses either as empty, which is
+  what keeps such a project awake.
 - **The busy rule for a hibernate somebody asks for is unchanged on purpose**
   (`confirmClosingBusyPanes`, `BusyPaneGate`, `--force`).
 - **Codex's hook cannot tell working from idle** (its one hook is turn ended),
@@ -168,6 +177,33 @@ Needs `preserve-sessions` (`handoffsEnabled`); without zmx both hibernation and
   (`HandoffPolicy.handoffWithin`), or the first pass after an update would
   cold-read every stale transcript in turn. By hand always writes one.
 
+## What hibernating closes
+
+- **Claude closes everything beneath it when its session is ended**, so
+  nothing is added for it. Checked on a real hibernate three ways: a
+  background command, a child in a session of its own, and one in a session
+  of its own that ignored TERM and HUP. All were gone afterwards, along with
+  the MCP helpers. A cleanup pass that signalled survivors was written and
+  then removed: it had nothing to do, and it put an unbounded `ps` in the
+  teardown.
+- **Codex's commands outlive its pane**, being the daemon's: a `sleep` Codex
+  had started was still running after its project was hibernated. So a Codex
+  pane is told to stop first (`HibernationTeardown.Plan.stopFirst`,
+  `ZmxRunner.stopCodexTerminals`): the screen is read and only what it calls
+  for is typed (`PromptBox.codexStopStep`), Escape if a turn is running, then
+  `/stop` ("Stopping all background terminals") if a terminal is.
+- **Escape interrupts the turn, not the command.** After it the command was
+  still running and the screen showed the `/stop` hint; that is why there are
+  two steps.
+- **`/stop` is never typed onto a draft.** It would be submitted with the
+  draft as a prompt, and the daemon would carry on with that turn after the
+  pane was gone. With a draft in the composer the terminal is left running.
+- **The Enter goes in a write of its own.** Codex reads text and Enter
+  arriving together as a paste and keeps the Enter as a newline.
+- **Only a hibernate does this.** A closed pane's plan carries no probe
+  reading, so a Codex pane that is closed leaves its commands running, as
+  before.
+
 ## Known limits
 
 - **A pane's session comes from a hook, the mod, or a search of the harness's
@@ -175,11 +211,10 @@ Needs `preserve-sessions` (`handoffsEnabled`); without zmx both hibernation and
   created in and uses physical paths (`/tmp` reports as `/tmp/…`, a rollout
   records `/private/tmp/…`). An agent started after a `cd` elsewhere, with no
   hook, gets no handoff.
-- **Background work is seen two ways, and neither is complete.** A command
-  shows as a process with no terminal; a subagent shows only as a transcript
-  being written. A detached browser an MCP server launched also has no
-  terminal, and will keep its agent's project awake for as long as it lives:
-  the rule errs toward awake. Codex's commands have not been looked at.
+- **Background work is read three ways, each for one case.** Claude's
+  commands from the process table, its subagents from their transcripts,
+  Codex's from its screen. A harness that changes how it runs commands, or
+  rewords its hint, silently stops being seen.
 - **Claude shows its spinner before it has submitted a prompt given on the
   command line.** For most of a minute at startup (three launched together)
   the status was `idle`, the box empty and the spinner turning; `running` only

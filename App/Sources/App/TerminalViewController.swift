@@ -7607,7 +7607,9 @@ final class TerminalViewController: NSViewController {
               !project.isHome, !project.isHibernated else { return }
         let surfaceIDs = project.tabList.trees.flatMap { $0.layout.surfaces.map(\.id) }
         if confirmIfBusy, !confirmClosingBusyPanes(surfaceIDs, what: "project “\(project.name)”") { return }
-        let records = captureHandoffRecords(for: project, surfaceIDs: surfaceIDs, request: handoffs)
+        let foreground = foregroundForHibernation(surfaceIDs, request: handoffs)
+        let records = captureHandoffRecords(for: project, surfaceIDs: surfaceIDs,
+                                            request: handoffs, foreground: foreground)
 
         if index == workspace.activeIndex {
             // Switch to another awake project if one exists; otherwise stay put
@@ -7623,7 +7625,8 @@ final class TerminalViewController: NSViewController {
         // A Space orders its members awake-before-dormant, so hibernating one
         // has to re-sort its Space. WorkspaceModel doesn't own this write.
         workspace.reapplyOrdering()
-        endSessionsForHibernation(of: project, surfaceIDs: surfaceIDs)
+        endSessionsForHibernation(of: project, surfaceIDs: surfaceIDs,
+                                  foreground: foreground ?? foregroundBySurface)
         // The plan above was built from the probe's reading; these panes are
         // now gone, and the poll that would say so stops while Zetty is in the
         // background. A wake line is only typed into a pane the probe does
@@ -7649,7 +7652,8 @@ final class TerminalViewController: NSViewController {
     /// to `exit` first and the panes' surfaces are held until every session is
     /// gone; the project is already marked hibernated, so the sidebar, the CLI
     /// and `zetty status` agree from the first moment.
-    private func endSessionsForHibernation(of project: ProjectRuntime, surfaceIDs: [UUID]) {
+    private func endSessionsForHibernation(of project: ProjectRuntime, surfaceIDs: [UUID],
+                                           foreground: [UUID: String]) {
         guard let teardown = onSurfacesHibernating else {
             onSurfacesClosed?(surfaceIDs)
             return
@@ -7659,7 +7663,7 @@ final class TerminalViewController: NSViewController {
             return status == .running || status == .needsAttention
         })
         let plan = HibernationTeardown.plan(surfaceIDs: surfaceIDs,
-                                            foreground: foregroundBySurface,
+                                            foreground: foreground,
                                             agentBusy: busyAgents)
         runTeardown(teardown, plan: plan, panes: surfaceIDs, of: project)
     }

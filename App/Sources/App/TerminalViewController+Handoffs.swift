@@ -46,23 +46,31 @@ extension TerminalViewController {
         return (commands, working)
     }
 
+    /// What is in each pane's foreground, for a hibernation about to happen:
+    /// the reading `hibernate-after` just took, or a fresh one when Zetty is
+    /// in the background and the probe's own is stale. nil is "use the
+    /// probe's". Both the handoff capture and the teardown plan read it, so
+    /// a scripted hibernate neither misses an agent nor types `exit` into one.
+    func foregroundForHibernation(_ surfaceIDs: [UUID], request: HandoffRequest) -> [UUID: String]? {
+        if case .automatic(_, let read) = request { return read }
+        guard !NSApp.isActive, let zmx = ZmxRunner.locate() else { return nil }
+        return Self.probeForeground(surfaceIDs, zmxPath: zmx)
+    }
+
     /// The records for a project about to be hibernated, written to disk.
     /// Called BEFORE the teardown: the probe, the hook state and the login
     /// are all gone after it.
     func captureHandoffRecords(for project: ProjectRuntime, surfaceIDs: [UUID],
-                               request: HandoffRequest) -> [HandoffRecord] {
+                               request: HandoffRequest,
+                               foreground: [UUID: String]?) -> [HandoffRecord] {
         if case .none = request { return [] }
         guard handoffsEnabled?(project) == true else { return [] }
 
         var manual = true
         var transcripts: [UUID: Date] = [:]
-        var foreground: [UUID: String]?
-        if case .automatic(let dates, let read) = request {
+        if case .automatic(let dates, _) = request {
             manual = false
             transcripts = dates
-            foreground = read
-        } else if !NSApp.isActive, let zmx = ZmxRunner.locate() {
-            foreground = Self.probeForeground(surfaceIDs, zmxPath: zmx)
         }
 
         let now = Date()

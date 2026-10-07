@@ -90,3 +90,50 @@ private func fixture(_ name: String) throws -> String {
                                              subdirectory: "Fixtures/promptbox"))
     return String(decoding: try Data(contentsOf: url), as: UTF8.self)
 }
+
+// Codex runs its commands under a shared daemon, not under the pane, so the
+// process table cannot show one still going. Its screen says so instead.
+@Test func aCodexWithATerminalStillRunningIsNotAtRest() {
+    let bold = "\u{1B}[1m", faint = "\u{1B}[2m", reset = "\u{1B}[0m"
+    let composer = "\(bold)› \(reset)\(faint)Ask Codex to do anything\(reset)"
+    #expect(PromptBox.isEmpty(vtScreen: "• started\n\(composer)\n  status", agent: .codex))
+    #expect(!PromptBox.isEmpty(
+        vtScreen: "• started\n  \(faint)1 background terminal running · /ps to view\(reset)\n\(composer)",
+        agent: .codex))
+    // The words alone, in somebody's message, are not the indicator.
+    #expect(PromptBox.isEmpty(
+        vtScreen: "› start a background terminal that keeps running\n• started\n\(composer)",
+        agent: .codex))
+}
+
+// MARK: - Closing what Codex has running
+
+// A real idle screen (codex 0.161.0) after a turn was interrupted with its
+// command still going: "1 background terminal running · /ps to view · /stop
+// to close". That command belongs to Codex's daemon and outlives the pane.
+@Test func aCodexAtRestWithATerminalRunningIsNotEmptyAndCanBeStopped() throws {
+    let screen = try fixture("codex-background")
+    #expect(!PromptBox.isEmpty(vtScreen: screen, agent: .codex))
+    #expect(PromptBox.codexStopStep(vtScreen: screen) == .stop)
+}
+
+@Test func aWorkingCodexIsInterruptedFirst() throws {
+    #expect(PromptBox.codexStopStep(vtScreen: try fixture("codex-working")) == .interrupt)
+}
+
+@Test func aCodexWithNothingRunningIsLeftAlone() throws {
+    #expect(PromptBox.codexStopStep(vtScreen: try fixture("codex-empty")) == .nothing)
+    #expect(PromptBox.codexStopStep(vtScreen: try fixture("codex-question")) == .nothing)
+    #expect(PromptBox.codexStopStep(vtScreen: "$ ls\nREADME.md") == .nothing)
+}
+
+// `/stop` typed after a draft would be submitted WITH it, as a prompt, and
+// Codex's daemon would carry on with that turn after the pane was gone.
+@Test func stopIsNeverTypedOntoADraft() {
+    let bold = "\u{1B}[1m", faint = "\u{1B}[2m", reset = "\u{1B}[0m"
+    let indicator = "  \(faint)1 background terminal running · /ps to view · /stop to close\(reset)"
+    #expect(PromptBox.codexStopStep(vtScreen: "\(indicator)\n\(bold)› \(reset)refactor the parser")
+            == .nothing)
+    #expect(PromptBox.codexStopStep(
+        vtScreen: "\(indicator)\n\(bold)› \(reset)\(faint)Ask Codex to do anything\(reset)") == .stop)
+}

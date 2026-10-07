@@ -26,28 +26,26 @@ public enum ForegroundProcess {
     }
 
     /// Whether the program in the pane's foreground has work of its own still
-    /// running: a descendant with no terminal.
+    /// running: a child of its own with no terminal.
     ///
     /// An agent runs each command it starts as a session of its own, off the
-    /// pane's terminal, while its helpers (MCP servers, a language server)
-    /// stay on it. So a dev server an agent started and left running shows
-    /// here after its turn has ended, when its hooks say idle and its prompt
-    /// box is empty. A different process GROUP alone is not the sign: Codex
-    /// keeps its helpers in groups of their own, on the terminal. Read off
-    /// claude 2.1.292. False for an idle shell, whose own jobs are not this.
+    /// pane's terminal, directly beneath it, while its helpers (MCP servers, a
+    /// language server) stay on the terminal. So a dev server an agent
+    /// started and left running shows here after its turn has ended, when its
+    /// hooks say idle and its prompt box is empty. Read off claude 2.1.292.
+    ///
+    /// Two things are deliberately not the sign. A different process GROUP:
+    /// Codex keeps its helpers in groups of their own, on the terminal. And a
+    /// detached process further down: a browser an MCP server launched hangs
+    /// off that helper, and is not work that should hold the project awake
+    /// (hibernating closes it with everything else beneath the agent). False for an idle shell, whose own jobs
+    /// are not this. Codex is never seen here at all: it runs its commands
+    /// under a shared daemon, not under the pane (`PromptBox` reads its
+    /// screen for that).
     public static func hasDetachedWork(forSessionPID sessionPID: Int32, psOutput: String) -> Bool {
         let rows = parse(psOutput)
         guard let leader = foregroundLeader(forSessionPID: sessionPID, in: rows) else { return false }
-        var children: [Int32: [Row]] = [:]
-        for row in rows { children[row.ppid, default: []].append(row) }
-        var pending = children[leader.row.pid] ?? []
-        var seen: Set<Int32> = [leader.row.pid]
-        while let row = pending.popLast() {
-            guard seen.insert(row.pid).inserted else { continue }
-            if row.tty == "??" { return true }
-            pending.append(contentsOf: children[row.pid] ?? [])
-        }
-        return false
+        return rows.contains { $0.ppid == leader.row.pid && $0.tty == "??" }
     }
 
     /// The process-group leader in the foreground of the session's terminal,

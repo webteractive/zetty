@@ -94,6 +94,9 @@ enum ZmxRunner {
             // pin its panes (and any queued wake) for good. A send that times
             // out means zmx is not answering, so the rest are not tried.
             let timeout = teardownCallTimeout
+            for session in plan.stopFirst {
+                stopCodexTerminals(session: session, zmxPath: zmxPath, timeout: timeout)
+            }
             for session in plan.exit {
                 let started = Date()
                 let sent = send(session: session, text: HibernationTeardown.exitInput,
@@ -123,6 +126,38 @@ enum ZmxRunner {
                 _ = run(zmxPath, ["kill"] + left + ["--force"], timeout: timeout)
             }
             DispatchQueue.main.async { MainActor.assumeIsolated { completion() } }
+        }
+    }
+
+    /// Has a Codex pane stop what it has running before its session is ended.
+    ///
+    /// Codex's commands run under its shared daemon, not under the pane, so
+    /// killing the session does not reach them: a `sleep` Codex had started
+    /// outlived its project's hibernation. The screen is read first and only
+    /// what it calls for is typed (`PromptBox.codexStopStep`): Escape if a
+    /// turn is running, then `/stop` if a terminal is. The Enter goes in a
+    /// write of its own, because Codex reads text and Enter arriving together
+    /// as a paste and keeps the Enter as a newline.
+    private static func stopCodexTerminals(session: String, zmxPath: String, timeout: TimeInterval) {
+        for _ in 0..<3 {   // at most: interrupt, look again, stop
+            guard let history = runData(zmxPath, ["history", session, "--vt"], timeout: timeout)
+            else { return }
+            switch PromptBox.codexStopStep(vtScreen: PromptBox.tail(of: history)) {
+            case .nothing:
+                return
+            case .interrupt:
+                guard send(session: session, text: "\u{1B}", zmxPath: zmxPath, timeout: timeout)
+                else { return }
+                Thread.sleep(forTimeInterval: 1)
+            case .stop:
+                guard send(session: session, text: "/stop", zmxPath: zmxPath, timeout: timeout)
+                else { return }
+                Thread.sleep(forTimeInterval: 0.3)
+                send(session: session, text: "\r", zmxPath: zmxPath, timeout: timeout)
+                Thread.sleep(forTimeInterval: 1.5)
+                ZettyLog.lifecycle.log("teardown: asked codex in \(session) to stop its terminals")
+                return
+            }
         }
     }
 
