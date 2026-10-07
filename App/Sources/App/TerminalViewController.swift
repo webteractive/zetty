@@ -2159,12 +2159,29 @@ final class TerminalViewController: NSViewController {
 
     /// What `AgentSessionLookup` needs for this pane, in the store of the login
     /// it is running — each config dir keeps its own transcripts.
+    ///
+    /// The directory falls back to the one the pane was created in: a pane
+    /// that was never shown has reported none, and an agent started there
+    /// recorded exactly that. A wrong guess costs nothing, since a candidate
+    /// is confirmed against the directory inside its transcript. It is made
+    /// physical because that is what a harness records: a pane under `/tmp`
+    /// reports `/tmp/…` while its Codex rollout says `/private/tmp/…`, and
+    /// the two never matched.
     private func sessionLookupTarget(for surfaceID: UUID, kind: AgentKind) -> AgentSessionLookup.Target? {
         guard let cwd = PaneCwdStore.read(surfaceID)
-                ?? workspace.surface(with: surfaceID).flatMap({ registry.workingDirectory(for: $0) })
+                ?? workspace.surface(with: surfaceID).flatMap({
+                    registry.workingDirectory(for: $0) ?? $0.workingDir
+                })
         else { return nil }
-        return AgentSessionLookup.Target(surface: surfaceID, cwd: cwd, agent: kind,
+        return AgentSessionLookup.Target(surface: surfaceID, cwd: Self.physicalPath(cwd), agent: kind,
                                          configDirectory: harnessConfigDirectory(for: surfaceID, kind: kind))
+    }
+
+    /// `path` with every symlink resolved, or `path` when it names nothing.
+    private static func physicalPath(_ path: String) -> String {
+        guard let resolved = realpath(path, nil) else { return path }
+        defer { free(resolved) }
+        return String(cString: resolved)
     }
 
     /// The config dir `kind` keeps its sessions in for this pane's login; nil
