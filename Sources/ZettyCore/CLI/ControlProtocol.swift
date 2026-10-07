@@ -116,8 +116,12 @@ public enum ControlRequest: Equatable, Sendable {
     /// with an error naming them unless this is set. A socket request never
     /// raises a confirmation dialog — a modal on the main thread froze every
     /// zetty command until someone clicked it.
-    case hibernateProject(name: String, force: Bool = false)
-    /// Wake the named hibernated project — fresh shells, layout intact. `.ok`.
+    ///
+    /// `handoff`: each Claude or Codex pane leaves a handoff unless this is
+    /// false (`--no-handoff`), for a caller that only wants the memory back.
+    case hibernateProject(name: String, force: Bool = false, handoff: Bool = true)
+    /// Wake the named hibernated project: each pane with a handoff starts a
+    /// fresh agent from it, the rest get fresh shells; layout intact. `.ok`.
     case wakeProject(name: String)
     /// Create a Space (a user-defined sidebar section). `colorID` is a curated
     /// palette id and `glyph` an SF Symbol; both optional. Errors when the name
@@ -133,8 +137,9 @@ public enum ControlRequest: Equatable, Sendable {
     /// (`--none`). Errors for Home, Scratch, and clones. `.ok`.
     case moveToSpace(project: String, space: String?)
     /// Hibernate every project in the named Space (`hibernate --space`). `.ok`.
-    /// `force` as for `hibernateProject`, across every project in the Space.
-    case hibernateSpace(name: String, force: Bool = false)
+    /// `force` and `handoff` as for `hibernateProject`, across every project
+    /// in the Space.
+    case hibernateSpace(name: String, force: Bool = false, handoff: Bool = true)
     /// Wake every hibernated project in the named Space (`wake --space`). `.ok`.
     case wakeSpace(name: String)
     /// Close the targeted pane (its tab when it's the last pane), or the
@@ -186,7 +191,7 @@ public enum ControlRequest: Equatable, Sendable {
 
 extension ControlRequest: Codable {
     private enum CodingKeys: String, CodingKey {
-        case command, target, text, enter, keys, project, wholeTab, killSessions, simulateRestart, vertical, lines, path, name, gitInit, focus, fetch, discard, line, column, space, newName, color, icon, account, probe, surface, on, profile, slot, collapse, view, force
+        case command, target, text, enter, keys, project, wholeTab, killSessions, simulateRestart, vertical, lines, path, name, gitInit, focus, fetch, discard, line, column, space, newName, color, icon, account, probe, surface, on, profile, slot, collapse, view, force, handoff
     }
 
     public init(from decoder: Decoder) throws {
@@ -195,6 +200,10 @@ extension ControlRequest: Codable {
         // reading of silence is "refuse if busy".
         func decodeForce() throws -> Bool {
             try container.decodeIfPresent(Bool.self, forKey: .force) ?? false
+        }
+        // Absent means the default, handoffs on: an older CLI never sends it.
+        func decodeHandoff() throws -> Bool {
+            try container.decodeIfPresent(Bool.self, forKey: .handoff) ?? true
         }
         switch try container.decode(String.self, forKey: .command) {
         case "status": self = .status
@@ -277,7 +286,7 @@ extension ControlRequest: Codable {
             )
         case "hibernate-space":
             self = .hibernateSpace(name: try container.decode(String.self, forKey: .name),
-                                   force: try decodeForce())
+                                   force: try decodeForce(), handoff: try decodeHandoff())
         case "wake-space":
             self = .wakeSpace(name: try container.decode(String.self, forKey: .name))
         case "clone":
@@ -301,7 +310,7 @@ extension ControlRequest: Codable {
             )
         case "hibernate":
             self = .hibernateProject(name: try container.decode(String.self, forKey: .project),
-                                     force: try decodeForce())
+                                     force: try decodeForce(), handoff: try decodeHandoff())
         case "wake":
             self = .wakeProject(name: try container.decode(String.self, forKey: .project))
         case "new-project":
@@ -438,10 +447,11 @@ extension ControlRequest: Codable {
             try container.encode("move-to-space", forKey: .command)
             try container.encode(project, forKey: .project)
             try container.encodeIfPresent(space, forKey: .space)
-        case .hibernateSpace(let name, let force):
+        case .hibernateSpace(let name, let force, let handoff):
             try container.encode("hibernate-space", forKey: .command)
             try container.encode(name, forKey: .name)
             try container.encode(force, forKey: .force)
+            try container.encode(handoff, forKey: .handoff)
         case .wakeSpace(let name):
             try container.encode("wake-space", forKey: .command)
             try container.encode(name, forKey: .name)
@@ -465,10 +475,11 @@ extension ControlRequest: Codable {
             try container.encode(fetch, forKey: .fetch)
             try container.encode(discard, forKey: .discard)
             try container.encode(force, forKey: .force)
-        case .hibernateProject(let name, let force):
+        case .hibernateProject(let name, let force, let handoff):
             try container.encode("hibernate", forKey: .command)
             try container.encode(name, forKey: .project)
             try container.encode(force, forKey: .force)
+            try container.encode(handoff, forKey: .handoff)
         case .wakeProject(let name):
             try container.encode("wake", forKey: .command)
             try container.encode(name, forKey: .project)
@@ -656,9 +667,13 @@ public struct StatusSnapshot: Codable, Equatable, Sendable {
         /// default login. nil keeps the field absent for anyone not using
         /// accounts.
         public let account: String?
+        /// For a pane of a hibernated project: `writing` while its handoff is
+        /// queued or being written, `ready` once waking will start a fresh
+        /// agent from it. Absent otherwise.
+        public let handoff: String?
 
         public init(id: String, title: String?, cwd: String?, tool: String?, agentStatus: String?,
-                    isFocused: Bool, live: Bool, account: String? = nil) {
+                    isFocused: Bool, live: Bool, account: String? = nil, handoff: String? = nil) {
             self.id = id
             self.title = title
             self.cwd = cwd
@@ -667,10 +682,11 @@ public struct StatusSnapshot: Codable, Equatable, Sendable {
             self.isFocused = isFocused
             self.live = live
             self.account = account
+            self.handoff = handoff
         }
 
         private enum CodingKeys: String, CodingKey {
-            case id, title, cwd, tool, agentStatus, isFocused, live, account
+            case id, title, cwd, tool, agentStatus, isFocused, live, account, handoff
         }
 
         /// Hand-written so `live` defaults instead of throwing when an older
@@ -686,6 +702,7 @@ public struct StatusSnapshot: Codable, Equatable, Sendable {
             isFocused = try c.decodeIfPresent(Bool.self, forKey: .isFocused) ?? false
             live = try c.decodeIfPresent(Bool.self, forKey: .live) ?? false
             account = try c.decodeIfPresent(String.self, forKey: .account)
+            handoff = try c.decodeIfPresent(String.self, forKey: .handoff)
         }
     }
 

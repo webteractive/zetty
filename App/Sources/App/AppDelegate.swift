@@ -2160,13 +2160,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         case .moveToSpace(let project, let space):
             if let message = tvc.moveProjectNamed(project, toSpace: space) { return .error(message) }
             return .ok
-        case .hibernateSpace(let name, let force):
+        case .hibernateSpace(let name, let force, _):
             if let message = tvc.hibernateSpaceNamed(name, force: force) { return .error(message) }
             return .ok
         case .wakeSpace(let name):
             if let message = tvc.wakeSpaceNamed(name) { return .error(message) }
             return .ok
-        case .hibernateProject(let name, let force):
+        case .hibernateProject(let name, let force, _):
             if let message = tvc.hibernateProjectNamed(name, force: force) { return .error(message) }
             return .ok
         case .wakeProject(let name):

@@ -287,3 +287,42 @@ private let panes: [StatusSnapshot.Pane] = [
     #expect(try JSONDecoder().decode(ControlRequest.self, from: Data(json.utf8))
         == .tiles(on: nil, profile: nil))
 }
+
+// MARK: - Hibernation handoffs
+
+// An older `zetty` never sends `handoff`, and silence must mean the default:
+// handoffs on.
+@Test func anOlderClientsHibernateStillWritesHandoffs() throws {
+    let project = try JSONDecoder().decode(
+        ControlRequest.self, from: Data(#"{"command":"hibernate","project":"Foo"}"#.utf8))
+    #expect(project == .hibernateProject(name: "Foo", force: false, handoff: true))
+    let space = try JSONDecoder().decode(
+        ControlRequest.self, from: Data(#"{"command":"hibernate-space","name":"Work"}"#.utf8))
+    #expect(space == .hibernateSpace(name: "Work", force: false, handoff: true))
+}
+
+@Test func theHandoffFlagRoundTrips() throws {
+    for request in [ControlRequest.hibernateProject(name: "Foo", force: true, handoff: false),
+                    .hibernateSpace(name: "Work", force: false, handoff: false)] {
+        let data = try JSONEncoder().encode(request)
+        #expect(try JSONDecoder().decode(ControlRequest.self, from: data) == request)
+    }
+}
+
+// The other direction: an older `zetty` reading a newer app's status, and a
+// newer one reading an older app's.
+@Test func aPanesHandoffStateDecodesFromOlderPayloadsAndRenders() throws {
+    let old = #"{"id":"045c5269","isFocused":false,"live":false}"#
+    #expect(try JSONDecoder().decode(StatusSnapshot.Pane.self, from: Data(old.utf8)).handoff == nil)
+
+    func lines(handoff: String?) -> [String] {
+        let pane = StatusSnapshot.Pane(id: "045c5269", title: nil, cwd: "/tmp/app", tool: nil,
+                                       agentStatus: nil, isFocused: false, live: false, handoff: handoff)
+        return ControlCLI.statusLines(StatusSnapshot(projects: [
+            .init(name: "App", isActive: false, hibernated: true,
+                  tabs: [.init(title: "main", isActive: true, panes: [pane])])]))
+    }
+    #expect(lines(handoff: "writing").contains { $0.contains("045c5269  -  ‹handoff: writing›") })
+    #expect(lines(handoff: "ready").contains { $0.contains("‹handoff: ready›") })
+    #expect(!lines(handoff: nil).contains { $0.contains("handoff") })
+}

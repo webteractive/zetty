@@ -94,12 +94,15 @@ public enum ControlCLI {
                                               branch in the original repo first,
                                               --discard deletes without fetching; a
                                               clone with unsaved work requires one
-      zetty hibernate (<name> | --space <name>) [--force]
+      zetty hibernate (<name> | --space <name>) [--force] [--no-handoff]
                                               free a project's (or every project in
                                               a Space's) sessions/processes/panes
-                                              (keeps its layout)
+                                              (keeps its layout). Each Claude or
+                                              Codex pane leaves a handoff unless
+                                              --no-handoff
       zetty wake (<name> | --space <name>)  wake a hibernated project or Space
-                                              (fresh shells). Rarely needed by
+                                              (a fresh agent from each handoff,
+                                              fresh shells otherwise). Rarely needed by
                                               hand — send/new-tab/split/break/
                                               focus wake as required
       zetty new-space <name> [--color <id>] [--icon <symbol>]
@@ -177,7 +180,8 @@ public enum ControlCLI {
         arguments are joined with spaces and sent verbatim; keys append after.
       - `status --json` prints the full machine-readable tree (pane ids, titles,
         cwd, running tool, agent status, focus, plus `hibernated` per project and
-        `live` per pane). `new-tab`/`split` print just the pane id, so:
+        `live` per pane, and `handoff` on a hibernated pane: `writing` while its
+        summary is being written, `ready` once waking will start from it). `new-tab`/`split` print just the pane id, so:
         zetty send --pane "$(zetty new-tab)" ls --enter
       - `status --json` also carries `tiles`: whether the grid is up, the active
         view's slots (numbered from 1, in reading order) and every saved view.
@@ -289,12 +293,13 @@ public enum ControlCLI {
             return runRemoveProject(arguments)
         case "hibernate":
             return runProjectByName(arguments, verb: "hibernate", takesForce: true,
-                                    { .hibernateProject(name: $0, force: $1) },
-                                    space: { .hibernateSpace(name: $0, force: $1) })
+                                    takesNoHandoff: true,
+                                    { .hibernateProject(name: $0, force: $1, handoff: $2) },
+                                    space: { .hibernateSpace(name: $0, force: $1, handoff: $2) })
         case "wake":
             return runProjectByName(arguments, verb: "wake", takesForce: false,
-                                    { name, _ in .wakeProject(name: name) },
-                                    space: { name, _ in .wakeSpace(name: name) })
+                                    { name, _, _ in .wakeProject(name: name) },
+                                    space: { name, _, _ in .wakeSpace(name: name) })
         case "new-space":
             return runNewSpace(arguments)
         case "rename-space":
@@ -501,10 +506,13 @@ public enum ControlCLI {
         DESTRUCTIVE: ends the project's sessions; a clone's directory is deleted.
         """,
         "hibernate": """
-        usage: zetty hibernate (<name> | --space <name>) [--force]
+        usage: zetty hibernate (<name> | --space <name>) [--force] [--no-handoff]
 
         Free a project's — or every project in a Space's — sessions, processes
         and panes, keeping its layout. Idle shells are asked to exit first.
+        Each Claude or Codex pane leaves a short handoff, written in the
+        background after the project is put away, and wakes into a fresh agent
+        that starts from it (`zetty status` shows ‹handoff: writing|ready›).
         Home can't be hibernated.
         Busy panes (anything but a bare shell in front) are refused with an
         error naming them; --force closes them anyway. It never waits on a
@@ -512,6 +520,7 @@ public enum ControlCLI {
 
           --space <name>   hibernate every project in that Space
           --force          hibernate even when panes are busy
+          --no-handoff     free the memory only; panes wake as plain shells
 
         DESTRUCTIVE: ends every process running in those panes.
         """,
@@ -1207,10 +1216,12 @@ public enum ControlCLI {
     /// Shared handler for name-targeted project commands (hibernate/wake).
     /// `--space <name>` targets every project in a Space instead of one project.
     private static func runProjectByName(_ arguments: [String], verb: String, takesForce: Bool,
-                                         _ make: (String, Bool) -> ControlRequest,
-                                         space makeSpace: ((String, Bool) -> ControlRequest)? = nil) -> Int32 {
+                                         takesNoHandoff: Bool = false,
+                                         _ make: (String, Bool, Bool) -> ControlRequest,
+                                         space makeSpace: ((String, Bool, Bool) -> ControlRequest)? = nil) -> Int32 {
         var wantsSpace = false
         var force = false
+        var handoff = true
         var parts: [String] = []
         for argument in arguments {
             switch argument {
@@ -1218,6 +1229,9 @@ public enum ControlCLI {
             case "--force":
                 guard takesForce else { return failure("\(verb) does not take --force") }
                 force = true
+            case "--no-handoff":
+                guard takesNoHandoff else { return failure("\(verb) does not take --no-handoff") }
+                handoff = false
             default: parts.append(argument)
             }
         }
@@ -1227,9 +1241,9 @@ public enum ControlCLI {
         }
         if wantsSpace {
             guard let makeSpace else { return failure("\(verb) does not take --space") }
-            return expectOK(makeSpace(name, force), success: nil)
+            return expectOK(makeSpace(name, force, handoff), success: nil)
         }
-        return expectOK(make(name, force), success: nil)
+        return expectOK(make(name, force, handoff), success: nil)
     }
 
     private static func runSplit(_ arguments: [String]) -> Int32 {
@@ -1715,6 +1729,7 @@ public enum ControlCLI {
                     // Only when it isn't the default login — the marker is for
                     // spotting the exception, not labelling every pane.
                     if let account = pane.account { fields.append("·\(account)·") }
+                    if let handoff = pane.handoff { fields.append("‹handoff: \(handoff)›") }
                     if let title = pane.title, !title.isEmpty { fields.append(title) }
                     if let cwd = pane.cwd { fields.append("— \(cwd)") }
                     if pane.isFocused { fields.append("*") }

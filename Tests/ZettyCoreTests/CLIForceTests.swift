@@ -81,3 +81,26 @@ import Testing
     #expect(try ControlWire.decodeRequest(#"{"command":"hibernate","project":"a"}"#)
         == .hibernateProject(name: "a", force: false))
 }
+
+// MARK: - --no-handoff
+
+// Hibernating writes a handoff per agent pane; a script that only wants the
+// memory back can say so.
+@Test func noHandoffReachesTheHibernateRequests() {
+    let cases: [([String], ControlRequest)] = [
+        (["hibernate", "Foo", "--no-handoff"], .hibernateProject(name: "Foo", force: false, handoff: false)),
+        (["hibernate", "--space", "Work", "--force", "--no-handoff"],
+         .hibernateSpace(name: "Work", force: true, handoff: false)),
+        (["hibernate", "Foo"], .hibernateProject(name: "Foo", force: false, handoff: true)),
+    ]
+    for (arguments, expected) in cases {
+        let (_, recorder) = runIsolated(arguments)
+        #expect(recorder.requests == [expected], "\(arguments)")
+    }
+}
+
+@Test func wakeDoesNotTakeNoHandoff() {
+    let (exit, recorder) = runIsolated(["wake", "Foo", "--no-handoff"])
+    #expect(exit != 0)
+    #expect(recorder.requests.isEmpty)
+}

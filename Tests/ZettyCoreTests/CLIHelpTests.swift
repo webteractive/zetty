@@ -23,7 +23,7 @@ private let actingArguments: [String: [String]] = [
     "merge-clone": ["Foo"],
     "push-clone": ["Foo"],
     "remove-project": ["Foo", "--discard"],
-    "hibernate": ["Foo"],
+    "hibernate": ["Foo", "--no-handoff"],
     "wake": ["--space", "Work"],
     "split": ["--pane", "abcd1234", "--focus"],
     "break": ["--pane", "abcd1234"],
