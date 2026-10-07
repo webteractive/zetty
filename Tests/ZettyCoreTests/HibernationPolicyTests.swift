@@ -4,10 +4,10 @@ import Foundation
 
 private func decide(idle: TimeInterval, after: TimeInterval = 600, busy: Bool = false,
                     active: Bool = false, hib: Bool = false, off: Bool = false,
-                    home: Bool = false) -> Bool {
+                    home: Bool = false, kept: Bool = false) -> Bool {
     HibernationPolicy.shouldHibernate(idleFor: idle, hibernateAfter: after, isBusy: busy,
                                       isActive: active, isHibernated: hib, autoDisabled: off,
-                                      isHome: home)
+                                      isHome: home, isKept: kept)
 }
 
 @Test func hibernatesWhenIdleAndQuiet() { #expect(decide(idle: 700)) }
@@ -20,3 +20,6 @@ private func decide(idle: TimeInterval, after: TimeInterval = 600, busy: Bool = 
 // The UI offers no hibernate verb for Home, so a timer that hibernated it
 // would leave a state with no way back.
 @Test func neverHibernatesHome()        { #expect(!decide(idle: 9999, home: true)) }
+// Woken by hand and not typed into since: somebody asked for it, so the timer
+// leaves it alone until they use it.
+@Test func neverWhileKeptAwake()        { #expect(!decide(idle: 9999, kept: true)) }
