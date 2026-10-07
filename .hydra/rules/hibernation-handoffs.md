@@ -217,8 +217,14 @@ Needs `preserve-sessions` (`handoffsEnabled`); without zmx both hibernation and
   (hibernate, and a closed pane whose surface is held) and `kill` (a closed
   pane, a removed project). Closing a pane takes BOTH at once, so the typing
   is serialised by a lock and the second in line reads the screen afresh;
-  without it the composer would get `/stop/stop`. Quitting with
-  `--kill-sessions` does not: it would hold the quit for seconds per pane.
+  without it the composer would get `/stop/stop`.
+- **A full shutdown asks too** (`killAndWait`: `quit --kill-sessions`,
+  `--simulate-restart`, scratch at quit), all panes at once since the quit is
+  waiting on it. On the build before, a Codex command survived
+  `quit --kill-sessions`; with it the command was gone four seconds later.
+  Both were run in an isolated instance (`DEVELOPMENT.md`, "An isolated test
+  instance"), the only way to try a quit that ends every session without
+  ending the real ones.
 
 ## Known limits
 

@@ -74,6 +74,43 @@ tuist test                 # all unit tests (ZettyCore + ZettyGhostty)
 `tuist test` rewrites the Xcode project without its build-stamp phase; run
 `tuist generate` again before the next build.
 
+## An isolated test instance
+
+Anything that ends sessions (`quit --kill-sessions`, hibernating, closing
+busy panes) can be tried in a second Zetty that shares nothing with the one
+you work in: its own home folder, and its own `zmx` socket directory, so it
+cannot list, reattach or kill a real session.
+
+```sh
+mkdir -p /tmp/zti/.config/zetty /tmp/zti/zmx          # short: a socket path is capped near 100 chars
+printf 'preserve-sessions = true\n' > /tmp/zti/.config/zetty/config
+
+# Before launching, both of these must come back empty-handed:
+ZMX_DIR=/tmp/zti/zmx zmx list                          # "no sessions found in /tmp/zti/zmx"
+CFFIXED_USER_HOME=/tmp/zti zetty status                # "cannot reach zetty at /tmp/zti/.zetty/zetty.sock"
+
+env -i HOME="$HOME" USER="$USER" SHELL=/bin/zsh TMPDIR="$TMPDIR" LANG=en_US.UTF-8 \
+  PATH="/usr/bin:/bin:/opt/homebrew/bin:$HOME/.local/bin" \
+  CFFIXED_USER_HOME=/tmp/zti ZMX_DIR=/tmp/zti/zmx \
+  <DerivedData>/Build/Products/Debug/zetty.app/Contents/MacOS/zetty </dev/null &
+
+# Drive it with the same two variables:
+iz() { CFFIXED_USER_HOME=/tmp/zti ZMX_DIR=/tmp/zti/zmx zetty "$@"; }
+iz status
+```
+
+`CFFIXED_USER_HOME` moves what the app calls home (workspace, config, control
+socket, hooks, handoffs); `ZMX_DIR` moves the sessions. `HOME` stays real, so
+the shells in its panes load your own profile and an agent started there is
+signed in. `env -i` keeps the launching shell's variables out of the app. The
+binary is run directly; going through `open` was not tried.
+
+Two limits. Codex's shared daemon is NOT isolated: a Codex in the test
+instance talks to the same daemon as your real ones (its `/stop` only reaches
+its own conversation). And the main-thread freeze on closing a busy pane was
+never reproduced here while it happened twice in a real instance, so a clean
+run in isolation does not clear a teardown change of that.
+
 ## Layout
 
 - `Sources/ZettyCore/**` — the pure, unit-tested model layer (no AppKit): pane

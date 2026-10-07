@@ -137,7 +137,11 @@ enum ZmxRunner {
     /// are bounded like the rest of the teardown. The hibernation plan used
     /// to name them from the probe's map, which a closed pane's plan does not
     /// carry and which runs up to three seconds behind.
-    static func stopCodexTerminals(in sessions: [String], zmxPath: String) {
+    ///
+    /// `together` stops them all at once rather than one after another, for
+    /// the quit path, where nothing else is ending sessions and the wait is
+    /// the user's. Each Codex with something running costs a few seconds.
+    static func stopCodexTerminals(in sessions: [String], zmxPath: String, together: Bool = false) {
         let timeout = teardownCallTimeout
         guard !sessions.isEmpty,
               let list = run(zmxPath, ["list"], timeout: timeout),
@@ -145,6 +149,12 @@ enum ZmxRunner {
         else { return }
         let codex = HibernationTeardown.codexSessions(
             among: sessions, pids: SessionPersistence.sessionPIDs(fromList: list), psOutput: ps)
+        if together {
+            DispatchQueue.concurrentPerform(iterations: codex.count) { index in
+                stopCodexTerminals(session: codex[index], zmxPath: zmxPath, timeout: timeout)
+            }
+            return
+        }
         for session in codex {
             // One at a time. Closing a pane ends its session by two routes
             // at once (`kill` and `endSessions`), and both typing `/stop`
@@ -201,6 +211,10 @@ enum ZmxRunner {
     /// path, where an async kill could race app termination.
     static func killAndWait(sessions: [String], zmxPath: String) {
         guard !sessions.isEmpty else { return }
+        // A full shutdown ends every session, and a Codex among them would
+        // leave its commands running under its daemon with no pane left to
+        // stop them from. All at once: the quit is waiting on this.
+        stopCodexTerminals(in: sessions, zmxPath: zmxPath, together: true)
         _ = run(zmxPath, ["kill"] + sessions)
     }
 
