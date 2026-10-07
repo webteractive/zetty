@@ -7497,6 +7497,10 @@ final class TerminalViewController: NSViewController {
     /// Global timeout (seconds, 0 = off) + per-project opt-out, wired from AppDelegate.
     var autoHibernateAfter: (() -> TimeInterval)?
     var autoHibernateDisabled: ((ProjectRuntime) -> Bool)?
+    /// Whether hibernating this project writes handoffs: the config switch is
+    /// on AND its panes run in preserved sessions, which is what gives Zetty
+    /// the probe, the session ids and a screen to read.
+    var handoffsEnabled: ((ProjectRuntime) -> Bool)?
 
     private var lastActiveAt: [UUID: Date] = [:]
     private var hibernationTimer: Timer?

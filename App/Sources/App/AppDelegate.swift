@@ -263,6 +263,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         tvc.autoHibernateDisabled = { [weak self] project in
             self?.projectSettings.settings(for: project.settingsKey)?.autoHibernate == false
         }
+        tvc.handoffsEnabled = { [weak self] project in
+            guard let self, self.appConfig.hibernateHandoffs else { return false }
+            return self.resolvedSettings(for: project).preserveSessions
+        }
         tvc.broadcastScopeProvider = { [weak self] project in
             BroadcastScope(code: self?.projectSettings.settings(for: project.settingsKey)?.broadcastScope)
         }

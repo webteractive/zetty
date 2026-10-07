@@ -68,6 +68,10 @@ public struct AppConfig: Equatable, Sendable {
     public var checkUpdates: Bool
     /// Auto-hibernate an idle, quiet project after this many seconds (0 = off).
     public var hibernateAfter: TimeInterval
+    /// When true (default), hibernating a project has each Claude or Codex
+    /// pane leave a short handoff, and waking starts a fresh agent from it.
+    /// Needs `preserveSessions`; without it hibernation is unchanged.
+    public var hibernateHandoffs: Bool
     /// Release the GPU surfaces of a non-active project's panes after this many
     /// seconds out of view, KEEPING their preserved sessions running (0 = off).
     ///
@@ -169,6 +173,7 @@ public struct AppConfig: Equatable, Sendable {
         restartRecovery: Bool = true,
         checkUpdates: Bool = true,
         hibernateAfter: TimeInterval = 0,
+        hibernateHandoffs: Bool = true,
         freeBackgroundPanesAfter: TimeInterval = 0,
         notifySound: Bool = true,
         notifyBadge: Bool = true,
@@ -195,6 +200,7 @@ public struct AppConfig: Equatable, Sendable {
         self.restartRecovery = restartRecovery
         self.checkUpdates = checkUpdates
         self.hibernateAfter = hibernateAfter
+        self.hibernateHandoffs = hibernateHandoffs
         self.freeBackgroundPanesAfter = freeBackgroundPanesAfter
         self.notifySound = notifySound
         self.notifyBadge = notifyBadge
@@ -314,6 +320,8 @@ public struct AppConfig: Equatable, Sendable {
                 config.tileManagerView = SessionsViewMode(rawValue: value.lowercased()) ?? .drawer
             case "zetty-restart-recovery":
                 config.restartRecovery = ["true", "yes", "on", "1"].contains(value.lowercased())
+            case "zetty-hibernate-handoffs":
+                config.hibernateHandoffs = ["true", "yes", "on", "1"].contains(value.lowercased())
             case "zetty-file-tree-show-hidden":
                 config.fileTree.showHidden = ["true", "yes", "on", "1"].contains(value.lowercased())
             case "zetty-file-tree-respect-gitignore":
@@ -461,6 +469,11 @@ public struct AppConfig: Equatable, Sendable {
         # Auto-hibernate a project after it's idle and quiet (0/off = disabled,
         # e.g. 60m or 2h). Frees its sessions/processes; waking spawns fresh shells.
         hibernate-after = \(hibernateAfter == 0 ? "off" : String(Int(hibernateAfter)))
+
+        # Hibernating a project has each Claude or Codex pane leave a short
+        # handoff, and waking starts a fresh agent from it instead of a bare
+        # shell (only with preserve-sessions = true).
+        zetty-hibernate-handoffs = \(hibernateHandoffs)
 
         # Release a background project's GPU surfaces after it's been out of view
         # this long, while its shells keep running in their preserved sessions

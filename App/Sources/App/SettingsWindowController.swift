@@ -43,6 +43,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
 
     // Sessions section controls.
     private let preserveSwitch = NSSwitch()
+    private let handoffsSwitch = NSSwitch()
     private let loginItemSwitch = NSSwitch()
     private let loginItemNote = NSTextField(wrappingLabelWithString:
         "Registers this copy of Zetty as a login item. Turn it on from the copy in /Applications — "
@@ -375,6 +376,15 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         sessionStatusLabel.font = ZTheme.chromeFont(size: 11)
         sessionStatusLabel.textColor = ZTheme.current.fg3Color
         stack.addArrangedSubview(sessionStatusLabel)
+
+        // Here rather than beside a hibernate control: there is none in
+        // Settings, and handoffs only exist for panes with a preserved session.
+        handoffsSwitch.target = self
+        handoffsSwitch.action = #selector(handoffsToggled(_:))
+        addFullWidth(switchRow("Write a handoff when hibernating", control: handoffsSwitch), to: stack)
+        stack.addArrangedSubview(caption(
+            "Each Claude or Codex pane leaves a short summary when its project is hibernated, and waking starts a fresh agent from it instead of a bare shell. Needs preserved sessions."
+        ))
 
         // Not a config key: login-item state is owned by the system, so a
         // key here would be a second source of truth with a precedence rule.
@@ -878,6 +888,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     private func refreshSessions() {
         let config = ConfigStore(fileURL: configURL).load()
         preserveSwitch.state = config.preserveSessions ? .on : .off
+        handoffsSwitch.state = config.hibernateHandoffs ? .on : .off
         notifySoundSwitch.state = config.notifySound ? .on : .off
         notifyBadgeSwitch.state = config.notifyBadge ? .on : .off
         notifySystemSwitch.state = config.notifySystem ? .on : .off
@@ -1031,6 +1042,13 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         let store = ConfigStore(fileURL: configURL)
         var config = store.load()
         config.claudeMod = sender.state == .on
+        store.save(config)
+    }
+
+    @objc private func handoffsToggled(_ sender: NSSwitch) {
+        let store = ConfigStore(fileURL: configURL)
+        var config = store.load()
+        config.hibernateHandoffs = sender.state == .on
         store.save(config)
     }
 

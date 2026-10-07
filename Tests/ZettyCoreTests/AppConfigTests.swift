@@ -240,3 +240,16 @@ import Testing
     let config = AppConfig.parse("zetty-tiles-grid = 3x3")
     #expect(!config.rendered().contains("zetty-tiles-grid"))
 }
+
+// Hibernating writes a handoff per agent pane unless this is off; the key is
+// Zetty's own, so it must never reach ghostty (a stray directive drops the
+// whole config).
+@Test func hibernateHandoffsIsZettysOwnAndDefaultsOn() {
+    #expect(AppConfig.parse("").hibernateHandoffs)
+    #expect(AppConfig.parse("zetty-hibernate-handoffs = on").hibernateHandoffs)
+    let off = AppConfig.parse("zetty-hibernate-handoffs = false")
+    #expect(!off.hibernateHandoffs)
+    #expect(!off.ghostty.contains { $0.key == "zetty-hibernate-handoffs" })
+    #expect(AppConfig.parse(off.rendered()).hibernateHandoffs == false)
+    #expect(AppConfig.parse(AppConfig.parse("").rendered()).hibernateHandoffs)
+}
