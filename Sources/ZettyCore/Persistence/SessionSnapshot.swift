@@ -85,6 +85,8 @@ public enum SessionSnapshot {
                 isHome: runtime.isHome,
                 cloneSource: runtime.cloneSource,
                 spaceID: runtime.spaceID,
+                lastUsedAt: runtime.lastUsedAt,
+                keptAwake: runtime.keptAwake,
                 sessions: [Session(title: "main", tabs: tabs, activeTabIndex: runtime.tabList.activeIndex)]
             )
         }
@@ -114,7 +116,7 @@ public enum SessionSnapshot {
             let tabList = TabList(restoring: trees, activeIndex: session?.activeTabIndex ?? 0,
                                   defaultWorkingDir: project.rootPath)
                 ?? TabList(defaultWorkingDir: project.rootPath)
-            return ProjectRuntime(
+            let runtime = ProjectRuntime(
                 name: project.name,
                 rootPath: project.rootPath,
                 isPinned: project.isPinned,
@@ -124,6 +126,9 @@ public enum SessionSnapshot {
                 spaceID: project.spaceID,
                 tabList: tabList
             )
+            runtime.lastUsedAt = project.lastUsedAt
+            runtime.keptAwake = project.keptAwake
+            return runtime
         }
     }
 

@@ -44,3 +44,40 @@ import Foundation
                                            homeRoot: "/Users/test")!
     #expect(restored.projects.first { $0.name == "stray" }?.spaceID == nil)
 }
+
+// MARK: - Activity (hibernate-after)
+
+// `hibernate-after` measures from when a project was last used. Kept only in
+// memory, every relaunch reset every project's idle clock.
+@Test func lastUsedAndKeptAwakeSurviveARoundTrip() throws {
+    let model = WorkspaceModel(homeRoot: "/Users/test")
+    model.addProject(name: "app", rootPath: "/tmp/app", makeActive: false)
+    let app = try #require(model.projects.first { $0.name == "app" })
+    app.lastUsedAt = Date(timeIntervalSince1970: 1_000)
+    app.keptAwake = true
+
+    let data = try JSONEncoder().encode(SessionSnapshot.workspace(from: model))
+    let saved = try JSONDecoder().decode(Workspace.self, from: data)
+    let restored = try #require(WorkspaceModel.restored(
+        from: SessionSnapshot.projectRuntimes(from: saved), homeRoot: "/Users/test"))
+    let back = try #require(restored.projects.first { $0.name == "app" })
+    #expect(back.lastUsedAt == Date(timeIntervalSince1970: 1_000))
+    #expect(back.keptAwake)
+    #expect(restored.projects.first { $0.isHome }?.keptAwake == false)
+}
+
+@Test func aWorkspaceSavedBeforeActivityWasRecordedStillLoads() throws {
+    let model = WorkspaceModel(homeRoot: "/Users/test")
+    model.addProject(name: "app", rootPath: "/tmp/app", makeActive: false)
+    let encoded = try JSONEncoder().encode(SessionSnapshot.workspace(from: model))
+    var json = try #require(try JSONSerialization.jsonObject(with: encoded) as? [String: Any])
+    var projects = try #require(json["projects"] as? [[String: Any]])
+    for index in projects.indices {
+        projects[index].removeValue(forKey: "lastUsedAt")
+        projects[index].removeValue(forKey: "keptAwake")
+    }
+    json["projects"] = projects
+    let saved = try JSONDecoder().decode(Workspace.self, from: JSONSerialization.data(withJSONObject: json))
+    let runtimes = SessionSnapshot.projectRuntimes(from: saved)
+    #expect(runtimes.allSatisfy { $0.lastUsedAt == nil && !$0.keptAwake })
+}

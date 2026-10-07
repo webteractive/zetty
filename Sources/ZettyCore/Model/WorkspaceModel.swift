@@ -23,6 +23,14 @@ public final class ProjectRuntime {
     /// whole point — unlike `isHome`/`isScratch`/`cloneSource`, which are fixed
     /// at creation.
     public var spaceID: UUID?
+    /// When the project was last on screen or typed into. With each agent's
+    /// transcript mtime it is what `hibernate-after` measures from. Persisted,
+    /// so a relaunch does not reset every project's idle clock.
+    public var lastUsedAt: Date?
+    /// Woken by hand and not typed into since: `hibernate-after` leaves it
+    /// alone, or a project somebody just asked for would be put away again
+    /// as soon as the timer allowed.
+    public var keptAwake: Bool = false
     public let tabList: TabList
 
     public init(id: UUID = UUID(), name: String, rootPath: String,

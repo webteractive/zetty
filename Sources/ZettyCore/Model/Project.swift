@@ -53,6 +53,9 @@ public struct Project: Codable, Sendable, Equatable, Identifiable {
     /// The `Space` this project belongs to, or nil when it renders in
     /// Pinned/Projects. Never set for Home, Scratch, or clones.
     public var spaceID: UUID?
+    /// See `ProjectRuntime.lastUsedAt` and `keptAwake`.
+    public var lastUsedAt: Date?
+    public var keptAwake: Bool
     public var sessions: [Session]
 
     public init(
@@ -66,6 +69,8 @@ public struct Project: Codable, Sendable, Equatable, Identifiable {
         isHome: Bool = false,
         cloneSource: String? = nil,
         spaceID: UUID? = nil,
+        lastUsedAt: Date? = nil,
+        keptAwake: Bool = false,
         sessions: [Session] = []
     ) {
         self.id = id
@@ -78,11 +83,13 @@ public struct Project: Codable, Sendable, Equatable, Identifiable {
         self.isHome = isHome
         self.cloneSource = cloneSource
         self.spaceID = spaceID
+        self.lastUsedAt = lastUsedAt
+        self.keptAwake = keptAwake
         self.sessions = sessions
     }
 
     private enum CodingKeys: String, CodingKey {
-        case id, name, rootPath, isPinned, sortOrder, preserveSessions, isHibernated, isHome, cloneSource, spaceID, sessions
+        case id, name, rootPath, isPinned, sortOrder, preserveSessions, isHibernated, isHome, cloneSource, spaceID, lastUsedAt, keptAwake, sessions
     }
 
     /// Tolerant decode so workspace.json files written before a field existed
@@ -99,6 +106,8 @@ public struct Project: Codable, Sendable, Equatable, Identifiable {
         isHome = try c.decodeIfPresent(Bool.self, forKey: .isHome) ?? false
         cloneSource = try c.decodeIfPresent(String.self, forKey: .cloneSource)
         spaceID = try c.decodeIfPresent(UUID.self, forKey: .spaceID)
+        lastUsedAt = try c.decodeIfPresent(Date.self, forKey: .lastUsedAt)
+        keptAwake = try c.decodeIfPresent(Bool.self, forKey: .keptAwake) ?? false
         sessions = try c.decodeIfPresent([Session].self, forKey: .sessions) ?? []
     }
 }
