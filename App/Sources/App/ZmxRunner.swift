@@ -74,6 +74,9 @@ enum ZmxRunner {
     static func kill(sessions: [String], zmxPath: String) {
         guard !sessions.isEmpty else { return }
         DispatchQueue.global(qos: .utility).async {
+            // A closed pane comes through here, and a Codex among them would
+            // otherwise leave its commands running under its daemon.
+            stopCodexTerminals(in: sessions, zmxPath: zmxPath)
             _ = run(zmxPath, ["kill"] + sessions)
         }
     }
@@ -94,9 +97,7 @@ enum ZmxRunner {
             // pin its panes (and any queued wake) for good. A send that times
             // out means zmx is not answering, so the rest are not tried.
             let timeout = teardownCallTimeout
-            for session in plan.stopFirst {
-                stopCodexTerminals(session: session, zmxPath: zmxPath, timeout: timeout)
-            }
+            stopCodexTerminals(in: plan.all, zmxPath: zmxPath)
             for session in plan.exit {
                 let started = Date()
                 let sent = send(session: session, text: HibernationTeardown.exitInput,
@@ -128,6 +129,34 @@ enum ZmxRunner {
             DispatchQueue.main.async { MainActor.assumeIsolated { completion() } }
         }
     }
+
+    /// Has every Codex among `sessions` stop what it has running, before the
+    /// caller ends them. Blocking — off-main only.
+    ///
+    /// Which sessions hold Codex is read here, at this moment, and both calls
+    /// are bounded like the rest of the teardown. The hibernation plan used
+    /// to name them from the probe's map, which a closed pane's plan does not
+    /// carry and which runs up to three seconds behind.
+    static func stopCodexTerminals(in sessions: [String], zmxPath: String) {
+        let timeout = teardownCallTimeout
+        guard !sessions.isEmpty,
+              let list = run(zmxPath, ["list"], timeout: timeout),
+              let ps = run("/bin/ps", ["-axo", ProcessTable.psFormat], timeout: timeout)
+        else { return }
+        let codex = HibernationTeardown.codexSessions(
+            among: sessions, pids: SessionPersistence.sessionPIDs(fromList: list), psOutput: ps)
+        for session in codex {
+            // One at a time. Closing a pane ends its session by two routes
+            // at once (`kill` and `endSessions`), and both typing `/stop`
+            // would put `/stop/stop` in the composer. The second in line
+            // reads the screen afresh and finds nothing left to do.
+            codexStopLock.lock()
+            stopCodexTerminals(session: session, zmxPath: zmxPath, timeout: timeout)
+            codexStopLock.unlock()
+        }
+    }
+
+    private static let codexStopLock = NSLock()
 
     /// Has a Codex pane stop what it has running before its session is ended.
     ///

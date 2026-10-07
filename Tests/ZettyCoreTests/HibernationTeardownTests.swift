@@ -58,15 +58,22 @@ private func name(_ id: UUID) -> String { SessionPersistence.sessionName(for: id
 }
 
 // Codex runs its commands under a shared daemon, so ending its pane leaves
-// them running. Its panes are named so they can be told to stop first.
-@Test func codexPanesAreStoppedBeforeTheirSessionsEnd() {
-    let codex = UUID()
-    let plan = HibernationTeardown.plan(
-        surfaceIDs: [shell, agent, codex],
-        foreground: [shell: "", agent: "claude", codex: "codex"],
-        agentBusy: [])
-    #expect(plan.stopFirst == [name(codex)])
-    #expect(plan.exit == [name(shell)])
-    // A pane closed rather than hibernated carries no probe reading.
-    #expect(HibernationTeardown.plan(surfaceIDs: [codex], foreground: [:], agentBusy: []).stopFirst.isEmpty)
+// them running; its panes are told to stop first. Which panes those are is
+// read off the process table at that moment, never off the probe's map: a
+// closed pane's plan carries no reading at all, and the map is up to three
+// seconds behind, which once left a Codex that had just started listed as a
+// shell.
+@Test func codexSessionsAreFoundInTheProcessTableItself() {
+    let ps = """
+    500 1 500 Ss ttys001 0:00.10 700 -zsh
+    501 500 501 S+ ttys001 0:01.00 9000 codex Run the tests
+    600 1 600 Ss ttys002 0:00.10 700 -zsh
+    601 600 601 S+ ttys002 0:01.00 9000 claude
+    700 1 700 Ss+ ttys003 0:00.10 700 -zsh
+    """
+    let pids: [String: Int32] = ["zetty-aaaaaaaa": 500, "zetty-bbbbbbbb": 600, "zetty-cccccccc": 700]
+    #expect(HibernationTeardown.codexSessions(
+        among: ["zetty-aaaaaaaa", "zetty-bbbbbbbb", "zetty-cccccccc", "zetty-gone0000"],
+        pids: pids, psOutput: ps) == ["zetty-aaaaaaaa"])
+    #expect(HibernationTeardown.codexSessions(among: [], pids: pids, psOutput: ps).isEmpty)
 }

@@ -148,8 +148,9 @@ copy-bind = n copy-cursor-down
   leaves a short **handoff** as its project is put away, and waking starts a
   fresh agent from it instead of a bare shell; the old conversation stays on
   disk. Waking again within moments, before the handoff is written, resumes
-  the old conversation instead. A Codex pane is also told to stop any command
-  it still has running, which would otherwise outlive it.
+  the old conversation instead. Hibernating or closing a Codex pane also tells
+  it to stop any command it still has running, which would otherwise outlive
+  it.
 - **Layout templates** — save a project's tabs and splits (each pane's folder
   and an optional startup command) to a committable `.zetty/project.json`; it is
   applied when the project is added, or from Project Settings.
