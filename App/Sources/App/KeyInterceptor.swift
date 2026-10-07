@@ -159,6 +159,10 @@ final class KeyInterceptor: NSObject {
             return event
         }
 
+        // Past the text-editing return above, so palette and rename typing
+        // does not count: this is a key on its way to a pane.
+        viewController.noteUserInput()
+
         guard let chord = KeyChord(event: event) else { return event }
 
         let modeBefore = engine.mode

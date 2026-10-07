@@ -139,7 +139,11 @@ copy-bind = n copy-cursor-down
 - **Hibernate** — right-click → **Hibernate Project** frees a project's
   processes and keeps its layout; it moves to the **Hibernating** section until
   you wake it. `hibernate-after = 60m` does this automatically for idle
-  projects (never Home). With preserved sessions, each Claude or Codex pane
+  projects (never Home), measured from when a project was last on screen,
+  typed into, or written to by one of its agents. An agent sitting idle at an
+  empty prompt no longer keeps its project awake; a working agent, a draft in
+  the prompt box or a running command still does, and so does a project you
+  woke yourself until you type into it. With preserved sessions, each Claude or Codex pane
   leaves a short **handoff** as its project is put away, and waking starts a
   fresh agent from it instead of a bare shell; the old conversation stays on
   disk. Waking again within moments, before the handoff is written, resumes

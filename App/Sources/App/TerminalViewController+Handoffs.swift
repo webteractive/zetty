@@ -150,12 +150,16 @@ extension TerminalViewController {
     static let handoffConsumeDelay: TimeInterval = 60
 
     /// The backstop for a pane whose harness never reports through a hook.
+    /// It takes its own reading: the poll behind `foregroundBySurface` stops
+    /// while Zetty is in the background, and a handoff left unconsumed is
+    /// typed into the pane again at the next launch.
     func scheduleHandoffConsume(_ surfaceID: UUID) {
-        guard handoffWakeSurfaces[surfaceID] != nil else { return }
-        DispatchQueue.main.asyncAfter(deadline: .now() + Self.handoffConsumeDelay) { [weak self] in
-            guard let self, let running = self.foregroundBySurface[surfaceID],
-                  AgentKind(rawValue: running).map(HandoffFork.supports) == true else { return }
-            self.consumeHandoff(surfaceID)
+        guard handoffWakeSurfaces[surfaceID] != nil, let zmx = ZmxRunner.locate() else { return }
+        DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + Self.handoffConsumeDelay) {
+            let running = Self.probeForeground([surfaceID], zmxPath: zmx)?[surfaceID]
+            guard let running, AgentKind(rawValue: running).map(HandoffFork.supports) == true
+            else { return }
+            DispatchQueue.main.async { [weak self] in self?.consumeHandoff(surfaceID) }
         }
     }
 
@@ -190,5 +194,204 @@ extension TerminalViewController {
             }
         }
         handoffRunner.enqueue(owed.sorted { $0.requestedAt < $1.requestedAt })
+    }
+}
+
+// MARK: - hibernate-after
+
+/// One candidate project's panes on their way through a `hibernate-after`
+/// pass: what the main thread knew, and what was read off it since.
+struct AutoHibernationCandidate {
+    struct Pane {
+        let surface: UUID
+        var facts: HibernationEligibility.Pane
+        /// Set for a pane holding an agent that can leave a handoff.
+        var agent: (kind: AgentKind, session: AgentSession, configDirectory: String?)?
+        /// Set instead when no hook, mod or cache names the pane's session,
+        /// and its harness's store has to be searched for it.
+        var lookup: AgentSessionLookup.Target?
+        var transcript: Date?
+    }
+
+    let project: UUID
+    var panes: [Pane]
+
+    /// Reads what only the disk and the screen can say: each agent's
+    /// transcript date, and the prompt box of each pane that needs one.
+    /// Blocking — off-main only.
+    mutating func readAgents(zmxPath: String) {
+        let found = AgentSessionLookup.fallbackSessions(for: panes.compactMap(\.lookup), claimed: [])
+        for index in panes.indices {
+            if let target = panes[index].lookup, let session = found[panes[index].surface] {
+                panes[index].agent = (target.agent, session, target.configDirectory)
+            }
+            guard let agent = panes[index].agent else { continue }
+            panes[index].transcript = AgentTranscript.modificationDate(
+                agent: agent.kind, session: agent.session, configDirectory: agent.configDirectory)
+            guard HibernationEligibility.needsPromptBox(panes[index].facts),
+                  let history = ZmxRunner.historyVT(
+                      session: SessionPersistence.sessionName(for: panes[index].surface),
+                      zmxPath: zmxPath, timeout: ZmxRunner.teardownCallTimeout)
+            else { continue }   // unread stays nil, which keeps the project awake
+            panes[index].facts.promptBoxEmpty = PromptBox.isEmpty(
+                vtScreen: PromptBox.tail(of: history), agent: agent.kind)
+        }
+    }
+}
+
+extension TerminalViewController {
+
+    /// A key reached a pane: its project is in use, and no longer merely
+    /// kept awake because somebody woke it. Two assignments per keystroke;
+    /// nothing is saved or refreshed by it.
+    func noteUserInput() {
+        guard let project = keyboardProject else { return }
+        project.lastUsedAt = Date()
+        project.keptAwake = false
+    }
+
+    /// How long a pass may stay out before it is given up on. Its reads are
+    /// bounded individually; this covers a `zmx list` or `ps` that hangs.
+    private static let autoHibernationPassTimeout: TimeInterval = 300
+
+    /// One `hibernate-after` pass, every minute.
+    ///
+    /// Three hops, because the truth is in three places. The idle clock and
+    /// the hook states are here on main. What is really in each pane's
+    /// foreground has to be read fresh off-main — the poll behind
+    /// `foregroundBySurface` stops while Zetty is in the background, which is
+    /// exactly when projects go idle. And whether an idle agent has a draft in
+    /// front of it, and when it last wrote its transcript, is on disk and on
+    /// its screen.
+    func evaluateAutoHibernation() {
+        let after = autoHibernateAfter?() ?? 0
+        guard after > 0, workspace.projects.count > 1 else { return }
+        let now = Date()
+        if let started = autoHibernationPassStartedAt,
+           now.timeIntervalSince(started) < Self.autoHibernationPassTimeout { return }
+
+        let onScreen = projectsOnScreen
+        var candidates: [ProjectRuntime] = []
+        for project in workspace.projects {
+            if onScreen.contains(project.id) { project.lastUsedAt = now; continue }
+            if project.lastUsedAt == nil { project.lastUsedAt = now }   // first sight: a full window
+            // Transcripts can only make a project LESS idle, so one that is
+            // not idle on this clock alone needs nothing read.
+            if shouldAutoHibernate(project, after: after, transcripts: [], isBusy: false, now: now) {
+                candidates.append(project)
+            }
+        }
+        guard !candidates.isEmpty else { return }
+
+        let surfaces = Dictionary(uniqueKeysWithValues: candidates.map { project in
+            (project.id, project.tabList.trees.flatMap { $0.layout.surfaces.map(\.id) })
+        })
+        guard let zmx = ZmxRunner.locate() else {
+            // No zmx: no probe, no screen to read, no handoffs. The last
+            // reading there is decides, and any agent pane keeps its project
+            // awake, exactly as before handoffs existed.
+            for project in candidates {
+                let panes = eligibilityPanes(surfaces[project.id] ?? [], foreground: foregroundBySurface)
+                finishAutoHibernation(.init(project: project.id, panes: panes), foreground: nil, after: after)
+            }
+            return
+        }
+
+        autoHibernationPassStartedAt = now
+        let allSurfaces = surfaces.values.flatMap { $0 }
+        DispatchQueue.global(qos: .utility).async { [weak self] in
+            let foreground = Self.probeForeground(allSurfaces, zmxPath: zmx)
+            DispatchQueue.main.async {
+                guard let self else { return }
+                // No answer is "unknown", never "idle": try again next minute.
+                guard let foreground else { self.autoHibernationPassStartedAt = nil; return }
+                var pending: [AutoHibernationCandidate] = []
+                for project in candidates {
+                    var panes = self.eligibilityPanes(surfaces[project.id] ?? [], foreground: foreground)
+                    // Anything a screen read cannot excuse ends it here.
+                    if panes.contains(where: {
+                        HibernationEligibility.keepsAwake($0.facts)
+                            && !HibernationEligibility.needsPromptBox($0.facts)
+                    }) { continue }
+                    for index in panes.indices where HibernationEligibility.needsPromptBox(panes[index].facts) {
+                        let id = panes[index].surface
+                        // Never the store scan here, once a minute on main.
+                        if let found = self.knownResumableSession(for: id, using: foreground) {
+                            panes[index].agent = (found.kind, found.session,
+                                                  self.harnessConfigDirectory(for: id, kind: found.kind))
+                        } else {
+                            panes[index].lookup = self.resumeLookupTarget(for: id, using: foreground)
+                        }
+                    }
+                    pending.append(.init(project: project.id, panes: panes))
+                }
+                DispatchQueue.global(qos: .utility).async { [weak self] in
+                    var read = pending
+                    for index in read.indices { read[index].readAgents(zmxPath: zmx) }
+                    DispatchQueue.main.async {
+                        guard let self else { return }
+                        self.autoHibernationPassStartedAt = nil
+                        for candidate in read {
+                            self.finishAutoHibernation(candidate, foreground: foreground, after: after)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// Each pane with its hook state, and the foreground command from
+    /// `foreground`. A pane with no session there has no entry, which reads
+    /// as not probed.
+    private func eligibilityPanes(_ surfaces: [UUID],
+                                  foreground: [UUID: String]) -> [AutoHibernationCandidate.Pane] {
+        surfaces.map { id in
+            .init(surface: id,
+                  facts: .init(foreground: foreground[id],
+                               agentStatus: agentDetector.state(for: id).status))
+        }
+    }
+
+    private func shouldAutoHibernate(_ project: ProjectRuntime, after: TimeInterval,
+                                     transcripts: [Date], isBusy: Bool, now: Date) -> Bool {
+        HibernationPolicy.shouldHibernate(
+            idleFor: HibernationPolicy.idleFor(now: now, lastUsedAt: project.lastUsedAt,
+                                               transcripts: transcripts),
+            hibernateAfter: after, isBusy: isBusy, isActive: false,
+            isHibernated: project.isHibernated,
+            autoDisabled: autoHibernateDisabled?(project) ?? false,
+            isHome: project.isHome, isKept: project.keptAwake)
+    }
+
+    /// Back on main with everything read. All of it is re-checked: a
+    /// minute's worth of world happened meanwhile.
+    private func finishAutoHibernation(_ candidate: AutoHibernationCandidate,
+                                       foreground: [UUID: String]?, after: TimeInterval) {
+        guard let project = workspace.projects.first(where: { $0.id == candidate.project }),
+              !projectsOnScreen.contains(project.id) else { return }
+        // A pane added since is unexamined, and a hook may have reported
+        // since the screens were read.
+        let current = project.tabList.trees.flatMap { $0.layout.surfaces.map(\.id) }
+        guard Set(current) == Set(candidate.panes.map(\.surface)) else { return }
+        let busy = candidate.panes.contains { pane in
+            var facts = pane.facts
+            facts.agentStatus = agentDetector.state(for: pane.surface).status
+            return HibernationEligibility.keepsAwake(facts)
+        }
+        let transcripts = Dictionary(uniqueKeysWithValues: candidate.panes.compactMap { pane in
+            pane.transcript.map { (pane.surface, $0) }
+        })
+        guard shouldAutoHibernate(project, after: after, transcripts: Array(transcripts.values),
+                                  isBusy: busy, now: Date()) else { return }
+        // What the store scan found, so the capture does not scan again.
+        for pane in candidate.panes where pane.lookup != nil {
+            if let agent = pane.agent {
+                rememberLookedUpSession(agent.session, kind: agent.kind, for: pane.surface)
+            }
+        }
+        ZettyLog.lifecycle.log("hibernate-after: putting \(project.name) away")
+        hibernateProject(project, confirmIfBusy: false,
+                         handoffs: .automatic(transcripts: transcripts,
+                                              foreground: foreground ?? foregroundBySurface))
     }
 }

@@ -2100,6 +2100,19 @@ final class TerminalViewController: NSViewController {
     /// just took; see `probedResumableKind`.
     func resumableSession(for surfaceID: UUID, using foreground: [UUID: String]? = nil)
         -> (kind: AgentKind, session: AgentSession)? {
+        if let known = knownResumableSession(for: surfaceID, using: foreground) { return known }
+        guard let kind = probedResumableKind(for: surfaceID, using: foreground),
+              let target = sessionLookupTarget(for: surfaceID, kind: kind),
+              let found = AgentSessionLookup.fallbackSessions(for: [target], claimed: [])[surfaceID]
+        else { return nil }
+        return (kind, found)
+    }
+
+    /// `resumableSession` without the store scan: what the hooks, the mod and
+    /// the cache already say. For a caller on a timer, which must not read a
+    /// harness's store on the main thread; see `resumeLookupTarget`.
+    func knownResumableSession(for surfaceID: UUID, using foreground: [UUID: String]? = nil)
+        -> (kind: AgentKind, session: AgentSession)? {
         // The probe outranks the stored kind: a pane can carry a stale kind
         // from the era when hook events matched by directory, which is what
         // once produced `codex resume <claude id>`.
@@ -2121,11 +2134,20 @@ final class TerminalViewController: NSViewController {
         if let cached = lookedUpResumeSessions[surfaceID], cached.kind == kind {
             return (kind, cached.session)
         }
+        return nil
+    }
 
-        guard let target = sessionLookupTarget(for: surfaceID, kind: kind),
-              let found = AgentSessionLookup.fallbackSessions(for: [target], claimed: [])[surfaceID]
-        else { return nil }
-        return (kind, found)
+    /// What a store scan needs to find this pane's session, for a caller that
+    /// runs `AgentSessionLookup` itself, off-main, and hands the answer back
+    /// through `rememberLookedUpSession`.
+    func resumeLookupTarget(for surfaceID: UUID, using foreground: [UUID: String]? = nil)
+        -> AgentSessionLookup.Target? {
+        probedResumableKind(for: surfaceID, using: foreground)
+            .flatMap { sessionLookupTarget(for: surfaceID, kind: $0) }
+    }
+
+    func rememberLookedUpSession(_ session: AgentSession, kind: AgentKind, for surfaceID: UUID) {
+        lookedUpResumeSessions[surfaceID] = (kind, session)
     }
 
     /// The login `kind` is running under in this pane.
@@ -4644,7 +4666,7 @@ final class TerminalViewController: NSViewController {
         if tileMode {
             // Wakes IN PLACE in tile mode; a wake that has to wait out a
             // teardown leaves it dormant, and the pane is not available yet.
-            if project.isHibernated { wakeProject(project, movesView: false) }
+            if project.isHibernated { wakeProject(project, movesView: false, keeps: false) }
             guard !project.isHibernated else { return .unavailable }
             return spawnOffscreen(location.surfaceID) ? .spawned : .unavailable
         }
@@ -7523,7 +7545,7 @@ final class TerminalViewController: NSViewController {
         // `idleFor` would read as 0 forever — so its surfaces would never
         // become eligible for release.
         if workspace.projects.indices.contains(index) {
-            lastActiveAt[workspace.projects[index].id] = Date()
+            workspace.projects[index].lastUsedAt = Date()
         }
         onActiveProjectChanged?()
         refreshTabBar()
@@ -7554,8 +7576,10 @@ final class TerminalViewController: NSViewController {
     /// the probe, the session ids and a screen to read.
     var handoffsEnabled: ((ProjectRuntime) -> Bool)?
 
-    private var lastActiveAt: [UUID: Date] = [:]
     private var hibernationTimer: Timer?
+    /// When the off-main half of a `hibernate-after` pass started; nil when
+    /// none is in flight. A pass that never comes back is given up on.
+    var autoHibernationPassStartedAt: Date?
     /// Writes each hibernated agent pane's handoff, in the background.
     let handoffRunner = HandoffRunner()
     /// Panes whose queued startup command is a fresh agent reading its
@@ -7602,7 +7626,14 @@ final class TerminalViewController: NSViewController {
         // now gone, and the poll that would say so stops while Zetty is in the
         // background. A wake line is only typed into a pane the probe does
         // not show an agent in.
-        for id in surfaceIDs { foregroundBySurface.removeValue(forKey: id) }
+        for id in surfaceIDs {
+            foregroundBySurface.removeValue(forKey: id)
+            // The agent that comes back is a new conversation; a session
+            // remembered from the store would have the next hibernation fork
+            // the old one.
+            lookedUpResumeSessions.removeValue(forKey: id)
+            resumeLookupAttempted.remove(id)
+        }
         handoffRunner.enqueue(records)
         onActiveProjectChanged?()
         refreshTabBar()
@@ -7713,7 +7744,11 @@ final class TerminalViewController: NSViewController {
     ///     teardown it had to wait for finishes. A caller that goes on to act
     ///     on the project (`focus`) must continue here, not after the call, or
     ///     it acts on whatever project happens to be active.
-    func wakeProject(_ project: ProjectRuntime, movesView: Bool = true,
+    ///   - keeps: a wake somebody asked for keeps the project from
+    ///     `hibernate-after` until it is typed into. False for a background
+    ///     CLI verb waking it for its own purposes: nobody would ever type
+    ///     into it, and it would never be put away again.
+    func wakeProject(_ project: ProjectRuntime, movesView: Bool = true, keeps: Bool = true,
                      then: (() -> Void)? = nil) {
         guard project.isHibernated,
               let index = workspace.projects.firstIndex(where: { $0.id == project.id })
@@ -7732,14 +7767,15 @@ final class TerminalViewController: NSViewController {
         if tileMode || !movesView {
             // Tile mode never changes the active project: wake IN PLACE, and
             // let the grid's spawn queue bring the panes up in its tiles.
-            wakeInPlace(project)
+            wakeInPlace(project, keeps: keeps)
             then?()
             return
         }
         queueHandoffWakes(for: project)
         project.isHibernated = false
         workspace.reapplyOrdering()   // waking lifts it back above its Space's dormant members
-        lastActiveAt[project.id] = Date()
+        project.lastUsedAt = Date()
+        project.keptAwake = keeps
         // Re-resolve: reapplyOrdering() moved the project, so the index captured
         // in the guard above is stale and would select a different row.
         workspace.select(index: workspace.projects.firstIndex { $0.id == project.id } ?? index)
@@ -7755,12 +7791,13 @@ final class TerminalViewController: NSViewController {
     /// Wakes `project` without selecting it: tile mode (which never changes
     /// the active project), and a deferred wake the user has moved on from.
     /// Its panes spawn when shown, like any background project's.
-    private func wakeInPlace(_ project: ProjectRuntime) {
+    private func wakeInPlace(_ project: ProjectRuntime, keeps: Bool) {
         guard project.isHibernated else { return }
         queueHandoffWakes(for: project)
         project.isHibernated = false
         workspace.reapplyOrdering()
-        lastActiveAt[project.id] = Date()
+        project.lastUsedAt = Date()
+        project.keptAwake = keeps
         refreshSidebar()
         rebuildSurfaceNodeView()
         if tileMode { enqueueMissingTileSurfaces() }
@@ -7801,19 +7838,6 @@ final class TerminalViewController: NSViewController {
         if project.isHibernated { wakeProject(project) } else { hibernateProject(project) }
     }
 
-    /// A project is busy if any pane runs a foreground command or a live agent —
-    /// such projects are never auto-hibernated.
-    private func projectIsBusy(_ project: ProjectRuntime) -> Bool {
-        for tree in project.tabList.trees {
-            for surface in tree.layout.surfaces {
-                if !(foregroundBySurface[surface.id] ?? "").isEmpty { return true }
-                let status = agentDetector.state(for: surface.id).status
-                if status == .running || status == .needsAttention { return true }
-            }
-        }
-        return false
-    }
-
     /// Starts the auto-hibernation timer (safe to call repeatedly, e.g. on reload).
     func startHibernationTimer() {
         hibernationTimer?.invalidate()
@@ -7822,26 +7846,23 @@ final class TerminalViewController: NSViewController {
         }
     }
 
-    private func evaluateAutoHibernation() {
-        let after = autoHibernateAfter?() ?? 0
-        guard after > 0, workspace.projects.count > 1 else { return }
-        let now = Date()
-        let activeID = workspace.activeProject.id
-        lastActiveAt[activeID] = now   // the active project is continuously "seen"
-        for project in workspace.projects where project.id != activeID {
-            let seen = lastActiveAt[project.id] ?? now   // first sight: full window before eligible
-            lastActiveAt[project.id] = seen
-            if HibernationPolicy.shouldHibernate(
-                idleFor: now.timeIntervalSince(seen),
-                hibernateAfter: after,
-                isBusy: projectIsBusy(project),
-                isActive: false,
-                isHibernated: project.isHibernated,
-                autoDisabled: autoHibernateDisabled?(project) ?? false,
-                isHome: project.isHome) {
-                hibernateProject(project, confirmIfBusy: false)
+    /// Projects with a pane on screen now: the active one and, while the grid
+    /// is up, every project a tile shows. They are in use by definition.
+    var projectsOnScreen: Set<UUID> {
+        var ids: Set<UUID> = [workspace.activeProject.id]
+        if tileMode {
+            for id in tileFocusableIDs {
+                if let project = workspace.project(containing: id) { ids.insert(project.id) }
             }
         }
+        return ids
+    }
+
+    /// The project the keyboard is typing into: the focused tile's while the
+    /// grid is up, the active one otherwise.
+    var keyboardProject: ProjectRuntime? {
+        if tileMode, let id = tileFocusedSurfaceID { return workspace.project(containing: id) }
+        return workspace.activeProject
     }
 
     // MARK: - Spaces

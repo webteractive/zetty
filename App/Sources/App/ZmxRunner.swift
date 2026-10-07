@@ -64,9 +64,10 @@ enum ZmxRunner {
     /// `zmx history <session> --vt` — the session's scrollback WITH attributes,
     /// as raw bytes (nil when the session doesn't exist or zmx fails). Bytes,
     /// not String: escape sequences must round-trip untouched into the pane.
-    /// Blocking.
-    static func historyVT(session: String, zmxPath: String) -> Data? {
-        runData(zmxPath, ["history", session, "--vt"])
+    /// Blocking. `timeout` bounds it for a caller that polls: without one a
+    /// hung zmx holds its thread for good.
+    static func historyVT(session: String, zmxPath: String, timeout: TimeInterval? = nil) -> Data? {
+        runData(zmxPath, ["history", session, "--vt"], timeout: timeout)
     }
 
     /// Kills the given sessions in the background (fire-and-forget).
