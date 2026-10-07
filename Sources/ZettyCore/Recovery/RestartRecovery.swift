@@ -194,14 +194,26 @@ public enum RestartRecovery {
         case .codex:  resume = "\(command(forCatalogID: "codex")) resume \(quotedID)"
         default:      return nil
         }
+        let login = loginPrefix(environment: environment, unsetting: unsetting)
+        return "cd \(ShellQuote.singleQuoted(cwd)) && \(login)\(resume)"
+    }
+
+    /// What goes in front of a harness command so it runs under a login the
+    /// pane's shell does not hold: `KEY='value' ` assignments, or `env -u KEY `
+    /// for the default login. Empty when the shell already is that login.
+    static func loginPrefix(environment: [String: String], unsetting: [String]) -> String {
         let assignments = EnvDirective.sanitized(environment)
             .filter { isShellName($0.key) }
             .sorted { $0.key < $1.key }
             .map { "\($0.key)=\(ShellQuote.singleQuoted($0.value)) " }
             .joined()
         let removals = Set(unsetting).filter(isShellName).sorted().map { "-u \($0) " }.joined()
-        let unset = removals.isEmpty ? "" : "env \(removals)"
-        return "cd \(ShellQuote.singleQuoted(cwd)) && \(assignments)\(unset)\(resume)"
+        return assignments + (removals.isEmpty ? "" : "env \(removals)")
+    }
+
+    /// The command a catalog harness is started with (`claude`, `codex`).
+    static func harnessCommand(for agent: AgentKind) -> String {
+        command(forCatalogID: agent.rawValue)
     }
 
     /// A name a POSIX shell accepts on the left of a prefix assignment.
