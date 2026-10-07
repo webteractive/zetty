@@ -10,8 +10,16 @@ enum AgentTranscript {
                                  configDirectory: String?) -> Date? {
         guard let url = url(agent: agent, session: session, configDirectory: configDirectory)
         else { return nil }
-        return (try? url.resourceValues(forKeys: [.contentModificationDateKey]))?
-            .contentModificationDate
+        // Claude runs subagents in its own process and writes each one's
+        // transcript beside the session's, in `<session>/subagents/`. One
+        // still working after the main turn ended shows nowhere else: the
+        // hooks say idle and there is no child process to see.
+        let subagents = url.deletingPathExtension().appendingPathComponent("subagents", isDirectory: true)
+        let files = [url] + ((try? FileManager.default.contentsOfDirectory(
+            at: subagents, includingPropertiesForKeys: [.contentModificationDateKey])) ?? [])
+        return files.compactMap {
+            (try? $0.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate
+        }.max()
     }
 
     private static func url(agent: AgentKind, session: AgentSession,

@@ -10,6 +10,7 @@ public enum ForegroundProcess {
 
     struct Row {
         let pid: Int32
+        let ppid: Int32
         let pgid: Int32
         let stat: String
         let tty: String
@@ -21,16 +22,46 @@ public enum ForegroundProcess {
     /// leader's tool name, or nil when the pane is idle (shell in the
     /// foreground), the pid is unknown, or it has no TTY.
     public static func command(forSessionPID sessionPID: Int32, psOutput: String) -> String? {
+        foregroundLeader(forSessionPID: sessionPID, in: parse(psOutput))?.name
+    }
+
+    /// Whether the program in the pane's foreground has work of its own still
+    /// running: a descendant with no terminal.
+    ///
+    /// An agent runs each command it starts as a session of its own, off the
+    /// pane's terminal, while its helpers (MCP servers, a language server)
+    /// stay on it. So a dev server an agent started and left running shows
+    /// here after its turn has ended, when its hooks say idle and its prompt
+    /// box is empty. A different process GROUP alone is not the sign: Codex
+    /// keeps its helpers in groups of their own, on the terminal. Read off
+    /// claude 2.1.292. False for an idle shell, whose own jobs are not this.
+    public static func hasDetachedWork(forSessionPID sessionPID: Int32, psOutput: String) -> Bool {
         let rows = parse(psOutput)
+        guard let leader = foregroundLeader(forSessionPID: sessionPID, in: rows) else { return false }
+        var children: [Int32: [Row]] = [:]
+        for row in rows { children[row.ppid, default: []].append(row) }
+        var pending = children[leader.row.pid] ?? []
+        var seen: Set<Int32> = [leader.row.pid]
+        while let row = pending.popLast() {
+            guard seen.insert(row.pid).inserted else { continue }
+            if row.tty == "??" { return true }
+            pending.append(contentsOf: children[row.pid] ?? [])
+        }
+        return false
+    }
+
+    /// The process-group leader in the foreground of the session's terminal,
+    /// with its tool name; nil when that is a shell at its prompt.
+    private static func foregroundLeader(forSessionPID sessionPID: Int32,
+                                         in rows: [Row]) -> (row: Row, name: String)? {
         guard let session = rows.first(where: { $0.pid == sessionPID }),
               !session.tty.isEmpty, session.tty != "??" else { return nil }
 
         let foreground = rows.filter { $0.tty == session.tty && $0.stat.contains("+") }
-        guard let leader = foreground.first(where: { $0.pid == $0.pgid }) ?? foreground.first else {
-            return nil
-        }
-        guard let name = toolName(fromCommandLine: leader.comm) else { return nil }
-        return TabTitle.isShellName(name) ? nil : name
+        guard let leader = foreground.first(where: { $0.pid == $0.pgid }) ?? foreground.first,
+              let name = toolName(fromCommandLine: leader.comm),
+              !TabTitle.isShellName(name) else { return nil }
+        return (leader, name)
     }
 
     /// Interpreters whose argv[0] hides the real tool (a python CLI's process
@@ -62,9 +93,11 @@ public enum ForegroundProcess {
         output.split(separator: "\n").compactMap { line in
             let fields = line.split(separator: " ", maxSplits: 7, omittingEmptySubsequences: true)
             guard fields.count == 8,
-                  let pid = Int32(fields[0]), let pgid = Int32(fields[2]) else { return nil }
+                  let pid = Int32(fields[0]), let ppid = Int32(fields[1]),
+                  let pgid = Int32(fields[2]) else { return nil }
             return Row(
                 pid: pid,
+                ppid: ppid,
                 pgid: pgid,
                 stat: String(fields[3]),
                 tty: String(fields[4]),

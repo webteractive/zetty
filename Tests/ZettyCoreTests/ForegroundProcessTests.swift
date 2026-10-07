@@ -112,3 +112,55 @@ private let psSample = """
     #expect(Set(SessionPersistence.sessionPIDs(fromList: list).keys)
             == Set(SessionPersistence.zettySessions(fromList: short)))
 }
+
+// MARK: - An agent's background work
+
+// Real `ps` rows from a Claude pane (claude 2.1.292), paths shortened. Its
+// helpers, a language server and an MCP bridge, sit on the pane's terminal in
+// the agent's own process group. A command it started with the Bash tool is
+// a session of its own with no terminal at all.
+private let agentHelpers = """
+30938 30937 30938 Ss ttys010 0:00.48 496 -zsh
+94650 30938 94650 S+ ttys010 14:18.75 300912 claude --name app
+1037 94650 94650 S+ ttys010 0:01.28 1968 /Applications/Xcode.app/Contents/Developer/usr/bin/sourcekit-lsp
+83541 94650 94650 S+ ttys010 0:00.01 1712 caffeinate -i -t 300
+94691 94650 94650 S+ ttys010 0:01.55 3648 npm exec mcp-remote https://example.com/mcp
+95115 94691 94650 S+ ttys010 0:00.93 2672 node /Users/me/.npm/_npx/x/node_modules/.bin/mcp-remote https://example.com/mcp
+"""
+
+private let agentTask = """
+84628 94650 84628 Ss ?? 0:00.01 1232 /bin/zsh -c source /Users/me/.claude/shell-snapshots/snapshot-zsh-1.sh 2>/dev/null || true && eval 'npm run dev'
+84629 84628 84628 S ?? 0:00.00 448 node server.js
+"""
+
+@Test func anAgentWithOnlyItsHelpersHasNoBackgroundWork() {
+    #expect(!ForegroundProcess.hasDetachedWork(forSessionPID: 30938, psOutput: agentHelpers))
+}
+
+// The dev server an idle agent left running: hibernate-after must not take it.
+@Test func aCommandTheAgentLeftRunningIsBackgroundWork() {
+    #expect(ForegroundProcess.hasDetachedWork(forSessionPID: 30938,
+                                              psOutput: agentHelpers + "\n" + agentTask))
+}
+
+@Test func someoneElsesDetachedProcessIsNotThisAgents() {
+    let stranger = "70001 1 70001 Ss ?? 0:00.01 1232 /bin/zsh -c eval 'npm run dev'"
+    #expect(!ForegroundProcess.hasDetachedWork(forSessionPID: 30938,
+                                               psOutput: agentHelpers + "\n" + stranger))
+}
+
+// Codex keeps its MCP helpers in process groups of their own, but on the
+// pane's terminal: a different group alone is not a task.
+@Test func helpersInTheirOwnGroupOnTheTerminalAreNotBackgroundWork() {
+    let codex = """
+    94059 94058 94059 Ss ttys026 0:01.00 1024 -zsh
+    64617 94059 64617 S+ ttys026 0:01.00 1024 codex
+    64685 64617 64685 S ttys026 0:01.00 1024 npm exec @playwright/mcp@latest
+    """
+    #expect(!ForegroundProcess.hasDetachedWork(forSessionPID: 94059, psOutput: codex))
+}
+
+@Test func anIdleShellOrAnUnknownPaneHasNoBackgroundWork() {
+    #expect(!ForegroundProcess.hasDetachedWork(forSessionPID: 33333, psOutput: psSample))
+    #expect(!ForegroundProcess.hasDetachedWork(forSessionPID: 99999, psOutput: psSample))
+}

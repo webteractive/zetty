@@ -128,6 +128,17 @@ Needs `preserve-sessions` (`handoffsEnabled`); without zmx both hibernation and
   run put the idle shell away and left the idle agent. A real question
   replaces the prompt box with a menu, so an empty box under that status is an
   agent with nothing to ask.
+- **An agent's own background work keeps its project awake** (Glen,
+  2026-10-08). When a turn ends Claude reports `idle` and shows an empty box
+  while a dev server it started keeps running, and before handoffs any
+  foreground process protected that server from the timer.
+  `ForegroundProcess.hasDetachedWork` finds it: an agent runs each command it
+  starts as a session of its own with NO terminal (`??` in `ps`), while its
+  helpers, MCP servers and a language server, stay on the pane's. A different
+  process GROUP alone is not the sign: Codex keeps its helpers in groups of
+  their own, on the terminal. Subagents run inside Claude's process, so they
+  are caught by the clock instead: `AgentTranscript` takes the newest of the
+  session's transcript and `<session>/subagents/*`.
 - **The busy rule for a hibernate somebody asks for is unchanged on purpose**
   (`confirmClosingBusyPanes`, `BusyPaneGate`, `--force`).
 - **Codex's hook cannot tell working from idle** (its one hook is turn ended),
@@ -164,13 +175,11 @@ Needs `preserve-sessions` (`handoffsEnabled`); without zmx both hibernation and
   created in and uses physical paths (`/tmp` reports as `/tmp/…`, a rollout
   records `/private/tmp/…`). An agent started after a `cd` elsewhere, with no
   hook, gets no handoff.
-- **An idle agent with work still running in the background is eligible.**
-  Claude reports `idle` when its turn ends, and a background shell or
-  subagent it left running does not change that, or its prompt box. Before
-  handoffs any foreground process kept the project awake, so a dev server
-  started by an agent was safe from `hibernate-after`; now only the idle clock
-  protects it (the transcript date moves while the agent writes, not while a
-  server it started just runs).
+- **Background work is seen two ways, and neither is complete.** A command
+  shows as a process with no terminal; a subagent shows only as a transcript
+  being written. A detached browser an MCP server launched also has no
+  terminal, and will keep its agent's project awake for as long as it lives:
+  the rule errs toward awake. Codex's commands have not been looked at.
 - **Claude shows its spinner before it has submitted a prompt given on the
   command line.** For most of a minute at startup (three launched together)
   the status was `idle`, the box empty and the spinner turning; `running` only

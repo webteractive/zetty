@@ -27,14 +27,23 @@ extension TerminalViewController {
     /// `zetty hibernate`. A pane was still reported as running Codex long
     /// after Codex had quit.
     nonisolated static func probeForeground(_ surfaceIDs: [UUID], zmxPath: String) -> [UUID: String]? {
+        probePanes(surfaceIDs, zmxPath: zmxPath)?.foreground
+    }
+
+    /// `probeForeground`, plus the panes whose foreground program has a
+    /// command of its own still running, from the same `ps` sweep.
+    nonisolated static func probePanes(_ surfaceIDs: [UUID], zmxPath: String)
+        -> (foreground: [UUID: String], backgroundWork: Set<UUID>)? {
         let pids = ZmxRunner.sessionPIDs(zmxPath: zmxPath)
         guard !pids.isEmpty, let ps = ZmxRunner.psSnapshot() else { return nil }
         var commands: [UUID: String] = [:]
+        var working: Set<UUID> = []
         for id in surfaceIDs {
             guard let pid = pids[SessionPersistence.sessionName(for: id)] else { continue }
             commands[id] = ForegroundProcess.command(forSessionPID: pid, psOutput: ps) ?? ""
+            if ForegroundProcess.hasDetachedWork(forSessionPID: pid, psOutput: ps) { working.insert(id) }
         }
-        return commands
+        return (commands, working)
     }
 
     /// The records for a project about to be hibernated, written to disk.
@@ -291,7 +300,8 @@ extension TerminalViewController {
             // reading there is decides, and any agent pane keeps its project
             // awake, exactly as before handoffs existed.
             for project in candidates {
-                let panes = eligibilityPanes(surfaces[project.id] ?? [], foreground: foregroundBySurface)
+                let panes = eligibilityPanes(surfaces[project.id] ?? [],
+                                             foreground: foregroundBySurface, backgroundWork: [])
                 finishAutoHibernation(.init(project: project.id, panes: panes), foreground: nil, after: after)
             }
             return
@@ -300,14 +310,16 @@ extension TerminalViewController {
         autoHibernationPassStartedAt = now
         let allSurfaces = surfaces.values.flatMap { $0 }
         DispatchQueue.global(qos: .utility).async { [weak self] in
-            let foreground = Self.probeForeground(allSurfaces, zmxPath: zmx)
+            let probed = Self.probePanes(allSurfaces, zmxPath: zmx)
             DispatchQueue.main.async {
                 guard let self else { return }
                 // No answer is "unknown", never "idle": try again next minute.
-                guard let foreground else { self.autoHibernationPassStartedAt = nil; return }
+                guard let probed else { self.autoHibernationPassStartedAt = nil; return }
+                let foreground = probed.foreground
                 var pending: [AutoHibernationCandidate] = []
                 for project in candidates {
-                    var panes = self.eligibilityPanes(surfaces[project.id] ?? [], foreground: foreground)
+                    var panes = self.eligibilityPanes(surfaces[project.id] ?? [], foreground: foreground,
+                                                      backgroundWork: probed.backgroundWork)
                     // Anything a screen read cannot excuse ends it here.
                     if panes.contains(where: {
                         HibernationEligibility.keepsAwake($0.facts)
@@ -343,12 +355,13 @@ extension TerminalViewController {
     /// Each pane with its hook state, and the foreground command from
     /// `foreground`. A pane with no session there has no entry, which reads
     /// as not probed.
-    private func eligibilityPanes(_ surfaces: [UUID],
-                                  foreground: [UUID: String]) -> [AutoHibernationCandidate.Pane] {
+    private func eligibilityPanes(_ surfaces: [UUID], foreground: [UUID: String],
+                                  backgroundWork: Set<UUID>) -> [AutoHibernationCandidate.Pane] {
         surfaces.map { id in
             .init(surface: id,
                   facts: .init(foreground: foreground[id],
-                               agentStatus: agentDetector.state(for: id).status))
+                               agentStatus: agentDetector.state(for: id).status,
+                               hasBackgroundWork: backgroundWork.contains(id)))
         }
     }
 

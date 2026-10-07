@@ -15,11 +15,16 @@ public enum HibernationEligibility {
         public var agentStatus: AgentStatus?
         /// nil when the box was not read, or could not be.
         public var promptBoxEmpty: Bool?
+        /// The foreground program has a command of its own still running
+        /// (`ForegroundProcess.hasDetachedWork`).
+        public var hasBackgroundWork: Bool
 
-        public init(foreground: String?, agentStatus: AgentStatus?, promptBoxEmpty: Bool? = nil) {
+        public init(foreground: String?, agentStatus: AgentStatus?, promptBoxEmpty: Bool? = nil,
+                    hasBackgroundWork: Bool = false) {
             self.foreground = foreground
             self.agentStatus = agentStatus
             self.promptBoxEmpty = promptBoxEmpty
+            self.hasBackgroundWork = hasBackgroundWork
         }
     }
 
@@ -33,13 +38,18 @@ public enum HibernationEligibility {
         // handoff, PROVEN to be doing nothing, at an empty prompt box, may be
         // put away.
         guard isHandoffAgent(foreground), isAtRest(pane.agentStatus) else { return true }
+        // Its turn is over and something it started is not: a dev server, a
+        // long build. Before handoffs any foreground process kept the project
+        // awake, so that work was safe from the timer, and it still is.
+        if pane.hasBackgroundWork { return true }
         return pane.promptBoxEmpty != true
     }
 
     /// Whether reading this pane's screen could change the answer, so the
     /// caller only pays for `zmx history` where it matters.
     public static func needsPromptBox(_ pane: Pane) -> Bool {
-        guard let foreground = pane.foreground, isHandoffAgent(foreground) else { return false }
+        guard let foreground = pane.foreground, isHandoffAgent(foreground),
+              !pane.hasBackgroundWork else { return false }
         return isAtRest(pane.agentStatus)
     }
 
