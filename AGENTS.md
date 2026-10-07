@@ -207,13 +207,28 @@ are in `.hydra/rules/surfaces-and-memory.md`.
   asks for one or the task clearly calls for it (e.g. a PR workflow). This
   overrides any workflow skill that would auto-branch before implementing.
 - **Document every new feature or user-facing change in `README.md`** (its
-  usage — Features, shortcuts, Configuration, and/or the Control CLI list) as
-  part of the same change. A feature isn't done until the README covers it.
+  usage — the intro list, Using Zetty, shortcuts, Configuration, and/or the
+  Control CLI list) as part of the same change. A feature isn't done until the
+  README covers it. **The README is usage only**: how to reach a feature and
+  what it does, in a few lines. Rationale, edge cases and internals go in the
+  feature's `.hydra/rules/` file; building, testing and releasing go in
+  `DEVELOPMENT.md`. (It was trimmed from ~1,180 lines to ~360 on 2026-10-07.)
 - **Feature deep-dives live in `.hydra/rules/`, not here.** Claude Code caps
   the loaded instruction files at 150k chars, and this file once exceeded it.
   Keep only cross-cutting rules in `CLAUDE.md`; record a feature's gotchas in
   its rule file (or a new one via `hydra add` / `hydra new`) and run
   `hydra sync` so the index below stays current.
+- **Anything new that ships in the app needs its license in
+  `THIRD_PARTY_NOTICES.md` and `licenses/`** (both are bundled into the app —
+  MIT, BSD and FTL require the notice to travel with the binary). That covers a
+  new package, a bundled file (font, logo set, script), and **every libghostty
+  bump**: list the static library's members (`ar -t libghostty.a` on a thin
+  slice) and compare against the notices, since a Ghostty update can compile in
+  a new C library. Two entries need care: GNU libintl is LGPL and statically
+  linked, and Ghostty's bash/zsh shell-integration scripts under
+  `App/Resources/ghostty` are GPLv3 (derived from Kitty). libghostty-spm ships
+  an MIT rewrite of those scripts, but it has no `ssh` wrapper (TERM fallback,
+  terminfo install), which Zetty's `ssh-env,ssh-terminfo` default relies on.
 - **Keep `CLAUDE.md` and `AGENTS.md` byte-identical.** They share one canonical
   content; any edit to one must be replicated to the other in the same commit.
 - **Every release ships human-written notes.** When cutting a release, add a

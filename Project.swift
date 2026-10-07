@@ -94,6 +94,10 @@ let project = Project(
                 // copies it out to ~/.zetty/mods — it is never loaded from
                 // inside the bundle, where Claude Code would write beside it.
                 .folderReference(path: "Mods"),
+                // Third-party notices and full license texts, which must travel
+                // with the binary, not only the repo (THIRD_PARTY_NOTICES.md).
+                "THIRD_PARTY_NOTICES.md",
+                .folderReference(path: "licenses"),
             ],
             scripts: [
                 .post(script: stampBuildCommit,

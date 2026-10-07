@@ -1,488 +1,61 @@
 # Zetty
 
-A native macOS GUI **terminal multiplexer** for developers, built on
-[libghostty](https://github.com/ghostty-org/ghostty) (Ghostty's embeddable
-terminal core) with a Swift AppKit application layer.
+A native macOS terminal for developers who keep many projects — and the AI
+coding agents working in them — open at once.
 
-Zetty organizes work around **pinnable projects**, each holding terminal
-**tabs and nested split panes** — and it natively understands **AI coding
-agents** (Claude Code, Codex, Gemini, opencode, Hermes, …) running inside
-those panes, surfacing their status in the sidebar and identifying each tab
-by the tool it's running.
+Zetty puts every project in one window: a sidebar of projects, each with its
+own tabs and split panes, terminals that survive quitting the app, and a live
+view of which agents are working, waiting on you, or failed. It is built on
+[libghostty](https://github.com/ghostty-org/ghostty), so every pane is a full
+Ghostty terminal, with a Swift AppKit app around it.
+
+- **Projects, tabs and splits** — pin, reorder, group into Spaces, hibernate
+  the ones you're not using, or fork one into a disposable copy-on-write clone.
+- **Agent-aware** — status dots for Claude Code, Codex, Hermes and more; launch
+  an agent when you open a pane; run several Claude or Codex logins side by
+  side; restart an agent without losing its conversation.
+- **Tile mode** — a grid of live terminals from any project, so you can answer
+  three agents without switching tabs.
+- **tmux-style keys** — a `Ctrl+B` prefix layer, vi copy mode, zoom and
+  broadcast input, alongside native ⌘ shortcuts.
+- **Sessions that survive** — with `preserve-sessions`, panes keep running
+  across quits and come back with their scrollback, even after a restart.
+- **Scriptable** — a `zetty` CLI to inspect, drive and reshape the workspace,
+  usable by the agents running inside it.
 
 **Platforms:** macOS 14+ (Apple Silicon & Intel). Linux later.
 
-## Features
+## Install
 
-- **Home** — a permanent terminal that's always there as a single row at the top
-  of the sidebar (its own house icon, no pin, and — though it supports tabs —
-  they aren't listed in the sidebar). Seeded on first launch (rooted at your home
-  directory, or wherever its **Working Directory** setting points), it can't be
-  removed or hibernated — not from the sidebar, not from the command palette,
-  and not by `hibernate-after` — and it carries its own project settings
-  (working directory, color, icon, theme, env, preserve-sessions,
-  notifications).
-- **Projects → tabs → splits** — add a project from one picker (**New Folder**
-  to create one, optionally `git init`, or pick an existing directory); every
-  project owns its own tabs, each tab an arbitrarily nested tree of split
-  panes. Break any pane out into its own tab. **Drag project rows** to reorder
-  them within their section (Pinned / Projects). Tabs spread across the bar,
-  shrink as more open, and once they hit their minimum width the strip scrolls
-  instead — so a project with many tabs never forces the window wider than you
-  want it, and the active tab is always scrolled into view.
-- **Narrow windows** — the window shrinks to **320 × 320**, roughly a
-  log-watching width. On the way down the status bar folds its ambient
-  readouts (appearance · scheme · shell · libghostty · version) into a single
-  chip showing the active **color scheme** (`● Nord`), and the account folds
-  in with them — click it for the rest. The left cluster
-  folds the same way once the path would stop being readable: working directory
-  and branch become one pill (`zetty ⏇ main ●`), with the full path, the
-  ahead/behind/changed counts, and the pane's account in its dropup. So a narrow
-  window is **two pills** — and anything else appears only in the state where
-  hiding it would be wrong: broadcast when it's **active**, `PREFIX`/`COPY`/`ZOOM`
-  when **armed**, the CLI pill when **stale**, and an **↑ Update** button when one
-  is waiting. Revealing the sidebar in a small window now splits the space it
-  has instead of forcing the window wider.
-- **Restart an agent, keeping its conversation** — a pane running **Claude** or
-  **Codex** grows a `⟳` button in its gutter, and in its tile header while the
-  grid is up. The pane is covered with a **Reloading session…** placeholder
-  while Zetty quits the agent (`/exit`, `/quit`) and runs `claude --resume` /
-  `codex resume` in its session, then uncovers once the agent is back — so the
-  conversation returns and **the scrollback is kept**. It comes back under the
-  **account** it was running as — including one started with `zetty run
-  <account>` — and finds the conversation in that account's own history.
-  Nothing is torn down;
-  the session is driven from outside. If the agent does not quit, or does not
-  come back, nothing further is sent rather than posting a resume into its
-  prompt. The button turns accent throughout and flashes green on success, red if
-  it gave up. Needs `preserve-sessions`, which is how Zetty can
-  tell the agent has exited; harnesses with no known quit line never show the
-  button.
-- **Tile mode** — `⇧⌘G`, `Ctrl+B g`, the grid button in the tab bar, **View →
-  Tile Running Sessions**, the command palette, or `zetty tiles`. A grid of
-  **live, interactive terminals** drawn from every awake project: the tiles are
-  the real terminals, so typing into the focused one reaches its shell and you
-  can answer three agents without leaving the grid.
-  - **You choose what is in it.** An empty slot is a `+ Attach` cell; click it
-    for a fuzzy-searchable list of every pane, drag a tab row out of the
-    sidebar onto it, or use a pane's right-click → **Add to Tile View ▸**.
-    An empty slot also offers **Split Right**, **Split Down** and **Remove
-    Split** outright, and a filled one carries a split button in its header,
-    so a **Freeform** view grows and shrinks without needing the right-click
-    menu or `Ctrl+B %`. Removing is offered only when there is a split to
-    collapse — a one-slot view has nothing to remove.
-    Each tile's header carries **refresh · end session · open · split down ·
-    split right · remove split · close**, and `⌘D` / `⇧⌘D` split the focused
-    slot too.
-    **End session** (the stop glyph) closes that pane for real, unlike `×`,
-    which only detaches it: the pane's session ends, and if it was its tab's
-    only pane the tab closes and the slot empties. A project's only pane cannot
-    be closed, so there the button becomes a moon and **hibernates the
-    project** instead — the session ends, the layout is kept, and the tile
-    empties. Either way you are asked first if something is still running.
-    Home's last pane and scratch terminals have no such button.
-    **Remove split** detaches the pane and collapses its split in one press.
-    It only appears when there is a split to remove. Attaching focuses
-    what you just attached.
-    **Drag a tile by its header onto another tile** to swap the two; the
-    layout keeps its shape and the panes trade places. Dropping on an empty
-    slot moves the pane there.
-    A tile's `×` (and `⌘W`) detaches the slot — the pane keeps running; press
-    it again on the now-empty slot to remove the slot itself. Clicking a
-    project or tab in the **sidebar** focuses its tile when that tab is in the
-    view on screen. For a project row that is the tile of its active tab, or
-    else its first tile. If the view has none, the click leaves the grid and
-    opens that project or tab normally. **Double-click a tile's header** to leave the grid for that pane, and use its **folder
-    button** to open that pane's own directory in an editor or Finder.
-  - **Or start something new.** The same list ends each project with a
-    **New session** row, so a slot can be filled without first making a tab
-    somewhere else. It goes through the project's own agent chooser when one
-    is configured (Project Settings → Agents), exactly like `⌘T` does, so the
-    new tile can come up already running an agent on the account you pick.
-  - **Add a project without leaving the grid.** The list's last row,
-    **Add Project…**, and an empty tile's **Add Project** button open the
-    folder panel; the new project's pane lands in that tile (after the agent
-    chooser, unless the project has a layout template). While the grid is up,
-    `⌘O` and the sidebar's **+** do the same, filling the first empty tile or
-    splitting the focused one. A folder that is already a project is attached,
-    not added twice, and the active project never changes.
-  - **Every tile has its own status line.** While the grid is up the status
-    bar's account, directory and git state move onto a footer on each tile, so
-    every pane shows where it is and what branch it is on — not only the
-    focused one. In a narrow tile the details give way first, and the
-    directory always stays.
-  - **Tile views are tabs.** While the grid is up the tab bar's strip carries
-    tile views instead of the active project's tabs, with `+` opening your
-    saved **profiles**. Several can be open at once. `⌘1`–`⌘9` jump to a view
-    and `⌘{` / `⌘}` step through them, as they do for tabs. **Double-click a
-    view's pill**, right-click it → **Rename…**, or press `Ctrl+B ,` to
-    rename it in place. Enter keeps the name,
-    and Esc or an empty name cancels.
-  - **⇧⌘G opens a chooser, not a view.** With nothing open the grid area
-    offers **New View** and lists the views you can reopen, so nothing arrives
-    uninvited. Closing your last view returns here.
-  - **A layout is a shape, and shapes are trees.** Not just columns × rows:
-    `1|2/3` — two columns with the second divided — is a layout, and so is
-    anything else you build. **Split a slot** from its right-click menu or with
-    `Ctrl+B %` / `Ctrl+B "`, exactly like splitting a pane, and **drag the
-    boundaries** to resize. **Save as layout** keeps whatever shape you made.
-    Every view starts as **one slot** you split into whatever the work turns
-    out to need — there are no preset shapes, because each one was reachable
-    by splitting. `+` makes a new view straight away; **Rename View…** names
-    it.
-    Editing a layout affects only views made afterwards, because creating a
-    view copies the shape rather than following it.
-  - **Profiles save themselves.** An open view *is* its profile: attaching,
-    renaming and resizing write through immediately, with no save step.
-    A slot remembers its project and tab, so it reattaches after a relaunch
-    even if the tab was renamed or reordered; one whose tab is gone shows the
-    name it had, with a **Reattach…** action. **The mode itself is
-    remembered too** — quit while the grid is up and the next launch comes
-    back to it, with the same views open.
-  - **Manage your views** with `⇧⌘J` or **View → Manage Tile Views…** (also
-    the command palette, and `+` → **Manage Views…** in the strip). Like
-    Sessions it docks to the bottom of the window, and its ⤡ button detaches it
-    into its own window (`zetty-tile-manager-view = drawer | window`, rewritten
-    by the button), and × in its header closes the drawer. The two drawers share
-    that strip, so opening one closes the other. It lists every saved
-    view with its shape, how many of its slots are filled, and whether it is
-    open or showing. From there you can open, rename, duplicate or delete one:
-    double-click or Return opens it, Delete deletes it after asking. Deleting a
-    view never touches its panes, which keep running. Closing a view's pill
-    only closes it; deleting is the one way a view leaves the library.
-  - **Scriptable.** `zetty status` reports the grid while it is up (slots are
-    numbered from 1, in reading order), and while it is up the default CLI
-    target is the focused *tile*. `zetty focus --pane <id>` with the grid up
-    focuses that pane's tile. If the pane's tab is not in the view it attaches
-    it first, filling an empty slot or else splitting the focused tile. Either
-    way you stay in the grid. `zetty tiles attach / detach / split` edit a view
-    without bringing the grid up. `zetty tiles list / new / open / rename /
-    duplicate / delete` manage the library.
-  - `zetty-tiles-grid` (default `4x4`) seeds a new view with a uniform shape;
-    each profile keeps its own tree thereafter. The status bar carries the
-    running/idle count while the grid is up.
-- **Sessions** — `⌘J`, **View → Sessions…**, the command palette, or the
-  status-bar pill. It docks to the **bottom of the window** by default; the ⤡ button in
-  its header detaches it into its own window, the ⤠ button docks it back, and
-  the docked drawer's **×** closes it.
-  Whichever form you leave it in is remembered — the buttons rewrite
-  `zetty-sessions-view`. It lists
-  every zmx session Zetty spawned, **grouped by project** in sidebar order:
-  which pane owns it, what it is running, its
-  live CPU, and the resident memory of its own processes. Each project's header row totals its
-  sessions' CPU and memory under those columns and leads with a **moon**
-  button that hibernates the project, also offered as **Hibernate “project”**
-  in every session's **⋮** menu — so idle projects can be put away without
-  visiting them (greyed out for Home and scratch terminals; sessions no pane
-  owns trail under **Orphaned**). A hibernated project has no sessions: if
-  one survives hibernating, Zetty ends it within seconds, and the project reads
-  *hibernated, ending…* until it is gone. Above the list,
-  Zetty's measured footprint. Per row: **Reveal Pane** (in tile mode it
-  focuses the pane's tile, attaching its tab when the view lacks it),
-  **Interrupt** (Ctrl-C), and **Kill Session…**. The status-bar pill carries a dot that turns yellow
-  when a session is busy; it folds into the compact bar's menu on a narrow
-  window unless something is busy. CPU is measured *between refreshes* rather than taken
-  from `ps`'s lifetime average, so the first reading after opening shows `—`
-  and a number appears a few seconds later — a process that was busy an hour
-  ago and is idle now reads as idle, which is the point.
-- **Command palette** — `⌘K`, filtered **fuzzily**: type the letters in order
-  and they need not be adjacent, so `go zetty` finds **Go to Project: zetty**
-  and `tsb` finds **Toggle Sidebar**. Space-separated words all have to match
-  but may be given in any order (`zetty go` works too). The panel follows the
-  window when the window is small, rather than overhanging it.
-- **Sidebar drawer** — `⌘B` cycles three states rather than two: pinned →
-  hidden → drawer. From hidden, the toggle (`⌘B`, or the sidebar button at the
-  leading edge of the tab bar) floats the sidebar **over** the terminal behind
-  a dimmed scrim instead of pushing it aside. Picking a project or tab closes
-  it, as do `Esc`, `⌘B`, and a click on the scrim; the **pin** button just
-  outside its edge puts it back alongside the terminal.
-- **Pane gutter buttons** — every pane carries a thin top strip with a focus
-  dot and click targets for **open** (a folder button that opens that pane's
-  own directory in an editor or Finder), **split vertically** and **split
-  horizontally**; panes in a multi-pane tab additionally get **break into tab** and **close**.
-  Right-clicking the strip opens those actions as a menu, plus **Scroll to
-  Bottom** (also ⌘↓).
-- **Project clones** — right-click a project → **Clone Project…** (or the
-  command palette / `zetty clone`) to fork it into an instant APFS
-  copy-on-write copy under `~/.zetty/clones/<project>-<name>` — every
-  untracked file, `.env`, and `node_modules` included — checked out on its
-  own git branch (named `<name>`); it nests under its source in the sidebar
-  behind a fork glyph, and a caution strip below the tab bar reminds you the
-  copy is disposable (commit + push, or merge back — uncommitted changes are
-  lost on removal). The copy runs in the background (the app never freezes); a
-  "Cloning…" spinner row appears under the source while it works and is
-  replaced by the real clone row when it lands. When the project has agents set
-  (Project Settings →
-  Agents), the clone sheet offers **Open with** — pick an agent (the default)
-  and it launches in the clone's first pane, or choose Standard session.
-  **Remove Clone…** offers **Fetch & Delete** (lands the
-  branch back in the original repo first — merge it with your normal tools)
-  or a plain delete, warning before discarding uncommitted or unfetched work.
-  Clones inherit the source project's settings (env, theme, agents) and have
-  no Project Settings of their own. No clones of clones; Home, Scratch, and
-  projects rooted at your home directory can't be cloned; non-APFS volumes
-  fall back to a full copy.
-- **Scratch terminals** — spin up a throwaway, project-less terminal rooted at
-  home (`⌃⌘N`, the command palette, or `zetty scratch`). They live in their own
-  **Scratch** sidebar section, are never saved to the workspace, and every tab
-  is closable — closing the last one while you're looking at it returns you to
-  your first pinned project.
-  Clear them all at once with **Close All Scratch Terminals** (`zetty
-  scratch-clear`). Like any other pane they run inside a preserved session, so
-  `zetty capture` can read their output — but that session ends when the pane
-  closes or Zetty quits, so a scratch terminal never outlives itself.
-- **Spaces** — right-click a project → **Move to Space ▸** to file it into a
-  named, colorable, collapsible sidebar section (or create one with **New
-  Space…**); Spaces render below **Projects**, each with a color dot, optional
-  glyph (SF Symbol or emoji), and an awake/dormant member count in its header.
-  A project belongs to at most one Space, and **joining one clears its pin** —
-  a project lives in exactly one section, so members show no star. Hibernating
-  a member moves it to the **Hibernating** section like any other project,
-  tagged with its Space's name; waking it returns it to that Space. A Space
-  with no awake members hides entirely (its dormant projects are still listed
-  under Hibernating, and it stays reachable from **Move to Space ▸**). The
-  header's **Hibernate All** / **Wake All** act on every member at once. Deleting a Space (its header's
-  **Delete Space…**) never removes a project — members just fall back to
-  Pinned/Projects. Drag a project onto a Space header to file it in, drag it
-  out to ungroup it, or drag a Space header itself to reorder the whole
-  section. Home, scratch terminals, and clones are never members — a clone
-  always follows its source's Space.
-- **Hibernating projects** — right-click a project → **Hibernate Project** (or
-  `zetty hibernate`, or its moon button in the Sessions view) to free
-  its sessions/processes while keeping its layout. Shells sitting idle at a
-  prompt are sent `exit` first, so they leave cleanly (history written, logout
-  hooks run); anything still running — or still alive a few seconds later — is
-  killed. Waking a project during those seconds wakes it once they are over.
-  A hibernated project never runs a session: a tile view showing one of its
-  panes shows **"<project> is hibernated"** with a **Wake Project** button
-  instead of starting it, and any session that survives hibernating is ended
-  automatically. Hibernated projects collect at the bottom of the sidebar in a **Hibernating**
-  section that is **collapsible** (click the header to tuck the dormant rows
-  away) and **sorted by name**. Dormancy never blocks the CLI: `zetty status`
-  reports it (`hibernated` per project, `live` per pane) and `send`/`new-tab`/
-  `split`/`break`/`focus` wake a project on demand, so scripts and agents don't
-  have to call `zetty wake` themselves.
-- **Live status bar** — the bottom strip tracks the **focused pane**: its
-  working directory (updates as you `cd`), git branch/ahead-behind/changes,
-  and the shell, alongside the color scheme and libghostty version.
-- **Full Ghostty terminal** — GPU rendering, ligatures/text shaping, and the
-  Kitty keyboard + graphics protocols come from full libghostty. Zetty builds
-  the multiplexer shell, not the terminal.
-- **tmux-style prefix keys** — `Ctrl+B` then a key drives splits, pane focus,
-  tabs, zoom, and paste; fully remappable, no mouse required. Running tmux
-  (or screen) in a pane? While it's the pane's foreground process, `Ctrl+B`
-  goes to it instead, so `Ctrl+B d` detaches; ⌘ shortcuts keep working.
-  Detection needs `preserve-sessions` and takes up to ~3s after tmux starts;
-  for tmux over `ssh`, press `Ctrl+B` twice to send a literal one.
-- **Vi-keyed copy mode** — `Ctrl+B [` enters a modal copy mode with vi
-  motions, visual selection, and yank-to-clipboard, rendered as a native
-  Ghostty selection.
-- **Broadcast input** — type once, send the same keystrokes to a set of panes:
-  the current **tab**'s splits, the whole **project** (every tab), the whole
-  **workspace**, or **only the panes running an AI agent** — steer a whole
-  swarm with one prompt. A yellow `BROADCAST` chip keeps the mode obvious.
-- **Session persistence** — with `preserve-sessions` enabled, panes run inside
-  [zmx](https://zmx.sh) sessions that survive app quit/relaunch, and
-  reattached panes replay their full scrollback history (colors intact) so
-  scrolling up works as if the app never quit.
-- **Per-project settings** — right-click a project → **Rename…** or **Project
-  Settings…**: custom name, identity color, and an SF Symbol or emoji icon
-  for the sidebar; a
-  per-project **theme** (the whole app re-themes when you switch projects);
-  per-project overrides (Follow global / On / Off) of session preservation
-  and agent notifications; and per-project **environment variables**
-  (private, never written into the repo).
-- **Layout templates** — save a project's tab/split arrangement (each pane's
-  cwd + optional startup command) into a git-committable
-  `.zetty/project.json`; it re-applies automatically when the project is
-  added, or on demand from Project Settings. A hand-editable global default
-  lives in Application Support.
-- **AI agent status** — hook-driven status dots per tab and per project:
-  green = running, yellow = needs attention, red = stopped on an error, dim =
-  idle — with optional
-  sound / Dock badge / Notification Center alerts when an agent needs you.
-- **Launch agents per project** — enable coding agents (Claude Code, Codex,
-  Hermes, Gemini, opencode, Pi, Cursor) in a project's **Agents** settings;
-  opening a new tab/split then offers a keyboard-driven chooser to launch one
-  or a plain shell.
-- **Multiple Claude accounts** — run a work login in one tab and a personal one
-  in the next. Each account keeps its own credentials, settings and history in
-  its own directory; set a default per project, override it per pane, and see
-  which is which from a status-bar chip and colored dots. The chip also warns
-  when an account is near a rate limit, and the account pickers list each
-  account's usage.
-- **Update notifications** — Zetty checks GitHub for newer releases and shows
-  an "Update available" pill in the status bar (plus **Check for Updates…**);
-  opt out with `check-updates = false`.
-- **Tab identity** — a foreground-process probe names each tab after what it's
-  actually running, with bundled logos for 40+ CLI tools.
-- **Peek a file without leaving the terminal** — ⌘-click a file path in any
-  pane's output (a compiler error, a `grep` hit, a stack frame) and Zetty does
-  the obvious thing with it. **Text** opens in a transient **read-only** overlay,
-  syntax-highlighted and scrolled to the referenced line; ⌘-hover underlines a
-  path that resolves to a real file, and Esc, the ✕, or a click outside closes
-  it. **Anything else** — a PDF, an image — skips the overlay and opens in its
-  default app, so a ⌘-click is useful whatever you point it at. Editing is
-  delegated: the overlay's **Open in ▾** button hands the file, *at the right
-  line*, to Zed, VS Code, Cursor, Windsurf, TextMate, or any editor Zetty finds.
-  Highlighting comes from [`bat`](https://github.com/sharkdp/bat) when it's
-  installed and falls back to plain text when it isn't; it follows your active
-  scheme's light/dark axis, and any colour the highlighter emits that would be
-  unreadable against the current background is replaced with the scheme's own
-  foreground. A peek is never blank: when there is genuinely nothing to draw —
-  an empty file, or one whose bytes couldn't be read — it says so in the panel
-  instead of showing an empty one. Because paths come from
-  untrusted output, files macOS would *install or execute* (installers, disk
-  images, compiled binaries) are only revealed in Finder, never launched.
-  ⌘-click detection reads the pane's preserved zmx session, so it needs
-  `preserve-sessions = true`; `zetty view` works either way.
-- **Per-pane file tree** — toggle a file tree on any pane with `⇧⌘F`, from its
-  gutter button, its right-click menu, or `Ctrl+B` `e`. Hidden by default. It roots at
-  the pane's current directory and follows `cd`, remembers which folders you had
-  open so hopping around doesn't collapse it, and has a fuzzy filename filter
-  (`tvc` finds `TerminalViewController.swift`). Click a file to peek it in the
-  read-only viewer, double-click or ⌘Enter to open it in your editor; right-click
-  for Reveal in Finder, Copy Path, and Copy Relative Path. It is **read-only** —
-  no rename, delete, or move — and it shows the raw filesystem by default, so
-  set `zetty-file-tree-respect-gitignore = true` on a project where
-  `node_modules` would drown it.
-- **`ssh://` links** — Zetty registers as a macOS handler for `ssh://` URLs, so
-  a handover from another app (Terminal, a browser link, `open ssh://host`)
-  opens the session in a new Home tab.
-- **Control CLI** — a `zetty` command scripts the app over a local socket:
-  inspect layout, send keys, capture output, open tabs/splits, focus panes.
-- **Themes** — 20 built-in color schemes (10 dark, 10 light), independent
-  dark/light selection, live macOS appearance following, and verbatim
-  passthrough of your existing Ghostty config.
+1. Download the latest `Zetty-<version>.dmg` from
+   [Releases](https://github.com/webteractive/zetty/releases).
+2. Open it and drag **Zetty** into **Applications**.
+3. Launch Zetty.
 
-## Installation
+**Install the `zetty` CLI:** **Settings (⌘,) → Command Line → Install** links
+`zetty` into `~/.local/bin` — make sure that's on your `PATH`.
 
-### Download (recommended)
+**Folder-access prompts.** macOS asks the first time a program running in a
+pane touches Desktop, Documents, Downloads, iCloud Drive or an external volume —
+every terminal does this. To stop the prompts for good, add
+`/Applications/zetty.app` under **System Settings → Privacy & Security → Full
+Disk Access**, then relaunch Zetty.
 
-1. Open the [Releases](https://github.com/webteractive/zetty/releases) page
-   and download the latest `Zetty-<version>.dmg`.
-2. Open the DMG and drag **Zetty** into **Applications**.
-3. Launch Zetty from Applications or Spotlight.
+To build from source, see [`DEVELOPMENT.md`](DEVELOPMENT.md).
 
-Releases are signed with a Developer ID and notarized by Apple, so Gatekeeper
-opens them without a prompt — the app and the DMG both carry their
-notarization ticket, so this works offline too.
+## Getting started
 
-> **Upgrading from an older release?** Releases up to and including
-> **0.1.52** were ad-hoc signed, not notarized. If macOS says one of those is
-> *"damaged and can't be opened"*, it isn't — clear the quarantine flag with
-> `xattr -d com.apple.quarantine /Applications/zetty.app`, or install a newer
-> release instead.
+1. Click **+** in the sidebar (or `⌘O`) to add a project — pick an existing
+   folder, or **New Folder** to create one (optionally `git init`).
+2. Open tabs with `⌘T` and split with `⌘D` / `⇧⌘D`. The focused pane is the one
+   with the accent dot.
+3. Press `⌘K` for the command palette — every action is in it.
 
-### "Zetty would like to access files in…" prompts
+Your layout, tab titles and sidebar persist across relaunches. **Home** — the
+row at the top of the sidebar — is a permanent terminal at your home folder
+(or `zetty-home-path`); `⌃⌘N` opens a throwaway **scratch terminal**.
 
-macOS shows a folder-access (TCC) prompt the first time a process **you run
-inside a pane** touches a protected folder — Desktop, Documents, Downloads,
-iCloud Drive, or removable/network volumes. The access is attributed to Zetty
-because Zetty spawned that process. This is normal — every terminal emulator
-(Terminal, iTerm2, Ghostty, WezTerm) behaves the same way. It is **not** a bug,
-and Zetty stores nothing about your folders.
-
-**Make it stop for good — grant Full Disk Access (one time):**
-
-1. **System Settings → Privacy & Security → Full Disk Access**
-2. Click **`+`**, add **`/Applications/zetty.app`**, and turn it on
-   (shortcut: `open "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles"`)
-3. **Quit and relaunch Zetty.**
-
-After that, the per-folder prompts stop.
-
-> **Why does it keep coming back?** Two reasons:
->
-> - **It re-triggers on re-access.** Any tool that re-scans its working
->   directory pops the prompt again until access is granted app-wide — for
->   example, clearing and restarting an AI agent session (Claude Code's
->   `/clear`, etc.) makes it re-read the project directory, so the prompt
->   reappears. Full Disk Access covers all of these at once.
-> - **An ad-hoc build changes identity.** macOS ties the grant to the app's
->   code signature. Releases are Developer ID signed, so the grant sticks
->   across updates — but the first update from an ad-hoc release (0.1.52 or
->   earlier) to a signed one is a new identity to macOS and re-prompts once.
->   A build you compile yourself is ad-hoc signed and re-prompts per build.
->
-> You do **not** need to "trust" each project — that's an App Sandbox concept,
-> and Zetty is not sandboxed. Granting folder access once is all it takes.
-
-### Collecting a diagnostic log
-
-The **file viewer** narrates every step of a peek — the file it read, the
-highlighter it ran and what that returned, how many styled runs it rendered,
-which colours it resolved them to, and the geometry the text landed in. If a
-peek ever comes up blank, that's the difference between "the modal is empty"
-and knowing which step emptied it.
-
-**Copy diagnostics** in the peek's footer puts the recent lines, plus your build
-and macOS version, on the clipboard — paste it straight into the issue. Nothing
-is sent anywhere, and the file's own contents are never recorded, only counts.
-
-The same lines also go to the macOS unified log, so they can be collected after
-the fact on any build — no debug build, no need to be watching when it happens:
-
-```sh
-log show --last 15m --predicate 'subsystem == "co.webteractive.zetty"' --style compact
-```
-
-### Build from source
-
-#### Prerequisites
-
-- macOS 14.0 or later
-- Xcode 16+ (Swift 6 toolchain) with command-line tools
-- [Tuist](https://tuist.dev) — `brew install tuist` (or via
-  [mise](https://mise.jdx.dev): `mise use -g tuist`)
-- Optional: [zmx](https://zmx.sh) for session persistence —
-  `brew install neurosnap/tap/zmx` (Settings can also download it for you)
-
-The libghostty terminal core is consumed as a prebuilt Swift package
-([libghostty-spm](https://github.com/Lakr233/libghostty-spm)) — no Zig
-toolchain or submodule build required.
-
-#### Build and install
-
-```sh
-git clone https://github.com/webteractive/zetty.git
-cd zetty
-
-# Generate the Xcode project (Tuist; sources are listed explicitly)
-tuist generate --no-open        # or: mise exec -- tuist generate --no-open
-
-# Build the app
-xcodebuild -project zetty.xcodeproj -scheme zetty \
-  -configuration Release -destination 'generic/platform=macOS' \
-  -derivedDataPath build build
-
-# Install
-ditto build/Build/Products/Release/zetty.app /Applications/zetty.app
-open /Applications/zetty.app
-```
-
-### Install the `zetty` CLI
-
-The app binary doubles as the control CLI. In Zetty, open **Settings (⌘,) →
-Command Line** and click install — this symlinks `zetty` into
-`~/.local/bin`. Make sure `~/.local/bin` is on your `PATH`.
-
-## Usage
-
-### Getting started
-
-1. Launch Zetty. The sidebar lists your **projects**. Click the **+** to open
-   the **Add Project** picker — use **New Folder** to create one (with an
-   optional *Initialize git repository*) or pick an existing directory. Each
-   project keeps its own tabs and layout. Drag project rows to reorder them.
-   Need a quick throwaway shell? `⌃⌘N` opens a **scratch terminal** (see below).
-2. Open tabs and split panes with the prefix keys below (or the menus).
-   Layout, tab titles, and sidebar state persist across relaunches
-   (`~/Library/Application Support/zetty/workspace.json`).
-3. Focus is shown by the accent status dot on the active pane — panes are
-   intentionally borderless.
-
-### Keyboard shortcuts (native)
+## Keyboard shortcuts
 
 | Shortcut | Action |
 |---|---|
@@ -494,78 +67,55 @@ Command Line** and click install — this symlinks `zetty` into
 | `⌘}` / `⌘{` | Next / previous tab (tile view, while the grid is up) |
 | `⌘1`–`⌘9` | Jump to tab (tile view, while the grid is up) |
 | `⌘J` | Toggle Sessions (docked drawer, or its own window) |
-| `⇧⌘G` | Toggle tile mode — a grid of manually attached panes |
-| `⇧⌘J` | Toggle the tile manager — saved tile views (docked drawer, or its own window) |
-| `⌘K` | Command palette (fuzzy — `go zetty` finds **Go to Project: zetty**) |
+| `⇧⌘G` | Toggle tile mode |
+| `⇧⌘J` | Toggle the tile manager (saved tile views) |
+| `⌘K` | Command palette |
 | `⌘B` | Toggle sidebar — pinned → hidden → drawer |
 | `⇧⌘F` | Toggle the focused pane's file tree |
 | `⌘↓` | Scroll the focused pane back to the live tail |
-| `⌘O` (or `⇧⌘N`) | Add project (create or pick a folder) |
+| `⌘O` (or `⇧⌘N`) | Add project |
 | `⌃⌘N` | New scratch terminal |
-| `⌘H` | Close Zetty to the menu bar (same as the red window button) |
-| `⌘,` | Settings |
-| `⌥⌘,` | Project Settings (active project) |
+| `⌘H` | Close Zetty to the menu bar |
+| `⌘,` / `⌥⌘,` | Settings / Project Settings |
 | `⇧⌘,` | Reload configuration |
 | `⇧⌘T` / `⇧⌘A` | Cycle color scheme / appearance |
 | `⇧⌘B` | Cycle broadcast scope (Off → Tab → Project → Agents → Workspace) |
-| `⌘C` / `⌘V` | Copy / paste (Ghostty defaults inside the terminal) |
+| `⌘C` / `⌘V` | Copy / paste |
 
-Everything above is also reachable from the menu bar and the command
-palette (`⌘K`). Beyond the shortcuts, the palette covers the prefix layer's
-pane verbs (directional focus, cycle, zoom, copy mode), the view toggles,
-Settings — with a direct entry per pane: General, Appearance, Sessions,
-Agents, Accounts — the update check, Close Window / Quit / Shutdown, every
-other tab in the active project, and per-project verbs (go to or wake, rename,
-hibernate, project settings, clone, merge a clone back to its source), plus
-the Space verbs: new Space, move the active project into one, and hibernate or
-wake all of a Space's members. Filtering is a plain substring match on the
-label, and only the first 50 matches are rendered — the footer says how many
-more matched, so keep typing to narrow a large workspace.
+Closing the window keeps Zetty and its terminals running from the menu-bar icon,
+which lists your projects and their agents' status.
 
-Closing the main window keeps Zetty and its terminals running behind the Zetty
-mark (the Z with a terminal tile on its tail) in the macOS menu bar and hides its Dock icon until the window is restored. The
-status menu lists every awake project, with nested tab choices for projects that
-have multiple tabs. Agent status dots mirror the sidebar: green means running,
-yellow needs attention, and dim gray is idle. **Close Zetty**, **Quit Zetty**,
-and **Shutdown Zetty** are available in that order from the regular Zetty
-application menu.
+### Prefix keys
 
-### Keybindings (prefix layer)
-
-Press `Ctrl+B` (the prefix, configurable), then:
+Press `Ctrl+B`, then:
 
 | Key | Action |
 |---|---|
-| `%` | Split vertically |
-| `"` | Split horizontally |
+| `%` / `"` | Split vertically / horizontally |
 | `h` `j` `k` `l` / arrows | Focus pane in that direction |
 | `o` | Cycle pane focus |
 | `x` | Close pane |
 | `z` | Zoom / unzoom pane |
-| `!` | Break focused pane into a new tab |
-| `e` | Toggle the focused pane's file tree |
-| `g` | Toggle tile mode — a grid of manually attached panes |
+| `!` | Break pane into a new tab |
+| `e` | Toggle the pane's file tree |
+| `g` | Toggle tile mode |
 | `c` | New tab |
 | `n` / `p` | Next / previous tab |
 | `1`–`9` | Jump to tab |
-| `,` | Rename tab (inline) |
-| `[` | Enter copy mode |
-| `]` | Paste |
-| `Ctrl+B` (again) | Send a literal `Ctrl+B` to the terminal |
-| `Esc` | Cancel the prefix |
+| `,` | Rename tab |
+| `[` / `]` | Copy mode / paste |
+| `Ctrl+B` | Send a literal `Ctrl+B` |
+| `Esc` | Cancel |
 
 **Copy mode** is vi-keyed: `h/j/k/l` `w/b/e` `0/$` `g/G` to move,
-`Ctrl+U/D/F/B` to page, `v`/`V` to select, `y` or `Enter` to yank,
-`q`/`Esc` to exit. The status bar shows `PREFIX` / `COPY` / `ZOOM` /
-`BROADCAST` chips so you always know what mode you're in.
+`Ctrl+U/D/F/B` to page, `v`/`V` to select, `y` or `Enter` to yank, `q`/`Esc` to
+exit. The status bar shows `PREFIX`, `COPY`, `ZOOM` and `BROADCAST` while each is
+active.
 
-**Broadcast input is per-project and Off by default.** Each project remembers
-its own scope; pick it in **Project Settings → Broadcast Input**, from **View →
-Broadcast Input** (Off / Tab / Project / Agents / Workspace), the command
-palette, or **⇧⌘B** to cycle scopes (Off → Tab → Project → Agents → Workspace →
-Off). You can also bind it on the prefix layer: `broadcast-cycle`, plus
-`broadcast-toggle` / `broadcast-agents-toggle` to flip the Tab / Agents scopes
-directly. Whichever you use edits the active project's scope.
+**Running tmux or screen in a pane?** While it's the pane's foreground program,
+`Ctrl+B` goes to it (so `Ctrl+B d` detaches) and ⌘ shortcuts keep working. This
+needs `preserve-sessions`; turn it off with `zetty-tmux-passthrough = false`.
+Over `ssh`, press `Ctrl+B` twice.
 
 Remap anything in the config file:
 
@@ -576,603 +126,266 @@ bind = ctrl+a broadcast-cycle
 copy-bind = n copy-cursor-down
 ```
 
-## Configuration
+## Using Zetty
 
-Zetty reads `~/.config/zetty/config` (or `$XDG_CONFIG_HOME/zetty/config`) and
-seeds a documented starter file on first launch. Format is plain
-`key = value` lines; comments are full-line only (`#` at line start).
+### Projects
 
-| Key | Default | Meaning |
-|---|---|---|
-| `appearance` | `system` | `system` follows macOS live; `dark`/`light` pin one axis |
-| `theme-dark` / `theme-light` | `Twilight` / `Daylight` | Scheme per appearance axis |
-| `sidebar-position` | `left` | Window side for the project sidebar |
-| `preserve-sessions` | `false` | Keep panes alive across quit/relaunch (requires zmx) |
-| `restore-scrollback` | `true` | Replay preserved panes' scrollback history on relaunch (with `preserve-sessions`) |
-| `check-updates` | `true` | Notify when a newer Zetty release is available |
-| `notify-sound` / `notify-badge` / `notify-system` | `true` | Agent needs-attention alerts |
-| `zetty-claude-mod` | `true` | Load Zetty's Claude Code mod into new Claude panes |
-| `zetty-claude-tools` | `true` | Let that mod give Claude tools to show a file, list this project's panes, open a pane and read one it opened |
-| `editor` | — | App used by Settings → "Open in Editor" |
-| `viewer-highlight-command` | `bat --style=plain --color=always --paging=never` | Command the file viewer pipes a file through for syntax highlighting; `off` disables it. Zetty sets `BAT_THEME` to match the active scheme's light/dark axis — pass your own `--theme` here to override |
-| `viewer-max-bytes` | `2097152` | Largest file the viewer will render; bigger files open in their default app instead |
-| `zetty-home-path` | — | Directory the **Home** project is rooted at (`~` allowed); unset — or `off`/`~` — keeps it at your home directory |
-| `zetty-restart-recovery` | `true` | After a macOS restart/shutdown/logout, replay each preserved pane's last screen and resume the Claude/Codex session it was running |
-| `zetty-tiles-grid` | `4x4` | Uniform shape a NEW tile view is seeded with, as `<cols>x<rows>`; each profile keeps its own layout tree thereafter, and splitting a slot changes it. Up to `8x8` |
-| `zetty-tile-manager-view` | `drawer` | Where the tile manager (`⇧⌘J`) appears: docked at the bottom of the window, or in its own `window`. Its dock/detach button rewrites this |
-| `zetty-file-tree-show-hidden` | `true` | Show dotfiles in the per-pane file tree |
-| `zetty-file-tree-respect-gitignore` | `false` | Hide anything the repo's `.gitignore` excludes |
-| `zetty-file-tree-ignore` | — | Extra names to hide, comma-separated (e.g. `node_modules, vendor`) |
-| `zetty-file-tree-width` | `220` | Width a file tree opens at, in points |
-| `prefix` / `bind` / `copy-bind` | tmux-canonical | Prefix-key layer remapping |
-| `zetty-tmux-passthrough` | `true` | While tmux or screen is the focused pane's foreground process, hand it the prefix instead of arming Zetty's layer |
+- **Organize** — drag project rows to reorder them; pin the ones you use most.
+  Right-click → **Move to Space ▸** files a project into a named, colored,
+  collapsible sidebar section (**New Space…** makes one).
+- **Customize** — right-click → **Project Settings…** for a name, color, icon
+  (SF Symbol or emoji), theme, environment variables, and per-project overrides
+  for session preservation and notifications.
+- **Hibernate** — right-click → **Hibernate Project** frees a project's
+  processes and keeps its layout; it moves to the **Hibernating** section until
+  you wake it. `hibernate-after = 60m` does this automatically for idle
+  projects (never Home).
+- **Layout templates** — save a project's tabs and splits (each pane's folder
+  and an optional startup command) to a committable `.zetty/project.json`; it is
+  applied when the project is added, or from Project Settings.
 
-`zetty-home-path` moves Home somewhere more useful than `~` — e.g.
-`zetty-home-path = ~/Projects`. You can also set it without touching the file:
-right-click **Home** → **Project Settings…** has a **Working Directory** row
-(Choose… / Use Default) that writes this same key. The row is unique to Home —
-every other project is rooted where it was added. The config wins over the path
-saved in the workspace, so a change lands on the next launch or ⇧⌘, reload, and removing the
-key moves Home back to your home directory. It affects **new** tabs and panes:
-shells already running keep their own working directories, and a preserved zmx
-session captured its cwd when it was created. A path that isn't an existing
-directory is ignored (Home stays at `~`).
+### Panes
 
-The file tree shows the raw filesystem by default, dotfiles included. On a JS
-project `node_modules` will dominate both the tree and its filter until you turn
-on `zetty-file-tree-respect-gitignore` or list names in `zetty-file-tree-ignore`.
-Dragging a tree's divider stores that pane's own width, which then wins over
-`zetty-file-tree-width` for that pane.
+Each pane has a thin top strip with its focus dot and buttons to **open its
+folder** in an editor or Finder, **split**, **break into a tab** and **close**;
+right-click the strip for the same actions plus **Scroll to Bottom**.
 
-New Zetty keys take a **`zetty-` prefix**, which is what keeps them out of the
-Ghostty passthrough (see below). Older Zetty keys predate the convention and stay
-unprefixed.
+- **File tree** — `⇧⌘F`, `Ctrl+B e` or the strip's button. Follows the pane's
+  folder, filters fuzzily, peeks a file on click and opens it in your editor on
+  double-click. Read-only.
+- **Peek a file** — ⌘-click a path in any pane's output (a compiler error, a
+  `grep` hit) to open it read-only, highlighted and scrolled to the line; **Open
+  in ▾** hands it to your editor at that line. Non-text files open in their
+  default app. Needs `preserve-sessions`; `zetty view <path>` works regardless.
+  Highlighting uses [`bat`](https://github.com/sharkdp/bat) when installed.
+- **Broadcast** — `⇧⌘B` sends your typing to every pane in the tab, the
+  project, the workspace, or only panes running an AI agent. Off by default, set
+  per project.
 
-**Any other `key = value` is a Ghostty directive**, forwarded verbatim to
-libghostty — paste your existing `~/.config/ghostty/config` straight in
-(Zetty does not read Ghostty's own config file). Terminal colors from pasted
-directives override the scheme; the app chrome stays scheme-driven. The
-`font-family` / `font-size` directives drive the **terminal and status bar**
-(also editable in Settings → Appearance); the rest of the chrome — tab bar,
-sidebar, file tree, palette, dialogs — uses the system font at a fixed size, so
-changing your terminal font never reflows the app around it.
+### Tile mode
 
-Ghostty validates its config **all-or-nothing**: one directive it doesn't
-recognize (a typo, or a Zetty key from a newer build) makes it discard *every*
-custom setting. Zetty guards both ends — Zetty's own keys, including ones this
-build predates, are never forwarded to Ghostty, and if a passthrough directive
-is still rejected, panes fall back to Zetty's own directives so
-`preserve-sessions` keeps working, with a one-time alert naming the problem.
+`⇧⌘G` (or `Ctrl+B g`, or `zetty tiles`) shows a grid of **live terminals** from
+any awake project — type into the focused tile and it reaches that shell.
 
-Built-in schemes — dark: Midnight, Nocturne, Frost, Twilight, Ember, Velvet,
-Eclipse, Rosewood, Neon, Ukiyo · light: Daylight, Paper, Glacier, Dawn,
-Latte, Porcelain, Harvest, Citrus, Daybreak, Sakura.
+- **Fill it** — click an empty slot's **+ Attach** to pick any pane, drag a tab
+  from the sidebar onto it, or start a **New session** there.
+- **Shape it** — split a slot (`Ctrl+B %` / `"`, or its header button), drag the
+  boundaries, drag a tile's header onto another to swap them.
+- **Keep it** — each view is a tab in the tab bar and saves itself as a profile;
+  reopen, rename or delete views from the tile manager (`⇧⌘J`).
+- A tile's `×` only detaches the pane; its stop button ends the session.
+  Double-click a header to leave the grid for that pane.
 
-Reload config anytime with **⇧⌘,** (also in the App menu and command
-palette) — theme and terminal overrides re-apply to every live pane, and
-runtime scheme/appearance switches persist back to the file.
+### Sessions
+
+`⌘J` lists every session Zetty runs, grouped by project, with live CPU and
+memory. From there: **Reveal Pane**, **Interrupt** (Ctrl-C), **Kill Session…**,
+or hibernate a whole project with its moon button.
 
 ### Session persistence
 
-To enable, either:
+Turn on **Settings (⌘,) → Sessions → Preserve sessions** (Zetty offers to
+download [zmx](https://zmx.sh) if needed), or set `preserve-sessions = true`.
+Every pane then runs in its own zmx session:
 
-- open **Settings (⌘,) → Sessions** and turn on **Preserve sessions** — if
-  zmx isn't installed, Zetty offers to download it for you; or
-- set `preserve-sessions = true` in `~/.config/zetty/config` and reload with
-  **⇧⌘,** (this path needs zmx already installed — e.g.
-  `brew install neurosnap/tap/zmx` — otherwise panes fall back to plain
-  shells with a one-time alert).
+- **Quitting keeps them running** — relaunching reattaches every pane with its
+  programs and full scrollback intact.
+- **Closing a pane ends its session.**
+- **Restarts are recovered** — on a macOS restart or shutdown Zetty snapshots
+  each pane's screen and, on relaunch, replays it and resumes the Claude Code or
+  Codex conversation it was running (`zetty-restart-recovery`). Turn on **Launch
+  at login** in the same settings to make that automatic.
 
-Once enabled, every pane runs inside its own zmx session:
+### AI agents
 
-- **Quit survives** — relaunching reattaches every pane with its running
-  programs intact (TUIs get a resize nudge so they repaint), and replays the
-  pane's full scrollback history, colors included, so scrolling up works as
-  if the app never quit (`restore-scrollback = false` disables the replay).
-- **Close kills** — explicitly closing a pane ends its session.
-- Crash leftovers are reaped once at startup; Settings offers a manual
-  kill-all too.
+**Status dots.** Turn on the harnesses you use under **Settings → Agent Status
+Hooks** (Claude Code, Codex, Hermes). Tabs, projects and tiles then show:
+green — working · yellow — needs you (optional sound, Dock badge and
+notification) · red — Claude's last turn failed · dim — idle.
 
-The Settings-offered download installs zmx into `~/.zetty/bin`; existing
-Homebrew or manual installs are detected automatically.
+**Launch agents.** Enable agents under **Project Settings → Agents** (Claude
+Code, Codex, Hermes, Gemini, opencode, Pi, Cursor). A new tab or split then asks
+which to start — arrow keys or `1`–`9`, `⏎` to launch, **Standard session** for
+a plain shell.
 
-#### Surviving a restart
+**Restart an agent, keeping its conversation.** A pane running Claude or Codex
+has a `⟳` button: Zetty quits the agent and resumes the same conversation in
+place, scrollback kept. Needs `preserve-sessions`.
 
-A macOS restart, shutdown or logout kills every process, zmx sessions
-included — so ordinarily every pane would come back as an empty shell. With
-`zetty-restart-recovery = true` (the default) Zetty notices that kind of quit
-and, before the sessions die:
+**Multiple accounts.** Run a work login in one tab and a personal one in the
+next (Claude Code and Codex). **Settings → Accounts → Add Account…** creates
+one, optionally sharing your skills, commands and `CLAUDE.md`. Choose an account
+per project (Project Settings → Account), per pane (the agent chooser lists each
+agent once per account), or from anywhere with `zetty run <account>` or the
+generated `claude-<account>` command. A status-bar chip and colored dots show
+which account a pane is on, and warn when one nears a rate limit.
 
-- **snapshots each preserved pane's screen** (its full scrollback, colors
-  intact) and replays it into the pane on relaunch, followed by a dim
-  `── restored after restart ──` divider so you can tell the replay from the
-  fresh shell beneath it;
-- **remembers which Claude Code or Codex session each pane was running** and
-  types `claude --resume <id>` / `codex resume <id>` into that pane once it
-  spawns (in the directory the agent was working in, under the same agent
-  account). Panes in background tabs pick theirs up when first viewed.
+**Claude Code integration.** Zetty loads a small Claude Code mod into every
+Claude pane. It adds:
 
-Which session a pane was running is learned from the harness's status hooks
-where they have fired, and otherwise from the harness's own session store on
-disk, so a Claude that has been running untouched for days is still resumed.
-When two panes share one directory, the newest sessions for it are handed out
-one per pane, so you get the right set of conversations back even though a
-pair may land swapped.
+- `/zetty panes`, `/zetty fleet`, `/zetty peek <path>[:line]` and
+  `/zetty split [command…]` commands;
+- tools Claude can call to show you a file, list this project's panes, and open
+  and read a pane of its own (`zetty-claude-tools = false` turns those off);
+- per-account rate limits on the account chip, a red dot when a turn fails, and
+  notifications that say what Claude is asking for.
 
-Panes in a project's background tabs are brought up for you a couple of
-seconds apart, rather than waiting to be clicked, so recovery finishes on its
-own without eleven agents starting at the same instant.
+Turn the mod off with **Settings → Agents → Load Zetty's mod** or
+`zetty-claude-mod = false`.
 
-Snapshots need preserve-sessions (zmx is the scrollback source); resumes work
-in any pane. Each agent comes back under the **account** it was running as,
-including one started with `zetty run <account>`. Hermes panes come back as a
-plain shell, since Zetty has no verified way to resume one. ⌘Q and `zetty quit` are unaffected — those keep
-sessions alive as before — and a crash or power loss leaves nothing to recover
-from. If a restart is cancelled after Zetty has already quit, the relaunch
-notices each agent is still running and types nothing into it.
+**What Zetty changes in your agent setup.** The Claude mod is on by default;
+status hooks and accounts change nothing until you set them up. Turning hooks
+or the mod off removes what they added:
 
-**Launch at login** (Settings ⌘, → Sessions) registers Zetty as a login item so
-the relaunch happens by itself. Turn it on from the copy in `/Applications`:
-the login item points at whichever bundle registered it.
-
-`zetty quit --simulate-restart` runs the whole power-off path without
-rebooting — snapshot, manifest, then every session killed — for testing.
-
-### `ssh://` links
-
-Zetty registers as a macOS handler for `ssh://` URLs. When another app opens
-`ssh://[user@]host[:port]` — Terminal, a browser link, or `open ssh://host`
-from a shell — Zetty comes to the front and opens a new **Home** tab running
-`ssh host` (with `-p <port>` when the URL carries one). URLs are validated
-strictly, so a crafted link can't inject shell commands; anything that isn't a
-clean `ssh://` target is ignored.
-
-To make Zetty the default `ssh://` handler, set it in the app that opens the
-links (or via a URL-handler utility) — macOS picks the default, not Zetty.
-
-### AI agent status
-
-Open **Settings (⌘,) → Agent Status Hooks** and toggle the harnesses you use
-(Claude Code, Codex, Hermes). Zetty installs a small hook helper
-(`~/.zetty/hooks/zetty-hook.py`) into each harness's own config; on lifecycle
-events the harness pings Zetty, which lights the sidebar dots:
-
-- 🟢 **green** — agent is working
-- 🟡 **yellow** — agent needs your attention (optional sound, Dock badge, and
-  macOS notification that focuses the pane when clicked)
-- 🔴 **red** — Claude's last turn ended in an API error or a refusal, until
-  its next turn starts (reported by the Claude Code integration below)
-- **dim** — agent is idle
-
-Restart the agent after installing a hook. Events name the exact pane they
-came from (Zetty tags each pane's environment), so two panes in the same
-directory light up independently; hooks from an older helper fall back to
-matching by working directory.
-Toggling off uninstalls the hook cleanly.
-
-The hook event log (`~/.zetty/agent-events.jsonl`) is trimmed to its most
-recent entries at launch, so it can't grow without bound on a long-lived
-workspace.
-
-Agent CLIs animate a spinner in their terminal title, so tab names and status
-dots update on a short coalescing interval (~0.1s) rather than on every escape
-sequence — many panes running agents at once cost the same as one. Scrolling
-the sidebar is unaffected by those updates: it only scrolls to reveal a project
-when the active project or tab actually changes.
-
-### Claude Code integration
-
-Zetty ships a small Claude Code **mod** (`zetty-bridge`) and loads it into
-every Claude pane. It runs inside Claude Code and reports what the hooks above
-cannot see. Zetty shows the parts Claude Code itself cannot show you — state
-across panes and across accounts:
-
-- **Rate limits per account.** Once an account is within 30% of a limit, its
-  chip in the status bar (and in each tile's footer) gains the highest window,
-  `Work · 5h 82%`, in yellow, and red from 95%. The **Account ▸** menu and the
-  new-pane agent chooser list every account's windows (`5h 14% · 7d 12%`) and,
-  for one that is nearly spent, when it resets. The figures are remembered, so
-  an account shows its last reading even with no pane running on it.
-- **A red dot for a turn that failed.** When Claude stops on an API error or a
-  refusal, the tab, its project and its tile turn red until the next turn
-  starts, and you get the same sound and macOS notification as a
-  needs-attention ("Claude stopped: API error"). Interrupting it yourself does
-  not count.
-- **Notifications that say what is wanted.** A needs-attention notification
-  carries Claude's own message ("Claude needs your permission to use Bash")
-  instead of only the project name.
-- **Restarting an agent** finds its conversation sooner, including straight
-  after a `/clear`.
-
-The context window is deliberately not shown: Claude Code's own status line
-already has it, in the pane it belongs to.
-
-Inside the Claude pane itself the mod adds:
-
-- **`/zetty` commands.** `/zetty panes` lists the panes of this project;
-  `/zetty fleet` opens them as a sidebar where pressing one takes you to it;
-  `/zetty peek <path>[:line]` opens a file in Zetty's viewer;
-  `/zetty split [--down] [command…]` opens a pane beside this one, optionally
-  running a command in it.
-- **Tools Claude can call.** `show_file` opens a file in the viewer for you to
-  look at, `list_panes` shows it this project's panes, `open_pane` starts a
-  visible pane (a dev server, a test watcher) instead of a hidden background
-  shell, and `read_pane` reads back a pane it opened. It cannot close panes,
-  type into panes it did not open, or see other projects. Turn the tools off
-  with **Settings → Agents → Let Claude open and read panes**, or
-  `zetty-claude-tools = false`; the commands stay.
-- **A clone row above the prompt.** In a cloned project the pane shows
-  `Clone of <source>` with **Merge into source** and **Push branch**. Each
-  asks for a second press before it runs, and **Hide** removes the row for the
-  session. They run `zetty merge-clone` / `zetty push-clone`, the same merge
-  and push the sidebar's **Merge to Source…** offers, with the same refusals
-  (a source with uncommitted changes, conflicts).
-- **A rate-limit warning above the prompt.** Once a window is 90% used a row
-  appears with the figure, when it resets, and a **New pane on <account>**
-  button for each of your other Claude accounts, plus Dismiss. The new pane
-  starts a fresh conversation on that account; it does not move this one.
-
-- **Nothing to install.** Zetty copies the mod to `~/.zetty/mods/zetty-bridge`
-  and points Claude Code at it through `CLAUDE_CODE_PLUGIN_DIRS`, keeping any
-  folders you list there yourself.
-- **It applies to agents started after it is enabled**, in a new pane.
-- **Turn it off** with **Settings (⌘,) → Agents → Load Zetty's mod**, or
-  `zetty-claude-mod = false`. The green / yellow / dim dots do not depend on it.
-- It reports only from inside Zetty panes, and needs a Claude Code recent
-  enough to load mods; an older one ignores it.
-
-### Memory: background pane pruning temporarily disabled
-
-Each live pane costs roughly **37 MB of GPU memory** (the terminal's render
-target and glyph atlas), so a workspace with many awake projects pays for
-surfaces nobody is looking at — about 300 MB at 5 live panes, 1.5 GB at 37.
-
-`free-background-panes-after = <duration>` remains accepted and preserved in
-the config, but currently has no runtime effect. Releasing a live preserved
-surface can block inside libghostty's synchronous subprocess teardown and freeze
-Zetty's main thread, so live terminal surfaces belonging to awake projects stay
-attached until a safe non-blocking teardown path is available. Use
-`hibernate-after` when you want idle projects' processes and surfaces stopped.
-It skips the Home project, which is never put away without your asking.
-
-Zetty also continuously reconciles preserved sessions against the workspace, so
-closing a pane always ends its session — even one whose tab you never opened —
-and no orphaned `zmx` shells accumulate.
-
-### Launching agents in a project
-
-Status hooks (above) *detect* agents you start yourself. To have Zetty *launch*
-them, open **Project Settings → Agents** and enable the ones you use — Claude
-Code, Codex, Hermes, Gemini, opencode, Pi, or Cursor. Each row has an editable
-launch command (defaults to the tool's CLI, e.g. `cursor-agent` for Cursor).
-
-With at least one agent enabled, opening a **new tab or split** in that project
-shows a chooser before the pane spawns:
-
-- **↑/↓** to select, **⏎** to launch, **1–9** to jump straight to an agent,
-  **Esc** to cancel.
-- **Standard session** opens a plain shell instead.
-- **Manage agents…** jumps to the Agents settings.
-
-The master **"Ask which agent to launch…"** toggle silences the chooser without
-unchecking your agents. This is per-project and stays on your machine (it is not
-written into the repo). The CLI (`zetty new-tab` / `split`) never prompts.
-
-### Agent accounts (multiple logins)
-
-Run more than one login side by side — a work account in one tab, a personal one
-in the next, or a default account per project. Supported for **Claude Code** and
-**Codex**; when both are set up, the Add Account sheet asks which one an account
-is for.
-
-Open **Settings (⌘,) → Accounts** and click **Add Account…**. Zetty creates a
-config directory under `~/.zetty/accounts/<name>` and seeds it, then either
-**Create & Sign In** opens a terminal running `claude auth login` so you can
-sign in on the spot, or **Create** just sets the account up — it shows as "Not
-signed in yet" and the **Sign In** button in the Accounts list authenticates it
-whenever you're ready. Your existing login is untouched either way; it stays
-available as the **Default** account.
-
-Under the hood an account is one environment variable pointing at a private
-config directory — `CLAUDE_CONFIG_DIR` for Claude Code, `CODEX_HOME` for Codex.
-Claude derives its Keychain entry from that path, so each account gets its own
-credentials automatically; Codex keeps its `auth.json` inside the directory, so
-relocating it isolates the login outright. Either way history and settings
-follow the account.
-
-**Choosing an account**
-
-- **Per project** — Project Settings → General → **Account**. Every new pane in
-  that project uses it, and clones inherit their source's.
-- **Per pane** — with agents enabled, the new-tab/split chooser lists each agent
-  once per account (`Claude Code — Work`, `Claude Code — Personal`).
-- **An open pane** — right-click the pane's gutter → **Account ▸**. Because a
-  program reads its environment once at startup, this closes the pane and opens
-  a fresh one in the same slot on the new account.
-- **By name, from any terminal** — `zetty run personal` runs that account's
-  agent right where you type it, with its config directory set. It needs no
-  picker, no project setting and not even a running Zetty, so an account is
-  always reachable. The command palette's **Run Account: …** entries are the
-  GUI twin, opening a new tab on that account.
-
-**Shortcut commands.** Each account also gets one: an account named *Personal*
-on Claude gives you `claude-personal` (a Codex one, `codex-personal`), generated in `~/.local/bin` beside the `zetty` symlink
-and removed when the account is. It takes the same arguments
-(`claude-personal --resume`). If `zetty` works in your shell these will too — they
-rely on the same `~/.local/bin` being on your `PATH`. A file of your own already
-sitting at that name is never overwritten; Settings → Accounts reports the
-collision instead.
-
-Choosing an account applies to **new panes only** — a pane keeps the environment
-it started with, which is why `Account ▸` respawns rather than switching in
-place. The account chip reports the login *running* in a pane, so a pane handed
-to `zetty run` shows the account actually in use and reverts when it exits.
-With **Agent Status Hooks** on, the harness itself reports which login it is
-running under, so the chip is also right when you start an account by hand
-(`CLAUDE_CONFIG_DIR=… claude`) or start the plain harness straight after an
-account's. Claude reports as it starts; Codex only reports when a turn ends.
-
-**What gets shared**
-
-A fresh config directory is empty, so the Add Account sheet offers to share
-parts of your existing setup. Skills, commands, agents and `CLAUDE.md` are
-**symlinked** — edit them once, both accounts see it. `settings.json` is
-**copied**, because Claude writes to it and each account needs its own (that is
-also where Zetty's agent status hooks live, so status dots keep working).
-Plugins are never shared: that directory is mutable state, and two Claude
-processes writing through one link would corrupt it. Logins, project history
-and sessions are never shared.
-
-A new account also inherits your onboarding answers — theme, and the fact that
-you've used Claude Code before — so it starts at the prompt instead of the
-first-run walkthrough. It will still ask once per folder whether you trust it,
-the same as any fresh login.
-
-**Seeing which is which**
-
-A colored chip in the status bar names the focused pane's account; tab pills and
-sidebar rows carry a matching dot. Nothing appears until you create your first
-account.
-
-Removing an account only makes Zetty forget it — the directory and its login
-stay on disk, so you can add it back. Panes and projects using it fall back to
-the Default login.
+- **Status hooks** add entries to `~/.claude/settings.json`, the `notify` line
+  of `~/.codex/config.toml` (your original `notify` is backed up and restored)
+  and `~/.hermes/config.yaml`, each calling `~/.zetty/hooks/zetty-hook.py`. Agent
+  accounts get the same entries in their own config folders. Events are logged
+  to `~/.zetty/agent-events.jsonl`, trimmed at launch.
+- **The Claude Code mod** is copied to `~/.zetty/mods/zetty-bridge` and reaches
+  Claude through `CLAUDE_CODE_PLUGIN_DIRS`, alongside any folders you set there.
+  If a `settings.json` sets that variable itself, Zetty adds its folder to the
+  list there too.
+- **Accounts** live in `~/.zetty/accounts/<name>`, and their `claude-<name>` /
+  `codex-<name>` shortcuts in `~/.local/bin` — a file of your own at that name is
+  never overwritten. Removing an account leaves its folder and login on disk.
+- **Every pane** gets `ZETTY=1` and `ZETTY_SURFACE` in its environment, which is
+  how hooks and the CLI know which pane they are in.
 
 ### Project clones
 
-#### Bringing clone work back
+Right-click a project → **Clone Project…** (or `zetty clone`) for an instant
+copy-on-write copy on its own git branch — untracked files, `.env` and
+`node_modules` included — nested under its source in the sidebar. Clones are
+disposable: when you're done, right-click → **Merge to Source…** to merge the
+work into the source locally or push the branch for a pull request, then
+**Remove Clone…**. (A source that isn't a git repo gets a per-file diff to copy
+changes back instead.)
 
-A clone's `.git` is a full copy of the source, so it carries the source's
-`main` and the same `origin`. Your clone's work lives on its own branch
-`<name>` — **don't push the clone's `main`** (that just creates two divergent
-`main`s). Right-click the clone → **Merge to Source…** for an adaptive
-chooser. It always starts by updating the clone from the source (resolving
-any conflicts *in the clone* — if it stops there, resolve + commit, then
-re-run "Merge to Source…"), then offers:
+### Updates and links
 
-- **Merge updates** — merges the clone's work into the source **locally**
-  (fetches the clone into the source repo and merges there); no remote
-  needed. Refuses if the source has uncommitted changes, and if the merge
-  into the source conflicts it aborts cleanly, leaving the source untouched.
-- **Push to branch** — pushes the clone's branch to `origin` so you can open
-  a pull request against the source's default branch. Only offered when the
-  clone has a remote.
+Zetty checks GitHub for new releases; click the **↑ Update** pill to download,
+verify and install one in place (`check-updates = false` to opt out). It also
+handles `ssh://` links, opening each in a new Home tab.
 
-If the clone's source isn't a git repository, "Merge to Source…" instead opens
-a **diff modal** (built on `git diff --no-index`) listing the clone's
-changed and new files, each with a per-file line-diff preview. Bring files
-back individually with **Replace** (overwrite the source's file) or
-**Keep Both** (save the clone's copy alongside it as `name 2.ext`) — nothing
-is ever deleted, and overwriting the source is atomic (the original survives
-a failed copy).
+## Troubleshooting
 
-`zetty update-clone <name>` still runs just that first sync step — merging
-the source's latest into the clone and leaving conflicts in place to
-resolve — the same step "Merge to Source…" runs before either strategy; it
-doesn't merge or push on its own.
+- **Zetty won't launch, with a "Library not loaded" error naming
+  `ZettyGhostty.framework`** — the app bundle is incomplete. Reinstall from the
+  [latest DMG](https://github.com/webteractive/zetty/releases); your workspace and
+  settings are kept.
+- **Reporting a bug** — include your macOS and Zetty versions (About Zetty). A
+  blank or wrong file peek has a **Copy diagnostics** button in its footer, and
+  everything else is in the system log:
+  `/usr/bin/log show --last 15m --predicate 'subsystem == "co.webteractive.zetty"' --style compact`.
+  `zetty status --json` helps with CLI and session issues.
 
-The clone banner's **"How do I merge this back?"** button shows the update /
-PR / no-origin-local-merge steps with your clone's real branch and paths
-filled in (git clones only), with a pointer to **Merge to Source…** for the
-one-click version.
+## Configuration
 
-### Updates
+Zetty reads `~/.config/zetty/config` (or `$XDG_CONFIG_HOME/zetty/config`), seeded
+with a documented starter file on first launch. Lines are `key = value`;
+comments are full-line `#`. Reload with **⇧⌘,**.
 
-Zetty checks [GitHub Releases](https://github.com/webteractive/zetty/releases)
-for a newer version on launch and periodically. When one exists, an **"↑ Update
-&lt;version&gt;"** pill appears in the status bar. Click it (or use **App menu →
-Check for Updates…**) and confirm **Install & Restart** — Zetty downloads the
-release DMG, verifies its SHA-256, swaps itself in place, and relaunches. You can still
-choose **View Release Notes** to open the page instead. Set `check-updates =
-false` to disable the automatic checks (the menu item still works).
+| Key | Default | Meaning |
+|---|---|---|
+| `appearance` | `system` | `system` follows macOS; `dark`/`light` pin one |
+| `theme-dark` / `theme-light` | `Twilight` / `Daylight` | Scheme per appearance |
+| `sidebar-position` | `left` | Side of the window for the sidebar |
+| `preserve-sessions` | `false` | Keep panes alive across quit/relaunch (needs zmx) |
+| `restore-scrollback` | `true` | Replay preserved panes' scrollback on relaunch |
+| `zetty-restart-recovery` | `true` | Recover panes and agent conversations after a macOS restart |
+| `hibernate-after` | `off` | Hibernate a project after it has been idle this long (e.g. `60m`, `2h`) |
+| `check-updates` | `true` | Notify when a newer release is available |
+| `notify-sound` / `notify-badge` / `notify-system` | `true` | Agent needs-attention alerts |
+| `zetty-claude-mod` | `true` | Load Zetty's Claude Code mod into new Claude panes |
+| `zetty-claude-tools` | `true` | Let that mod give Claude its pane and file tools |
+| `editor` | — | App for "Open in Editor" |
+| `viewer-highlight-command` | `bat --style=plain --color=always --paging=never` | Highlighter for the file viewer; `off` disables it |
+| `viewer-max-bytes` | `2097152` | Largest file the viewer renders |
+| `zetty-home-path` | — | Folder the **Home** project opens in (`~` allowed) |
+| `zetty-tiles-grid` | `4x4` | Starting shape of a new tile view, up to `8x8` |
+| `zetty-tile-manager-view` | `drawer` | Show the tile manager docked (`drawer`) or as a `window` |
+| `zetty-file-tree-show-hidden` | `true` | Show dotfiles in the file tree |
+| `zetty-file-tree-respect-gitignore` | `false` | Hide what `.gitignore` excludes |
+| `zetty-file-tree-ignore` | — | Extra names to hide, comma-separated (e.g. `node_modules, vendor`) |
+| `zetty-file-tree-width` | `220` | Width a file tree opens at |
+| `prefix` / `bind` / `copy-bind` | tmux defaults | Prefix-layer remapping |
+| `zetty-tmux-passthrough` | `true` | Hand `Ctrl+B` to tmux/screen running in the focused pane |
 
-The swap keeps your working copy until the new one is verified: the old bundle
-is moved aside rather than deleted, and if the copy is incomplete for any reason
-— an interrupted install, a full disk — the previous version is put back and
-relaunched. If a Zetty install ever fails to launch with a *"Library not
-loaded"* error naming `ZettyGhostty.framework`, its bundle is incomplete;
-reinstall from the [latest DMG](https://github.com/webteractive/zetty/releases)
-to repair it.
+**Any other line is a Ghostty directive**, passed straight to libghostty — paste
+your existing Ghostty config in (Zetty doesn't read Ghostty's own file).
+`font-family` and `font-size` set the terminal and status-bar font; the rest of
+the interface keeps the system font. If Ghostty rejects a directive, Zetty
+alerts you once and keeps its own settings working.
 
-### Control CLI
+**Color schemes** — dark: Midnight, Nocturne, Frost, Twilight, Ember, Velvet,
+Eclipse, Rosewood, Neon, Ukiyo · light: Daylight, Paper, Glacier, Dawn, Latte,
+Porcelain, Harvest, Citrus, Daybreak, Sakura.
 
-The `zetty` command drives the running app over `~/.zetty/zetty.sock` —
-machine-readable output, errors on stderr, exit codes 0/1/2. Pane targets
-resolve by unique id prefix, unique `--cwd`, or default to the focused pane.
+## Control CLI
+
+`zetty` drives the running app over a local socket. Pane targets are a unique
+prefix of the pane id, a unique `--cwd`, or the focused pane.
 
 ```sh
 zetty status --json                      # projects → tabs → panes, agent status
 zetty send --cwd ~/work/api 'ls' --enter # type into a pane
 zetty send --key C-c                     # send a control key
-zetty capture --lines 100                # recent pane output (preserved sessions)
-zetty view README.md:20                  # peek text read-only at line 20 (else: default app)
-zetty new-tab --project api              # background tab; prints the new pane id
-zetty accounts                           # list Claude accounts and their config dirs
-zetty accounts --probe                   # …and ask each one who it's signed in as
-zetty new-tab --account work             # open a tab on a specific account
-zetty run personal                       # run that account's agent HERE (execs it)
-zetty run personal --resume              # ...args after the name go to the harness
-claude-personal                          # the generated shortcut, same thing
-zetty --version                          # which build is this?
-zetty split --pane 1a2b3c4d --horizontal # background split; prints the new pane id
-zetty split --pane 1a2b3c4d --focus      # ...or bring the new pane to front
-zetty break --pane 1a2b3c4d              # move a pane into its own (background) tab
-zetty add-project ~/work/api             # add an existing directory as a project
-zetty add-project ~/work/api --space "Client Acme"  # ...and file it into an existing Space
-zetty new-project ~/work/new --git       # create a folder + add it (optional git init)
-zetty clone --project api --name fork-1  # instant CoW clone, own branch zetty/fork-1
-zetty update-clone fork-1                # merge the source's latest into the clone, leaving conflicts in place
-zetty merge-clone fork-1                 # then land the clone's work in the source (refuses on a dirty source)
-zetty push-clone fork-1                  # or push the clone's branch to origin for a PR
-zetty remove-project api                 # close a project's tabs (no confirmation)
-zetty remove-project api/fork-1 --fetch  # clone: land its branch in the source repo, then delete
-zetty hibernate api                      # free a project's sessions/processes (keeps layout)
-zetty wake api                           # wake a hibernated project (fresh shells)
-zetty hibernate --space "Client Acme"    # free every project in a Space
-zetty wake --space "Client Acme"         # wake every hibernated project in a Space
-zetty new-space "Client Acme" --color sky --icon briefcase
-                                          # create a Space (a named sidebar section)
-zetty rename-space "Client Acme" --to "Acme Corp"
-                                          # rename a Space (--to separates two unquoted multi-word names)
-zetty move-to-space api "Client Acme"    # move a project into a Space
-zetty move-to-space api --none           # ...or out of every Space
-zetty remove-space "Client Acme"         # delete a Space (its projects are kept, ungrouped)
-zetty scratch                            # background scratch terminal; prints its pane id
-zetty scratch-clear                      # close and clear all scratch terminals
-zetty focus --cwd ~/work/api
-zetty close --pane 1a2b3c4d --tab
+zetty capture --lines 100                # recent output of a pane
+zetty view README.md:20                  # peek a file at line 20
+zetty new-tab --project api              # open a tab; prints the new pane id
+zetty split --pane 1a2b3c4d --horizontal # split a pane; prints the new pane id
+zetty break --pane 1a2b3c4d              # move a pane into its own tab
+zetty focus --cwd ~/work/api             # switch to a pane
+zetty close --pane 1a2b3c4d --tab        # close a pane, or its whole tab
+zetty add-project ~/work/api             # add a folder as a project
+zetty new-project ~/work/new --git       # create a folder and add it
+zetty remove-project api                 # remove a project
+zetty hibernate api                      # put a project away (keeps its layout)
+zetty wake api                           # bring it back
+zetty clone --project api --name fork-1  # copy-on-write clone on its own branch
+zetty merge-clone fork-1                 # land a clone's work in its source
+zetty push-clone fork-1                  # or push its branch for a pull request
+zetty new-space "Client Acme" --color sky
+zetty move-to-space api "Client Acme"
+zetty scratch                            # throwaway terminal; prints its pane id
+zetty tiles                              # toggle the tile grid
+zetty tiles --profile morning            # open a saved tile view
+zetty accounts                           # list agent accounts
+zetty run personal                       # run that account's agent here
 zetty reload                             # same as ⇧⌘,
-zetty tiles                              # toggle the grid
-zetty tiles --off                        # close it (idempotent, for scripts)
-zetty tiles --profile morning            # open a saved tile view by name
-zetty tiles list                         # saved views: ● showing, ○ open, filled/slots
-zetty tiles new "Deep Work"              # make a one-slot view and show it
-zetty tiles rename "Deep Work" --to Review
-zetty tiles duplicate Review             # copy it, slots and all → "Review copy"
-zetty tiles delete "Review copy"         # remove a view (its panes keep running)
-zetty tiles attach --pane 1a2b3c4d       # show a pane's tab in the active view; prints the slot
-zetty tiles split --slot 2 --horizontal  # divide slot 2 top/bottom; prints the new slot
-zetty tiles detach --slot 3 --collapse   # empty slot 3 and merge its split away
-zetty quit --kill-sessions               # full shutdown, ends preserved sessions
-zetty quit --simulate-restart            # run restart recovery, then kill sessions (testing aid)
+zetty quit --kill-sessions               # quit and end preserved sessions
 ```
 
-**Every pane a CLI verb creates is spawned immediately**, even in the
-background: its shell — and any layout-template startup command or chosen agent
-— is running by the time the verb returns, while the project you are looking at
-stays put unless you pass `--focus`. That is what makes orchestration work, with
-one session adding, driving and removing panes across many projects and being
-able to `send` and `capture` them straight away. The cost is that a background
-`add-project` pays for its panes at creation rather than on first view.
-
-The **Home** project is targetable by name (`zetty new-tab --project Home`),
-but `zetty remove-project Home` and `zetty hibernate Home` are both rejected —
-Home is permanent, and since no surface offers a hibernate verb for it, a
-hibernated Home would have nothing to wake it. (`zetty wake Home` still works,
-so a workspace saved in that state before this rule existed recovers.)
-
-**`add-project --space` errors on an unknown Space name** rather than creating
-one — a typo shouldn't silently produce a second near-identical Space. Space
-names are matched case-insensitively, so quote a name with spaces (or, for
-`rename-space`, separate two unquoted multi-word names with `--to`: `zetty
-rename-space Client Acme --to Acme Corp` would otherwise be ambiguous about
-where the old name ends). Home, scratch terminals, and clones can never join a
-Space — `move-to-space` and the `Move to Space ▸` menu both refuse them; a
-clone always renders in whatever Space its source is in.
-
-**Destructive commands never wait on a dialog.** `close`, `remove-project`,
-`hibernate`, `scratch-clear`, and `quit` when it would end sessions refuse
-panes that are busy — anything but a bare shell running — with an error that
-names them, and `--force` goes ahead anyway. Clicking in the app still asks
-first; a script never blocks the app (and every other `zetty` command) on a
-confirmation nobody is there to answer.
-
-**`zetty <command> --help` is always safe.** Every command prints its own help
-— usage, flags, and whether it destroys anything — and does nothing else,
-wherever `--help` (or `-h`) appears among its arguments. The one exception is
-`zetty run <account> …`, which passes everything after the account name to the
-agent, so `zetty run work --help` shows the agent's help. A bare `-h` is never
-sent as text: `zetty send 'ls -h' --enter`, not `zetty send ls -h --enter`.
-
-`new-tab`, `split`, `break`, and `scratch` never change the active project or
-keyboard focus by default — an agent can reshape your workspace while you keep
-typing. Pass `--focus` to switch to the result. While the **tile grid** is up,
-`--focus` puts the new pane in the active view's focused tile instead of
-leaving the grid (a scratch terminal included), and background panes are still
-spawned, so their ids work there too.
-
-**Dormant panes never dead-end a script.** A pane has no terminal behind it
-until it is viewed (shells spawn lazily), and a hibernated project has none at
-all — `zetty status` shows this as `live: false` on the pane plus `hibernated:
-true` on the project, so a caller can tell the two apart. `live: true` means
-a terminal really is behind the pane and `send` will reach it. Either way you don't
-have to act on it: `send` spawns the pane on demand, waking its project if
-needed, and puts your view back where it was, so the pane ids `new-tab`, `split`
-and `break` print are always usable. A pane that had to be spawned needs a
-moment before its shell reads input, so `send` queues the payload and returns 0
-— success means "delivered or queued", not "already executed". `focus` also
-wakes, and stays switched, since switching is the point. `capture` is the one
-exception: hibernating frees a project's zmx sessions, so there is no output
-left to read and it errors instead of waking a shell for nothing.
-
-`view` takes no pane target — the peek belongs to the window and appears over
-whichever project is active. Relative paths resolve against the **cwd of the
-shell you ran it in** (as `add-project` does), so running it inside a pane
-naturally resolves against that pane's directory. It needs no preserved session,
-which makes it the reliable way for an agent to put a file in front of you.
-
-Run `zetty --help` for the full grammar. This makes Zetty scriptable by
-anything — including the AI agents running inside it.
-
-## Development
-
-```sh
-tuist generate --no-open   # regenerate after adding/removing files
-xcodebuild -project zetty.xcodeproj -scheme zetty -destination 'generic/platform=macOS' build
-tuist test                 # unit tests (ZettyCore + ZettyGhostty)
-swift test                 # faster: the pure ZettyCore suite only
-
-scripts/package.sh                             # build dist/Zetty-<version>.dmg + .sha256
-scripts/release.sh --notes notes.md patch      # cut a release (add --dry-run first)
-```
-
-Releases go through `scripts/release.sh` — it bumps the version, packages, tags,
-and uploads both the DMG and the `.sha256` sidecar the in-app updater verifies
-against. Don't assemble a release by hand or with a generic release tool; see the
-**Releasing** section of [`AGENTS.md`](AGENTS.md) for why.
-
-- `Sources/ZettyCore/**` — pure, unit-tested model layer (no AppKit):
-  pane tree, workspace persistence, config parsing, keybinding engine,
-  agent state machine, CLI protocol.
-- `App/Sources/App/**` — the AppKit application.
-- `App/Sources/ZettyGhostty/**` — the libghostty bridge.
-
-See [`AGENTS.md`](AGENTS.md) for the full contributor guide (layout, design
-rules, subsystem internals, gotchas) and [`DESIGN.md`](DESIGN.md) for the
-visual spec. Product plans live in [`docs/plans/`](docs/plans/).
-
-## Status
-
-Pre-release (`0.1.x`), under active development and daily use. Interfaces and
-config keys may still change. Pre-built apps, Developer ID signed and
-notarized, ship via [GitHub Releases](https://github.com/webteractive/zetty/releases).
+- **Background by default.** `new-tab`, `split`, `break` and `scratch` don't move
+  your focus; add `--focus` to switch to the result. New panes start right away,
+  so their ids can be used with `send` and `capture` immediately.
+- **Hibernated or not-yet-viewed panes still work** — `send` and `focus` wake
+  them on demand.
+- **Destructive commands never wait on a dialog.** `close`, `remove-project`,
+  `hibernate`, `scratch-clear` and `quit --kill-sessions` refuse busy panes with an error naming them; pass
+  `--force` to go ahead.
+- **`zetty <command> --help`** shows usage and does nothing else. Run
+  `zetty --help` for every command.
 
 ## Contributing
 
-Contributions are welcome — bug reports, feature requests, and pull
-requests alike. See [`CONTRIBUTING.md`](CONTRIBUTING.md) for how to get a
-build running and what a good PR looks like, and
-[`AGENTS.md`](AGENTS.md) for the full contributor guide.
+Zetty is pre-release (`0.1.x`): interfaces and config keys may still change.
+Contributions are welcome — see [`CONTRIBUTING.md`](CONTRIBUTING.md), and
+[`DEVELOPMENT.md`](DEVELOPMENT.md) for building, testing and releasing.
 
 ## License
 
-Zetty is open source under the [MIT License](LICENSE). Third-party
-components (libghostty, icon sets, bundled fonts) remain under their own
-licenses.
+Zetty is released under the [MIT License](LICENSE). It includes third-party
+software under its own licenses — Ghostty and libghostty-spm (MIT), FreeType,
+Oniguruma, libpng, zlib and others, plus GNU libintl (LGPL-2.1) inside the
+terminal core and Ghostty's bash and zsh shell-integration scripts (GPLv3). See
+[`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md) for the full list; the notices
+and license texts also ship inside the app.
 
 ## Acknowledgments
 
-- [Ghostty](https://ghostty.org) / [libghostty-spm](https://github.com/Lakr233/libghostty-spm) — the terminal core
+- [Ghostty](https://ghostty.org) and [libghostty-spm](https://github.com/Lakr233/libghostty-spm) — the terminal core
 - [zmx](https://zmx.sh) — session persistence
-- [simple-icons](https://simpleicons.org) (CC0) and
-  [lobe-icons](https://github.com/lobehub/lobe-icons) (MIT) — tool logos
+- [JetBrains Mono](https://www.jetbrains.com/lp/mono/) — the bundled font
+- [simple-icons](https://simpleicons.org) and [lobe-icons](https://github.com/lobehub/lobe-icons) — tool logos
