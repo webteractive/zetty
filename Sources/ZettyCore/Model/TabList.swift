@@ -70,6 +70,20 @@ public final class TabList {
         activeIndex = other.activeIndex
     }
 
+    /// Reduces the list to one tab holding one pane: `surfaceID` when the
+    /// list has it, its first pane otherwise. A hibernated project wakes
+    /// this way when it has handoffs, since they are picked from one at a
+    /// time and not put back as a layout. Returns the pane that is left.
+    @discardableResult
+    public func collapse(toSurface surfaceID: UUID?) -> UUID {
+        let all = trees.flatMap { $0.layout.surfaces }
+        // `trees` is never empty and a tree always has a pane.
+        let kept = all.first { $0.id == surfaceID } ?? all[0]
+        trees = [PaneTree(layout: Layout(root: .leaf(kept)), focusedSurfaceID: kept.id)]
+        activeIndex = 0
+        return kept.id
+    }
+
     /// Appends a new single-pane tab and makes it active.
     public func newTab() {
         trees.append(TabList.freshTree(workingDir: defaultWorkingDir))

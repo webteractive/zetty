@@ -111,6 +111,27 @@ its own conversation). And the main-thread freeze on closing a busy pane was
 never reproduced here while it happened twice in a real instance, so a clean
 run in isolation does not clear a teardown change of that.
 
+Handoffs need the test home to see the conversations, because the app looks
+under ITS home while an agent in a pane keeps using yours. Without this a
+hibernate there finds no conversation and puts the project away with no
+handoff:
+
+```sh
+mkdir -p /tmp/zti/.claude
+ln -s "$HOME/.claude/projects" /tmp/zti/.claude/projects    # Claude: the whole store
+# Codex: link the pane's own rollout FILE into the same dated folder. The
+# lookup walks /tmp/zti/.codex/sessions and does not follow a link at its
+# root, and it has to see the file grow to know the compaction finished.
+mkdir -p /tmp/zti/.codex/sessions/2026/10/08
+ln -s "$HOME"/.codex/sessions/2026/10/08/rollout-<…>.jsonl /tmp/zti/.codex/sessions/2026/10/08/
+```
+
+No hook reaches the test instance either (they report to your real home). A
+woken pane's record is then consumed by the one-minute probe, not by an
+event, and a working Claude is not known to be mid-turn, so the interrupt is
+only exercised by Codex there. Type a few words into a pane's prompt box
+before hibernating to see the failure banner.
+
 ## Layout
 
 - `Sources/ZettyCore/**` — the pure, unit-tested model layer (no AppKit): pane

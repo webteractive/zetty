@@ -3,81 +3,64 @@ import Foundation
 /// How a hibernated pane comes back.
 public enum HandoffWake {
 
+    /// What the person picks for a pane that left a handoff, on the
+    /// hibernated project's screen or with `zetty wake --fresh | --shell`.
+    public enum Choice: String, Codable, Sendable, CaseIterable {
+        /// The agent's own conversation, compacted before it was put away.
+        case resume
+        /// The same harness under the same login, with a new conversation.
+        /// The compacted one stays in the harness's history.
+        case fresh
+        /// No agent: a shell at the pane's directory.
+        case shell
+    }
+
     public enum Plan: Equatable, Sendable {
-        /// A fresh agent whose first message is the handoff.
-        case fresh(String)
-        /// The old conversation: the pane was woken before its handoff was ready.
         case resume(String)
+        case fresh(String)
         /// As before handoffs: a shell at the pane's directory.
         case plainShell
 
         public var logName: String {
             switch self {
-            case .fresh:      return "fresh"
             case .resume:     return "resume"
+            case .fresh:      return "fresh"
             case .plainShell: return "plain"
             }
         }
     }
 
-    public static func plan(record: HandoffRecord?, handoffReady: Bool, forkPending: Bool,
-                            handoffPath: String, login: ResumeLogin) -> Plan {
+    /// A project is only put away once its agents have compacted, so a pane
+    /// either has a record to come back from or never had an agent.
+    public static func plan(record: HandoffRecord?, choice: Choice = .resume, login: ResumeLogin) -> Plan {
         guard let record else { return .plainShell }
-        if handoffReady,
-           let command = command(agent: record.agent, handoffPath: handoffPath,
-                                 cwd: record.cwd, login: login) {
-            return .fresh(command)
+        switch choice {
+        case .resume: return command(record: record, login: login).map(Plan.resume) ?? .plainShell
+        case .fresh:  return freshCommand(record: record, login: login).map(Plan.fresh) ?? .plainShell
+        case .shell:  return .plainShell
         }
-        // A wake within minutes reads as a change of mind: give the person
-        // their conversation back rather than making them wait for a summary.
-        if forkPending,
-           let command = RestartRecovery.resumeCommand(
-               agent: record.agent, sessionID: record.sessionID, cwd: record.cwd,
-               environment: login.environment, unsetting: login.unsetting) {
-            return .resume(command)
-        }
-        return .plainShell
     }
 
-    /// The line typed into the woken pane's shell. Claude mentions the file,
-    /// so the transcript shows a path and not two pages; Codex has no mention
-    /// syntax we rely on, so the shell reads the file into its first message.
-    /// `"$(cat '…')"` works in zsh, bash and fish 3.4+, and the resume line
-    /// already depends on shell syntax (`cd … && …`).
-    public static func command(agent: AgentKind, handoffPath: String, cwd: String,
-                               login: ResumeLogin) -> String? {
-        guard HandoffFork.supports(agent) else { return nil }
-        let message: String
-        switch agent {
-        case .claude where isMentionable(handoffPath):
-            message = ShellQuote.singleQuoted("@" + handoffPath)
-        default:
-            message = "\"$(cat \(ShellQuote.singleQuoted(handoffPath)))\""
-        }
-        let prefix = RestartRecovery.loginPrefix(environment: login.environment,
-                                                 unsetting: login.unsetting)
-        return "cd \(ShellQuote.singleQuoted(cwd)) && "
-            + "\(prefix)\(RestartRecovery.harnessCommand(for: agent)) \(message)"
+    /// A new conversation in the pane's harness, under the login the old one
+    /// ran as: a pane spawned on one account whose agent ran on another would
+    /// otherwise come back on the wrong one.
+    public static func freshCommand(record: HandoffRecord, login: ResumeLogin) -> String? {
+        guard HandoffCompaction.supports(record.agent) else { return nil }
+        let prefix = RestartRecovery.loginPrefix(environment: login.environment, unsetting: login.unsetting)
+        return "cd \(ShellQuote.singleQuoted(record.cwd)) && "
+            + "\(prefix)\(RestartRecovery.harnessCommand(for: record.agent))"
     }
 
-    /// Whether a hook event proves the fresh agent has taken its handoff in,
-    /// so the file can go. `startedWorking` is whether an EARLIER event since
-    /// the wake reported the agent running.
-    ///
-    /// Claude reports `SessionStart` as it launches, BEFORE it expands the
-    /// mention in its first message: deleting the file on that event left the
-    /// agent holding a bare path to nothing. The event after the one that says
-    /// it started working is the first that can only follow the message being
-    /// read. It is counted since the wake, never read off the pane's status,
-    /// which may still say `running` from an agent hibernated mid-turn.
-    /// Codex's shell has read the file before Codex starts, and its one hook
-    /// is turn ended.
-    public static func provesHandoffRead(agent: AgentKind, startedWorking: Bool) -> Bool {
-        agent == .codex || startedWorking
-    }
-
-    /// A mention ends at whitespace, and a quote in it would end the shell's.
-    private static func isMentionable(_ path: String) -> Bool {
-        !path.contains(where: { $0.isWhitespace || $0 == "'" })
+    /// The line typed into the woken pane's shell: the ordinary resume line
+    /// with a first message, so the agent says where things stand instead of
+    /// sitting silent at its prompt. Both harnesses take that message as
+    /// the argument after the session (`claude --resume <id> <prompt>`,
+    /// `codex resume <id> <prompt>`).
+    public static func command(record: HandoffRecord, login: ResumeLogin) -> String? {
+        guard HandoffCompaction.supports(record.agent),
+              let resume = RestartRecovery.resumeCommand(
+                  agent: record.agent, sessionID: record.sessionID, cwd: record.cwd,
+                  environment: login.environment, unsetting: login.unsetting) else { return nil }
+        return "\(resume) \(ShellQuote.singleQuoted(HandoffCompaction.wakeLine))"
     }
 }

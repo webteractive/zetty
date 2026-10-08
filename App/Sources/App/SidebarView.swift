@@ -22,7 +22,8 @@ struct SidebarProject: Equatable {
     let projectColor: NSColor?           // per-project identity color (nil = default)
     let customGlyph: String?             // SF Symbol overriding the diamond (nil = default)
     let isHibernated: Bool               // frozen: dimmed row + moon glyph
-    let isWritingHandoffs: Bool          // hibernated, with handoff forks still queued or running
+    let isWritingHandoffs: Bool          // asked to hibernate; put away once its handoffs are written
+    let handoffFailed: Bool              // left awake because a handoff could not be written
     let isScratch: Bool                  // project-less ephemeral terminal (Scratch section)
     let isHome: Bool                     // permanent Home project (own top section)
     let isClone: Bool                    // renders attached under its source with a fork glyph
@@ -1511,6 +1512,7 @@ extension SidebarView: NSOutlineViewDelegate {
                 customGlyph: project.customGlyph ?? (project.isClone ? "arrow.triangle.branch" : nil),
                 isHibernated: project.isHibernated,
                 isWritingHandoffs: project.isWritingHandoffs,
+                handoffFailed: project.handoffFailed,
                 isScratch: project.isScratch,
                 isClone: project.isClone,
                 isHome: project.isHome,
@@ -1861,7 +1863,8 @@ private final class ProjectCellView: NSTableCellView {
     func configure(name: String, isPinned: Bool, isActive: Bool, agentStatus: AgentStatus?,
                    toolIcon: NSImage? = nil, projectColor: NSColor? = nil,
                    customGlyph: String? = nil, isHibernated: Bool = false,
-                   isWritingHandoffs: Bool = false, isScratch: Bool = false,
+                   isWritingHandoffs: Bool = false, handoffFailed: Bool = false,
+                   isScratch: Bool = false,
                    isClone: Bool = false,
                    isHome: Bool = false,
                    inSpace: Bool = false,
@@ -1894,37 +1897,47 @@ private final class ProjectCellView: NSTableCellView {
         // Recycled cells may have been a spinner row — stop it.
         spinner.stopAnimation(nil)
 
+        // Hibernated rows read as dormant: dim text regardless of active state.
+        // Set before the attributed text below, whose tags keep their own colors.
+        let nameColor = isHibernated ? ZTheme.current.fg3Color
+            : (isActive ? ZTheme.current.fgColor : ZTheme.current.fg2Color)
+        nameLabel.textColor = nameColor
+
         let spaceTag = isHibernated ? (spaceName ?? "") : ""
-        if !spaceTag.isEmpty || (isHibernated && isWritingHandoffs) {
+        if !spaceTag.isEmpty || isWritingHandoffs || handoffFailed {
             // Hibernated rows all collect under Hibernating, so the row itself
             // has to say which Space it will return to when woken. Attributed
             // text rather than another subview — this cell is recycled on every
             // refresh, and a conditional subview means conditional constraints.
             let text = NSMutableAttributedString(
                 string: name,
-                attributes: [.foregroundColor: nameLabel.textColor ?? ZTheme.current.fgColor,
+                attributes: [.foregroundColor: nameColor,
                              .font: nameLabel.font ?? ZTheme.chromeFont(size: 12)])
-            let tag: [NSAttributedString.Key: Any] = [.foregroundColor: ZTheme.current.fg3Color,
-                                                      .font: ZTheme.chromeFont(size: 10)]
-            if !spaceTag.isEmpty {
-                text.append(NSAttributedString(string: "  \(spaceTag)", attributes: tag))
+            func tag(_ string: String, color: NSColor = ZTheme.current.fg3Color) {
+                text.append(NSAttributedString(
+                    string: "  \(string)",
+                    attributes: [.foregroundColor: color, .font: ZTheme.chromeFont(size: 10)]))
             }
-            // Its agents' handoffs are still being written in the background:
-            // that is what the stray claude or codex processes are, and a
-            // wake right now resumes the old conversations instead.
+            if !spaceTag.isEmpty { tag(spaceTag) }
+            // Still awake: it is put away once its agents' handoffs are
+            // written, which is what the extra claude or codex processes are.
             if isWritingHandoffs {
-                text.append(NSAttributedString(string: "  Writing handoffs…", attributes: tag))
+                tag("Writing handoffs…")
+            } else if handoffFailed {
+                tag("Handoff failed", color: ZTheme.current.redColor)
             }
             nameLabel.attributedStringValue = text
         } else {
             nameLabel.stringValue = name
         }
-        nameLabel.toolTip = isHibernated && isWritingHandoffs
-            ? "Handoffs are being written. Waking now resumes the old conversations instead."
-            : nil
-        // Hibernated rows read as dormant: dim text regardless of active state.
-        nameLabel.textColor = isHibernated ? ZTheme.current.fg3Color
-            : (isActive ? ZTheme.current.fgColor : ZTheme.current.fg2Color)
+        if isWritingHandoffs {
+            nameLabel.toolTip = "Its agents are writing handoffs, and it is hibernated when they are done. "
+                + "Typing in it cancels."
+        } else if handoffFailed {
+            nameLabel.toolTip = "A handoff could not be written, so this project was left awake."
+        } else {
+            nameLabel.toolTip = nil
+        }
 
         // Single-tab projects surface the pane's tool logo on the row itself
         // (multi-tab projects show logos on their tab child rows instead).

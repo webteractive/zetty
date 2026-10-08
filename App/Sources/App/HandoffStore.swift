@@ -1,26 +1,27 @@
 import Foundation
 import ZettyCore
 
-/// File side of hibernation handoffs: `~/.zetty/handoffs/<SURFACE-UUID>.json`
-/// and `.md`, owner-only.
+/// File side of hibernation handoffs: `~/.zetty/handoffs/<SURFACE-UUID>.json`,
+/// owner-only. One per pane that comes back by resuming a conversation its
+/// agent compacted before the project was put away.
 ///
-/// A record with no `.md` is a handoff still owed (or one a quit interrupted);
-/// a record with one is ready to wake from. Paths and file contents are pure
-/// in `ZettyCore` (`HandoffPaths`, `HandoffPrompt`).
+/// Written at the moment a project is put away (`save`): while its agents
+/// are compacting nothing is on disk, so a quit or a cancel leaves nothing to
+/// clean up. Paths are pure in `ZettyCore` (`HandoffPaths`).
 enum HandoffStore {
     private static var home: String { NSHomeDirectory() }
 
-    static func handoffPath(for surface: UUID) -> String {
-        HandoffPaths.handoff(for: surface, home: home)
-    }
-
-    /// Records the pane and clears any handoff an earlier hibernation left,
-    /// so a fork that fails this time cannot wake the pane from stale text.
-    static func begin(_ record: HandoffRecord) {
+    /// False when it could not be written, with nothing left behind.
+    @discardableResult
+    static func save(_ record: HandoffRecord) -> Bool {
         ensureDirectory()
-        try? FileManager.default.removeItem(atPath: handoffPath(for: record.surface))
-        guard let data = try? JSONEncoder().encode(record) else { return }
-        writeOwnerOnly(data, to: HandoffPaths.record(for: record.surface, home: home))
+        guard let data = try? JSONEncoder().encode(record),
+              writeOwnerOnly(data, to: HandoffPaths.record(for: record.surface, home: home))
+        else {
+            remove(record.surface)
+            return false
+        }
+        return true
     }
 
     static func record(for surface: UUID) -> HandoffRecord? {
@@ -37,31 +38,22 @@ enum HandoffStore {
             .compactMap(record(for:))
     }
 
-    static func isReady(_ surface: UUID) -> Bool {
-        FileManager.default.fileExists(atPath: handoffPath(for: surface))
-    }
-
-    /// The wake file: wake line plus handoff, because a mention inside a
-    /// mentioned file is not expanded.
-    static func writeHandoff(_ handoff: String, for surface: UUID) {
-        ensureDirectory()
-        writeOwnerOnly(Data(HandoffPrompt.wakeFile(handoff: handoff).utf8),
-                       to: handoffPath(for: surface))
-    }
-
     static func remove(_ surface: UUID) {
         try? FileManager.default.removeItem(atPath: HandoffPaths.record(for: surface, home: home))
-        try? FileManager.default.removeItem(atPath: handoffPath(for: surface))
     }
 
-    /// Drops every file whose pane is gone. `owned` must span hibernated
-    /// projects (`sessionOwnerSurfaceIDs`): theirs are the panes with handoffs.
-    static func sweep(keeping owned: Set<UUID>) {
+    /// Drops every record nobody owns any more. A record that names its
+    /// project (by `settingsKey`) is that project's, whatever became of the
+    /// pane it came from:
+    /// a project wakes as one pane and its other handoffs wait. An older one
+    /// is its pane's, and `panes` must then span hibernated projects
+    /// (`sessionOwnerSurfaceIDs`).
+    static func sweep(keeping panes: Set<UUID>, projects: Set<String>) {
         let directory = HandoffPaths.directory(home: home)
         for name in (try? FileManager.default.contentsOfDirectory(atPath: directory)) ?? [] {
-            guard let surface = HandoffPaths.surfaceID(fromFileName: name),
-                  !owned.contains(surface) else { continue }
-            try? FileManager.default.removeItem(atPath: "\(directory)/\(name)")
+            guard let surface = HandoffPaths.surfaceID(fromFileName: name) else { continue }
+            let owned = record(for: surface)?.project.map(projects.contains) ?? panes.contains(surface)
+            if !owned { try? FileManager.default.removeItem(atPath: "\(directory)/\(name)") }
         }
     }
 
@@ -71,17 +63,18 @@ enum HandoffStore {
             attributes: [.posixPermissions: 0o700])
     }
 
-    /// Created owner-only and then moved into place: a handoff describes
-    /// somebody's work, so it is never readable by anyone else, and never
-    /// seen half-written by a pane that is waking.
-    private static func writeOwnerOnly(_ data: Data, to path: String) {
+    /// Created owner-only and then moved into place: it names somebody's
+    /// conversation and login, and is never seen half-written by a pane
+    /// that is waking.
+    private static func writeOwnerOnly(_ data: Data, to path: String) -> Bool {
         let temporary = path + ".tmp"
         try? FileManager.default.removeItem(atPath: temporary)
         guard FileManager.default.createFile(atPath: temporary, contents: data,
-                                             attributes: [.posixPermissions: 0o600]) else { return }
+                                             attributes: [.posixPermissions: 0o600]) else { return false }
         guard rename(temporary, path) == 0 else {
             try? FileManager.default.removeItem(atPath: temporary)
-            return
+            return false
         }
+        return true
     }
 }

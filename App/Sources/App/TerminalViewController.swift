@@ -78,10 +78,11 @@ final class TerminalViewController: NSViewController {
     private var rootContentView: SurfaceNodeView?
     /// The dormant-project placeholder, shown instead of `rootContentView` when
     /// the active project is hibernated.
-    private var placeholderView: NSView?
+    private var placeholderView: HibernationPlaceholderView?
     /// The caution strip shown below the tab bar when the active project is a
     /// clone (copy-on-write fork). Nil for ordinary projects.
     private var cloneWarningBanner: CloneWarningBanner?
+    private var handoffBanner: HandoffBanner?
 
     /// The tab bar strip shown above the pane area.
     private var tabBarView: TabBarView?
@@ -446,15 +447,16 @@ final class TerminalViewController: NSViewController {
     /// (⌘W and the per-pane ×) simply didn't have it.
     func reconcileSessions() {
         let owned = sessionOwnerSurfaceIDs        // read on main; workspace is main-only
+        let projects = Set(workspace.projects.map(\.settingsKey))
         endLeftoverSessionsOfHibernatedProjects()
         // A handoff belongs to a pane. A hibernated pane has no surface to
         // prune, so closing it or removing its project reaches no close hook;
         // ownership is asked here, where the cwd files' is. `owned` spans
         // hibernated projects, whose panes are the ones with handoffs.
-        handoffRunner.cancel(notIn: Set(owned))
+        cancelOutdatedHibernations()
         let zmx = ZmxRunner.locate()
         DispatchQueue.global(qos: .utility).async { [weak self] in
-            HandoffStore.sweep(keeping: Set(owned))
+            HandoffStore.sweep(keeping: Set(owned), projects: projects)
             let listed = zmx.map { ZmxRunner.listZettySessions(zmxPath: $0) } ?? []
             let candidates = SessionPersistence.orphans(existing: listed, liveSurfaceIDs: owned)
             let names = (try? FileManager.default
@@ -1894,12 +1896,17 @@ final class TerminalViewController: NSViewController {
                               onCancel: (() -> Void)? = nil,
                               _ onProceed: @escaping (_ command: String?, _ accountID: String?) -> Void) {
         let config = agentsProvider?(project) ?? .disabled
-        let agents = config.agents
-        guard config.promptOnNewPane, !agents.isEmpty, let window = view.window else {
+        // Handoffs still waiting in this project are offered wherever a new
+        // pane is: that is how the ones not picked at the wake get started.
+        // They show even with the agent prompt off, which is about agents.
+        let waiting = waitingHandoffs(for: project)
+        let agents = config.promptOnNewPane ? config.agents : []
+        guard !agents.isEmpty || !waiting.isEmpty, let window = view.window else {
             onProceed(nil, nil); return
         }
         AgentChooserSheet.present(
             agents: agents,
+            handoffs: waiting.map { .init(id: $0.surface, title: $0.label, agentID: $0.agent.rawValue) },
             accounts: accountsProvider?() ?? [],
             defaultAccountID: projectAccountProvider?(project),
             limitSummary: { [weak self] id in self?.accountLimitLabel(for: id)?.summary },
@@ -1908,6 +1915,25 @@ final class TerminalViewController: NSViewController {
             switch outcome {
             // launch chosen agent, on the chosen account
             case let .agent(command, accountID): onProceed(command, accountID)
+            case .handoff(let id):
+                // The new pane is spawned on the handoff's own login, so the
+                // resume line needs none of its own.
+                guard let record = waiting.first(where: { $0.surface == id }),
+                      let command = HandoffWake.command(record: record, login: .inherited) else {
+                    onProceed(nil, nil); return
+                }
+                HandoffStore.remove(id)
+                ZettyLog.lifecycle.log("handoff: \(SessionPersistence.shortID(for: id)) started in a new pane")
+                self?.handoffBootCommands[command] = Self.resumingHandoffMessage
+                onProceed(command, record.accountID)
+            case .deleteHandoff(let id):
+                // Nothing was picked for the new pane yet: ask again, with
+                // what is left.
+                if let record = waiting.first(where: { $0.surface == id }) { self?.deleteHandoff(record) }
+                // A turn later: the sheet that reported this is still closing.
+                DispatchQueue.main.async {
+                    self?.chooseAgentThenSpawn(in: project, onCancel: onCancel, onProceed)
+                }
             case let .standard(accountID):       onProceed(nil, accountID)
             case .manage:
                 self?.onOpenAgentSettings?(project)
@@ -2614,6 +2640,12 @@ final class TerminalViewController: NSViewController {
     /// `deliverAfterSpawn` and `guardedResumeSurfaces`.
     private func injectStartupCommandIfPending(_ surfaceID: UUID) {
         guard let command = pendingStartupCommands.removeValue(forKey: surfaceID) else { return }
+        // A pane starting from a handoff is covered before its line is
+        // typed: the grace period below is what lets the cover draw first.
+        if let message = handoffBootSurfaces.removeValue(forKey: surfaceID)
+            ?? handoffBootCommands.removeValue(forKey: command) {
+            coverPaneWhileAgentBoots(surfaceID, message: message)
+        }
         let isResume = guardedResumeSurfaces.remove(surfaceID) != nil
         if isResume, runningAccountHolds[surfaceID] != nil {
             runningAccountHolds[surfaceID] = Date()
@@ -2629,6 +2661,79 @@ final class TerminalViewController: NSViewController {
     /// Whether a command is waiting for this pane to spawn.
     func hasPendingStartupCommand(for surfaceID: UUID) -> Bool {
         pendingStartupCommands[surfaceID] != nil
+    }
+
+    // MARK: - A pane starting from a handoff
+
+    /// Panes whose queued startup command starts an agent from a handoff,
+    /// with what their cover says. For a pane that already exists when the
+    /// start is queued (a project woken as one pane).
+    var handoffBootSurfaces: [UUID: String] = [:]
+    /// The same, by the command itself, for a pane that does not exist yet:
+    /// a new tab or split is handed its command before it has an id. A
+    /// resume line names its session, so it cannot be mistaken for another.
+    var handoffBootCommands: [String: String] = [:]
+
+    private var handoffBootCovers: [UUID: ReloadingOverlay] = [:]
+    private var handoffBootTimers: [UUID: Timer] = [:]
+
+    /// How long a pane stays covered when its agent never shows: long enough
+    /// for a slow start, short enough that a line that failed (a session
+    /// that is gone) is seen and not hidden for good.
+    private static let handoffBootTimeout: TimeInterval = 30
+
+    /// Covers a pane from before its start line is typed until the agent is
+    /// up, so what is seen is a loading state and then the agent, never
+    /// `cd … && claude --resume '…' 'This project was hibernated…'` being
+    /// pasted into a shell (Glen, 2026-10-08).
+    ///
+    /// The cover is the one the refresh button uses, and for the same
+    /// reasons: a child of the terminal view, since the surface composites
+    /// over anything beside it, and lifted only once the agent has STAYED in
+    /// the foreground (`agentReadySightings`), since a process existing is
+    /// not a harness that has finished starting. It is held here and not on
+    /// the pane's container: a wake is followed by rebuilds, which make new
+    /// containers and would lose track of a cover the old one put up.
+    private func coverPaneWhileAgentBoots(_ surfaceID: UUID, message: String) {
+        guard handoffBootCovers[surfaceID] == nil, let surface = surface(with: surfaceID),
+              let zmx = ZmxRunner.locate() else { return }
+        let cover = ReloadingOverlay(message: message)
+        cover.cover(registry.terminalView(for: surface))
+        handoffBootCovers[surfaceID] = cover
+        ZettyLog.lifecycle.log("handoff: \(SessionPersistence.shortID(for: surfaceID)) covered while its agent starts")
+
+        let started = Date()
+        let deadline = started + Self.handoffBootTimeout
+        var sightings = 0
+        handoffBootTimers[surfaceID] = Timer.scheduledTimer(
+            withTimeInterval: Self.agentExitPollInterval, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated {
+                // Closed while it was starting.
+                guard let self, self.surface(with: surfaceID) != nil else {
+                    self?.uncoverBootedPane(surfaceID)
+                    return
+                }
+                DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+                    let running = Self.probeForeground([surfaceID], zmxPath: zmx)?[surfaceID] ?? ""
+                    let isAgent = AgentKind(rawValue: running).map(HandoffCompaction.supports) == true
+                    DispatchQueue.main.async {
+                        sightings = isAgent ? sightings + 1 : 0
+                        let isUp = sightings >= Self.agentReadySightings
+                        guard isUp || Date() >= deadline, let self,
+                              self.handoffBootCovers[surfaceID] != nil else { return }
+                        ZettyLog.lifecycle.log(
+                            "handoff: \(SessionPersistence.shortID(for: surfaceID)) uncovered after "
+                            + "\(Int(Date().timeIntervalSince(started)))s, agent \(isUp ? "up" : "not seen")")
+                        self.uncoverBootedPane(surfaceID)
+                    }
+                }
+            }
+        }
+    }
+
+    private func uncoverBootedPane(_ surfaceID: UUID) {
+        handoffBootTimers.removeValue(forKey: surfaceID)?.invalidate()
+        handoffBootCovers.removeValue(forKey: surfaceID)?.dismiss()
     }
 
     /// How long a restart-recovery resume waits after its pane spawns: long
@@ -2742,16 +2847,8 @@ final class TerminalViewController: NSViewController {
                 // Live events only: the startup replay describes sessions that
                 // may be long gone, and the override it would set is persisted.
                 if notify { applyReportedAccount(from: event, to: surface) }
-                // Not on the first event: Claude reports as it launches,
-                // before it has read the handoff its first message mentions.
-                if notify, let woken = handoffWakeSurfaces[surfaceID] {
-                    if HandoffWake.provesHandoffRead(
-                        agent: woken, startedWorking: handoffWakeStarted.contains(surfaceID)) {
-                        consumeHandoff(surfaceID)
-                    } else if agentDetector.state(for: surfaceID).status == .running {
-                        handoffWakeStarted.insert(surfaceID)
-                    }
-                }
+                // The agent a wake line started is reporting: it is back.
+                if notify { consumeHandoff(surfaceID) }
                 continue
             }
             // Fallback: an older helper, or a pane Zetty no longer has — every
@@ -3652,7 +3749,7 @@ final class TerminalViewController: NSViewController {
                     guard let self else { return }
                     // Re-read the flag too: it can flip while the palette is open.
                     if project.isHibernated {
-                        self.wakeProject(project)
+                        self.wakeFromUI(project)
                     } else if let index = self.liveIndex(of: project) {
                         self.selectProject(at: index)
                     }
@@ -3779,7 +3876,7 @@ final class TerminalViewController: NSViewController {
                         // doesn't use accounts.
                         account: accountDisplayName(for: surface),
                         // Two stat-sized reads, for hibernated projects only.
-                        handoff: project.isHibernated ? handoffState(for: surface.id) : nil
+                        handoff: handoffState(for: surface.id, in: project)
                     )
                 }
                 let title = TabTitle.display(
@@ -4940,7 +5037,7 @@ final class TerminalViewController: NSViewController {
 
     /// The pane's display title: live terminal title, falling back to the
     /// persisted one — unless the title is known-stale (tool exited).
-    private func displayTitle(for surface: Surface?) -> String? {
+    func displayTitle(for surface: Surface?) -> String? {
         guard let surface else { return nil }
         guard !staleTitleSurfaces.contains(surface.id) else {
             return registry.title(for: surface)   // only a FRESH live title counts
@@ -4980,7 +5077,7 @@ final class TerminalViewController: NSViewController {
     /// Not part of the workspace MODEL (a zoom is, and this is not), but it IS
     /// persisted beside it as `Workspace.tileModeActive`: quitting while the
     /// grid is up comes back to the grid, with the views that were open.
-    private var tileMode = false
+    private(set) var tileMode = false
     /// Set by `restoreTileMode` before the view loads; entered in `viewDidLoad`.
     private var pendingTileMode = false
     private var tileFocusedSurfaceID: UUID?
@@ -6690,8 +6787,8 @@ final class TerminalViewController: NSViewController {
                 projectColor: identity?.color,
                 customGlyph: identity?.glyph,
                 isHibernated: project.isHibernated,
-                isWritingHandoffs: project.isHibernated && handoffRunner.anyPending(
-                    among: trees.flatMap { $0.layout.surfaces.map(\.id) }),
+                isWritingHandoffs: hibernationsInProgress[project.id] != nil,
+                handoffFailed: handoffFailures[project.id] != nil,
                 isScratch: project.isScratch,
                 isHome: project.isHome,
                 isClone: project.cloneSource != nil,
@@ -6725,7 +6822,8 @@ final class TerminalViewController: NSViewController {
                 name: pending.displayName,
                 isPinned: false, tabTitles: [], tabStatuses: [], tabIcons: [],
                 icon: nil, status: nil, projectColor: nil, customGlyph: nil,
-                isHibernated: false, isWritingHandoffs: false, isScratch: false, isHome: false,
+                isHibernated: false, isWritingHandoffs: false, handoffFailed: false,
+                isScratch: false, isHome: false,
                 isClone: true, cloneSourceIndex: sourceIndex, isPendingClone: true,
                 spaceID: nil, spaceName: nil,
                 accountColor: nil, accountName: nil, tabAccountColors: []
@@ -7582,14 +7680,27 @@ final class TerminalViewController: NSViewController {
     /// When the off-main half of a `hibernate-after` pass started; nil when
     /// none is in flight. A pass that never comes back is given up on.
     var autoHibernationPassStartedAt: Date?
-    /// Writes each hibernated agent pane's handoff, in the background.
-    let handoffRunner = HandoffRunner()
-    /// Panes whose queued startup command is a fresh agent reading its
-    /// handoff, with the harness. The handoff is deleted once that agent has
-    /// provably read it; see `HandoffWake.provesHandoffRead`.
-    var handoffWakeSurfaces: [UUID: AgentKind] = [:]
-    /// Those of them a hook has reported running since the wake.
-    var handoffWakeStarted: Set<UUID> = []
+    /// Has each agent pane compact its conversation, in its own chat.
+    let handoffCompactor = HandoffCompactor()
+    /// Projects asked to hibernate whose agents are still compacting. Still
+    /// awake; see `beginHibernation`.
+    var hibernationsInProgress: [UUID: HibernationInProgress] = [:]
+    /// Projects left awake because a pane could not hand off. Until
+    /// dismissed or tried again; not persisted.
+    var handoffFailures: [UUID: HandoffFailure] = [:]
+    /// Panes whose queued startup command resumes a compacted conversation.
+    /// The record goes once that agent is back; see `consumeHandoff`.
+    var handoffWakeSurfaces: Set<UUID> = []
+    /// How each pane was picked to come back, for the wake about to happen:
+    /// set by whoever asks for it (the hibernated screen, `zetty wake
+    /// --fresh`) and read once by `queueHandoffWakes`. A pane not named
+    /// resumes. Kept here rather than passed along because a wake can be
+    /// deferred behind a teardown, or happen in place.
+    var handoffWakeChoices: [UUID: HandoffWake.Choice] = [:]
+    /// Projects being woken as one pane, whose start is already queued:
+    /// `queueHandoffWakes` leaves them alone. Beside the wake for the same
+    /// reason the choices are.
+    var singlePaneWakes: Set<UUID> = []
 
     /// Frees a project's sessions, processes, and panes; keeps its layout.
     /// Never hibernates the active project (switches away first), and never
@@ -7598,19 +7709,37 @@ final class TerminalViewController: NSViewController {
     /// it. The rule lives here, in the funnel every path goes through; the
     /// checks at the call sites are what keep a dead verb off the screen.
     ///
-    /// `handoffs`: each Claude or Codex pane leaves a handoff unless this is
-    /// `.none`. Captured before the teardown and written after it, by forks of
-    /// the sessions, so the memory is freed at once either way.
+    /// `handoffs`: each Claude or Codex pane compacts its conversation into
+    /// a handoff unless this is `.none`. That happens FIRST: with any agent
+    /// to ask, this only starts the attempt (`beginHibernation`), and the
+    /// project is put away when every one has compacted, or left awake if
+    /// one cannot.
     func hibernateProject(_ project: ProjectRuntime, confirmIfBusy: Bool = true,
                           handoffs: HandoffRequest = .manual) {
-        guard let index = workspace.projects.firstIndex(where: { $0.id == project.id }),
-              !project.isHome, !project.isHibernated else { return }
+        guard workspace.projects.contains(where: { $0.id == project.id }),
+              !project.isHome, !project.isHibernated,
+              hibernationsInProgress[project.id] == nil else { return }
         let surfaceIDs = project.tabList.trees.flatMap { $0.layout.surfaces.map(\.id) }
         if confirmIfBusy, !confirmClosingBusyPanes(surfaceIDs, what: "project “\(project.name)”") { return }
+        handoffFailures.removeValue(forKey: project.id)     // a new attempt
         let foreground = foregroundForHibernation(surfaceIDs, request: handoffs)
         let records = captureHandoffRecords(for: project, surfaceIDs: surfaceIDs,
                                             request: handoffs, foreground: foreground)
+        guard !records.isEmpty else {
+            putAway(project, surfaceIDs: surfaceIDs, foreground: foreground)
+            return
+        }
+        var isAutomatic = false
+        if case .automatic = handoffs { isAutomatic = true }
+        beginHibernation(of: project, panes: surfaceIDs, records: records, isAutomatic: isAutomatic)
+    }
 
+    /// The hibernation itself: marks the project, ends its sessions and frees
+    /// its panes. Its agents have compacted by now, and their records are
+    /// already on disk.
+    func putAway(_ project: ProjectRuntime, surfaceIDs: [UUID], foreground: [UUID: String]?) {
+        guard let index = workspace.projects.firstIndex(where: { $0.id == project.id }),
+              !project.isHome, !project.isHibernated else { return }
         if index == workspace.activeIndex {
             // Switch to another awake project if one exists; otherwise stay put
             // and let the dormant placeholder render (full dormancy is allowed —
@@ -7638,8 +7767,20 @@ final class TerminalViewController: NSViewController {
             // the old one.
             lookedUpResumeSessions.removeValue(forKey: id)
             resumeLookupAttempted.remove(id)
+            // Woken with its whole layout, in a tab nobody opened: its wake
+            // line was never typed, so its handoff is waiting again, not on
+            // its way back. Left marked, it would be missing from the list
+            // it is picked from, and its stale line would be typed into
+            // whatever this pane is woken as next.
+            guard handoffWakeSurfaces.remove(id) != nil else { continue }
+            pendingStartupCommands.removeValue(forKey: id)
+            guardedResumeSurfaces.remove(id)
+            handoffBootSurfaces.removeValue(forKey: id)
+            if var record = HandoffStore.record(for: id), record.wake != nil {
+                record.wake = nil
+                HandoffStore.save(record)
+            }
         }
-        handoffRunner.enqueue(records)
         onActiveProjectChanged?()
         refreshTabBar()
         refreshSidebar()
@@ -7821,6 +7962,9 @@ final class TerminalViewController: NSViewController {
         guard !project.isHome else { return "Home can't be hibernated" }
         guard workspace.projects.count > 1 else { return "cannot hibernate the only project" }
         guard !project.isHibernated else { return "project \"\(project.name)\" is already hibernated" }
+        guard hibernationsInProgress[project.id] == nil else {
+            return "project \"\(project.name)\" is already being hibernated; its handoffs are being written"
+        }
         let surfaces = project.tabList.trees.flatMap { $0.layout.surfaces.map(\.id) }
         if let refusal = cliRefusal(closing: surfaces, force: force) { return refusal }
         hibernateProject(project, confirmIfBusy: false, handoffs: handoff ? .manual : .none)
@@ -7828,20 +7972,56 @@ final class TerminalViewController: NSViewController {
     }
 
     /// Wake the named project (CLI, case-insensitive). Returns an error or nil.
-    func wakeProjectNamed(_ name: String) -> String? {
+    func wakeProjectNamed(_ name: String, handoffs: HandoffWake.Choice = .resume) -> String? {
         let matches = workspace.projects.filter { $0.name.lowercased() == name.lowercased() }
         guard let project = matches.first else { return "no project named \"\(name)\"" }
         guard matches.count == 1 else { return "\(matches.count) projects named \"\(name)\" — use the sidebar" }
+        // Not put away yet: waking it is calling the hibernation off.
+        if hibernationsInProgress[project.id] != nil {
+            cancelHibernation(of: project.id, why: "woken from the CLI")
+            return nil
+        }
         guard project.isHibernated else { return "project \"\(project.name)\" is not hibernated" }
-        wakeProject(project)
+        wakeProject(project, choosing: handoffs)
         return nil
+    }
+
+    /// Wakes a project with every pane's handoff coming back the same way.
+    func wakeProject(_ project: ProjectRuntime, choosing choice: HandoffWake.Choice) {
+        let panes = project.tabList.trees.flatMap { $0.layout.surfaces.map(\.id) }
+        wakeProject(project, choosing: Dictionary(uniqueKeysWithValues: panes.map { ($0, choice) }))
+    }
+
+    /// Wakes a project with each pane's handoff coming back as picked.
+    private func wakeProject(_ project: ProjectRuntime, choosing choices: [UUID: HandoffWake.Choice]) {
+        handoffWakeChoices.merge(choices) { _, new in new }
+        wakeProject(project)
+    }
+
+    /// A wake somebody asked for in the GUI, away from the hibernated
+    /// project's own screen (the sidebar, the palette). With handoffs to
+    /// pick from it shows that screen instead of deciding for them.
+    func wakeFromUI(_ project: ProjectRuntime) {
+        guard project.isHibernated, !tileMode,
+              let index = workspace.projects.firstIndex(where: { $0.id == project.id }),
+              !waitingHandoffs(for: project).isEmpty else {
+            wakeProject(project)
+            return
+        }
+        if index != workspace.activeIndex { selectProject(at: index) }
     }
 
     /// Toggles hibernate/wake for the project at `index` (sidebar menu).
     func toggleHibernation(at index: Int) {
         guard workspace.projects.indices.contains(index) else { return }
         let project = workspace.projects[index]
-        if project.isHibernated { wakeProject(project) } else { hibernateProject(project) }
+        if hibernationsInProgress[project.id] != nil {
+            cancelHibernation(of: project.id, why: "toggled back from the sidebar")
+        } else if project.isHibernated {
+            wakeFromUI(project)
+        } else {
+            hibernateProject(project)
+        }
     }
 
     /// Starts the auto-hibernation timer (safe to call repeatedly, e.g. on reload).
@@ -7949,12 +8129,13 @@ final class TerminalViewController: NSViewController {
     }
 
     /// Wake every hibernated project in a Space (CLI `wake-space`).
-    func wakeSpaceNamed(_ name: String) -> String? {
+    func wakeSpaceNamed(_ name: String, handoffs: HandoffWake.Choice = .resume) -> String? {
         guard let space = workspace.space(named: name) else {
             return "no Space named \"\(name)\""
         }
-        for project in workspace.projects(inSpace: space.id) where project.isHibernated {
-            wakeProject(project)
+        for project in workspace.projects(inSpace: space.id) {
+            cancelHibernation(of: project.id, why: "its Space was woken from the CLI")
+            if project.isHibernated { wakeProject(project, choosing: handoffs) }
         }
         return nil
     }
@@ -8138,6 +8319,8 @@ final class TerminalViewController: NSViewController {
         placeholderView = nil
         cloneWarningBanner?.removeFromSuperview()
         cloneWarningBanner = nil
+        handoffBanner?.removeFromSuperview()
+        handoffBanner = nil
         // The tile views belong in this teardown for the same reason as the
         // rest: this function owns everything it puts in the container. Leaving
         // them attached stranded a full-size view over the panes AND kept the
@@ -8216,6 +8399,23 @@ final class TerminalViewController: NSViewController {
             topGuide = banner.bottomAnchor
         }
 
+        // The active project is on its way to being hibernated, or was left
+        // awake because a handoff could not be written. Not in tile mode,
+        // where the pane area belongs to every project at once; the sidebar
+        // row says the same there.
+        if !tileMode, let banner = makeHandoffBanner() {
+            banner.translatesAutoresizingMaskIntoConstraints = false
+            container.addSubview(banner)
+            NSLayoutConstraint.activate([
+                banner.topAnchor.constraint(equalTo: topGuide),
+                banner.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+                banner.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+                banner.heightAnchor.constraint(equalToConstant: HandoffBanner.height),
+            ])
+            handoffBanner = banner
+            topGuide = banner.bottomAnchor
+        }
+
         // One decision, tested in ZettyCore: tile mode outranks the active
         // project, whose hibernation placeholder once replaced the grid and
         // stranded every tile pane outside the window.
@@ -8230,8 +8430,11 @@ final class TerminalViewController: NSViewController {
             let project = workspace.activeProject
             let placeholder = HibernationPlaceholderView(
                 projectName: project.name,
-                tabCount: project.tabList.trees.count
-            ) { [weak self] in self?.wakeProject(project) }
+                tabCount: project.tabList.trees.count,
+                handoffs: waitingHandoffs(for: project),
+                onWake: { [weak self] in self?.wakeProject(project) },
+                onStart: { [weak self] start in self?.wakeProject(project, startingWith: start) },
+                onDelete: { [weak self] handoff in self?.deleteHandoff(handoff) })
             placeholder.translatesAutoresizingMaskIntoConstraints = false
             container.addSubview(placeholder)
             NSLayoutConstraint.activate([

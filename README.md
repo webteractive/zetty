@@ -145,12 +145,33 @@ copy-bind = n copy-cursor-down
   or subagent an agent left running, a draft in the prompt box or a running
   command still does, and so does a project you woke yourself until you type
   into it. With preserved sessions, each Claude or Codex pane
-  leaves a short **handoff** as its project is put away, and waking starts a
-  fresh agent from it instead of a bare shell; the old conversation stays on
-  disk. Waking again within moments, before the handoff is written, resumes
-  the old conversation instead. Hibernating or closing a Codex pane, or
-  quitting with its sessions, also tells it to stop any command it still has
-  running, which would otherwise outlive it.
+  hands off first, in its own chat where you can watch it: a turn in
+  progress is stopped, Zetty types `/compact` (for Claude, with handoff
+  instructions) and the agent compacts its conversation, and only then is the
+  project put away. Until then it stays awake, the sidebar row and a strip
+  above its panes read "Writing handoffs…", and typing in it, **Cancel** on
+  the strip, or waking it calls the hibernation off (a chat that has already
+  compacted stays compacted). A hibernated project's screen lists its
+  handoffs, one per agent pane, in the same list the new-tab chooser uses,
+  and you pick what to start with: a **Resume: …** row resumes that handoff
+  (the pane shows "Resuming handoff…" until the agent is up, then the agent
+  says where things stand), an agent's row starts a new
+  conversation, and **Standard session** opens a plain shell.
+  The project comes back as a single pane. The handoffs you didn't pick
+  wait: adding a tab or a split offers them, ahead of the agents, in the
+  same chooser. The bin at the end of a handoff, on that screen or in the
+  chooser, deletes it; the conversation itself stays in the agent's own
+  history. Waking from the sidebar or the palette opens that screen
+  first. `zetty wake`, and a CLI verb that wakes a project to drive one of
+  its panes, put the whole layout back instead, each agent resuming its own
+  handoff. If a pane cannot hand off, most often
+  because its prompt box holds a draft or a question, nothing is typed over
+  it: the project is left awake and says "Handoff failed" and why, with
+  **Hibernate Anyway** to put it away without one. A cleared or brand-new
+  chat has nothing to hand off and does not hold the hibernate up.
+  Hibernating or closing a Codex pane, or quitting with its sessions, also
+  tells it to stop any command it still has running, which would otherwise
+  outlive it.
 - **Layout templates** — save a project's tabs and splits (each pane's folder
   and an optional startup command) to a committable `.zetty/project.json`; it is
   applied when the project is added, or from Project Settings.
@@ -355,7 +376,8 @@ zetty new-project ~/work/new --git       # create a folder and add it
 zetty remove-project api                 # remove a project
 zetty hibernate api                      # put a project away (keeps its layout)
 zetty hibernate api --no-handoff         # same, without writing handoffs
-zetty wake api                           # bring it back
+zetty wake api                           # bring it back; agents resume their handoffs
+zetty wake api --fresh                   # ...with new conversations (or --shell: no agents)
 zetty clone --project api --name fork-1  # copy-on-write clone on its own branch
 zetty merge-clone fork-1                 # land a clone's work in its source
 zetty push-clone fork-1                  # or push its branch for a pull request
@@ -374,9 +396,11 @@ zetty quit --kill-sessions               # quit and end preserved sessions
   your focus; add `--focus` to switch to the result. New panes start right away,
   so their ids can be used with `send` and `capture` immediately.
 - **Hibernated or not-yet-viewed panes still work** — `send` and `focus` wake
-  them on demand. `status` marks a hibernated pane `‹handoff: writing›` while
-  its handoff is being written and `‹handoff: ready›` once waking will start
-  from it.
+  them on demand. `hibernate` returns at once: `status` marks a pane
+  `‹handoff: writing›` while its project waits to be put away,
+  `‹handoff: ready›` once it is hibernated and waking will resume it, and
+  `‹handoff: failed›` on the pane that left its project awake.
+  `wake` on a project still writing its handoffs cancels the hibernation.
 - **Destructive commands never wait on a dialog.** `close`, `remove-project`,
   `hibernate`, `scratch-clear` and `quit --kill-sessions` refuse busy panes with an error naming them; pass
   `--force` to go ahead.

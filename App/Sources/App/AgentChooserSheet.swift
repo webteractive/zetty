@@ -14,9 +14,37 @@ final class AgentChooserSheet: NSObject {
         /// Launch this command, on this account (nil = whatever the project
         /// default resolves to).
         case agent(command: String, accountID: String?)
+        /// Start this waiting handoff in the new pane.
+        case handoff(UUID)
+        /// Throw this waiting handoff away. Nothing is created; the caller
+        /// asks again with what is left.
+        case deleteHandoff(UUID)
         case standard(accountID: String?)   // plain session
         case manage                         // open Project Settings → Agents
         case cancel                         // do nothing
+    }
+
+    /// A handoff waiting in the project, offered ahead of the agents: it is
+    /// work already under way.
+    struct Handoff {
+        let id: UUID
+        let title: String
+        /// The harness it resumes in, for its logo.
+        let agentID: String
+    }
+
+    /// The most handoffs listed, here and on a hibernated project's screen.
+    /// The newest come first, and the rest are still there next time.
+    static let handoffRows = 5
+
+    /// How a waiting handoff reads in a list, wherever it is picked.
+    static func handoffRowTitle(_ label: String) -> String { "Resume: \(label)" }
+
+    /// The row for a plain shell, wherever one is picked.
+    static let standardSessionTitle = "Standard session"
+    static var standardSessionIcon: NSImage? {
+        NSImage(systemSymbolName: "apple.terminal", accessibilityDescription: nil)
+            ?? NSImage(systemSymbolName: "terminal", accessibilityDescription: nil)
     }
 
     /// Beyond this many rows the per-account expansion is dropped: the sheet has
@@ -32,16 +60,20 @@ final class AgentChooserSheet: NSObject {
     private let outcomes: [Outcome]
     private let completion: (Outcome) -> Void
     private let listView: ChooserListView
+    private let offersHandoffs: Bool
+    private let offersAgents: Bool
 
     static func present(
         agents: [ResolvedSpawnAgent],
+        handoffs: [Handoff] = [],
         accounts: [AgentAccount] = [],
         defaultAccountID: String? = nil,
         limitSummary: @escaping (String) -> String? = { _ in nil },
         on window: NSWindow,
         completion: @escaping (Outcome) -> Void
     ) {
-        let sheet = AgentChooserSheet(agents: agents, accounts: accounts,
+        let sheet = AgentChooserSheet(agents: agents, handoffs: Array(handoffs.prefix(handoffRows)),
+                                      accounts: accounts,
                                       defaultAccountID: defaultAccountID,
                                       limitSummary: limitSummary,
                                       host: window, completion: completion)
@@ -51,6 +83,7 @@ final class AgentChooserSheet: NSObject {
 
     private init(
         agents: [ResolvedSpawnAgent],
+        handoffs: [Handoff],
         accounts: [AgentAccount],
         defaultAccountID: String?,
         limitSummary: (String) -> String?,
@@ -59,6 +92,8 @@ final class AgentChooserSheet: NSObject {
     ) {
         self.hostWindow = host
         self.completion = completion
+        self.offersHandoffs = !handoffs.isEmpty
+        self.offersAgents = !agents.isEmpty
 
         panel = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 320, height: 10),
@@ -84,10 +119,17 @@ final class AgentChooserSheet: NSObject {
             total + accounts.filter { $0.agentID == resolved.agent.id }.count   // + Default below
         } + expandable.count
         let expand = !expandable.isEmpty
-            && (agents.count - expandable.count) + expandedCount + 1 <= Self.rowBudget
+            && handoffs.count + (agents.count - expandable.count) + expandedCount + 1 <= Self.rowBudget
 
         var items: [ChooserListView.Item] = []
         var outcomes: [Outcome] = []
+        for handoff in handoffs {
+            items.append(.init(title: Self.handoffRowTitle(handoff.title),
+                               icon: AgentIcons.icon(forTool: handoff.agentID)
+                                   ?? NSImage(systemSymbolName: "moon.zzz", accessibilityDescription: nil),
+                               isDeletable: true))
+            outcomes.append(.handoff(handoff.id))
+        }
         for resolved in agents {
             let icon = AgentIcons.icon(forTool: resolved.agent.id)
                 ?? NSImage(systemSymbolName: "sparkles", accessibilityDescription: nil)
@@ -113,9 +155,7 @@ final class AgentChooserSheet: NSObject {
                 outcomes.append(.agent(command: resolved.command, accountID: account.id))
             }
         }
-        let terminalIcon = NSImage(systemSymbolName: "apple.terminal", accessibilityDescription: nil)
-            ?? NSImage(systemSymbolName: "terminal", accessibilityDescription: nil)
-        items.append(ChooserListView.Item(title: "Standard session", icon: terminalIcon))
+        items.append(ChooserListView.Item(title: Self.standardSessionTitle, icon: Self.standardSessionIcon))
         outcomes.append(.standard(accountID: defaultAccountID))
         self.outcomes = outcomes
         listView = ChooserListView(items: items)
@@ -123,6 +163,11 @@ final class AgentChooserSheet: NSObject {
         super.init()
         buildLayout()
         listView.onActivate = { [weak self] index in self?.activate(index) }
+        listView.onDelete = { [weak self] index in
+            guard let self, self.outcomes.indices.contains(index),
+                  case .handoff(let id) = self.outcomes[index] else { return }
+            self.finish(.deleteHandoff(id))
+        }
         let fit = panel.contentView?.fittingSize ?? .zero
         panel.setContentSize(fit == .zero ? NSSize(width: 320, height: 200) : fit)
         panel.initialFirstResponder = listView
@@ -134,13 +179,25 @@ final class AgentChooserSheet: NSObject {
     }
 
     private func buildLayout() {
-        let title = NSTextField(labelWithString: "Launch an agent?")
+        let title = NSTextField(labelWithString: offersHandoffs ? "Start with a handoff?" : "Launch an agent?")
         title.font = ZTheme.chromeFont(size: 13)
         title.textColor = ZTheme.current.accentColor
 
-        let helper = NSTextField(wrappingLabelWithString:
-            "This project has agents enabled. Pick one to launch here, or continue "
-            + "with a standard session.")
+        // What is on offer decides what is said: handoffs wait in a project
+        // whether or not it has agents enabled.
+        let explanation: String
+        switch (offersHandoffs, offersAgents) {
+        case (true, true):
+            explanation = "This project has handoffs waiting from when it was hibernated. Resume one "
+                + "here, launch an agent, or continue with a standard session."
+        case (true, false):
+            explanation = "This project has handoffs waiting from when it was hibernated. Resume one "
+                + "here, or continue with a standard session."
+        default:
+            explanation = "This project has agents enabled. Pick one to launch here, or continue "
+                + "with a standard session."
+        }
+        let helper = NSTextField(wrappingLabelWithString: explanation)
         helper.font = .systemFont(ofSize: 11)
         helper.textColor = ZTheme.current.fg3Color
         helper.translatesAutoresizingMaskIntoConstraints = false
@@ -192,7 +249,10 @@ final class AgentChooserSheet: NSObject {
 /// A vertical list of selectable rows with ↑/↓/⏎/Space/Esc and 1–9 handling.
 /// `onActivate(index)` fires when a row is chosen; Esc is handled by the sheet's
 /// Cancel button key equivalent.
-private final class ChooserListView: NSView {
+///
+/// Shared with `HibernationPlaceholderView`, so a handoff or a session is
+/// picked from the same list wherever it is picked.
+final class ChooserListView: NSView {
 
     struct Item {
         let title: String
@@ -200,15 +260,31 @@ private final class ChooserListView: NSView {
         /// The account's identity color, or nil for rows that aren't
         /// account-specific.
         var dot: NSColor?
+        /// A waiting handoff: it carries a bin at its end.
+        var isDeletable = false
     }
 
     var onActivate: ((Int) -> Void)?
-    private var selected = 0
+    /// The bin of a deletable row was clicked.
+    var onDelete: ((Int) -> Void)?
+    private let isKeyboardDriven: Bool
+    /// Each row's bin, nil for a row without one.
+    private var bins: [NSImageView?] = []
+    /// The highlighted row, or nil for none: a list that is clicked, not
+    /// driven from the keyboard, has no row standing pre-selected.
+    private var selected: Int?
     private var rowViews: [NSView] = []
     private var labels: [NSTextField] = []
     private var iconViews: [NSImageView] = []
 
-    init(items: [Item]) {
+    /// - Parameters:
+    ///   - selectsFirstRow: false where the list is not the first responder
+    ///     and nothing should look chosen until it is clicked.
+    ///   - truncatesLabels: lets a long title give way instead of setting
+    ///     the list's width, where that width would hold a window open.
+    init(items: [Item], selectsFirstRow: Bool = true, truncatesLabels: Bool = false) {
+        selected = selectsFirstRow ? 0 : nil
+        isKeyboardDriven = selectsFirstRow
         super.init(frame: .zero)
         let stack = NSStackView()
         stack.orientation = .vertical
@@ -239,6 +315,7 @@ private final class ChooserListView: NSView {
             label.lineBreakMode = .byTruncatingTail
             label.drawsBackground = false
             label.translatesAutoresizingMaskIntoConstraints = false
+            if truncatesLabels { label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal) }
 
             // The account's identity color, trailing. Zero-width when the row
             // isn't account-specific, so every row keeps the same constraints.
@@ -248,12 +325,37 @@ private final class ChooserListView: NSView {
             dot.layer?.backgroundColor = item.dot?.cgColor
             dot.translatesAutoresizingMaskIntoConstraints = false
 
+            // A waiting handoff can be thrown away from here. An image, not
+            // a button: the row's click recognizer takes the mouse-down
+            // first, so `rowClicked` tells a click on the bin by where it
+            // landed.
+            var bin: NSImageView?
+            if item.isDeletable {
+                let view = NSImageView()
+                view.image = NSImage(systemSymbolName: "trash", accessibilityDescription: "Delete handoff")?
+                    .withSymbolConfiguration(NSImage.SymbolConfiguration(pointSize: 11, weight: .regular))
+                view.contentTintColor = ZTheme.current.fg3Color
+                view.toolTip = "Delete this handoff. The conversation stays in the agent's own history."
+                view.translatesAutoresizingMaskIntoConstraints = false
+                row.addSubview(view)
+                bin = view
+            }
+            bins.append(bin)
+
             // Add to the hierarchy BEFORE constraining — activation needs a
             // common ancestor.
             row.addSubview(iconView)
             row.addSubview(label)
             row.addSubview(dot)
             stack.addArrangedSubview(row)
+            if let bin {
+                NSLayoutConstraint.activate([
+                    bin.trailingAnchor.constraint(equalTo: row.trailingAnchor, constant: -10),
+                    bin.centerYAnchor.constraint(equalTo: row.centerYAnchor),
+                    bin.widthAnchor.constraint(equalToConstant: 16),
+                    label.trailingAnchor.constraint(lessThanOrEqualTo: bin.leadingAnchor, constant: -8),
+                ])
+            }
             NSLayoutConstraint.activate([
                 row.widthAnchor.constraint(equalTo: widthAnchor),
                 row.heightAnchor.constraint(equalToConstant: 28),
@@ -283,29 +385,36 @@ private final class ChooserListView: NSView {
     @available(*, unavailable)
     required init?(coder _: NSCoder) { fatalError("not supported") }
 
-    override var acceptsFirstResponder: Bool { true }
+    /// Only where it was asked to be driven from the keyboard. Elsewhere a
+    /// click must not leave it holding the keys: its Return and 1–9 pick.
+    override var acceptsFirstResponder: Bool { isKeyboardDriven }
 
     @objc private func rowClicked(_ recognizer: NSClickGestureRecognizer) {
         guard let row = recognizer.view, let index = rowViews.firstIndex(of: row) else { return }
         selected = index
         updateHighlight()
+        // A little slack around the bin: it is 16pt of a 28pt row.
+        if let bin = bins[index], bin.frame.insetBy(dx: -6, dy: -6).contains(recognizer.location(in: row)) {
+            onDelete?(index)
+            return
+        }
         onActivate?(index)
     }
 
     override func keyDown(with event: NSEvent) {
         switch event.keyCode {
         case 125: // down
-            selected = min(selected + 1, rowViews.count - 1); updateHighlight()
+            selected = min((selected ?? -1) + 1, rowViews.count - 1); updateHighlight()
         case 126: // up
-            selected = max(selected - 1, 0); updateHighlight()
+            selected = max((selected ?? 0) - 1, 0); updateHighlight()
         case 36, 76, 49: // return, enter, space
-            onActivate?(selected)
+            if let selected { onActivate?(selected) }
         default:
             // 1–9 jump straight to that row.
             if let chars = event.characters, let digit = Int(chars), digit >= 1, digit <= rowViews.count {
                 selected = digit - 1
                 updateHighlight()
-                onActivate?(selected)
+                onActivate?(digit - 1)
             } else {
                 super.keyDown(with: event)
             }

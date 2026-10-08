@@ -22,7 +22,49 @@ enum AgentTranscript {
         }.max()
     }
 
-    private static func url(agent: AgentKind, session: AgentSession,
+    /// Whether a transcript shows the agent having replied
+    /// (`HandoffConversation.hasReply`): a conversation worth handing off.
+    /// Blocking — call off-main.
+    static func hasReply(at url: URL, agent: AgentKind) -> Bool {
+        guard let handle = try? FileHandle(forReadingFrom: url) else { return false }
+        defer { try? handle.close() }
+        guard let head = try? handle.read(upToCount: replyScanLimit) else { return false }
+        // The first reply is near the top. A transcript too long to settle
+        // within the cap holds a conversation whatever its opening says.
+        return HandoffConversation.hasReply(agent: agent, transcript: String(decoding: head, as: UTF8.self))
+            || head.count >= replyScanLimit
+    }
+
+    private static let replyScanLimit = 4 * 1024 * 1024
+
+    /// Whether the conversation has grown since it was last compacted
+    /// (`HandoffCompaction.needsCompaction`), read off the end of its
+    /// transcript. Blocking — call off-main.
+    static func needsCompaction(at url: URL, agent: AgentKind) -> Bool {
+        guard let tail = tail(of: url) else { return true }
+        return HandoffCompaction.needsCompaction(agent: agent, transcriptTail: tail)
+    }
+
+    /// What the harness called the conversation (`HandoffConversation.title`),
+    /// or nil. Blocking — call off-main.
+    static func title(at url: URL, agent: AgentKind) -> String? {
+        tail(of: url).flatMap { HandoffConversation.title(agent: agent, transcriptTail: $0) }
+    }
+
+    /// The end of a transcript, up to `replyScanLimit`.
+    private static func tail(of url: URL) -> String? {
+        guard let handle = try? FileHandle(forReadingFrom: url) else { return nil }
+        defer { try? handle.close() }
+        let size = (try? handle.seekToEnd()) ?? 0
+        let start = size > UInt64(replyScanLimit) ? size - UInt64(replyScanLimit) : 0
+        guard (try? handle.seek(toOffset: start)) != nil,
+              let tail = try? handle.readToEnd() else { return nil }
+        return String(decoding: tail, as: UTF8.self)
+    }
+
+    /// The session's transcript, or nil when it cannot be found, which is
+    /// what a cleared Claude chat is until its first message. Blocking.
+    static func url(agent: AgentKind, session: AgentSession,
                             configDirectory: String?) -> URL? {
         let fileManager = FileManager.default
         switch agent {

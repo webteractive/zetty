@@ -117,12 +117,20 @@ public enum ControlRequest: Equatable, Sendable {
     /// raises a confirmation dialog — a modal on the main thread froze every
     /// zetty command until someone clicked it.
     ///
-    /// `handoff`: each Claude or Codex pane leaves a handoff unless this is
-    /// false (`--no-handoff`), for a caller that only wants the memory back.
+    /// `handoff`: each Claude or Codex pane compacts its conversation into
+    /// a handoff first unless this is false (`--no-handoff`), for a caller
+    /// that only wants the memory back. With any agent to ask the answer is
+    /// `.ok` at once and the project is put away when they have compacted,
+    /// or left awake if one cannot.
     case hibernateProject(name: String, force: Bool = false, handoff: Bool = true)
-    /// Wake the named hibernated project: each pane with a handoff starts a
-    /// fresh agent from it, the rest get fresh shells; layout intact. `.ok`.
-    case wakeProject(name: String)
+    /// Wake the named hibernated project: each pane with a handoff resumes
+    /// its compacted conversation, the rest get fresh shells; layout intact.
+    /// `.ok`.
+    ///
+    /// `handoffs`: how the panes that left one come back, all of them alike
+    /// (`--fresh`, `--shell`), with the whole layout put back. The
+    /// hibernated project's own screen wakes it as one pane instead.
+    case wakeProject(name: String, handoffs: HandoffWake.Choice = .resume)
     /// Create a Space (a user-defined sidebar section). `colorID` is a curated
     /// palette id and `glyph` an SF Symbol; both optional. Errors when the name
     /// is blank or already taken (case-insensitively). Response `.ok`.
@@ -141,7 +149,8 @@ public enum ControlRequest: Equatable, Sendable {
     /// in the Space.
     case hibernateSpace(name: String, force: Bool = false, handoff: Bool = true)
     /// Wake every hibernated project in the named Space (`wake --space`). `.ok`.
-    case wakeSpace(name: String)
+    /// `handoffs` as for `wakeProject`, across every project in the Space.
+    case wakeSpace(name: String, handoffs: HandoffWake.Choice = .resume)
     /// Close the targeted pane (its tab when it's the last pane), or the
     /// whole tab containing it when `wholeTab` is set.
     ///
@@ -191,7 +200,7 @@ public enum ControlRequest: Equatable, Sendable {
 
 extension ControlRequest: Codable {
     private enum CodingKeys: String, CodingKey {
-        case command, target, text, enter, keys, project, wholeTab, killSessions, simulateRestart, vertical, lines, path, name, gitInit, focus, fetch, discard, line, column, space, newName, color, icon, account, probe, surface, on, profile, slot, collapse, view, force, handoff
+        case command, target, text, enter, keys, project, wholeTab, killSessions, simulateRestart, vertical, lines, path, name, gitInit, focus, fetch, discard, line, column, space, newName, color, icon, account, probe, surface, on, profile, slot, collapse, view, force, handoff, wake
     }
 
     public init(from decoder: Decoder) throws {
@@ -204,6 +213,11 @@ extension ControlRequest: Codable {
         // Absent means the default, handoffs on: an older CLI never sends it.
         func decodeHandoff() throws -> Bool {
             try container.decodeIfPresent(Bool.self, forKey: .handoff) ?? true
+        }
+        // Absent, or a word a newer CLI knows and this build does not: resume.
+        func decodeWake() throws -> HandoffWake.Choice {
+            try container.decodeIfPresent(String.self, forKey: .wake)
+                .flatMap(HandoffWake.Choice.init(rawValue:)) ?? .resume
         }
         switch try container.decode(String.self, forKey: .command) {
         case "status": self = .status
@@ -288,7 +302,8 @@ extension ControlRequest: Codable {
             self = .hibernateSpace(name: try container.decode(String.self, forKey: .name),
                                    force: try decodeForce(), handoff: try decodeHandoff())
         case "wake-space":
-            self = .wakeSpace(name: try container.decode(String.self, forKey: .name))
+            self = .wakeSpace(name: try container.decode(String.self, forKey: .name),
+                              handoffs: try decodeWake())
         case "clone":
             self = .cloneProject(
                 project: try container.decodeIfPresent(String.self, forKey: .project),
@@ -312,7 +327,8 @@ extension ControlRequest: Codable {
             self = .hibernateProject(name: try container.decode(String.self, forKey: .project),
                                      force: try decodeForce(), handoff: try decodeHandoff())
         case "wake":
-            self = .wakeProject(name: try container.decode(String.self, forKey: .project))
+            self = .wakeProject(name: try container.decode(String.self, forKey: .project),
+                                handoffs: try decodeWake())
         case "new-project":
             self = .newProject(
                 path: try container.decode(String.self, forKey: .path),
@@ -452,9 +468,10 @@ extension ControlRequest: Codable {
             try container.encode(name, forKey: .name)
             try container.encode(force, forKey: .force)
             try container.encode(handoff, forKey: .handoff)
-        case .wakeSpace(let name):
+        case .wakeSpace(let name, let handoffs):
             try container.encode("wake-space", forKey: .command)
             try container.encode(name, forKey: .name)
+            try container.encode(handoffs.rawValue, forKey: .wake)
         case .cloneProject(let project, let name, let focus):
             try container.encode("clone", forKey: .command)
             try container.encodeIfPresent(project, forKey: .project)
@@ -480,9 +497,10 @@ extension ControlRequest: Codable {
             try container.encode(name, forKey: .project)
             try container.encode(force, forKey: .force)
             try container.encode(handoff, forKey: .handoff)
-        case .wakeProject(let name):
+        case .wakeProject(let name, let handoffs):
             try container.encode("wake", forKey: .command)
             try container.encode(name, forKey: .project)
+            try container.encode(handoffs.rawValue, forKey: .wake)
         case .newProject(let path, let name, let gitInit, let focus):
             try container.encode("new-project", forKey: .command)
             try container.encode(path, forKey: .path)
@@ -667,9 +685,10 @@ public struct StatusSnapshot: Codable, Equatable, Sendable {
         /// default login. nil keeps the field absent for anyone not using
         /// accounts.
         public let account: String?
-        /// For a pane of a hibernated project: `writing` while its handoff is
-        /// queued or being written, `ready` once waking will start a fresh
-        /// agent from it. Absent otherwise.
+        /// `writing` while the pane's project waits on its handoff to be put
+        /// away, `ready` on a hibernated pane that will wake by resuming its
+        /// compacted conversation, `failed` on the pane that could not hand
+        /// off and left its project awake. Absent otherwise.
         public let handoff: String?
 
         public init(id: String, title: String?, cwd: String?, tool: String?, agentStatus: String?,

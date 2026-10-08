@@ -267,15 +267,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             guard let self, self.appConfig.hibernateHandoffs else { return false }
             return self.resolvedSettings(for: project).preserveSessions
         }
-        // A fork starting or finishing is machine-driven: coalesced.
-        tvc.handoffRunner.onChange = { [weak tvc] in
-            tvc?.setNeedsChromeRefresh(tabBar: false, sidebar: true)
-        }
-        tvc.handoffRunner.accountEnvironment = { [weak self] record in
-            AgentAccountResolver.harnessAccount(
-                agentID: record.agent.rawValue, runningAccountID: record.accountID,
-                spawnedAccountID: nil, accounts: self?.agentAccounts.accounts ?? [],
-                home: NSHomeDirectory()).env
+        tvc.handoffCompactor.onFinished = { [weak tvc] surface, result, title in
+            tvc?.handoffCompactionFinished(surface, result, title: title)
         }
         tvc.broadcastScopeProvider = { [weak self] project in
             BroadcastScope(code: self?.projectSettings.settings(for: project.settingsKey)?.broadcastScope)
@@ -421,8 +414,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
 
         startUpdateChecks()
         refreshCLIStatus()
-        // Handoffs a quit left owed, and wake lines it lost. After the
-        // accounts, settings and recovery manifest above: it reads all three.
+        // Wake lines a quit lost. After the accounts, settings and recovery
+        // manifest above: it reads all three.
         tvc.restoreHandoffState()
         tvc.startHibernationTimer()
 
@@ -1839,9 +1832,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     func applicationWillTerminate(_: Notification) {
         controlSocketServer?.stop()
         killScratchSessions()
-        // A fork is the app's child and would outlive it. Its record stays on
-        // disk, and the next launch queues it again.
-        terminalViewController?.handoffRunner.stopForQuit()
         saveWorkspace()
     }
 
@@ -2179,14 +2169,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         case .hibernateSpace(let name, let force, let handoff):
             if let message = tvc.hibernateSpaceNamed(name, force: force, handoff: handoff) { return .error(message) }
             return .ok
-        case .wakeSpace(let name):
-            if let message = tvc.wakeSpaceNamed(name) { return .error(message) }
+        case .wakeSpace(let name, let handoffs):
+            if let message = tvc.wakeSpaceNamed(name, handoffs: handoffs) { return .error(message) }
             return .ok
         case .hibernateProject(let name, let force, let handoff):
             if let message = tvc.hibernateProjectNamed(name, force: force, handoff: handoff) { return .error(message) }
             return .ok
-        case .wakeProject(let name):
-            if let message = tvc.wakeProjectNamed(name) { return .error(message) }
+        case .wakeProject(let name, let handoffs):
+            if let message = tvc.wakeProjectNamed(name, handoffs: handoffs) { return .error(message) }
             return .ok
         case .newProject(let path, let name, let gitInit, let focus):
             switch tvc.newProject(path: path, name: name, gitInit: gitInit, focus: focus) {

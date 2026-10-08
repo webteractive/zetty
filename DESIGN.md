@@ -151,7 +151,7 @@ are authoritative.
   palette rows 9 · panes 8 · chips & status dots 3–7.
 - **Grid:** the terminal grid uses 8pt padding, with 8pt gaps between panes.
 - **Bars (heights in pt):** tab bar 28 · status bar 30 · pane gutter strip 24 ·
-  clone warning banner 26.
+  clone warning banner 26 · handoff banner 26.
 - **Sidebar:** 244 default, user-resizable 180–420 (`SidebarMetrics`).
 
 ---
@@ -187,6 +187,12 @@ are authoritative.
   below the tab bar whenever the active project is a clone, reminding that the
   copy is disposable. It becomes the content's top guide, so it sits above both
   the terminal and the hibernation placeholder.
+- **Handoff banner** (26pt) — the same strip, below the clone banner when
+  both show, while the active project's agents compact before it is
+  hibernated, or after one of them could not. Writing is not a warning: `fg3` bar and moon glyph,
+  with **Cancel**. Failed is: `red` bar and triangle, with **Hibernate
+  Anyway** and **Dismiss**. Not shown in tile mode, where the sidebar row
+  carries the same words.
 - **Status bar** (`bg0`, 30pt, mono) — tracks the focused pane: git branch
   (purple) with ahead/behind/changes, working directory, shell, and libghostty
   version, plus pills for appearance and scheme switchers, an "Update available" pill when one is
@@ -208,7 +214,13 @@ are authoritative.
 - **Hibernation placeholder** — shown in the content area when the active
   project is dormant: a `moon.zzz` glyph, "<project> is hibernated", a note
   that its sessions and processes were freed with the layout kept, and a
-  **Wake Project** button.
+  **Wake Project** button. With handoffs to pick from, the button gives way
+  to the agent chooser's own list (`ChooserListView`: 28pt rows, 16pt logo,
+  12pt chrome label, 5pt radius, `bg3` on the row last clicked): a
+  "Resume: Claude · <title>" row per handoff, a row per harness for a new
+  conversation, and "Standard session". A `trash` glyph in `fg3` ends each
+  handoff row and deletes it; not red, since one sits beside every row. One
+  list for picking a handoff or a session, wherever it is picked.
 - **Command palette** (⌘K) — centered modal over a scrim, `bg2`, 14pt radius;
   search input, rows (9pt radius) with a glyph chip + label + shortcut.
 - **File viewer overlay** — a transient read-only panel (14pt radius) over the

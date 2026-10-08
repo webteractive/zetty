@@ -184,6 +184,69 @@ extension PromptBox {
         return composer.drop(while: \.isWhitespace).dropFirst().allSatisfy(\.isWhitespace)
     }
 
+    /// Whether a pane's agent can be handed a line to act on.
+    public enum Readiness: Equatable, Sendable {
+        /// An empty prompt box: what is typed now is what gets submitted.
+        case ready
+        /// A turn is running. Only Codex shows this; Claude's box looks the
+        /// same while it works, and its hooks are what say so.
+        case working
+        /// A draft, a question's menu, or a screen that cannot be read:
+        /// typing here would join the draft or answer the question.
+        case blocked
+    }
+
+    /// Read before `/compact` is typed into a pane, and after each key sent
+    /// to clear the way for it. A running terminal does not block Codex
+    /// here as it does for `hibernate-after`: the turn is over.
+    public static func readiness(vtScreen: String, agent: AgentKind) -> Readiness {
+        switch agent {
+        case .claude:
+            return isEmpty(vtScreen: vtScreen) ? .ready : .blocked
+        case .codex:
+            if isCodexWorking(vtScreen) { return .working }
+            return isCodexComposerBlank(vtScreen) ? .ready : .blocked
+        default:
+            return .blocked
+        }
+    }
+
+    /// Whether the box holds nothing, whatever else the agent is doing. A
+    /// working Codex has a composer too, and what is in it was typed by
+    /// somebody; `readiness` cannot say, since working outranks it there.
+    public static func boxIsEmpty(vtScreen: String, agent: AgentKind) -> Bool {
+        switch agent {
+        case .claude: return isEmpty(vtScreen: vtScreen)
+        case .codex:  return isCodexComposerBlank(vtScreen)
+        default:      return false
+        }
+    }
+
+    /// Whether the harness is compacting right now, which is the one time an
+    /// empty box does not mean it has stopped: `Compacting conversation…`
+    /// (Claude) and `Compacting context` (Codex), both drawn above the box.
+    public static func isCompacting(vtScreen: String) -> Bool {
+        let lines = withoutFaintText(vtScreen, keepFaint: true)
+            .split(omittingEmptySubsequences: true, whereSeparator: \.isNewline)
+        // Only the screen as it stands: a finished compaction's line scrolls
+        // up and stays in the history above.
+        return lines.suffix(compactingWindow).contains { $0.contains("Compacting") }
+    }
+
+    /// Whether Claude has just declined to compact because there is nothing
+    /// to: `Not enough messages to compact.` Its conversation is as compact
+    /// as it gets, which is a handoff, not a failure. The transcript is
+    /// checked for this before asking (`HandoffCompaction.needsCompaction`);
+    /// this is for whatever that check does not foresee.
+    public static func saysNothingToCompact(vtScreen: String) -> Bool {
+        withoutFaintText(vtScreen, keepFaint: true)
+            .split(omittingEmptySubsequences: true, whereSeparator: \.isNewline)
+            .suffix(compactingWindow).contains { $0.contains("Not enough messages to compact") }
+    }
+
+    /// How many lines up from the bottom a harness draws its working line.
+    private static let compactingWindow = 12
+
     /// The end of a pane's history, which is all a reader looks at: a
     /// preserved pane's scrollback can run to megabytes. Cut forward to a
     /// line start, so the first line is never half of one.

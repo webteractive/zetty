@@ -69,7 +69,8 @@ public struct AppConfig: Equatable, Sendable {
     /// Auto-hibernate an idle, quiet project after this many seconds (0 = off).
     public var hibernateAfter: TimeInterval
     /// When true (default), hibernating a project has each Claude or Codex
-    /// pane leave a short handoff, and waking starts a fresh agent from it.
+    /// pane compact its conversation into a handoff first, and waking
+    /// resumes it.
     /// Needs `preserveSessions`; without it hibernation is unchanged.
     public var hibernateHandoffs: Bool
     /// Release the GPU surfaces of a non-active project's panes after this many
@@ -470,9 +471,10 @@ public struct AppConfig: Equatable, Sendable {
         # e.g. 60m or 2h). Frees its sessions/processes; waking spawns fresh shells.
         hibernate-after = \(hibernateAfter == 0 ? "off" : String(Int(hibernateAfter)))
 
-        # Hibernating a project has each Claude or Codex pane leave a short
-        # handoff, and waking starts a fresh agent from it instead of a bare
-        # shell (only with preserve-sessions = true).
+        # Hibernating a project has each Claude or Codex pane compact its own
+        # conversation into a handoff first (/compact, in its chat), and waking
+        # resumes it instead of opening a bare shell (only with
+        # preserve-sessions = true).
         zetty-hibernate-handoffs = \(hibernateHandoffs)
 
         # Release a background project's GPU surfaces after it's been out of view

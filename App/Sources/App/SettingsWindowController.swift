@@ -383,7 +383,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         handoffsSwitch.action = #selector(handoffsToggled(_:))
         addFullWidth(switchRow("Write a handoff when hibernating", control: handoffsSwitch), to: stack)
         stack.addArrangedSubview(caption(
-            "Each Claude or Codex pane leaves a short summary when its project is hibernated, and waking starts a fresh agent from it instead of a bare shell. Needs preserved sessions."
+            "Each Claude or Codex pane compacts its conversation into a handoff before its project is hibernated, and waking resumes it instead of opening a bare shell. Needs preserved sessions."
         ))
 
         // Not a config key: login-item state is owned by the system, so a

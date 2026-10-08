@@ -104,3 +104,30 @@ import Testing
     #expect(exit != 0)
     #expect(recorder.requests.isEmpty)
 }
+
+// MARK: - wake --fresh / --shell
+
+// A pane that left a handoff resumes it by default. The CLI can ask for
+// new conversations, or for no agents at all, for every pane alike.
+@Test func wakeCarriesHowTheHandoffsComeBack() {
+    let cases: [([String], ControlRequest)] = [
+        (["wake", "Foo"], .wakeProject(name: "Foo", handoffs: .resume)),
+        (["wake", "Foo", "--fresh"], .wakeProject(name: "Foo", handoffs: .fresh)),
+        (["wake", "--shell", "Foo"], .wakeProject(name: "Foo", handoffs: .shell)),
+        (["wake", "--space", "Work", "--fresh"], .wakeSpace(name: "Work", handoffs: .fresh)),
+    ]
+    for (arguments, expected) in cases {
+        let (_, recorder) = runIsolated(arguments)
+        #expect(recorder.requests == [expected], "\(arguments)")
+    }
+}
+
+@Test func theTwoWakeFlagsExcludeEachOtherAndBelongToWakeOnly() {
+    for arguments in [["wake", "Foo", "--fresh", "--shell"], ["wake", "Foo", "--shell", "--fresh"],
+                      ["hibernate", "Foo", "--fresh"], ["hibernate", "Foo", "--shell"]] {
+        let (exit, recorder) = runIsolated(arguments)
+        #expect(exit != 0, "\(arguments)")
+        #expect(recorder.requests.isEmpty, "\(arguments)")
+    }
+}
+

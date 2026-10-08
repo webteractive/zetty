@@ -27,6 +27,12 @@ import Foundation
             == .removeProject(name: "zetty", fetch: false, discard: false))
     #expect(try ControlWire.decodeRequest(ControlWire.encodeLine(ControlRequest.hibernateProject(name: "api"))) == .hibernateProject(name: "api"))
     #expect(try ControlWire.decodeRequest(ControlWire.encodeLine(ControlRequest.wakeProject(name: "api"))) == .wakeProject(name: "api"))
+    #expect(try ControlWire.decodeRequest(ControlWire.encodeLine(ControlRequest.wakeProject(name: "api", handoffs: .fresh)))
+            == .wakeProject(name: "api", handoffs: .fresh))
+    // An older CLI sends no `wake`, and a word this build does not know is not an error: both resume.
+    #expect(try ControlWire.decodeRequest(#"{"command":"wake","project":"api"}"#) == .wakeProject(name: "api"))
+    #expect(try ControlWire.decodeRequest(#"{"command":"wake-space","name":"S","wake":"someday"}"#)
+            == .wakeSpace(name: "S"))
     #expect(try ControlWire.decodeRequest(ControlWire.encodeLine(
         ControlRequest.newProject(path: "/Users/x/new", name: "new", gitInit: true, focus: true)))
         == .newProject(path: "/Users/x/new", name: "new", gitInit: true, focus: true))

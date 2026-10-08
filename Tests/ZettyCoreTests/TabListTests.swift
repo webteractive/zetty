@@ -1,3 +1,4 @@
+import Foundation
 import Testing
 @testable import ZettyCore
 
@@ -226,3 +227,32 @@ private func twoPaneTabList() -> TabList {
     #expect(ws.activeIndex == 0)                         // active project unchanged
     #expect(ws.projects.contains { $0.isScratch })
 }
+
+// MARK: - Collapsing to one pane
+
+// A hibernated project with handoffs wakes as ONE pane: its handoffs are
+// picked from one at a time, not put back as a layout.
+@Test func collapsingKeepsOnlyThePaneAskedFor() {
+    let list = TabList(defaultWorkingDir: "/p")
+    let first = list.trees[0].layout.surfaces[0].id
+    list.newTab()
+    let second = list.trees[1].layout.surfaces[0].id
+    _ = list.splitPane(inTreeAt: 1, paneID: second, direction: .vertical, newSurface: Surface(workingDir: "/p"))
+    #expect(list.trees.flatMap { $0.layout.surfaces }.count == 3)
+
+    #expect(list.collapse(toSurface: second) == second)
+    #expect(list.trees.count == 1 && list.activeIndex == 0)
+    #expect(list.trees[0].layout.surfaces.map(\.id) == [second])
+    #expect(list.trees[0].focusedSurfaceID == second)
+    _ = first
+}
+
+@Test func collapsingToAPaneThatIsGoneKeepsTheFirst() {
+    let list = TabList(defaultWorkingDir: "/p")
+    let first = list.trees[0].layout.surfaces[0].id
+    list.newTab()
+    #expect(list.collapse(toSurface: UUID()) == first)
+    #expect(list.collapse(toSurface: nil) == first)
+    #expect(list.trees[0].layout.surfaces.map(\.id) == [first])
+}
+

@@ -98,11 +98,14 @@ public enum ControlCLI {
                                               free a project's (or every project in
                                               a Space's) sessions/processes/panes
                                               (keeps its layout). Each Claude or
-                                              Codex pane leaves a handoff unless
-                                              --no-handoff
-      zetty wake (<name> | --space <name>)  wake a hibernated project or Space
-                                              (a fresh agent from each handoff,
-                                              fresh shells otherwise). Rarely needed by
+                                              Codex pane compacts into a handoff
+                                              first, unless --no-handoff
+      zetty wake (<name> | --space <name>) [--fresh | --shell]
+                                              wake a hibernated project or Space
+                                              (each agent resumes its handoff,
+                                              fresh shells otherwise; --fresh
+                                              starts new conversations, --shell
+                                              no agents). Rarely needed by
                                               hand — send/new-tab/split/break/
                                               focus wake as required
       zetty new-space <name> [--color <id>] [--icon <symbol>]
@@ -180,8 +183,10 @@ public enum ControlCLI {
         arguments are joined with spaces and sent verbatim; keys append after.
       - `status --json` prints the full machine-readable tree (pane ids, titles,
         cwd, running tool, agent status, focus, plus `hibernated` per project and
-        `live` per pane, and `handoff` on a hibernated pane: `writing` while its
-        summary is being written, `ready` once waking will start from it). `new-tab`/`split` print just the pane id, so:
+        `live` per pane, and `handoff` on a pane: `writing` while its project
+        waits to be put away, `ready` once it is hibernated and waking will
+        resume it, `failed` on the pane that left its project awake).
+        `new-tab`/`split` print just the pane id, so:
         zetty send --pane "$(zetty new-tab)" ls --enter
       - `status --json` also carries `tiles`: whether the grid is up, the active
         view's slots (numbered from 1, in reading order) and every saved view.
@@ -292,14 +297,13 @@ public enum ControlCLI {
         case "remove-project":
             return runRemoveProject(arguments)
         case "hibernate":
-            return runProjectByName(arguments, verb: "hibernate", takesForce: true,
-                                    takesNoHandoff: true,
-                                    { .hibernateProject(name: $0, force: $1, handoff: $2) },
-                                    space: { .hibernateSpace(name: $0, force: $1, handoff: $2) })
+            return runProjectByName(arguments, verb: "hibernate", flags: ["--force", "--no-handoff"],
+                                    { .hibernateProject(name: $0, force: $1.force, handoff: $1.handoff) },
+                                    space: { .hibernateSpace(name: $0, force: $1.force, handoff: $1.handoff) })
         case "wake":
-            return runProjectByName(arguments, verb: "wake", takesForce: false,
-                                    { name, _, _ in .wakeProject(name: name) },
-                                    space: { name, _, _ in .wakeSpace(name: name) })
+            return runProjectByName(arguments, verb: "wake", flags: ["--fresh", "--shell"],
+                                    { .wakeProject(name: $0, handoffs: $1.wake) },
+                                    space: { .wakeSpace(name: $0, handoffs: $1.wake) })
         case "new-space":
             return runNewSpace(arguments)
         case "rename-space":
@@ -510,9 +514,15 @@ public enum ControlCLI {
 
         Free a project's — or every project in a Space's — sessions, processes
         and panes, keeping its layout. Idle shells are asked to exit first.
-        Each Claude or Codex pane leaves a short handoff, written in the
-        background after the project is put away, and wakes into a fresh agent
-        that starts from it (`zetty status` shows ‹handoff: writing|ready›).
+        Each Claude or Codex pane hands off FIRST, in its own chat: a turn in
+        progress is stopped, the agent compacts its conversation (/compact),
+        and only then is the project put away. The command returns at once;
+        until then the project is awake and `zetty status` shows
+        ‹handoff: writing›, then ‹handoff: ready› on the hibernated panes,
+        which wake by resuming the compacted conversation. If a pane cannot
+        (a draft or a question in its prompt box, say) the project is left
+        awake, with ‹handoff: failed› on that pane. `zetty wake` while it is
+        still writing calls the hibernation off.
         Home can't be hibernated.
         Busy panes (anything but a bare shell in front) are refused with an
         error naming them; --force closes them anyway. It never waits on a
@@ -525,14 +535,24 @@ public enum ControlCLI {
         DESTRUCTIVE: ends every process running in those panes.
         """,
         "wake": """
-        usage: zetty wake (<name> | --space <name>)
+        usage: zetty wake (<name> | --space <name>) [--fresh | --shell]
 
-        Wake a hibernated project or Space, with fresh shells. Rarely needed by
-        hand: send/new-tab/split/break/focus wake what they target.
+        Wake a hibernated project or Space. A pane that left a handoff resumes
+        its compacted conversation and says where things stand; every other
+        pane is a fresh shell. Rarely needed by hand: send/new-tab/split/
+        break/focus wake what they target. On a project still writing its
+        handoffs it calls the hibernation off instead.
 
           --space <name>   wake every project in that Space
+          --fresh          start each agent with a new conversation instead;
+                           the compacted one stays in the harness's history
+          --shell          start no agents: every pane is a shell
 
-        Starts shells; destroys nothing.
+        This puts the whole layout back, and the two flags apply to every
+        pane alike. The hibernated project's own screen wakes it as a single
+        pane instead, with one handoff picked to start with.
+
+        Starts shells and agents; destroys nothing.
         """,
         "new-space": """
         usage: zetty new-space <name> [--color <id>] [--icon <symbol>]
@@ -1213,25 +1233,39 @@ public enum ControlCLI {
                         success: nil)
     }
 
-    /// Shared handler for name-targeted project commands (hibernate/wake).
-    /// `--space <name>` targets every project in a Space instead of one project.
-    private static func runProjectByName(_ arguments: [String], verb: String, takesForce: Bool,
-                                         takesNoHandoff: Bool = false,
-                                         _ make: (String, Bool, Bool) -> ControlRequest,
-                                         space makeSpace: ((String, Bool, Bool) -> ControlRequest)? = nil) -> Int32 {
-        var wantsSpace = false
+    /// What a name-targeted project verb was asked for beyond its target.
+    private struct ProjectVerbOptions {
         var force = false
         var handoff = true
+        var wake = HandoffWake.Choice.resume
+    }
+
+    /// Shared handler for name-targeted project commands (hibernate/wake).
+    /// `--space <name>` targets every project in a Space instead of one
+    /// project; `flags` are the others this verb takes, and any of the rest
+    /// is an error rather than part of the name.
+    private static func runProjectByName(_ arguments: [String], verb: String, flags: Set<String>,
+                                         _ make: (String, ProjectVerbOptions) -> ControlRequest,
+                                         space makeSpace: ((String, ProjectVerbOptions) -> ControlRequest)? = nil)
+        -> Int32 {
+        var wantsSpace = false
+        var options = ProjectVerbOptions()
         var parts: [String] = []
         for argument in arguments {
             switch argument {
             case "--space": wantsSpace = true
-            case "--force":
-                guard takesForce else { return failure("\(verb) does not take --force") }
-                force = true
-            case "--no-handoff":
-                guard takesNoHandoff else { return failure("\(verb) does not take --no-handoff") }
-                handoff = false
+            case "--force", "--no-handoff", "--fresh", "--shell":
+                guard flags.contains(argument) else { return failure("\(verb) does not take \(argument)") }
+                switch argument {
+                case "--force":      options.force = true
+                case "--no-handoff": options.handoff = false
+                case "--fresh":
+                    guard options.wake != .shell else { return failure("pass --fresh or --shell, not both") }
+                    options.wake = .fresh
+                default:
+                    guard options.wake != .fresh else { return failure("pass --fresh or --shell, not both") }
+                    options.wake = .shell
+                }
             default: parts.append(argument)
             }
         }
@@ -1241,9 +1275,9 @@ public enum ControlCLI {
         }
         if wantsSpace {
             guard let makeSpace else { return failure("\(verb) does not take --space") }
-            return expectOK(makeSpace(name, force, handoff), success: nil)
+            return expectOK(makeSpace(name, options), success: nil)
         }
-        return expectOK(make(name, force, handoff), success: nil)
+        return expectOK(make(name, options), success: nil)
     }
 
     private static func runSplit(_ arguments: [String]) -> Int32 {

@@ -40,9 +40,10 @@ enum ZmxRunner {
     }
 
     /// `zmx list` → session name to root shell pid (empty on any failure).
-    /// Blocking — call off-main.
-    static func sessionPIDs(zmxPath: String) -> [String: Int32] {
-        guard let output = run(zmxPath, ["list"]) else { return [:] }
+    /// Blocking — call off-main, or with a `timeout` where that cannot be
+    /// helped: a hung zmx otherwise holds the caller for good.
+    static func sessionPIDs(zmxPath: String, timeout: TimeInterval? = nil) -> [String: Int32] {
+        guard let output = run(zmxPath, ["list"], timeout: timeout) else { return [:] }
         return SessionPersistence.sessionPIDs(fromList: output)
     }
 
@@ -51,8 +52,8 @@ enum ZmxRunner {
     ///
     /// One sweep, deliberately: a second polling loop is the mistake the git
     /// pill and synchronous chrome refresh already made here.
-    static func psSnapshot() -> String? {
-        run("/bin/ps", ["-axo", ProcessTable.psFormat])
+    static func psSnapshot(timeout: TimeInterval? = nil) -> String? {
+        run("/bin/ps", ["-axo", ProcessTable.psFormat], timeout: timeout)
     }
 
     /// `zmx history <session>` — the session's retained scrollback as plain
@@ -143,12 +144,10 @@ enum ZmxRunner {
     /// the user's. Each Codex with something running costs a few seconds.
     static func stopCodexTerminals(in sessions: [String], zmxPath: String, together: Bool = false) {
         let timeout = teardownCallTimeout
-        guard !sessions.isEmpty,
-              let list = run(zmxPath, ["list"], timeout: timeout),
-              let ps = run("/bin/ps", ["-axo", ProcessTable.psFormat], timeout: timeout)
-        else { return }
-        let codex = HibernationTeardown.codexSessions(
-            among: sessions, pids: SessionPersistence.sessionPIDs(fromList: list), psOutput: ps)
+        guard !sessions.isEmpty else { return }
+        let pids = sessionPIDs(zmxPath: zmxPath, timeout: timeout)
+        guard !pids.isEmpty, let ps = psSnapshot(timeout: timeout) else { return }
+        let codex = HibernationTeardown.codexSessions(among: sessions, pids: pids, psOutput: ps)
         if together {
             DispatchQueue.concurrentPerform(iterations: codex.count) { index in
                 stopCodexTerminals(session: codex[index], zmxPath: zmxPath, timeout: timeout)
@@ -183,9 +182,9 @@ enum ZmxRunner {
         // version sent the bare byte, and a working Codex's command outlived
         // the hibernate. The bare byte is the second try, for a Codex that
         // has the protocol off.
-        var escapes = ["\u{1B}[27u", "\u{1B}"]
+        var escapes = [kittyEscape, "\u{1B}"]
         for _ in 0..<3 {   // at most: interrupt, interrupt the other way, stop
-            guard let history = runData(zmxPath, ["history", session, "--vt"], timeout: timeout)
+            guard let history = historyVT(session: session, zmxPath: zmxPath, timeout: timeout)
             else { return }
             switch PromptBox.codexStopStep(vtScreen: PromptBox.tail(of: history)) {
             case .nothing:
@@ -194,17 +193,133 @@ enum ZmxRunner {
                 guard !escapes.isEmpty,
                       send(session: session, text: escapes.removeFirst(), zmxPath: zmxPath, timeout: timeout)
                 else { return }
-                Thread.sleep(forTimeInterval: 1.5)
+                Thread.sleep(forTimeInterval: interruptSettle)
             case .stop:
                 guard send(session: session, text: "/stop", zmxPath: zmxPath, timeout: timeout)
                 else { return }
-                Thread.sleep(forTimeInterval: 0.3)
+                Thread.sleep(forTimeInterval: enterDelay)
                 send(session: session, text: "\r", zmxPath: zmxPath, timeout: timeout)
-                Thread.sleep(forTimeInterval: 1.5)
+                Thread.sleep(forTimeInterval: interruptSettle)
                 ZettyLog.lifecycle.log("teardown: asked codex in \(session) to stop its terminals")
                 return
             }
         }
+    }
+
+    /// Escape as the kitty keyboard protocol encodes it. Claude and Codex
+    /// both turn the protocol on, and neither acts on a bare ESC byte then.
+    private static let kittyEscape = "\u{1B}[27u"
+    /// The gap between a line and its Enter. Arriving together they are read
+    /// as a paste, and the Enter is kept as a newline.
+    private static let enterDelay: TimeInterval = 0.3
+    /// How long a harness is given to act on a key before it is looked at
+    /// again.
+    private static let interruptSettle: TimeInterval = 1.5
+
+    /// Ctrl+C in the same encoding. It clears a prompt box that holds text,
+    /// and a raw 0x03 did nothing to either harness.
+    private static let kittyControlC = "\u{1B}[99;5u"
+
+    /// Has the agent in `session` compact its conversation, in its own chat,
+    /// and waits for the harness to say it has. Nil when cancelled. Blocking
+    /// for up to `HandoffCompaction.timeout` — off-main only.
+    ///
+    /// A box that holds a draft or a question is left exactly as it is, and
+    /// is a failure: the line would join the draft or answer the question,
+    /// and neither is ours to throw away. Only then is a turn in progress
+    /// stopped (`midTurn` is Claude's hooks saying so; a working Codex shows
+    /// on its screen). Claude puts an interrupted prompt back in its box, so
+    /// a box that was empty before the interrupt and is not after it holds
+    /// only that, and is cleared.
+    ///
+    /// The Enter goes in a write of its own: both harnesses read text and
+    /// Enter arriving together as a paste and keep the Enter as a newline.
+    static func compact(session: String, agent: AgentKind, midTurn: Bool, transcript: URL,
+                        zmxPath: String, isCancelled: () -> Bool) -> HandoffCompaction.Result? {
+        guard let line = HandoffCompaction.line(for: agent) else { return .failed("its harness cannot compact") }
+        let timeout = teardownCallTimeout
+        func screen() -> String? {
+            historyVT(session: session, zmxPath: zmxPath, timeout: timeout).map { PromptBox.tail(of: $0) }
+        }
+        func press(_ key: String) -> PromptBox.Readiness? {
+            guard send(session: session, text: key, zmxPath: zmxPath, timeout: timeout) else { return nil }
+            Thread.sleep(forTimeInterval: interruptSettle)
+            return screen().map { PromptBox.readiness(vtScreen: $0, agent: agent) }
+        }
+        let unreadable = HandoffCompaction.Result.failed("its screen could not be read")
+
+        guard let first = screen() else { return unreadable }
+        guard PromptBox.boxIsEmpty(vtScreen: first, agent: agent) else {
+            return .failed("its prompt box holds a draft or a question")
+        }
+        var state = PromptBox.readiness(vtScreen: first, agent: agent)
+        if midTurn || state == .working {
+            // The bare byte is the second try, for a harness with the
+            // keyboard protocol off.
+            for escape in [kittyEscape, "\u{1B}"] {
+                guard let after = press(escape) else { return unreadable }
+                state = after
+                if state != .working { break }
+            }
+            if state == .blocked {
+                guard let cleared = press(kittyControlC) else { return unreadable }
+                state = cleared
+            }
+            guard state == .ready else { return .failed("its turn could not be stopped") }
+        }
+        guard state == .ready else { return .failed("its prompt box holds a draft or a question") }
+        if isCancelled() { return nil }
+
+        let sizeBefore = fileSize(transcript)
+        guard send(session: session, text: line, zmxPath: zmxPath, timeout: timeout) else {
+            return .failed("the request could not be typed")
+        }
+        Thread.sleep(forTimeInterval: enterDelay)
+        guard send(session: session, text: "\r", zmxPath: zmxPath, timeout: timeout) else {
+            return .failed("the request could not be submitted")
+        }
+        ZettyLog.lifecycle.log("handoff: asked \(session) to compact")
+
+        // The transcript is the answer; the screen only tells a compaction
+        // still running from a harness that has stopped without doing one.
+        let deadline = Date().addingTimeInterval(HandoffCompaction.timeout)
+        var seconds = 0
+        var restingReads = 0
+        while Date() < deadline {
+            Thread.sleep(forTimeInterval: 1)
+            if isCancelled() { return nil }
+            if HandoffCompaction.hasCompacted(agent: agent, appended: read(transcript, from: sizeBefore)) {
+                return .compacted
+            }
+            seconds += 1
+            guard seconds.isMultiple(of: compactionScreenInterval), let now = screen() else { continue }
+            let resting = !PromptBox.isCompacting(vtScreen: now)
+                && PromptBox.readiness(vtScreen: now, agent: agent) == .ready
+            restingReads = resting ? restingReads + 1 : 0
+            // It answered that there is nothing to compact: already a handoff.
+            if resting, PromptBox.saysNothingToCompact(vtScreen: now) { return .compacted }
+            if restingReads >= compactionRestingReads { return .failed("it did not compact") }
+        }
+        return .failed("compacting took over \(Int(HandoffCompaction.timeout / 60)) minutes")
+    }
+
+    /// How often the screen is read while a compaction is awaited, in
+    /// seconds, and how many readings in a row of a harness at rest, with no
+    /// compaction in its transcript, are taken to mean there will be none.
+    private static let compactionScreenInterval = 5
+    private static let compactionRestingReads = 3
+
+    private static func fileSize(_ url: URL) -> UInt64 {
+        ((try? FileManager.default.attributesOfItem(atPath: url.path))?[.size] as? NSNumber)?.uint64Value ?? 0
+    }
+
+    /// What a file gained past `offset`, as text.
+    private static func read(_ url: URL, from offset: UInt64) -> String {
+        guard let handle = try? FileHandle(forReadingFrom: url) else { return "" }
+        defer { try? handle.close() }
+        guard (try? handle.seek(toOffset: offset)) != nil,
+              let data = try? handle.readToEnd() else { return "" }
+        return String(decoding: data, as: UTF8.self)
     }
 
     /// Kills the given sessions and waits for zmx to finish — for the quit

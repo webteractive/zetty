@@ -2,81 +2,75 @@ import Foundation
 import Testing
 @testable import ZettyCore
 
-private let path = "/Users/me/.zetty/handoffs/045C5269.md"
-
-@Test func claudeWakesByMentioningTheFile() {
-    #expect(HandoffWake.command(agent: .claude, handoffPath: path, cwd: "/Users/me/app", login: .inherited)
-            == "cd '/Users/me/app' && claude '@/Users/me/.zetty/handoffs/045C5269.md'")
+private func record(_ agent: AgentKind, session: String = "abc-123") -> HandoffRecord {
+    HandoffRecord(surface: UUID(), agent: agent, sessionID: session, cwd: "/Users/me/app",
+                  accountID: nil, requestedAt: Date(timeIntervalSince1970: 0))
 }
 
-@Test func aPathAMentionCannotCarryIsReadByTheShellInstead() {
-    #expect(HandoffWake.command(agent: .claude, handoffPath: "/Users/John Smith/.zetty/handoffs/x.md",
-                                cwd: "/tmp", login: .inherited)
-            == "cd '/tmp' && claude \"$(cat '/Users/John Smith/.zetty/handoffs/x.md')\"")
-}
+private let wake = ShellQuote.singleQuoted(HandoffCompaction.wakeLine)
 
-@Test func codexAlwaysGetsTheTextAsItsFirstMessage() {
-    #expect(HandoffWake.command(agent: .codex, handoffPath: path, cwd: "/Users/me/app", login: .inherited)
-            == "cd '/Users/me/app' && codex \"$(cat '/Users/me/.zetty/handoffs/045C5269.md')\"")
+@Test func aPaneWakesByResumingItsCompactedConversation() {
+    #expect(HandoffWake.command(record: record(.claude), login: .inherited)
+            == "cd '/Users/me/app' && claude --resume 'abc-123' \(wake)")
+    #expect(HandoffWake.command(record: record(.codex), login: .inherited)
+            == "cd '/Users/me/app' && codex resume 'abc-123' \(wake)")
 }
 
 @Test func theWakeComesBackUnderTheAgentsLogin() {
     let account = ResumeLogin(environment: ["CLAUDE_CONFIG_DIR": "/Users/me/.zetty/accounts/work"])
-    #expect(HandoffWake.command(agent: .claude, handoffPath: path, cwd: "/a", login: account)
-            == "cd '/a' && CLAUDE_CONFIG_DIR='/Users/me/.zetty/accounts/work' claude '@\(path)'")
+    #expect(HandoffWake.command(record: record(.claude), login: account)
+            == "cd '/Users/me/app' && CLAUDE_CONFIG_DIR='/Users/me/.zetty/accounts/work' "
+            + "claude --resume 'abc-123' \(wake)")
     let defaultLogin = ResumeLogin(unsetting: ["CODEX_HOME"])
-    #expect(HandoffWake.command(agent: .codex, handoffPath: path, cwd: "/a", login: defaultLogin)
-            == "cd '/a' && env -u CODEX_HOME codex \"$(cat '\(path)')\"")
+    #expect(HandoffWake.command(record: record(.codex), login: defaultLogin)
+            == "cd '/Users/me/app' && env -u CODEX_HOME codex resume 'abc-123' \(wake)")
 }
 
-@Test func aHarnessWithNoGrammarHasNoWakeLine() {
-    #expect(HandoffWake.command(agent: .gemini, handoffPath: path, cwd: "/a", login: .inherited) == nil)
+@Test func aHarnessThatCannotCompactOrABadSessionHasNoWakeLine() {
+    #expect(HandoffWake.command(record: record(.gemini), login: .inherited) == nil)
+    #expect(HandoffWake.command(record: record(.claude, session: "abc'; rm -rf ~"), login: .inherited) == nil)
 }
 
-private let record = HandoffRecord(surface: UUID(), agent: .claude, sessionID: "abc-123",
-                                   cwd: "/Users/me/app", accountID: nil,
-                                   requestedAt: Date(timeIntervalSince1970: 0))
-
-@Test func aReadyHandoffWakesFresh() {
-    let plan = HandoffWake.plan(record: record, handoffReady: true, forkPending: false,
-                                handoffPath: path, login: .inherited)
-    #expect(plan == .fresh("cd '/Users/me/app' && claude '@\(path)'"))
+@Test func aRecordWakesByResumingAndNoRecordAsAPlainShell() {
+    let claude = record(.claude)
+    #expect(HandoffWake.plan(record: claude, login: .inherited)
+            == .resume("cd '/Users/me/app' && claude --resume 'abc-123' \(wake)"))
+    #expect(HandoffWake.plan(record: nil, login: .inherited) == .plainShell)
+    #expect(HandoffWake.plan(record: record(.gemini), login: .inherited) == .plainShell)
 }
 
-@Test func wakingBeforeTheHandoffIsReadyResumesTheOldConversation() {
-    let plan = HandoffWake.plan(record: record, handoffReady: false, forkPending: true,
-                                handoffPath: path, login: .inherited)
-    #expect(plan == .resume("cd '/Users/me/app' && claude --resume 'abc-123'"))
+// The wake line is one shell argument: a quote in it must not end the
+// quoting, and a newline would be typed as Enter.
+@Test func theWakeLineIsASingleQuotableLine() {
+    #expect(!HandoffCompaction.wakeLine.contains("\n"))
+    #expect(wake.hasPrefix("'") && wake.hasSuffix("'"))
 }
 
-@Test func aReadyHandoffWinsOverAStaleQueueEntry() {
-    let plan = HandoffWake.plan(record: record, handoffReady: true, forkPending: true,
-                                handoffPath: path, login: .inherited)
-    #expect(plan == .fresh("cd '/Users/me/app' && claude '@\(path)'"))
+// MARK: - Picking how a pane comes back
+
+@Test func aFreshAgentStartsANewConversationUnderTheSameLogin() {
+    #expect(HandoffWake.plan(record: record(.claude), choice: .fresh, login: .inherited)
+            == .fresh("cd '/Users/me/app' && claude"))
+    let account = ResumeLogin(environment: ["CODEX_HOME": "/Users/me/.zetty/accounts/work"])
+    #expect(HandoffWake.plan(record: record(.codex), choice: .fresh, login: account)
+            == .fresh("cd '/Users/me/app' && CODEX_HOME='/Users/me/.zetty/accounts/work' codex"))
 }
 
-@Test func noRecordOrAFailedForkWakesAsBefore() {
-    #expect(HandoffWake.plan(record: nil, handoffReady: false, forkPending: false,
-                             handoffPath: path, login: .inherited) == .plainShell)
-    #expect(HandoffWake.plan(record: record, handoffReady: false, forkPending: false,
-                             handoffPath: path, login: .inherited) == .plainShell)
+@Test func aShellIsAShellWhateverThePaneHeld() {
+    #expect(HandoffWake.plan(record: record(.claude), choice: .shell, login: .inherited) == .plainShell)
+    #expect(HandoffWake.plan(record: nil, choice: .fresh, login: .inherited) == .plainShell)
+    #expect(HandoffWake.plan(record: record(.gemini), choice: .fresh, login: .inherited) == .plainShell)
 }
 
-// MARK: - When the handoff is spent
-
-// Claude reports SessionStart as it launches, BEFORE it expands the mention
-// in its first message. Deleting the file on that event left the fresh agent
-// holding a bare path to nothing, on the first real wake.
-@Test func claudeStartingUpDoesNotProveItReadTheHandoff() {
-    #expect(!HandoffWake.provesHandoffRead(agent: .claude, startedWorking: false))
+// The choice rides in the record once a pane is woken, so a wake line a quit
+// lost is typed again the way it was chosen. Records written before it
+// existed carry none, which is resume.
+@Test func aRecordRemembersHowItWasWoken() throws {
+    var chosen = record(.claude)
+    chosen.wake = .fresh
+    let data = try JSONEncoder().encode(chosen)
+    #expect(try JSONDecoder().decode(HandoffRecord.self, from: data).wake == .fresh)
+    let old = try JSONEncoder().encode(record(.claude))
+    #expect(try JSONDecoder().decode(HandoffRecord.self, from: old).wake == nil)
 }
 
-@Test func anEventAfterClaudeStartedWorkingDoes() {
-    #expect(HandoffWake.provesHandoffRead(agent: .claude, startedWorking: true))
-}
-
-// Codex's shell reads the file into the first message before Codex starts,
-// and its one hook is turn ended.
-@Test func anyCodexEventDoes() {
-    #expect(HandoffWake.provesHandoffRead(agent: .codex, startedWorking: false))
-}

@@ -137,3 +137,55 @@ private func fixture(_ name: String) throws -> String {
     #expect(PromptBox.codexStopStep(
         vtScreen: "\(indicator)\n\(bold)› \(reset)\(faint)Ask Codex to do anything\(reset)") == .stop)
 }
+
+// MARK: - Before a line is typed into an agent
+
+@Test func anEmptyBoxIsReadyForALine() throws {
+    #expect(PromptBox.readiness(vtScreen: try fixture("claude-empty"), agent: .claude) == .ready)
+    #expect(PromptBox.readiness(vtScreen: try fixture("codex-empty"), agent: .codex) == .ready)
+}
+
+// Typed onto a draft the line would join it, and onto a question it would
+// answer it.
+@Test func aDraftOrAQuestionBlocksIt() throws {
+    for name in ["claude-draft", "claude-question"] {
+        #expect(PromptBox.readiness(vtScreen: try fixture(name), agent: .claude) == .blocked, "\(name)")
+    }
+    for name in ["codex-draft", "codex-question"] {
+        #expect(PromptBox.readiness(vtScreen: try fixture(name), agent: .codex) == .blocked, "\(name)")
+    }
+    #expect(PromptBox.readiness(vtScreen: "nothing recognisable", agent: .claude) == .blocked)
+    #expect(PromptBox.readiness(vtScreen: try fixture("claude-empty"), agent: .gemini) == .blocked)
+}
+
+// Codex shows a turn running; Claude's box reads empty while it works, and
+// its hooks are what say so.
+@Test func onlyCodexShowsATurnRunning() throws {
+    #expect(PromptBox.readiness(vtScreen: try fixture("codex-working"), agent: .codex) == .working)
+    #expect(PromptBox.readiness(vtScreen: try fixture("claude-working"), agent: .claude) == .ready)
+}
+
+// A command Codex left running does not stop it taking a line: its turn is
+// over. (It does keep the project awake under hibernate-after.)
+@Test func aCodexWithATerminalRunningCanStillBeAsked() throws {
+    #expect(PromptBox.readiness(vtScreen: try fixture("codex-background"), agent: .codex) == .ready)
+}
+
+@Test func compactingIsReadOffTheBottomOfTheScreen() {
+    let claude = "⏺ OK\n\n✢ Compacting conversation… (3s · ↓ 324 tokens)\n────\n❯ \n────\n"
+    #expect(PromptBox.isCompacting(vtScreen: claude))
+    #expect(PromptBox.isCompacting(vtScreen: "• Compacting context (7s • esc to interrupt)\n› \n"))
+    #expect(!PromptBox.isCompacting(vtScreen: "  ⎿  Compacted (ctrl+o to see full summary)\n────\n❯ \n────\n"))
+    // One that finished long ago is history, not the screen.
+    let old = "✢ Compacting conversation…\n" + String(repeating: "line\n", count: 40) + "❯ \n"
+    #expect(!PromptBox.isCompacting(vtScreen: old))
+}
+
+@Test func nothingToCompactIsReadOffTheBottomOfTheScreen() {
+    let declined = "❯ /compact Write this summary as a handoff\n  ⎿  Not enough messages to compact.\n────\n❯ \n────\n"
+    #expect(PromptBox.saysNothingToCompact(vtScreen: declined))
+    #expect(!PromptBox.saysNothingToCompact(vtScreen: "  ⎿  Compacted (ctrl+o to see full summary)\n❯ \n"))
+    let old = "  ⎿  Not enough messages to compact.\n" + String(repeating: "line\n", count: 40) + "❯ \n"
+    #expect(!PromptBox.saysNothingToCompact(vtScreen: old))
+}
+

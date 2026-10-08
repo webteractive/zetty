@@ -64,6 +64,6 @@ public enum HibernationEligibility {
     }
 
     private static func isHandoffAgent(_ foreground: String) -> Bool {
-        AgentKind(rawValue: foreground).map(HandoffFork.supports) ?? false
+        AgentKind(rawValue: foreground).map(HandoffCompaction.supports) ?? false
     }
 }
