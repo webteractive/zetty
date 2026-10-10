@@ -2,8 +2,10 @@ import AppKit
 import ServiceManagement
 import ZettyGhostty
 
-/// A small themed Settings window. Currently hosts the **Agent Status Hooks**
-/// section — a toggle per harness that installs/uninstalls Zetty's status hook.
+/// The themed Settings window: every key in Zetty's config has a control
+/// here, except `free-background-panes-after`, whose feature is disabled.
+/// Repeated-line keys (`bind`/`copy-bind`, ghostty directives) are edited as
+/// text and applied explicitly.
 final class SettingsWindowController: NSWindowController, NSWindowDelegate {
 
     /// The Settings panes, in display order. Single source of truth: the tab
@@ -14,6 +16,9 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         case general = "General"
         case appearance = "Appearance"
         case sessions = "Sessions"
+        case files = "Files"
+        case keys = "Keys"
+        case terminal = "Terminal"
         case agents = "Agents"
         case accounts = "Accounts"
     }
@@ -41,9 +46,45 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     private let cliStatusLabel = NSTextField(labelWithString: "")
     private let cliInstallButton = NSButton(title: "Install CLI", target: nil, action: nil)
 
+    // General: Home directory + updates.
+    private let homePathLabel = NSTextField(labelWithString: "")
+    private let homeDefaultButton = NSButton(title: "Default", target: nil, action: nil)
+    private let checkUpdatesSwitch = NSSwitch()
+
     // Sessions section controls.
     private let preserveSwitch = NSSwitch()
+    private let restoreScrollbackSwitch = NSSwitch()
+    private let restartRecoverySwitch = NSSwitch()
+    private let hibernatePopup = NSPopUpButton()
     private let handoffsSwitch = NSSwitch()
+
+    /// `hibernate-after` choices offered by the dropdown, in seconds (0 = off).
+    /// A hand-written value outside the list still shows, as its own item.
+    private static let hibernatePresets: [TimeInterval] = [0, 900, 1800, 3600, 7200, 14400, 28800]
+
+    // Files tab: file tree + viewer.
+    private let showHiddenSwitch = NSSwitch()
+    private let respectGitignoreSwitch = NSSwitch()
+    private let treeIgnoreField = NSTextField()
+    private let treeWidthField = NSTextField()
+    private let highlightField = NSTextField()
+    private let viewerMaxField = NSTextField()
+
+    // Keys tab: prefix layer.
+    private let prefixField = NSTextField()
+    private let tmuxPassthroughSwitch = NSSwitch()
+    private let bindingsTextView = NSTextView()
+    private let bindingsStatus = NSTextField(wrappingLabelWithString: "")
+
+    // Terminal tab: forwarded ghostty directives.
+    private let ghosttyTextView = NSTextView()
+    private let ghosttyStatus = NSTextField(wrappingLabelWithString: "")
+
+    /// What each text editor last loaded from disk. A refresh replaces an
+    /// editor's text only while it still matches — unapplied typing survives
+    /// a tab switch.
+    private var loadedBindingsText = ""
+    private var loadedGhosttyText = ""
     private let loginItemSwitch = NSSwitch()
     private let loginItemNote = NSTextField(wrappingLabelWithString:
         "Registers this copy of Zetty as a login item. Turn it on from the copy in /Applications — "
@@ -57,6 +98,8 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     private let darkThemePopup = NSPopUpButton()
     private let lightThemePopup = NSPopUpButton()
     private let sidebarPositionPopup = NSPopUpButton()
+    private let sessionsViewPopup = NSPopUpButton()
+    private let tileManagerViewPopup = NSPopUpButton()
     private let fontPopup = NSPopUpButton()
     private let fontSizeField = NSTextField()
     private let fontSizeStepper = NSStepper()
@@ -92,6 +135,20 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     /// (owner applies + persists).
     var onSetFontSize: ((Float?) -> Void)?
 
+    /// Called after this window writes the config file, so the owner reloads
+    /// at once instead of on the file watcher's next poll — until then its
+    /// in-memory copy is stale, and a save of its own would overwrite this one.
+    var onConfigSaved: (() -> Void)?
+
+    /// Called with a directory picked for the Home project (the owner writes
+    /// `zetty-home-path` and re-roots Home); the account's home means default.
+    var onSetHomeDirectory: ((String) -> Void)?
+
+    /// Called when the user picks where Sessions / the tile manager appear
+    /// (the owner moves an open one and persists).
+    var onSetSessionsView: ((SessionsViewMode) -> Void)?
+    var onSetTileManagerView: ((SessionsViewMode) -> Void)?
+
     // MARK: Accounts
 
     /// Every configured agent account, newest state (owner holds the store).
@@ -125,7 +182,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         self.installer = installer
         self.liveSurfaceIDs = liveSurfaceIDs
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 500, height: 450),
+            contentRect: NSRect(x: 0, y: 0, width: 620, height: 520),
             styleMask: [.titled, .closable],
             backing: .buffered,
             defer: false
@@ -153,6 +210,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         refreshAppearance()
         refreshCLI()
         refreshSessions()
+        refreshConfigControls()
         refreshAccounts()
     }
 
@@ -190,6 +248,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
             tabs.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -12),
             tabs.bottomAnchor.constraint(equalTo: root.bottomAnchor, constant: -12),
         ])
+        tabs.delegate = self
         tabView = tabs
         refresh()
         return root
@@ -200,24 +259,40 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         case .general: return buildGeneralTab()
         case .appearance: return buildAppearanceTab()
         case .sessions: return buildSessionsTab()
+        case .files: return buildFilesTab()
+        case .keys: return buildKeysTab()
+        case .terminal: return buildTerminalTab()
         case .agents: return buildAgentsTab()
         case .accounts: return buildAccountsTab()
         }
     }
 
+    /// Each pane scrolls: the window is a fixed size, and a pane taller than
+    /// it (Agents, Sessions) would otherwise be cut off at the bottom.
     private func tabItem(_ label: String, _ content: NSView) -> NSTabViewItem {
-        let container = NSView()
+        let document = FlippedView()
+        document.translatesAutoresizingMaskIntoConstraints = false
         content.translatesAutoresizingMaskIntoConstraints = false
-        container.addSubview(content)
+        document.addSubview(content)
+
+        let scroll = NSScrollView()
+        scroll.drawsBackground = false
+        scroll.borderType = .noBorder
+        scroll.hasVerticalScroller = true
+        scroll.autohidesScrollers = true
+        scroll.documentView = document
         NSLayoutConstraint.activate([
-            content.topAnchor.constraint(equalTo: container.topAnchor, constant: 14),
-            content.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 14),
-            content.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -14),
-            content.bottomAnchor.constraint(lessThanOrEqualTo: container.bottomAnchor, constant: -14),
+            document.topAnchor.constraint(equalTo: scroll.contentView.topAnchor),
+            document.leadingAnchor.constraint(equalTo: scroll.contentView.leadingAnchor),
+            document.widthAnchor.constraint(equalTo: scroll.contentView.widthAnchor),
+            content.topAnchor.constraint(equalTo: document.topAnchor, constant: 14),
+            content.leadingAnchor.constraint(equalTo: document.leadingAnchor, constant: 14),
+            content.trailingAnchor.constraint(equalTo: document.trailingAnchor, constant: -14),
+            content.bottomAnchor.constraint(equalTo: document.bottomAnchor, constant: -14),
         ])
         let item = NSTabViewItem()
         item.label = label
-        item.view = container
+        item.view = scroll
         return item
     }
 
@@ -243,9 +318,9 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         stack.addArrangedSubview(sectionHeader("Configuration"))
         stack.addArrangedSubview(caption(abbreviatedConfigPath()))
         stack.addArrangedSubview(caption(
-            "appearance, theme-dark, theme-light and preserve-sessions are Zetty's own keys; "
-            + "every other key = value is forwarded verbatim to the terminal, so an existing "
-            + "ghostty config can be pasted straight in. Reload anytime with ⇧⌘,."
+            "Every setting in this window is saved to this file. Keys Zetty doesn't own are "
+            + "forwarded to the terminal (see the Terminal tab), so an existing ghostty config "
+            + "can be pasted straight in. Reload anytime with ⇧⌘,."
         ))
 
         // Editor row: a dropdown of detected text editors + the open button.
@@ -260,6 +335,35 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         editorRow.spacing = 8
         stack.addArrangedSubview(editorRow)
         populateEditorPopup()
+
+        stack.addArrangedSubview(spacer())
+        stack.addArrangedSubview(sectionHeader("Home"))
+        homePathLabel.font = ZTheme.chromeFont(size: 12)
+        homePathLabel.textColor = ZTheme.current.fgColor
+        homePathLabel.lineBreakMode = .byTruncatingMiddle
+        homePathLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        let chooseHome = NSButton(title: "Choose…", target: self, action: #selector(chooseHomeDirectory(_:)))
+        chooseHome.bezelStyle = .rounded
+        homeDefaultButton.bezelStyle = .rounded
+        homeDefaultButton.target = self
+        homeDefaultButton.action = #selector(resetHomeDirectory(_:))
+        let homeRow = NSStackView(views: [homePathLabel, NSView(), homeDefaultButton, chooseHome])
+        homeRow.orientation = .horizontal
+        homeRow.spacing = 8
+        addFullWidth(homeRow, to: stack)
+        stack.addArrangedSubview(caption(
+            "Where the Home project's new tabs and panes open. Open shells keep their directory."
+        ))
+
+        stack.addArrangedSubview(spacer())
+        stack.addArrangedSubview(sectionHeader("Updates"))
+        checkUpdatesSwitch.target = self
+        checkUpdatesSwitch.action = #selector(checkUpdatesToggled(_:))
+        addFullWidth(switchRow("Check for updates automatically", control: checkUpdatesSwitch), to: stack)
+        stack.addArrangedSubview(caption(
+            "Checks GitHub every 6 hours and shows a pill when a release is out. "
+            + "Check for Updates… in the Zetty menu works either way."
+        ))
 
         stack.addArrangedSubview(spacer())
         stack.addArrangedSubview(sectionHeader("Command Line"))
@@ -302,14 +406,29 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         sidebarPositionPopup.addItems(withTitles: SidebarPosition.allCases.map { $0.rawValue.capitalized })
         sidebarPositionPopup.target = self
         sidebarPositionPopup.action = #selector(sidebarPositionPicked(_:))
+        for (popup, action) in [
+            (sessionsViewPopup, #selector(sessionsViewPicked(_:))),
+            (tileManagerViewPopup, #selector(tileManagerViewPicked(_:))),
+        ] {
+            popup.removeAllItems()
+            popup.addItems(withTitles: SessionsViewMode.allCases.map(Self.viewModeTitle))
+            popup.target = self
+            popup.action = action
+        }
         for (title, popup) in [
             ("Appearance", appearancePopup),
             ("Dark theme", darkThemePopup),
             ("Light theme", lightThemePopup),
             ("Sidebar position", sidebarPositionPopup),
+            ("Sessions view", sessionsViewPopup),
+            ("Tile manager", tileManagerViewPopup),
         ] {
             addFullWidth(popupRow(title, popup: popup), to: stack)
         }
+        stack.addArrangedSubview(caption(
+            "Sessions and the tile manager open docked at the bottom of the window, "
+            + "or in a window of their own. Their detach and dock buttons switch this too."
+        ))
 
         fontPopup.removeAllItems()
         fontPopup.addItem(withTitle: Self.defaultFontItem)
@@ -376,9 +495,34 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         sessionStatusLabel.font = ZTheme.chromeFont(size: 11)
         sessionStatusLabel.textColor = ZTheme.current.fg3Color
         stack.addArrangedSubview(sessionStatusLabel)
+        orphanButton.bezelStyle = .rounded
+        orphanButton.target = self
+        orphanButton.action = #selector(killOrphans(_:))
+        orphanButton.isHidden = true
+        stack.addArrangedSubview(orphanButton)
 
-        // Here rather than beside a hibernate control: there is none in
-        // Settings, and handoffs only exist for panes with a preserved session.
+        restoreScrollbackSwitch.target = self
+        restoreScrollbackSwitch.action = #selector(restoreScrollbackToggled(_:))
+        addFullWidth(switchRow("Restore scrollback on relaunch", control: restoreScrollbackSwitch), to: stack)
+        restartRecoverySwitch.target = self
+        restartRecoverySwitch.action = #selector(restartRecoveryToggled(_:))
+        addFullWidth(switchRow("Recover after a macOS restart", control: restartRecoverySwitch), to: stack)
+        stack.addArrangedSubview(caption(
+            "Both need preserved sessions. Recovery replays each pane's last screen after a "
+            + "restart, shutdown or logout, and resumes the Claude or Codex session it was running."
+        ))
+
+        stack.addArrangedSubview(spacer())
+        stack.addArrangedSubview(sectionHeader("Hibernation"))
+        hibernatePopup.target = self
+        hibernatePopup.action = #selector(hibernateAfterPicked(_:))
+        addFullWidth(popupRow("Hibernate idle projects after", popup: hibernatePopup), to: stack)
+        stack.addArrangedSubview(caption(
+            "A project that has been idle and quiet this long is hibernated: its sessions end, "
+            + "and waking it opens fresh shells. Project Settings can opt a project out."
+        ))
+
+        // Handoffs only exist for panes with a preserved session.
         handoffsSwitch.target = self
         handoffsSwitch.action = #selector(handoffsToggled(_:))
         addFullWidth(switchRow("Write a handoff when hibernating", control: handoffsSwitch), to: stack)
@@ -388,19 +532,155 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
 
         // Not a config key: login-item state is owned by the system, so a
         // key here would be a second source of truth with a precedence rule.
+        stack.addArrangedSubview(spacer())
+        stack.addArrangedSubview(sectionHeader("Startup"))
         loginItemSwitch.target = self
         loginItemSwitch.action = #selector(loginItemToggled(_:))
         addFullWidth(switchRow("Launch at login", control: loginItemSwitch), to: stack)
         loginItemNote.font = ZTheme.chromeFont(size: 11)
         loginItemNote.textColor = ZTheme.current.fg3Color
         stack.addArrangedSubview(loginItemNote)
-
-        orphanButton.bezelStyle = .rounded
-        orphanButton.target = self
-        orphanButton.action = #selector(killOrphans(_:))
-        orphanButton.isHidden = true
-        stack.addArrangedSubview(orphanButton)
         return stack
+    }
+
+    /// Files: the per-pane file tree and the read-only file viewer.
+    private func buildFilesTab() -> NSView {
+        let stack = sectionStack()
+
+        stack.addArrangedSubview(sectionHeader("File Tree"))
+        stack.addArrangedSubview(caption(
+            "Toggle it from the pane gutter or Ctrl+B e. By default it shows the raw filesystem."
+        ))
+        showHiddenSwitch.target = self
+        showHiddenSwitch.action = #selector(showHiddenToggled(_:))
+        addFullWidth(switchRow("Show hidden files", control: showHiddenSwitch), to: stack)
+        respectGitignoreSwitch.target = self
+        respectGitignoreSwitch.action = #selector(respectGitignoreToggled(_:))
+        addFullWidth(switchRow("Hide files ignored by Git", control: respectGitignoreSwitch), to: stack)
+        configureField(treeIgnoreField, placeholder: "node_modules, .build")
+        addFullWidth(controlRow("Also hide", control: treeIgnoreField, width: 240), to: stack)
+        configureField(treeWidthField, placeholder: "\(Int(FileTreeSettings.defaultWidth))", alignment: .right)
+        addFullWidth(controlRow("Width (points)", control: treeWidthField, width: 64), to: stack)
+        stack.addArrangedSubview(caption("Also hide takes comma-separated names. Width applies to trees opened from now on."))
+
+        stack.addArrangedSubview(spacer())
+        stack.addArrangedSubview(sectionHeader("File Viewer"))
+        configureField(highlightField, placeholder: "off")
+        addFullWidth(controlRow("Highlight command", control: highlightField, width: 300), to: stack)
+        stack.addArrangedSubview(caption(
+            "The file is piped through this command and its ANSI colors are shown. Leave it "
+            + "blank for plain text. Default: \(AppConfig.defaultViewerHighlightCommand)"
+        ))
+        configureField(viewerMaxField, placeholder: "2", alignment: .right)
+        addFullWidth(controlRow("Largest file shown (MB)", control: viewerMaxField, width: 64), to: stack)
+        return stack
+    }
+
+    /// Keys: the tmux-style prefix layer.
+    private func buildKeysTab() -> NSView {
+        let stack = sectionStack()
+        stack.addArrangedSubview(caption(
+            "Press the prefix, then a key: % \" split · h j k l focus · x close · z zoom · "
+            + "c new tab · [ copy mode. ⌘ shortcuts are separate and always work."
+        ))
+        configureField(prefixField, placeholder: "ctrl+b")
+        addFullWidth(controlRow("Prefix key", control: prefixField, width: 140), to: stack)
+        tmuxPassthroughSwitch.target = self
+        tmuxPassthroughSwitch.action = #selector(tmuxPassthroughToggled(_:))
+        addFullWidth(switchRow("Send the prefix to tmux or screen", control: tmuxPassthroughSwitch), to: stack)
+        stack.addArrangedSubview(caption(
+            "While tmux or screen runs in a pane, its prefix goes to it (Ctrl+B d detaches) "
+            + "instead of arming Zetty's prefix layer."
+        ))
+
+        stack.addArrangedSubview(spacer())
+        stack.addArrangedSubview(sectionHeader("Bindings"))
+        stack.addArrangedSubview(caption(
+            "One per line, added on top of the defaults: bind = <key> <command> for the prefix "
+            + "layer, copy-bind = <key> <command> for copy mode. For example: bind = s split-vertical"
+        ))
+        addFullWidth(textEditor(bindingsTextView, height: 130), to: stack)
+        addFullWidth(applyRow(status: bindingsStatus, action: #selector(applyBindings(_:))), to: stack)
+        return stack
+    }
+
+    /// Terminal: ghostty directives forwarded verbatim to every pane.
+    private func buildTerminalTab() -> NSView {
+        let stack = sectionStack()
+        stack.addArrangedSubview(sectionHeader("Ghostty Settings"))
+        stack.addArrangedSubview(caption(
+            "One key = value per line, passed to the terminal as-is: cursor-style = bar, "
+            + "window-padding-x = 8, keybind = …. Font and font size from Appearance show "
+            + "up here too.",
+            link: "key = value", url: "https://ghostty.org/docs/config/reference"
+        ))
+        addFullWidth(textEditor(ghosttyTextView, height: 220), to: stack)
+        addFullWidth(applyRow(status: ghosttyStatus, action: #selector(applyGhostty(_:))), to: stack)
+        stack.addArrangedSubview(caption(
+            "If the terminal rejects a line it ignores all of them, and Zetty tells you once."
+        ))
+        return stack
+    }
+
+    /// A single-line config field: commits on Enter and on focus loss.
+    private func configureField(_ field: NSTextField, placeholder: String,
+                                alignment: NSTextAlignment = .natural) {
+        field.placeholderString = placeholder
+        field.alignment = alignment
+        field.font = ZTheme.chromeFont(size: 12)
+        field.delegate = self
+        field.target = self
+        field.action = #selector(fieldCommitted(_:))
+    }
+
+    /// A plain multi-line editor in a bordered scroll view, set up like
+    /// `ProjectSettingsSheet.envTextView` — `autoresizingMask = [.width]` is
+    /// what gives the text view a width on macOS 15 (see file-viewer rule).
+    private func textEditor(_ textView: NSTextView, height: CGFloat) -> NSScrollView {
+        textView.font = ZTheme.chromeFont(size: 12)
+        textView.textColor = ZTheme.current.fgColor
+        textView.backgroundColor = ZTheme.current.bg2Color
+        textView.insertionPointColor = ZTheme.current.fgColor
+        textView.isRichText = false
+        textView.isAutomaticQuoteSubstitutionEnabled = false
+        textView.isAutomaticDashSubstitutionEnabled = false
+        textView.isAutomaticTextReplacementEnabled = false
+        textView.isAutomaticSpellingCorrectionEnabled = false
+        textView.autoresizingMask = [.width]
+        textView.minSize = NSSize(width: 0, height: height)
+        textView.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude,
+                                  height: CGFloat.greatestFiniteMagnitude)
+        textView.isVerticallyResizable = true
+        textView.textContainerInset = NSSize(width: 4, height: 6)
+
+        let scroll = NSScrollView()
+        scroll.documentView = textView
+        scroll.hasVerticalScroller = true
+        scroll.drawsBackground = true
+        scroll.backgroundColor = ZTheme.current.bg2Color
+        scroll.borderType = .noBorder
+        scroll.wantsLayer = true
+        scroll.layer?.cornerRadius = 6
+        scroll.layer?.borderWidth = 1
+        scroll.layer?.borderColor = ZTheme.current.borderColor.cgColor
+        scroll.translatesAutoresizingMaskIntoConstraints = false
+        scroll.heightAnchor.constraint(equalToConstant: height).isActive = true
+        return scroll
+    }
+
+    /// A status line beside an Apply button, for the text editors.
+    private func applyRow(status: NSTextField, action: Selector) -> NSView {
+        status.font = ZTheme.chromeFont(size: 11)
+        status.textColor = ZTheme.current.fg3Color
+        status.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        let apply = NSButton(title: "Apply", target: self, action: action)
+        apply.bezelStyle = .rounded
+        apply.setContentHuggingPriority(.required, for: .horizontal)
+        let row = NSStackView(views: [status, apply])
+        row.orientation = .horizontal
+        row.alignment = .top
+        row.spacing = 8
+        return row
     }
 
     /// Agents: attention notifications + per-harness status hooks.
@@ -988,10 +1268,246 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     /// Persists the toggle to the config file; the app's config watcher picks
     /// up the change and re-threads preservation (new panes only).
     private func savePreserveSessions(_ enabled: Bool) {
+        updateConfig { $0.preserveSessions = enabled }
+    }
+
+    // MARK: - Config-backed controls
+
+    /// Loads the config, applies `change`, and saves only when something
+    /// actually changed (a field commits on Enter AND on focus loss, so the
+    /// same value often arrives twice). Then tells the owner to reload.
+    private func updateConfig(_ change: (inout AppConfig) -> Void) {
         let store = ConfigStore(fileURL: configURL)
-        var config = store.load()
-        config.preserveSessions = enabled
+        let current = store.load()
+        var config = current
+        change(&config)
+        guard config != current else { return }
         store.save(config)
+        onConfigSaved?()
+    }
+
+    /// Syncs every control added for the General, Files, Keys and Terminal
+    /// tabs (and the Sessions ones beside preservation) with the file.
+    private func refreshConfigControls() {
+        let config = ConfigStore(fileURL: configURL).load()
+
+        let home = config.resolvedHomePath(defaultHome: NSHomeDirectory())
+        homePathLabel.stringValue = Self.abbreviated(home)
+        homePathLabel.toolTip = home
+        homeDefaultButton.isHidden = config.homePath == nil
+        checkUpdatesSwitch.state = config.checkUpdates ? .on : .off
+
+        if let index = SessionsViewMode.allCases.firstIndex(of: config.sessionsView) {
+            sessionsViewPopup.selectItem(at: index)
+        }
+        if let index = SessionsViewMode.allCases.firstIndex(of: config.tileManagerView) {
+            tileManagerViewPopup.selectItem(at: index)
+        }
+
+        restoreScrollbackSwitch.state = config.restoreScrollback ? .on : .off
+        restartRecoverySwitch.state = config.restartRecovery ? .on : .off
+        populateHibernatePopup(selecting: config.hibernateAfter)
+
+        showHiddenSwitch.state = config.fileTree.showHidden ? .on : .off
+        respectGitignoreSwitch.state = config.fileTree.respectGitignore ? .on : .off
+        treeIgnoreField.stringValue = config.fileTree.extraIgnores.joined(separator: ", ")
+        treeWidthField.stringValue = String(Int(config.fileTree.width))
+        highlightField.stringValue = config.viewerHighlightCommand
+        viewerMaxField.stringValue = Self.megabytes(config.viewerMaxBytes)
+
+        prefixField.stringValue = config.prefixSourceValue ?? ""
+        tmuxPassthroughSwitch.state = config.keybindings.passPrefixToMultiplexer ? .on : .off
+        if bindingsTextView.string == loadedBindingsText {
+            bindingsTextView.string = config.bindingLinesText
+        }
+        loadedBindingsText = config.bindingLinesText
+        if ghosttyTextView.string == loadedGhosttyText {
+            ghosttyTextView.string = config.ghosttyDirectivesText
+        }
+        loadedGhosttyText = config.ghosttyDirectivesText
+    }
+
+    private static func abbreviated(_ path: String) -> String {
+        let home = NSHomeDirectory()
+        if path == home { return "~" }
+        return path.hasPrefix(home + "/") ? "~" + path.dropFirst(home.count) : path
+    }
+
+    /// Bytes as megabytes for the viewer-size field: whole numbers plain, else
+    /// one decimal. `String(format:)` is locale-independent, so the text
+    /// round-trips through `Double.init`.
+    private static func megabytes(_ bytes: Int) -> String {
+        let value = Double(bytes) / 1_048_576
+        return value == value.rounded() ? String(Int(value)) : String(format: "%.1f", value)
+    }
+
+    private static func viewModeTitle(_ mode: SessionsViewMode) -> String {
+        switch mode {
+        case .drawer: return "Docked"
+        case .window: return "Window"
+        }
+    }
+
+    private static func durationTitle(_ seconds: TimeInterval) -> String {
+        if seconds == 0 { return "Never" }
+        let whole = Int(seconds)
+        if whole % 3600 == 0 { return "\(whole / 3600) hour" + (whole == 3600 ? "" : "s") }
+        if whole % 60 == 0 { return "\(whole / 60) minutes" }
+        return "\(whole) seconds"
+    }
+
+    /// The presets, plus the configured value when it's a hand-written one.
+    private func populateHibernatePopup(selecting current: TimeInterval) {
+        var values = Self.hibernatePresets
+        if !values.contains(current) {
+            values.append(current)
+            values.sort()
+        }
+        hibernatePopup.removeAllItems()
+        for value in values {
+            hibernatePopup.addItem(withTitle: Self.durationTitle(value))
+            hibernatePopup.lastItem?.representedObject = NSNumber(value: value)
+        }
+        if let index = values.firstIndex(of: current) { hibernatePopup.selectItem(at: index) }
+    }
+
+    @objc private func checkUpdatesToggled(_ sender: NSSwitch) {
+        updateConfig { $0.checkUpdates = sender.state == .on }
+    }
+
+    @objc private func restoreScrollbackToggled(_ sender: NSSwitch) {
+        updateConfig { $0.restoreScrollback = sender.state == .on }
+    }
+
+    @objc private func restartRecoveryToggled(_ sender: NSSwitch) {
+        updateConfig { $0.restartRecovery = sender.state == .on }
+    }
+
+    @objc private func hibernateAfterPicked(_ sender: NSPopUpButton) {
+        guard let value = (sender.selectedItem?.representedObject as? NSNumber)?.doubleValue else { return }
+        updateConfig { $0.hibernateAfter = value }
+    }
+
+    @objc private func showHiddenToggled(_ sender: NSSwitch) {
+        updateConfig { $0.fileTree.showHidden = sender.state == .on }
+    }
+
+    @objc private func respectGitignoreToggled(_ sender: NSSwitch) {
+        updateConfig { $0.fileTree.respectGitignore = sender.state == .on }
+    }
+
+    @objc private func tmuxPassthroughToggled(_ sender: NSSwitch) {
+        updateConfig { $0.keybindings.passPrefixToMultiplexer = sender.state == .on }
+    }
+
+    @objc private func sessionsViewPicked(_ sender: NSPopUpButton) {
+        let modes = SessionsViewMode.allCases
+        guard (0..<modes.count).contains(sender.indexOfSelectedItem) else { return }
+        onSetSessionsView?(modes[sender.indexOfSelectedItem])
+    }
+
+    @objc private func tileManagerViewPicked(_ sender: NSPopUpButton) {
+        let modes = SessionsViewMode.allCases
+        guard (0..<modes.count).contains(sender.indexOfSelectedItem) else { return }
+        onSetTileManagerView?(modes[sender.indexOfSelectedItem])
+    }
+
+    @objc private func chooseHomeDirectory(_ sender: Any?) {
+        guard let window else { return }
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = false
+        panel.canChooseDirectories = true
+        panel.canCreateDirectories = true
+        panel.allowsMultipleSelection = false
+        panel.prompt = "Choose"
+        panel.message = "Choose the directory new Home tabs and panes open in"
+        panel.directoryURL = URL(fileURLWithPath:
+            ConfigStore(fileURL: configURL).load().resolvedHomePath(defaultHome: NSHomeDirectory()))
+        panel.beginSheetModal(for: window) { [weak self] response in
+            guard response == .OK, let path = panel.url?.path else { return }
+            self?.onSetHomeDirectory?(path)
+            self?.refreshConfigControls()
+        }
+    }
+
+    @objc private func resetHomeDirectory(_ sender: Any?) {
+        onSetHomeDirectory?(NSHomeDirectory())
+        refreshConfigControls()
+    }
+
+    /// Enter in any single-line config field.
+    @objc private func fieldCommitted(_ sender: NSTextField) {
+        commitField(sender)
+    }
+
+    /// Writes one single-line field. Unparseable input reverts to the file's
+    /// value rather than saving something the parser would drop.
+    private func commitField(_ field: NSTextField) {
+        let value = field.stringValue.trimmingCharacters(in: .whitespaces)
+        switch field {
+        case treeIgnoreField:
+            updateConfig {
+                $0.fileTree.extraIgnores = value.split(separator: ",")
+                    .map { $0.trimmingCharacters(in: .whitespaces) }
+                    .filter { !$0.isEmpty }
+            }
+        case treeWidthField:
+            if value.isEmpty {
+                updateConfig { $0.fileTree.width = FileTreeSettings.defaultWidth }
+            } else if let width = Double(value), width > 0 {
+                updateConfig { $0.fileTree.width = width.rounded() }
+            }
+        case highlightField:
+            // Blank is "off": the file writes it as `off`, the parser reads "".
+            updateConfig { $0.viewerHighlightCommand = value }
+        case viewerMaxField:
+            if value.isEmpty {
+                updateConfig { $0.viewerMaxBytes = AppConfig.defaultViewerMaxBytes }
+            } else if let megabytes = Double(value), megabytes > 0 {
+                updateConfig { $0.viewerMaxBytes = max(1, Int(megabytes * 1_048_576)) }
+            }
+        case prefixField:
+            let config = ConfigStore(fileURL: configURL).load()
+            let result = config.settingKeybindings(prefix: value, lines: config.bindingLinesText)
+            guard result.issues.isEmpty else {
+                showStatus(bindingsStatus, issues: result.issues)
+                break
+            }
+            updateConfig { $0.keybindings = result.config.keybindings }
+        default:
+            return
+        }
+        refreshConfigControls()
+    }
+
+    @objc private func applyBindings(_ sender: Any?) {
+        let config = ConfigStore(fileURL: configURL).load()
+        let result = config.settingKeybindings(prefix: config.prefixSourceValue ?? "",
+                                               lines: bindingsTextView.string)
+        // Applied even with issues: the good lines land, the bad ones are named.
+        updateConfig { $0.keybindings = result.config.keybindings }
+        loadedBindingsText = bindingsTextView.string   // keep the typed text on refresh
+        showStatus(bindingsStatus, issues: result.issues)
+    }
+
+    @objc private func applyGhostty(_ sender: Any?) {
+        let config = ConfigStore(fileURL: configURL).load()
+        let result = config.settingGhosttyDirectives(ghosttyTextView.string)
+        updateConfig { $0.ghostty = result.config.ghostty }
+        loadedGhosttyText = ghosttyTextView.string
+        showStatus(ghosttyStatus, issues: result.issues)
+    }
+
+    /// "Applied." or the lines that were skipped, in the error color. A
+    /// rejected prefix skips everything; otherwise the good lines did land.
+    private func showStatus(_ label: NSTextField, issues: [String]) {
+        if issues.isEmpty {
+            label.stringValue = "Applied."
+            label.textColor = ZTheme.current.fg3Color
+        } else {
+            label.stringValue = "Skipped: " + issues.joined(separator: "; ")
+            label.textColor = ZTheme.current.redColor
+        }
     }
 
     // MARK: - Command Line
@@ -1018,45 +1534,27 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     }
 
     @objc private func notifySoundToggled(_ sender: NSSwitch) {
-        let store = ConfigStore(fileURL: configURL)
-        var config = store.load()
-        config.notifySound = sender.state == .on
-        store.save(config)
+        updateConfig { $0.notifySound = sender.state == .on }
     }
 
     @objc private func notifyBadgeToggled(_ sender: NSSwitch) {
-        let store = ConfigStore(fileURL: configURL)
-        var config = store.load()
-        config.notifyBadge = sender.state == .on
-        store.save(config)
+        updateConfig { $0.notifyBadge = sender.state == .on }
     }
 
     @objc private func notifySystemToggled(_ sender: NSSwitch) {
-        let store = ConfigStore(fileURL: configURL)
-        var config = store.load()
-        config.notifySystem = sender.state == .on
-        store.save(config)
+        updateConfig { $0.notifySystem = sender.state == .on }
     }
 
     @objc private func claudeModToggled(_ sender: NSSwitch) {
-        let store = ConfigStore(fileURL: configURL)
-        var config = store.load()
-        config.claudeMod = sender.state == .on
-        store.save(config)
+        updateConfig { $0.claudeMod = sender.state == .on }
     }
 
     @objc private func handoffsToggled(_ sender: NSSwitch) {
-        let store = ConfigStore(fileURL: configURL)
-        var config = store.load()
-        config.hibernateHandoffs = sender.state == .on
-        store.save(config)
+        updateConfig { $0.hibernateHandoffs = sender.state == .on }
     }
 
     @objc private func claudeToolsToggled(_ sender: NSSwitch) {
-        let store = ConfigStore(fileURL: configURL)
-        var config = store.load()
-        config.claudeTools = sender.state == .on
-        store.save(config)
+        updateConfig { $0.claudeTools = sender.state == .on }
     }
 
     @objc private func killOrphans(_ sender: Any?) {
@@ -1104,13 +1602,11 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
 
     /// Persists the picked editor to the config (`nil` for System Default).
     @objc private func editorPicked(_ sender: NSPopUpButton) {
-        let store = ConfigStore(fileURL: configURL)
-        var config = store.load()
         let index = sender.indexOfSelectedItem
-        config.editor = index <= 0 || index > editorApps.count
+        let editor = index <= 0 || index > editorApps.count
             ? nil
             : EditorCatalog.displayName(of: editorApps[index - 1])
-        store.save(config)
+        updateConfig { $0.editor = editor }
     }
 
     // MARK: - Actions
@@ -1165,11 +1661,33 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
 
 extension SettingsWindowController: NSTextFieldDelegate {
 
-    /// Typed sizes commit on focus loss, not just Enter.
+    /// Typed values commit on focus loss, not just Enter.
     func controlTextDidEndEditing(_ notification: Notification) {
-        guard let control = notification.object as? NSControl, control === fontSizeField else { return }
-        commitFontSize(fontSizeField.stringValue)
+        guard let field = notification.object as? NSTextField else { return }
+        if field === fontSizeField {
+            commitFontSize(fontSizeField.stringValue)
+        } else {
+            commitField(field)
+        }
     }
+}
+
+// MARK: - Tab switches
+
+extension SettingsWindowController: NSTabViewDelegate {
+
+    /// Re-reads the file on every tab switch: the Appearance font controls and
+    /// the Terminal tab show the same directives, so an edit in one must show
+    /// in the other.
+    func tabView(_ tabView: NSTabView, didSelect tabViewItem: NSTabViewItem?) {
+        refreshAppearance()
+        refreshConfigControls()
+    }
+}
+
+/// Top-anchored document view for the scrolling Settings panes.
+private final class FlippedView: NSView {
+    override var isFlipped: Bool { true }
 }
 
 // MARK: - Accounts table

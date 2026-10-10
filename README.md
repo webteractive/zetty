@@ -318,6 +318,12 @@ Zetty reads `~/.config/zetty/config` (or `$XDG_CONFIG_HOME/zetty/config`), seede
 with a documented starter file on first launch. Lines are `key = value`;
 comments are full-line `#`. Reload with **⇧⌘,**.
 
+Every key below can also be set from **Settings (⌘,)**: General (Home
+directory, update checks), Appearance, Sessions, **Files** (file tree and
+viewer), **Keys** (prefix key, tmux passthrough, `bind`/`copy-bind` lines) and
+**Terminal** (pasted ghostty lines). The Keys and Terminal editors apply with
+their **Apply** button and name any line they couldn't use.
+
 | Key | Default | Meaning |
 |---|---|---|
 | `appearance` | `system` | `system` follows macOS; `dark`/`light` pin one |
@@ -336,7 +342,7 @@ comments are full-line `#`. Reload with **⇧⌘,**.
 | `viewer-highlight-command` | `bat --style=plain --color=always --paging=never` | Highlighter for the file viewer; `off` disables it |
 | `viewer-max-bytes` | `2097152` | Largest file the viewer renders |
 | `zetty-home-path` | — | Folder the **Home** project opens in (`~` allowed) |
-| `zetty-tiles-grid` | `4x4` | Starting shape of a new tile view, up to `8x8` |
+| `zetty-sessions-view` | `drawer` | Show Sessions docked (`drawer`) or as a `window` |
 | `zetty-tile-manager-view` | `drawer` | Show the tile manager docked (`drawer`) or as a `window` |
 | `zetty-file-tree-show-hidden` | `true` | Show dotfiles in the file tree |
 | `zetty-file-tree-respect-gitignore` | `false` | Hide what `.gitignore` excludes |

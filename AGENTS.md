@@ -109,6 +109,13 @@ in `ZettyCore` (`AppConfig` / `ConfigStore`); `AppDelegate` resolves + applies i
 - **Reload:** ⇧⌘, (also App menu + command palette) re-reads config and
   re-applies theme + terminal overrides to every live pane. Runtime scheme /
   appearance switches persist back to the file (`AppConfig.rendered()`).
+- **Every config key has a control in Settings (⌘,)** — a new key ships with
+  one in `SettingsWindowController`, or with the reason it has none written in
+  that file's doc comment (today only `free-background-panes-after`, whose
+  feature is disabled). Settings writes through `updateConfig`, which calls
+  `onConfigSaved` so `AppDelegate` reloads at once: its in-memory `appConfig`
+  is otherwise stale until the 1s file poll, and an `AppDelegate` save in that
+  window would overwrite the Settings write.
 - **`preserve-sessions = true|false`** (default false) — panes run inside
   [zmx](https://zmx.sh) sessions so they survive quit/relaunch. The reattach,
   scrollback-restore, scratch-pane deadlock, title persistence and restart-

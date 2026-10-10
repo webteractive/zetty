@@ -814,6 +814,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         modInstaller.applyEnvironment(enabled: appConfig.claudeMod,
                                       tools: appConfig.claudeTools)   // new panes only
         syncModIntoClaudeSettings()
+        // Turned on after launch (Settings, or a hand edit): start the timer
+        // now rather than at the next relaunch. Turning it off needs nothing —
+        // every check re-reads the flag.
+        if appConfig.checkUpdates, updateTimer == nil { startUpdateChecks() }
         // A menu action, so this always runs on main — but the delegate itself
         // is nonisolated, hence the explicit assumption rather than an await.
         MainActor.assumeIsolated { EditorCatalog.invalidate() }  // pick up an editor installed since launch
@@ -1516,6 +1520,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         refreshSessionsChrome()
     }
 
+    /// Settings → Appearance. While Sessions is showing, the change goes
+    /// through the toggle so it moves to the new form at once; otherwise only
+    /// the setting is rewritten, for the next time it opens.
+    @MainActor func setSessionsView(_ mode: SessionsViewMode) {
+        guard mode != appConfig.sessionsView else { return }
+        let showing = terminalViewController?.isSessionsDrawerVisible == true
+            || taskManagerWindowController?.window?.isVisible == true
+        guard !showing else { return toggleSessionsMode() }
+        appConfig.sessionsView = mode
+        saveConfig()
+    }
+
+    /// Settings → Appearance: the same choice for the tile manager.
+    @MainActor func setTileManagerView(_ mode: SessionsViewMode) {
+        guard mode != appConfig.tileManagerView else { return }
+        let showing = terminalViewController?.isTileManagerDrawerVisible == true
+            || tileManagerWindowController?.window?.isVisible == true
+        guard !showing else { return toggleTileManagerMode() }
+        appConfig.tileManagerView = mode
+        saveConfig()
+    }
+
     // MARK: - Settings
 
     private var settingsWindowController: SettingsWindowController?
@@ -1549,6 +1575,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         controller.onSignInAccount = { [weak self] account in self?.signInToAccount(account) }
         controller.onCheckAccounts = { [weak self] done in self?.refreshAccountIdentities(then: done) }
         controller.onHooksChanged = { [weak self] in self?.installHooksForAccounts() }
+        controller.onConfigSaved = { [weak self] in
+            self?.reloadConfiguration(nil)
+            self?.configWatcher?.markSaved()   // already applied; skip the poll's repeat
+        }
+        controller.onSetHomeDirectory = { [weak self] path in self?.setHomeDirectory(path) }
+        controller.onSetSessionsView = { [weak self] mode in
+            MainActor.assumeIsolated { self?.setSessionsView(mode) }
+        }
+        controller.onSetTileManagerView = { [weak self] mode in
+            MainActor.assumeIsolated { self?.setTileManagerView(mode) }
+        }
         settingsWindowController = controller
         controller.refresh()
         controller.showWindow(nil)
