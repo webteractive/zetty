@@ -1623,6 +1623,7 @@ public enum ControlCLI {
     /// delaying a launch.
     private static func notify(_ request: ControlRequest) {
         if let transport { _ = transport(request); return }
+        guard let out = try? ControlWire.encodeLine(request) else { return }
         let path = (NSHomeDirectory() as NSString).appendingPathComponent(".zetty/zetty.sock")
         let fd = socket(AF_UNIX, SOCK_STREAM, 0)
         guard fd >= 0 else { return }
@@ -1648,14 +1649,19 @@ public enum ControlCLI {
                 connect(fd, $0, socklen_t(MemoryLayout<sockaddr_un>.size))
             }
         }
-        guard connected == 0, let out = try? ControlWire.encodeLine(request) else { return }
-        let outBytes = Array(out.utf8)
-        _ = outBytes.withUnsafeBufferPointer { write(fd, $0.baseAddress, $0.count) }
+        guard connected == 0 else { return }
+        ControlSocketIO.writeAll(Array(out.utf8), to: fd, timeout: 0.25)
     }
 
     /// One request → one response over the app's Unix socket.
+    ///
+    /// The request is encoded BEFORE connecting so the line follows the
+    /// connect at once: an app whose socket reads fail instead of blocking
+    /// (see `ControlSocketIO`) answered "malformed request" to every client
+    /// that spent those few ms in `JSONEncoder` after connecting.
     private static func roundTrip(_ request: ControlRequest) -> ControlResponse {
         if let transport { return transport(request) }
+        guard let out = try? ControlWire.encodeLine(request) else { return .error("cannot encode request") }
         let path = (NSHomeDirectory() as NSString).appendingPathComponent(".zetty/zetty.sock")
         let fd = socket(AF_UNIX, SOCK_STREAM, 0)
         guard fd >= 0 else { return .error("cannot create socket") }
@@ -1689,23 +1695,16 @@ public enum ControlCLI {
             return .error("cannot reach zetty at \(path) — is the app running?")
         }
 
-        guard let out = try? ControlWire.encodeLine(request) else { return .error("cannot encode request") }
-        let outBytes = Array(out.utf8)
-        _ = outBytes.withUnsafeBufferPointer { write(fd, $0.baseAddress, $0.count) }
-
-        var buffer = Data()
-        var chunk = [UInt8](repeating: 0, count: 4096)
-        while true {
-            let count = read(fd, &chunk, chunk.count)
-            guard count > 0 else { break }
-            buffer.append(contentsOf: chunk[0..<count])
-            if buffer.contains(0x0A) { break }
+        // Read even when the write failed: an app that answered early (with
+        // an error) and closed still left that answer to explain why.
+        let sent = ControlSocketIO.writeAll(Array(out.utf8), to: fd, timeout: 30)
+        // No size cap: a `capture` or `status --json` reply can be large.
+        guard let line = ControlSocketIO.readLine(from: fd, timeout: 30, limit: .max) else {
+            return .error(sent
+                ? "no response from zetty (timed out or connection closed)"
+                : "cannot send request to zetty (timed out or connection closed)")
         }
-        guard !buffer.isEmpty else {
-            return .error("no response from zetty (timed out or connection closed)")
-        }
-        guard let line = String(data: buffer, encoding: .utf8),
-              let response = try? ControlWire.decodeResponse(line) else {
+        guard let response = try? ControlWire.decodeResponse(line) else {
             return .error("malformed response from app")
         }
         return response

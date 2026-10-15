@@ -612,8 +612,8 @@ pane. The new work is orchestration:
   than waking, because hibernating killed the session it reads. Grep inherits
   that: report `☾ project (hibernated, skipped)` rather than spawning shells.
 - **Output volume.** A broad pattern across 37 panes can produce megabytes; the
-  socket read caps at 1 MB per line (`ControlSocketServer.readLine`) but the
-  *response* uses `writeAll` with no cap. Add a match limit (default 200) and
+  socket read caps at 1 MB per line (`ControlSocketIO.readLine`) but the
+  *response* uses `ControlSocketIO.writeAll` with no cap. Add a match limit (default 200) and
   say so in the output — silent truncation reads as "no more matches."
 
 ### Testing

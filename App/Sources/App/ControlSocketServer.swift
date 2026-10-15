@@ -1,4 +1,5 @@
 import Foundation
+import ZettyCore
 import ZettyGhostty
 
 /// The app end of the `Zetty` CLI: a Unix-domain socket at
@@ -22,6 +23,8 @@ final class ControlSocketServer {
     private let queue = DispatchQueue(label: "co.webteractive.zetty.control-socket")
     private var listenerFD: Int32 = -1
     private var acceptSource: DispatchSourceRead?
+    /// Seconds a client gets to send its request line, and to take the reply.
+    private static let exchangeTimeout: TimeInterval = 10
 
     init(
         socketURL: URL = ControlSocketServer.defaultSocketURL,
@@ -128,13 +131,15 @@ final class ControlSocketServer {
         var on: Int32 = 1
         setsockopt(clientFD, SOL_SOCKET, SO_NOSIGPIPE, &on, socklen_t(MemoryLayout<Int32>.size))
         // And a client that connects but never completes a line must not wedge
-        // the (serial) accept queue forever — bound both directions.
-        var timeout = timeval(tv_sec: 10, tv_usec: 0)
+        // the (serial) accept queue forever — bound both directions. The socket
+        // timeouts bound one blocking call; `ControlSocketIO` bounds the whole
+        // exchange, including retries after EINTR/EAGAIN.
+        var timeout = timeval(tv_sec: __darwin_time_t(Self.exchangeTimeout), tv_usec: 0)
         setsockopt(clientFD, SOL_SOCKET, SO_RCVTIMEO, &timeout, socklen_t(MemoryLayout<timeval>.size))
         setsockopt(clientFD, SOL_SOCKET, SO_SNDTIMEO, &timeout, socklen_t(MemoryLayout<timeval>.size))
 
         let response: ControlResponse
-        if let line = readLine(from: clientFD),
+        if let line = ControlSocketIO.readLine(from: clientFD, timeout: Self.exchangeTimeout),
            let request = try? ControlWire.decodeRequest(line) {
             response = handler(request)
         } else {
@@ -142,32 +147,6 @@ final class ControlSocketServer {
         }
 
         guard let out = try? ControlWire.encodeLine(response) else { return }
-        writeAll(Array(out.utf8), to: clientFD)
-    }
-
-    /// Writes the whole buffer, retrying after short writes (EINTR, full
-    /// socket buffers on large `status --json`/`capture` responses).
-    private func writeAll(_ bytes: [UInt8], to fd: Int32) {
-        var offset = 0
-        while offset < bytes.count {
-            let written = bytes[offset...].withUnsafeBufferPointer { buffer in
-                write(fd, buffer.baseAddress, buffer.count)
-            }
-            guard written > 0 else { return }   // timeout/closed peer — give up
-            offset += written
-        }
-    }
-
-    /// Reads until the first newline (cap 1 MB); nil on EOF-before-data.
-    private func readLine(from fd: Int32) -> String? {
-        var buffer = Data()
-        var chunk = [UInt8](repeating: 0, count: 4096)
-        while !buffer.contains(0x0A), buffer.count < 1_048_576 {
-            let count = read(fd, &chunk, chunk.count)
-            guard count > 0 else { break }
-            buffer.append(contentsOf: chunk[0..<count])
-        }
-        guard !buffer.isEmpty else { return nil }
-        return String(data: buffer, encoding: .utf8)
+        ControlSocketIO.writeAll(Array(out.utf8), to: clientFD, timeout: Self.exchangeTimeout)
     }
 }

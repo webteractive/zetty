@@ -152,6 +152,32 @@ prefix, unique cwd, or default to the focused pane. Server handlers run on
 the main thread (`ControlSocketServer` → `AppDelegate.startControlSocket` →
 `TerminalViewController` snapshot/send/split/close/capture).
 
+### A failed read is not the end of a request
+
+**Socket IO on both ends goes through `ControlSocketIO`** (`readLine`,
+`writeAll`). Both used to treat any `read`/`write` result <= 0 as the end of
+the exchange. That holds for a healthy blocking socket, but an interrupted call
+(EINTR) or a socket that turns up non-blocking (EAGAIN) fails at once. It
+happened (v0.1.55, Oct 2026): a long-running app began answering `malformed
+request` ~0.1ms after `accept`, before a CLI that encodes its request after
+connecting had written a byte. When a request did get through, the reply stopped
+at exactly 8192 bytes, one AF_UNIX send buffer, because the next `write` hit
+EAGAIN and `writeAll` gave up. A `status --json` larger than that could not
+succeed at all. Every verb failed for every caller, including the schedy
+morning ritual.
+
+- **Retry EINTR, wait out EAGAIN with `poll`, stop only on EOF, a hard error,
+  or the overall deadline** (10s in the server, 30s in `roundTrip`, 250ms in
+  `notify`). SO_RCVTIMEO/SO_SNDTIMEO stay set because they bound one blocking
+  call. The deadline bounds the whole exchange.
+- **The CLI encodes before it connects**, so the request line follows the
+  connect at once. `roundTrip` still reads after a failed write, so an app that
+  answered early with an error still gets to say why.
+- Tests: `ControlSocketIOTests` covers a client that writes 150ms late to a
+  non-blocking accepted socket, a read interrupted by a signal, the deadline,
+  EOF, the cap, and a large write to a slow reader. The server itself is in the
+  App target, which no `swift test` hosts, so it only calls these helpers.
+
 ### Dormant panes are the CLI's problem, not the caller's
 
 A pane has no terminal behind it in two unrelated cases — its tab was never
