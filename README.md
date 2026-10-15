@@ -190,6 +190,8 @@ right-click the strip for the same actions plus **Scroll to Bottom**.
   in ▾** hands it to your editor at that line. Non-text files open in their
   default app. Needs `preserve-sessions`; `zetty view <path>` works regardless.
   Highlighting uses [`bat`](https://github.com/sharkdp/bat) when installed.
+- **Drop a file** — drag a file from Finder onto a pane to paste its path;
+  dropped text or a link pastes as text.
 - **Broadcast** — `⇧⌘B` sends your typing to every pane in the tab, the
   project, the workspace, or only panes running an AI agent. Off by default, set
   per project.
