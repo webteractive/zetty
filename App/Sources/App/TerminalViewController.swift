@@ -7569,13 +7569,27 @@ final class TerminalViewController: NSViewController {
     /// The CLI's answer to destructive work on `surfaceIDs`: nil to go ahead,
     /// or an error naming the busy panes (anything but a bare shell in front,
     /// the same rule the GUI's dialog uses). `force` skips the check.
+    ///
+    /// Reads `cliForegroundReading` first: `foregroundBySurface` stops
+    /// updating while Zetty is in the background, which is when the CLI is
+    /// usually called.
     func cliRefusal(closing surfaceIDs: [UUID], force: Bool) -> String? {
+        guard !force, !surfaceIDs.isEmpty else { return nil }
+        if cliForegroundReading == .failed { return BusyPaneGate.unreadable }
         let busy = surfaceIDs.compactMap { id -> BusyPaneGate.BusyPane? in
-            guard let command = foregroundBySurface[id], !command.isEmpty else { return nil }
+            guard let command = BusyPaneGate.command(session: SessionPersistence.sessionName(for: id),
+                                                     reading: cliForegroundReading,
+                                                     cached: foregroundBySurface[id]),
+                  !command.isEmpty else { return nil }
             return .init(pane: SessionPersistence.shortID(for: id), command: command)
         }
         return BusyPaneGate.refusal(busy: busy, force: force)
     }
+
+    /// What ran in each pane when the control request being served arrived,
+    /// read off-main by `AppDelegate` for requests that may end busy panes
+    /// (`ControlRequest.refusesBusyPanes`); nil otherwise.
+    var cliForegroundReading: BusyPaneGate.Reading?
 
     /// Close the tab at an explicit index (called by the tab bar × button).
     /// No-op if it is the only tab. `confirmIfBusy: false` (the CLI path)

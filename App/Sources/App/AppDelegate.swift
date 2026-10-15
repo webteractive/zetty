@@ -1904,6 +1904,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     private func startControlSocket() {
         let server = ControlSocketServer { [weak self] request in
             guard let self else { return .error("Zetty is shutting down") }
+            // Taken here, off-main, before any of the paths below reaches
+            // `cliRefusal`. The socket queue is serial, so the reading belongs
+            // to this request alone until it is cleared.
+            if request.refusesBusyPanes {
+                let reading = Self.readForegroundForRequest()
+                DispatchQueue.main.sync { self.terminalViewController?.cliForegroundReading = reading }
+            }
+            // Cleared ASYNC: a `quit` has already queued the terminate, and
+            // `applicationWillTerminate` stops this server with a sync onto
+            // the socket queue, so a sync back onto main here deadlocks the
+            // app. Main is serial, so the clear still lands before the next
+            // request reads it.
+            defer {
+                if request.refusesBusyPanes {
+                    DispatchQueue.main.async { self.terminalViewController?.cliForegroundReading = nil }
+                }
+            }
             switch request {
             case .capture(let target, let lines):
                 let resolved = DispatchQueue.main.sync { () -> Result<TerminalViewController.CaptureSource, ControlError> in
@@ -2117,6 +2134,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     }
 
     /// Fast control verbs — must run on the main thread (UI/workspace state).
+    /// What runs in front of every preserved pane right now: one `zmx list`
+    /// and one `ps`, each bounded, for one request that may end busy panes.
+    /// nil without zmx, where no pane has a session to read.
+    private static func readForegroundForRequest() -> BusyPaneGate.Reading? {
+        guard let zmx = ZmxRunner.locate() else { return nil }
+        let pids = ZmxRunner.sessionPIDs(zmxPath: zmx, timeout: foregroundReadTimeout)
+        guard let ps = ZmxRunner.psSnapshot(timeout: foregroundReadTimeout) else { return .failed }
+        return .taken(ForegroundProcess.commands(forSessionPIDs: pids, psOutput: ps))
+    }
+
+    /// Seconds each of `readForegroundForRequest`'s two calls may take.
+    private static let foregroundReadTimeout: TimeInterval = 3
+
     private func handleOnMain(_ request: ControlRequest) -> ControlResponse {
         guard let tvc = terminalViewController else {
             return .error("Zetty is still starting up")

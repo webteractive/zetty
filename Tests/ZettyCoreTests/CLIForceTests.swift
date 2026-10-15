@@ -131,3 +131,44 @@ import Testing
     }
 }
 
+
+// MARK: - A reading taken for the request
+
+/// The app's cached map freezes while Zetty is in the background: a `sleep`
+/// started then read as a bare shell, and an unforced `hibernate` killed it.
+/// A gated request is answered from its own reading instead.
+@Test func aFreshReadingOutranksTheFrozenCache() {
+    let reading = BusyPaneGate.Reading.taken(["zetty-ab12cd34": "sleep", "zetty-ee11ff22": ""])
+    #expect(BusyPaneGate.command(session: "zetty-ab12cd34", reading: reading, cached: "") == "sleep")
+    // An agent that has since exited is no longer busy either.
+    #expect(BusyPaneGate.command(session: "zetty-ee11ff22", reading: reading, cached: "claude") == "")
+}
+
+@Test func aPaneTheReadingCannotSeeFallsBackToTheCache() {
+    let reading = BusyPaneGate.Reading.taken([:])
+    #expect(BusyPaneGate.command(session: "zetty-ab12cd34", reading: reading, cached: "node") == "node")
+    #expect(BusyPaneGate.command(session: "zetty-ab12cd34", reading: nil, cached: "node") == "node")
+    #expect(BusyPaneGate.command(session: "zetty-ab12cd34", reading: .failed, cached: nil) == nil)
+}
+
+@Test func onlyUnforcedRequestsThatEndSessionsTakeAReading() {
+    let gated: [ControlRequest] = [
+        .close(target: .pane("ab12"), wholeTab: false),
+        .removeProject(name: "Foo", fetch: false, discard: false),
+        .hibernateProject(name: "Foo"),
+        .hibernateSpace(name: "Work"),
+        .scratchClear(),
+        .quit(killSessions: true, simulateRestart: false),
+    ]
+    for request in gated { #expect(request.refusesBusyPanes, "\(request)") }
+
+    let ungated: [ControlRequest] = [
+        .close(target: .pane("ab12"), wholeTab: false, force: true),
+        .hibernateProject(name: "Foo", force: true),
+        .scratchClear(force: true),
+        .restartAgent(target: .pane("ab12")),
+        .status,
+        .focus(target: .pane("ab12")),
+    ]
+    for request in ungated { #expect(!request.refusesBusyPanes, "\(request)") }
+}

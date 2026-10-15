@@ -207,6 +207,22 @@ public enum ControlRequest: Equatable, Sendable {
     case accountRunning(surface: String, account: String)
 }
 
+extension ControlRequest {
+    /// True for an unforced request that may end busy panes' sessions, which
+    /// the app answers from a fresh `BusyPaneGate.Reading` rather than its
+    /// cached map. `restart-agent` is not one: it reads the agent's own state.
+    public var refusesBusyPanes: Bool {
+        switch self {
+        case .close(_, _, let force), .removeProject(_, _, _, let force),
+             .hibernateProject(_, let force, _), .hibernateSpace(_, let force, _),
+             .scratchClear(let force), .quit(_, _, let force):
+            return !force
+        default:
+            return false
+        }
+    }
+}
+
 extension ControlRequest: Codable {
     private enum CodingKeys: String, CodingKey {
         case command, target, text, enter, keys, project, wholeTab, killSessions, simulateRestart, vertical, lines, path, name, gitInit, focus, fetch, discard, line, column, space, newName, color, icon, account, probe, surface, on, profile, slot, collapse, view, force, handoff, wake

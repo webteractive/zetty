@@ -25,6 +25,15 @@ public enum ForegroundProcess {
         foregroundLeader(forSessionPID: sessionPID, in: parse(psOutput))?.name
     }
 
+    /// `command(forSessionPID:psOutput:)` for every session at once, parsing
+    /// the snapshot a single time: session name → the foreground tool, or ""
+    /// for a pane at its bare shell.
+    public static func commands(forSessionPIDs sessionPIDs: [String: Int32],
+                                psOutput: String) -> [String: String] {
+        let rows = parse(psOutput)
+        return sessionPIDs.mapValues { foregroundLeader(forSessionPID: $0, in: rows)?.name ?? "" }
+    }
+
     /// Whether the program in the pane's foreground has work of its own still
     /// running: a child of its own with no terminal.
     ///

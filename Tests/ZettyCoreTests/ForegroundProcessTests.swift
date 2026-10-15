@@ -181,3 +181,11 @@ private let helperBrowser = """
     #expect(!ForegroundProcess.hasDetachedWork(forSessionPID: 30938,
                                                psOutput: agentHelpers + "\n" + helperBrowser))
 }
+
+@Test func everySessionIsReadFromOneSnapshot() {
+    let commands = ForegroundProcess.commands(
+        forSessionPIDs: ["zetty-codex": 94059, "zetty-vim": 22222, "zetty-idle": 33333, "zetty-gone": 99999],
+        psOutput: psSample)
+    // "" is a reading too: a bare shell, or a session the snapshot does not have.
+    #expect(commands == ["zetty-codex": "codex", "zetty-vim": "vim", "zetty-idle": "", "zetty-gone": ""])
+}

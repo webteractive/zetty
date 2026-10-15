@@ -99,6 +99,25 @@ raised `confirmClosingBusyPanes`, and the CLI froze for everyone.
   `TerminalViewController.cliRefusal(closing:force:)`. Busy means what the
   dialog means: anything but a bare shell in the foreground probe. `--force`
   goes ahead without asking.
+- **Busy is read FRESH for each gated request, not from the probe's map.**
+  `foregroundBySurface` is refreshed by `pollForegroundAgents`, which skips
+  every tick while Zetty is not the active app, so it is frozen exactly when
+  agents and scripts call the CLI. It happened (Oct 2026): with an editor in
+  front, a pane's `sleep 900` read as a bare shell, and an unforced `zetty
+  hibernate` (and the mod's `/zetty-hibernate`) killed it. Now the socket
+  queue takes one bounded `zmx list` + `ps` (3s each,
+  `readForegroundForRequest`) for any request with
+  `ControlRequest.refusesBusyPanes`, hands it to `cliRefusal` as
+  `cliForegroundReading`, and clears it after. **The clear is
+  `main.async`, never `main.sync`:** an unforced `quit` is gated too, its
+  handler has already queued the terminate, and `applicationWillTerminate`
+  stops this server with a `queue.sync` onto the socket queue, so a sync
+  clear deadlocked the app on every unforced `zetty quit` (caught in the
+  isolated test app before it shipped). A pane with no preserved
+  session still falls back to the map (`BusyPaneGate.command`). A `ps` that
+  fails or times out refuses with `BusyPaneGate.unreadable` rather than
+  guessing idle. The GUI keeps the map: its dialog only runs while Zetty is
+  active, when the map is current.
 - **The check comes before anything moves.** `closePane` works out whether it
   will take the pane or its whole tab first; `hibernate --space` is all or
   nothing, because a Space half-hibernated by a refusal is worse than none.
