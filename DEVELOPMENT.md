@@ -94,10 +94,16 @@ env -i HOME="$HOME" USER="$USER" SHELL=/bin/zsh TMPDIR="$TMPDIR" LANG=en_US.UTF-
   CFFIXED_USER_HOME=/tmp/zti ZMX_DIR=/tmp/zti/zmx \
   <DerivedData>/Build/Products/Debug/zetty.app/Contents/MacOS/zetty </dev/null &
 
-# Drive it with the same two variables:
-iz() { CFFIXED_USER_HOME=/tmp/zti ZMX_DIR=/tmp/zti/zmx zetty "$@"; }
+# Drive it with the same two variables, and with ITS binary as the CLI
+# (`zetty` on PATH is the installed one, which would test the old CLI):
+iz() { CFFIXED_USER_HOME=/tmp/zti ZMX_DIR=/tmp/zti/zmx <the test app>/Contents/MacOS/zetty "$@"; }
 iz status
 ```
+
+This is how a change is verified before it is committed:
+`.hydra/rules/isolated-test-app.md` has the full recipe (a frozen copy of
+the build, teardown, and what still leaks, such as Claude in a test pane
+loading the installed mod).
 
 `CFFIXED_USER_HOME` moves what the app calls home (workspace, config, control
 socket, hooks, handoffs); `ZMX_DIR` moves the sessions. `HOME` stays real, so
