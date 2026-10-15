@@ -70,6 +70,14 @@ Commands (see `zetty --help` for full grammar and agent notes):
   with `decodeIfPresent ?? true`, so an older CLI that never sends it gets the
   default (unlike `force`, where silence must mean refuse). See
   `hibernation-handoffs.md`.
+- `restart-agent (--pane|--cwd) [--force]` — the pane's ⟳ button: restart
+  its Claude or Codex on the same conversation. `.ok` means STARTED; the quit
+  and resume run on timers afterwards. A turn in progress is refused unless
+  `--force` (no dialog, per the rule below). Target is required, like `close`.
+  See `agent-pane-refresh.md`.
+- `edit [--pane|--cwd]` — open the pane's project root (a scratch pane's cwd)
+  in the configured `editor`, Finder without one; `.text` says what it did.
+  No menu: the per-pane Open button's picker is GUI-only.
 - `focus (--pane|--cwd)` · `close (--pane|--cwd) [--tab]` · `reload` ·
   `quit [--kill-sessions]` (no dialog; the flag kills every preserved
   session first — full shutdown).

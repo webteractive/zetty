@@ -29,6 +29,8 @@ private let actingArguments: [String: [String]] = [
     "break": ["--pane", "abcd1234"],
     "focus": ["--pane", "abcd1234"],
     "close": ["--pane", "abcd1234", "--tab"],
+    "restart-agent": ["--pane", "abcd1234", "--force"],
+    "edit": ["--pane", "abcd1234"],
     "reload": [],
     "tiles": ["open", "Generic"],
     "scratch": ["--focus"],

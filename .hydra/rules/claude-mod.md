@@ -221,6 +221,32 @@ at in a real pane yet.
 workspace is never handed to the model. `read_pane` answers only for panes
 `open_pane` returned in this load of the mod.
 
+**The pane commands are top-level and Claude-only** (Glen, 2026-10-15):
+`/zetty-reload`, `/zetty-hibernate [project]` and `/zetty-open`, registered
+beside `/zetty` and answered by their own `command.run` hooks. They are
+`zetty-` prefixed rather than `/zetty <verb>` so each is one word in the
+typeahead, and the prefix keeps them clear of Claude Code's built-ins. Codex
+and Hermes have no mod, so they have no equivalent; the CLI verbs underneath
+(`restart-agent`, `hibernate`, `edit`) work for any caller. None is
+`immediate`, so each waits for a turn in flight to end.
+
+- **`/zetty-reload` passes `--force`**: see `agent-pane-refresh.md`.
+- **`/zetty-hibernate` never adds `--force` itself.** A first version did
+  when `status` showed only agents busy in this project (this pane's own
+  Claude counts as busy, so every unforced hibernate of it is refused). Run
+  for real, it hibernated a project with a `sleep` running and killed it:
+  `pollForegroundAgents` returns early while Zetty is not the active app, so
+  the map behind `status` (and behind the app's own busy refusal) was frozen
+  and showed no tools at all, and `/zetty-open` had just made the editor
+  frontmost. Busy is the app's call: `cliRefusal` now takes a fresh reading
+  for each such request (`control-cli.md`), which the mod cannot.
+  A refusal is passed on with `Run /zetty-hibernate <name> --force`. The
+  name is every non-flag word (`hibernateArgs`), so names with spaces work
+  unquoted.
+- **`/zetty-open` opens the project ROOT**, not the pane's cwd: it is the
+  project the person asked for. A scratch pane's root is just home, so it
+  falls back to the pane's working directory (`openProjectInEditor`).
+
 **The clone band asks twice.** `Merge into source` changes the source repo
 and `Push branch` pushes to origin; the CLI verbs behind them ask nothing, so
 the band holds a `cloneStep` (`idle` → `merge`/`push` → run) and only the

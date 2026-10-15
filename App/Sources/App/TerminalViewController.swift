@@ -2382,15 +2382,61 @@ final class TerminalViewController: NSViewController {
     /// disabled `free-background-panes-after` because it can block the main
     /// thread, and driving the session externally avoids the question entirely.
     func refreshAgentPane(surfaceID: UUID) {
+        // The button only shows on a resumable agent; a click that races its
+        // exit, or a second click mid-restart, is simply ignored.
         guard agentRestartTimers[surfaceID] == nil,
-              let kind = probedResumableKind(for: surfaceID),
-              let exit = AgentResume.exitCommand(for: kind) else { return }
+              probedResumableKind(for: surfaceID) != nil else { return }
+        let started = startAgentRestart(surfaceID: surfaceID) { [weak self] in
+            self?.confirmClosingBusyPanes([surfaceID], what: "Agent") ?? false
+        }
+        if case .refused(let message) = started { presentAgentRestartFailure(message) }
+    }
+
+    /// How an attempt to restart a pane's agent began.
+    enum AgentRestartStart: Equatable {
+        case started
+        /// Nothing was sent; the message says why.
+        case refused(String)
+        /// The agent was mid-turn and `allowRunning` said no.
+        case declined
+    }
+
+    /// CLI `restart-agent`: the ⟳ button for a pane named by the caller, with
+    /// errors as text and `force` in place of the busy dialog — a socket
+    /// request never waits on one.
+    func restartAgent(target: PaneSelector, force: Bool) -> String? {
+        let pane: StatusSnapshot.Pane
+        do { pane = try target.resolve(in: statusSnapshot().panes) } catch {
+            return error.localizedDescription
+        }
+        guard let surface = surface(withShortID: pane.id) else { return "pane \(pane.id) not found" }
+        guard agentRestartTimers[surface.id] == nil else {
+            return "the agent in pane \(pane.id) is already restarting"
+        }
+        guard probedResumableKind(for: surface.id) != nil else {
+            return "pane \(pane.id) is not running Claude or Codex"
+        }
+        switch startAgentRestart(surfaceID: surface.id, allowRunning: { force }) {
+        case .started: return nil
+        case .refused(let message): return message
+        case .declined:
+            return "the agent in pane \(pane.id) is running a turn — pass --force to restart it anyway"
+        }
+    }
+
+    /// Covers the pane, sends the agent its quit line, and leaves the rest to
+    /// `waitForAgentExit`. `allowRunning` is asked only when the agent is
+    /// mid-turn: the GUI asks the person, the CLI answers with `--force`.
+    private func startAgentRestart(surfaceID: UUID, allowRunning: () -> Bool) -> AgentRestartStart {
+        guard let kind = probedResumableKind(for: surfaceID),
+              let exit = AgentResume.exitCommand(for: kind) else {
+            return .refused("No agent that can be restarted is running in this pane.")
+        }
 
         // BEFORE anything is sent: a harness may clear its hook state as it
         // exits, and the resume is worthless without the id.
         guard let resume = agentResumeCommand(for: surfaceID) else {
-            presentAgentRestartFailure("No session to resume was found for this pane.")
-            return
+            return .refused("No session to resume was found for this pane.")
         }
 
         let session = SessionPersistence.sessionName(for: surfaceID)
@@ -2398,13 +2444,10 @@ final class TerminalViewController: NSViewController {
               let sessionPID = lastSessionPIDs[session]
                 ?? ZmxRunner.sessionPIDs(zmxPath: zmx)[session]
         else {
-            presentAgentRestartFailure(
-                "Restarting an agent needs preserve-sessions, so Zetty can drive and watch it.")
-            return
+            return .refused("Restarting an agent needs preserve-sessions, so Zetty can drive and watch it.")
         }
 
-        if agentDetector.state(for: surfaceID).status == .running,
-           !confirmClosingBusyPanes([surfaceID], what: "Agent") { return }
+        if agentDetector.state(for: surfaceID).status == .running, !allowRunning() { return .declined }
 
         setRefreshSpinning(true, for: surfaceID)
         setPaneReloading(true, for: surfaceID)
@@ -2424,6 +2467,7 @@ final class TerminalViewController: NSViewController {
                 }
             }
         }
+        return .started
     }
 
     /// Polls the pane's foreground process until the agent is gone, sends the
@@ -4962,6 +5006,37 @@ final class TerminalViewController: NSViewController {
         }
         menu.addItem(finder)
         return menu
+    }
+
+    /// CLI `edit`: opens the pane's PROJECT root (a scratch pane's working
+    /// directory, since a scratch's root is just home) in the configured
+    /// `editor`, Finder without one. No menu: the caller asked for the
+    /// default, and a menu is no answer to a socket request.
+    func openProjectInEditor(target: PaneSelector) -> Result<String, ControlError> {
+        let pane: StatusSnapshot.Pane
+        do { pane = try target.resolve(in: statusSnapshot().panes) } catch let error as ControlError {
+            return .failure(error)
+        } catch {
+            return .failure(.protocolError(error.localizedDescription))
+        }
+        guard let surface = surface(withShortID: pane.id) else {
+            return .failure(.noSuchPane("pane \(pane.id) not found"))
+        }
+        let directory: URL
+        if let project = workspace.project(containing: surface.id), !project.isScratch {
+            directory = URL(fileURLWithPath: project.rootPath, isDirectory: true)
+        } else {
+            directory = directoryURL(for: surface.id)
+        }
+
+        let configured = editorProvider?()?.trimmingCharacters(in: .whitespaces) ?? ""
+        guard !configured.isEmpty, let editor = EditorCatalog.resolve(configured) else {
+            NSWorkspace.shared.activateFileViewerSelecting([directory])
+            return .success("Revealed \(directory.path) in Finder (no editor is set in the config).")
+        }
+        NSWorkspace.shared.open([directory], withApplicationAt: editor,
+                                configuration: NSWorkspace.OpenConfiguration())
+        return .success("Opened \(directory.path) in \(EditorCatalog.displayName(of: editor)).")
     }
 
     @objc private func editorMenuPicked(_ sender: NSMenuItem) {

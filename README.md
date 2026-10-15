@@ -244,7 +244,8 @@ a plain shell.
 
 **Restart an agent, keeping its conversation.** A pane running Claude or Codex
 has a `⟳` button: Zetty quits the agent and resumes the same conversation in
-place, scrollback kept. Needs `preserve-sessions`.
+place, scrollback kept. Needs `preserve-sessions`. From inside Claude,
+`/zetty-reload` does the same.
 
 **Multiple accounts.** Run a work login in one tab and a personal one in the
 next (Claude Code and Codex). **Settings → Accounts → Add Account…** creates
@@ -259,6 +260,11 @@ Claude pane. It adds:
 
 - `/zetty panes`, `/zetty fleet`, `/zetty peek <path>[:line]` and
   `/zetty split [command…]` commands;
+- `/zetty-reload` (restart this Claude on the same conversation),
+  `/zetty-hibernate [project]` (this project by default; its agents hand off
+  first, and `--force` / `--no-handoff` work as on the CLI; this project needs
+  `--force`, since the Claude asking counts as busy) and `/zetty-open`
+  (this project in your `editor`, or Finder);
 - tools Claude can call to show you a file, list this project's panes, and open
   and read a pane of its own (`zetty-claude-tools = false` turns those off);
 - per-account rate limits on the account chip, a red dot when a turn fails, and
@@ -379,6 +385,8 @@ zetty split --pane 1a2b3c4d --horizontal # split a pane; prints the new pane id
 zetty break --pane 1a2b3c4d              # move a pane into its own tab
 zetty focus --cwd ~/work/api             # switch to a pane
 zetty close --pane 1a2b3c4d --tab        # close a pane, or its whole tab
+zetty restart-agent --pane 1a2b3c4d      # the pane's ⟳: restart its Claude/Codex
+zetty edit --pane 1a2b3c4d               # open the pane's project in your editor
 zetty add-project ~/work/api             # add a folder as a project
 zetty new-project ~/work/new --git       # create a folder and add it
 zetty remove-project api                 # remove a project

@@ -2246,6 +2246,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
                 return .error(message)
             }
             return .ok
+        case .restartAgent(let target, let force):
+            // Fast: this only STARTS the restart; the quit and resume are
+            // timers on main afterwards.
+            if let message = tvc.restartAgent(target: target, force: force) {
+                return .error(message)
+            }
+            return .ok
+        case .openInEditor(let target):
+            switch tvc.openProjectInEditor(target: target) {
+            case .success(let text): return .text(text)
+            case .failure(let error): return .error(error.localizedDescription)
+            }
         case .capture, .quit, .cloneProject, .removeProject, .updateClone, .mergeClone,
              .pushClone, .accounts:
             // Slow verbs — handled on the socket queue in startControlSocket.

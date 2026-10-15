@@ -2,7 +2,7 @@ import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register, SessionUsage } from 'claude-code'
 
 import {
-  baseName, describePanes, fleetLabel, limitWarning, otherAccounts, projectPanes, UUID,
+  baseName, describePanes, fleetLabel, hibernateArgs, limitWarning, otherAccounts, projectPanes, UUID,
 } from './panes'
 
 // Zetty bridge: keeps one snapshot per pane at
@@ -113,6 +113,9 @@ const USAGE = [
   '  /zetty fleet                 a sidebar of this project\'s panes; press one to go to it',
   '  /zetty peek <path>[:line]    open a file in Zetty\'s viewer',
   '  /zetty split [--down] [command…]   open a pane beside this one, optionally running a command',
+  '',
+  'Also: /zetty-reload (restart this Claude on this conversation), /zetty-hibernate [project],',
+  '/zetty-open (this project in your editor).',
 ].join('\n')
 
 // Splits this pane and, with a command, types it into the new one. Shared with
@@ -153,6 +156,70 @@ async function startCommands($: EngineInterface): Promise<void> {
     description: 'Zetty: list this project\'s panes, peek a file, or open a pane',
     argumentHint: 'panes | fleet | peek <path> | split [command]',
   })
+  // Top-level rather than `/zetty <verb>`, so each is one word in the
+  // typeahead. Not `immediate`: each waits for a turn in flight to end.
+  await $.command.register({
+    name: 'zetty-reload',
+    description: 'Zetty: restart this Claude in its pane, back on this conversation',
+  })
+  await $.command.register({
+    name: 'zetty-hibernate',
+    description: 'Zetty: hibernate a project (this one by default); its agents hand off first',
+    argumentHint: '[project] [--force] [--no-handoff]',
+  })
+  await $.command.register({
+    name: 'zetty-open',
+    description: "Zetty: open this pane's project in your editor",
+  })
+}
+
+// MARK: - Pane actions
+
+// The ⟳ button, from inside: Zetty covers the pane, types /exit and resumes
+// this conversation. `--force` because the command only runs once a turn has
+// ended, yet the hook state Zetty reads can still say "running" for a moment.
+async function reloadThisPane($: EngineInterface): Promise<string> {
+  const me = await paneID($)
+  if (me === undefined) return 'This session is not running inside a Zetty pane.'
+  const ran = await zetty($, ['restart-agent', '--pane', me, '--force'])
+  return ran.ok ? 'Restarting Claude in this pane; it comes back on this conversation.' : ran.out
+}
+
+async function hibernate($: EngineInterface, args: string): Promise<string> {
+  const parsed = hibernateArgs(args)
+  if ('error' in parsed) return parsed.error
+  const me = await paneID($)
+  const handoff = !parsed.flags.includes('--no-handoff')
+  let name = parsed.name
+  let isThisProject = false
+  if (me !== undefined) {
+    const status = await zetty($, ['status', '--json'])
+    const mine = status.ok ? projectPanes(status.out, me)?.project : undefined
+    if (name === '') name = mine ?? ''
+    isThisProject = mine !== undefined && mine.toLowerCase() === name.toLowerCase()
+  }
+  if (name === '') return 'Name a project: this session is not running inside a Zetty pane.'
+
+  // Never forced on the person's behalf: which panes are busy is Zetty's call,
+  // and the map behind `status` freezes while Zetty is not the active app.
+  const ran = await zetty($, ['hibernate', name, ...parsed.flags])
+  if (!ran.ok) {
+    // The CLI's own refusal names the busy panes and says "pass --force".
+    return ran.out.includes('--force')
+      ? `${ran.out}\nRun /zetty-hibernate ${name} --force to go ahead.`
+      : ran.out
+  }
+  const how = handoff
+    ? 'Each agent compacts its conversation into a handoff first; then its sessions end.'
+    : 'Its sessions end now, without handoffs.'
+  const here = isThisProject ? ' That includes this pane: open the project again to wake it.' : ''
+  return `Hibernating ${name}. ${how}${here}`
+}
+
+async function openInEditor($: EngineInterface): Promise<string> {
+  const me = await paneID($)
+  if (me === undefined) return 'This session is not running inside a Zetty pane.'
+  return (await zetty($, ['edit', '--pane', me])).out
 }
 
 // MARK: - Tools for the model
@@ -475,6 +542,12 @@ export const register: Register = on => {
         return { text: USAGE }
     }
   })
+
+  on('command.run', { command: 'zetty-reload' }, async $ => ({ text: await reloadThisPane($) }))
+
+  on('command.run', { command: 'zetty-hibernate' }, async ($, e) => ({ text: await hibernate($, e.args) }))
+
+  on('command.run', { command: 'zetty-open' }, async $ => ({ text: await openInEditor($) }))
 
   on('tool.call', { tool: 'mcp__zetty-bridge__show_file' }, async ($, e) => {
     const input = e as unknown as { path?: unknown; line?: unknown }

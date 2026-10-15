@@ -14,6 +14,21 @@ triggers:
 > limit). This file is authoritative: edit it here, then run `hydra sync`.
 
 `⟳` in a pane's gutter restarts Claude or Codex on its existing conversation.
+`zetty restart-agent` and the Claude mod's `/zetty-reload` reach the same
+`startAgentRestart`; only the button asks before interrupting a turn.
+
+- **One body, two front doors.** `startAgentRestart(surfaceID:allowRunning:)`
+  returns `.started`, `.refused(why)` or `.declined`, and never shows UI. The
+  button (`refreshAgentPane`) turns a refusal into the sheet and asks the busy
+  dialog as `allowRunning`; the CLI (`restartAgent(target:force:)`) returns the
+  text and answers `allowRunning` with `--force`, because a socket request
+  never waits on a dialog. Failures after it started (did not quit, did not
+  come back) are still the sheet, which does not block the socket.
+- **A pane restarting itself works because nothing is waited on.** The mod's
+  command returns as soon as the CLI says `.ok`; `/exit` is typed a run-loop
+  turn later, into a Claude that has finished the command. The mod passes
+  `--force` since a slash command only runs once a turn has ended, while the
+  hook state can still say `running` for a moment.
 
 - **The pane is COVERED and the session is driven from OUTSIDE.** `zmx send`
   writes to a session's PTY whether or not a client is attached, so the quit

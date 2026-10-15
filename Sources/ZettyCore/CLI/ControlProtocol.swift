@@ -183,6 +183,15 @@ public enum ControlRequest: Equatable, Sendable {
     /// whose tab is not in the shown view is attached to it first (the
     /// `TilePlacement` rule).
     case focus(target: PaneSelector)
+    /// Restart the targeted pane's agent (Claude or Codex) on its existing
+    /// conversation, as the pane's ⟳ button does. `.ok` means the restart
+    /// STARTED: the quit and resume run afterwards, behind the pane's cover.
+    /// An agent in the middle of a turn is refused unless `force`.
+    case restartAgent(target: PaneSelector, force: Bool = false)
+    /// Open the targeted pane's project (its root; a scratch pane's working
+    /// directory) in the configured `editor`, Finder without one. Response
+    /// `.text` naming what was opened, and with what.
+    case openInEditor(target: PaneSelector)
     /// The targeted pane's recent output (`lines` from the end; nil → all
     /// retained scrollback). Requires the pane's preserved zmx session.
     case capture(target: PaneSelector, lines: Int?)
@@ -361,6 +370,13 @@ extension ControlRequest: Codable {
             )
         case "focus":
             self = .focus(target: try container.decode(PaneSelector.self, forKey: .target))
+        case "restart-agent":
+            self = .restartAgent(
+                target: try container.decodeIfPresent(PaneSelector.self, forKey: .target) ?? .focused,
+                force: try decodeForce())
+        case "edit":
+            self = .openInEditor(
+                target: try container.decodeIfPresent(PaneSelector.self, forKey: .target) ?? .focused)
         case "capture":
             self = .capture(
                 target: try container.decodeIfPresent(PaneSelector.self, forKey: .target) ?? .focused,
@@ -529,6 +545,13 @@ extension ControlRequest: Codable {
             try container.encode(focus, forKey: .focus)
         case .focus(let target):
             try container.encode("focus", forKey: .command)
+            try container.encode(target, forKey: .target)
+        case .restartAgent(let target, let force):
+            try container.encode("restart-agent", forKey: .command)
+            try container.encode(target, forKey: .target)
+            try container.encode(force, forKey: .force)
+        case .openInEditor(let target):
+            try container.encode("edit", forKey: .command)
             try container.encode(target, forKey: .target)
         case .capture(let target, let lines):
             try container.encode("capture", forKey: .command)

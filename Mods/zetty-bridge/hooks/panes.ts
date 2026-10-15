@@ -141,3 +141,25 @@ export function otherAccounts(accountsJSON: string, currentDirectory: string, ho
       && expand(account.directory) !== expand(currentDirectory))
     .map(account => account.name as string)
 }
+
+// MARK: - /zetty-hibernate
+
+export const HIBERNATE_USAGE = 'Usage: /zetty-hibernate [project] [--force] [--no-handoff]'
+
+// `/zetty-hibernate [project…] [--force] [--no-handoff]`. Every word that is
+// not a flag is the project's name (names may hold spaces); an empty name
+// means this pane's own project. The two flags are the CLI's, passed through.
+export function hibernateArgs(args: string): { name: string; flags: string[] } | { error: string } {
+  const flags: string[] = []
+  const words: string[] = []
+  for (const word of args.trim().split(/\s+/).filter(word => word !== '')) {
+    if (word === '--force' || word === '--no-handoff') {
+      if (!flags.includes(word)) flags.push(word)
+    } else if (word.startsWith('-')) {
+      return { error: `Unknown option ${word}.\n${HIBERNATE_USAGE}` }
+    } else {
+      words.push(word)
+    }
+  }
+  return { name: words.join(' '), flags }
+}

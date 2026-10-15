@@ -134,6 +134,13 @@ public enum ControlCLI {
       zetty close (--pane <id> | --cwd <path>) [--tab] [--force]
                                               close a pane (a tab's last pane closes
                                               the tab; --tab closes the whole tab)
+      zetty restart-agent (--pane <id> | --cwd <path>) [--force]
+                                              restart the pane's Claude or Codex on
+                                              its own conversation (the pane's ⟳);
+                                              a turn in progress needs --force
+      zetty edit [--pane <id> | --cwd <path>]
+                                              open the pane's project in your
+                                              configured editor (Finder without one)
       zetty reload                          reload zetty config (⇧⌘, equivalent)
       zetty tiles [--on|--off] [--profile <name>]
                                             toggle the grid of running sessions (⇧⌘G);
@@ -220,7 +227,8 @@ public enum ControlCLI {
     public static let verbs: [String] = [
         "status", "ls", "send", "capture", "view", "new-tab", "add-project", "new-project",
         "clone", "update-clone", "merge-clone", "push-clone",
-        "remove-project", "hibernate", "wake", "split", "break", "focus", "close", "reload", "tiles",
+        "remove-project", "hibernate", "wake", "split", "break", "focus", "close",
+        "restart-agent", "edit", "reload", "tiles",
         "scratch", "scratch-clear", "quit", "accounts", "run",
         "new-space", "rename-space", "remove-space", "move-to-space",
     ]
@@ -320,6 +328,10 @@ public enum ControlCLI {
             return runFocus(arguments)
         case "close":
             return runClose(arguments)
+        case "restart-agent":
+            return runRestartAgent(arguments)
+        case "edit":
+            return runEdit(arguments)
         case "reload":
             return expectOK(.reload, success: "reloaded")
         case "tiles":
@@ -640,6 +652,33 @@ public enum ControlCLI {
           --force         close even when the pane (or tab) is busy
 
         DESTRUCTIVE: kills what is running in the pane (or every pane of the tab).
+        """,
+        "restart-agent": """
+        usage: zetty restart-agent (--pane <id> | --cwd <path>) [--force]
+
+        Restart the pane's Claude or Codex on its existing conversation, as the
+        pane's ⟳ button does: the pane is covered, the agent quits, and the
+        same conversation is resumed. Returns once the restart has STARTED.
+        Needs preserve-sessions. An agent in the middle of a turn is refused
+        with an error; --force interrupts it. It never waits on a dialog.
+
+          --pane <id>     the pane whose agent to restart
+          --cwd <path>    the single pane whose working dir is <path>
+          --force         restart even while the agent is running a turn
+
+        Interrupts a turn in progress only with --force; the conversation is kept.
+        """,
+        "edit": """
+        usage: zetty edit [--pane <id> | --cwd <path>]
+
+        Open the pane's project folder (a scratch pane's working directory) in
+        the editor set by `editor` in the config, or in Finder when none is set.
+        Prints what was opened and with what. Default target: the focused pane.
+
+          --pane <id>     the pane whose project to open
+          --cwd <path>    the single pane whose working dir is <path>
+
+        Opens an app; destroys nothing.
         """,
         "reload": """
         usage: zetty reload
@@ -1343,6 +1382,46 @@ public enum ControlCLI {
             return failure("focus needs an explicit target: --pane <id> or --cwd <path>")
         }
         return expectOK(.focus(target: target), success: nil)
+    }
+
+    private static func runRestartAgent(_ arguments: [String]) -> Int32 {
+        var target: PaneSelector?
+        var force = false
+        var index = 0
+        while index < arguments.count {
+            switch arguments[index] {
+            case "--pane":
+                index += 1
+                guard index < arguments.count else { return failure("--pane needs a value") }
+                target = .pane(arguments[index])
+            case "--cwd":
+                index += 1
+                guard index < arguments.count else { return failure("--cwd needs a value") }
+                target = .cwd(arguments[index])
+            case "--force":
+                force = true
+            default:
+                return failure("unknown argument \"\(arguments[index])\"")
+            }
+            index += 1
+        }
+        // Explicit, like `close`: restarting whichever agent holds focus is
+        // not something to do by accident.
+        guard let target else {
+            return failure("restart-agent needs an explicit target: --pane <id> or --cwd <path>")
+        }
+        return expectOK(.restartAgent(target: target, force: force), success: "restarting")
+    }
+
+    private static func runEdit(_ arguments: [String]) -> Int32 {
+        var target = PaneSelector.focused
+        if !arguments.isEmpty {
+            guard let explicit = parseRequiredTarget(arguments) else {
+                return failure("usage: zetty edit [--pane <id> | --cwd <path>]")
+            }
+            target = explicit
+        }
+        return expectText(.openInEditor(target: target))
     }
 
     private static func runClose(_ arguments: [String]) -> Int32 {
