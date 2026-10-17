@@ -263,7 +263,7 @@ be wrong**, and folds otherwise.
 - **`Open ▾` is not on the bar at all.** It was a pill here, folding into the
   `⋯` menu when compact, and it opened the FOCUSED pane's directory — which in
   a split tab means guessing. It is a `folder` button in each pane's gutter
-  now (`PaneActionWiring.onOpen`), second after refresh as in a tile's header,
+  now (`PaneActionWiring.onOpen`), right after refresh as in a tile's header,
   so a button always names its own pane. Do not bring the pill back.
 - **The account always folds** into the location dropup. It is identity, not
   state, and the status bar is not its only surface — the tab pill carries an

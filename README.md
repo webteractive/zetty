@@ -136,9 +136,10 @@ copy-bind = n copy-cursor-down
 - **Customize** — right-click → **Project Settings…** for a name, color, icon
   (SF Symbol or emoji), theme, environment variables, and per-project overrides
   for session preservation and notifications.
-- **Hibernate** — right-click → **Hibernate Project** frees a project's
-  processes and keeps its layout; it moves to the **Hibernating** section until
-  you wake it. `hibernate-after = 60m` does this automatically for idle
+- **Hibernate** — right-click → **Hibernate Project**, or the moon in the
+  gutter of any of its panes, frees a project's processes and keeps its
+  layout; it moves to the **Hibernating** section until you wake it.
+  `hibernate-after = 60m` does this automatically for idle
   projects (never Home), measured from when a project was last on screen,
   typed into, or written to by one of its agents. An agent sitting idle at an
   empty prompt no longer keeps its project awake; a working agent, a command

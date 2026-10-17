@@ -28,6 +28,12 @@ struct PaneActionWiring {
     let onRefreshAgent: (UUID) -> Void
     /// Show the Open picker for this pane's own directory, under that button.
     let onOpen: (UUID, NSView) -> Void
+    /// Whether this pane's project can be hibernated: every project but Home,
+    /// the same rule as the sidebar's Hibernate Project.
+    let canHibernate: (UUID) -> Bool
+    /// Hibernate this pane's project, through the sidebar's path (busy-pane
+    /// confirmation and handoffs included).
+    let onHibernate: (UUID) -> Void
 }
 
 // MARK: - SurfaceNodeView
@@ -387,7 +393,7 @@ final class LeafContainerView: NSView, AgentRestartPresenting {
     }
 
     /// Lays the gutter actions out against the trailing edge:
-    /// refresh · open · file tree · split-vertical · split-horizontal · break · close.
+    /// hibernate · refresh · open · file tree · split-vertical · split-horizontal · break · close.
     /// The split pair is always available; break and × only when the pane is
     /// closable. Scroll-to-bottom is deliberately NOT here — its button did
     /// nothing in panes running an agent CLI and the cause is unfound, so the
@@ -403,6 +409,16 @@ final class LeafContainerView: NSView, AgentRestartPresenting {
             stack.topAnchor.constraint(equalTo: topAnchor, constant: 4),
             stack.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -4),
         ])
+
+        // Hibernate puts the whole PROJECT away, so it leads, furthest from
+        // the pane's own ×. Home is never hibernated, so it has none.
+        if paneActions?.canHibernate(surfaceID) ?? false {
+            stack.addArrangedSubview(makeGutterButton(
+                symbol: "moon.zzz", fallback: "☾",
+                toolTip: "Hibernate this project: its agents hand off, then its sessions end",
+                action: #selector(hibernateTapped)
+            ))
+        }
 
         // Leading in the gutter, away from × — a refresh ends the running
         // agent, so it should not sit under the pointer that just missed close.
@@ -505,6 +521,10 @@ final class LeafContainerView: NSView, AgentRestartPresenting {
 
     @objc private func refreshAgentTapped() {
         paneActions?.onRefreshAgent(surfaceID)
+    }
+
+    @objc private func hibernateTapped() {
+        paneActions?.onHibernate(surfaceID)
     }
 
     @objc private func openTapped(_ sender: NSButton) {

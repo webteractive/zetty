@@ -8705,6 +8705,13 @@ final class TerminalViewController: NSViewController {
                 onRefreshAgent: { [weak self] id in self?.refreshAgentPane(surfaceID: id) },
                 onOpen: { [weak self] id, anchor in
                     self?.showEditorMenu(from: anchor, forSurface: id)
+                },
+                canHibernate: { [weak self] id in
+                    self?.workspace.project(containing: id).map { !$0.isHome } ?? false
+                },
+                onHibernate: { [weak self] id in
+                    guard let self, let project = self.workspace.project(containing: id) else { return }
+                    self.hibernateProject(project)
                 }
             ),
             onRatioChange: { [weak self] path, ratio in
