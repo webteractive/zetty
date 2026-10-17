@@ -148,6 +148,17 @@ Needs `preserve-sessions` (`handoffsEnabled`); without zmx both hibernation and
 - **Text and Enter go in separate writes**, 0.3 seconds apart. Both harnesses
   read them arriving together as a paste and keep the Enter as a newline:
   the line sits in the box, looking sent to nobody.
+- **The gap is not always enough, so the box is read after the Enter.** A
+  hibernate from the pane gutter's moon on claude 2.1.302 (2026-10-17,
+  isolated instance, Glen) left the line in the box with the CR kept as a
+  newline, and the five minutes ran out on it. A later CR did not send it;
+  Enter in the kitty encoding (`CSI 13 u`) did at once. Replayed by hand
+  the same writes submitted every time, so the cause is a timing the click
+  sets up (the app rebuilding the pane area as the request is typed), and
+  it was not reproduced. So a box still holding the line 1.5 s after the CR
+  gets `CSI 13 u`; still holding it after that, the line is cleared with
+  Ctrl+C (it is ours, typed into a box seen empty) and the pane fails at
+  once with "the request sat in its prompt box unsent".
 - **The instructions are one short line.** A newline would submit half of
   it, and Claude folds a long paste into a `[Pasted text]` chip that a slash
   command would take as its whole argument. `HandoffCompactionTests` holds

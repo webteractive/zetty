@@ -219,6 +219,9 @@ enum ZmxRunner {
     /// Ctrl+C in the same encoding. It clears a prompt box that holds text,
     /// and a raw 0x03 did nothing to either harness.
     private static let kittyControlC = "\u{1B}[99;5u"
+    /// Enter in the same encoding, the second try when a bare CR was kept
+    /// as a newline.
+    private static let kittyEnter = "\u{1B}[13u"
 
     /// Has the agent in `session` compact its conversation, in its own chat,
     /// and waits for the harness to say it has. Nil when cancelled. Blocking
@@ -275,8 +278,23 @@ enum ZmxRunner {
             return .failed("the request could not be typed")
         }
         Thread.sleep(forTimeInterval: enterDelay)
-        guard send(session: session, text: "\r", zmxPath: zmxPath, timeout: timeout) else {
-            return .failed("the request could not be submitted")
+        guard press("\r") != nil else { return .failed("the request could not be submitted") }
+        // An unreadable screen is taken as submitted: no key is pressed blind.
+        func boxIsEmpty() -> Bool {
+            screen().map { PromptBox.boxIsEmpty(vtScreen: $0, agent: agent) } ?? true
+        }
+        if !boxIsEmpty() {
+            // The Enter was kept as a newline and the line sits in the box
+            // unsent: a hibernate from the pane gutter on claude 2.1.302
+            // waited out its 5 minutes on it, the app busy with the click.
+            // Enter in the kitty encoding is a key press, never pasted text.
+            ZettyLog.lifecycle.log("handoff: \(session) kept the Enter as a newline; pressing it again")
+            guard press(kittyEnter) != nil else { return unreadable }
+            if !boxIsEmpty() {
+                // Ours, typed into a box that was empty: take it back out.
+                _ = press(kittyControlC)
+                return .failed("the request sat in its prompt box unsent")
+            }
         }
         ZettyLog.lifecycle.log("handoff: asked \(session) to compact")
 
