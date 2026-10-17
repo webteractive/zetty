@@ -93,6 +93,17 @@ Needs `preserve-sessions` (`handoffsEnabled`); without zmx both hibernation and
   read first, before anything is sent, and a box that is not empty is a
   failure with that reason: the project stays awake and the person decides.
   Nothing is cleared that somebody typed.
+- **Faint text in the box is a placeholder, not a draft** (typed text is
+  never faint), unless it is a `[…]` chip. Claude 2.1.301 draws several:
+  `Try "…"`, `Message @<agent>…`, the queued-message hints and the
+  predicted next prompt (prompt suggestions, on for Glen). Only `Try "…"`
+  used to pass, so a pane showing any other failed every hibernate as
+  "holds a draft or a question" and Glen fell back to `/exit` and a
+  hibernate with no handoff (2026-10-16, event-platform, three tries in a
+  row). The same read decides `hibernate-after`, so such a pane no longer
+  keeps its project awake either. Which placeholder event-platform showed
+  was inferred, not seen: its screen was gone by the time it was looked
+  at, and a resumed copy of that conversation read empty.
 - **Only then is a turn stopped.** Claude panes whose hooks say `running`,
   and a Codex whose screen shows `esc to interrupt`, are sent Escape.
   `needsAttention` is not a reason: it is an idle Claude's notification (box
@@ -123,8 +134,23 @@ Needs `preserve-sessions` (`handoffsEnabled`); without zmx both hibernation and
   gained since the request is read. Claude's took 8 to 12 seconds on a small
   chat, Codex's about 30.
 - **The screen only tells a compaction still running from a harness that
-  stopped without one.** Every 5 seconds: no `Compacting…` line near the
-  bottom and an empty box, three readings in a row, is "it did not compact".
+  stopped without one.** Every 5 seconds: no `Compacting…` line in the 12
+  lines above the input and an empty box, three readings in a row, is "it
+  did not compact". **Counted from the input, not the screen's bottom**
+  (`PromptBox.aboveInput`): beneath Claude's box sit its status line, the
+  permission mode and hook output, and above it a tip under the working
+  line and any plugin's band (warden's runs to four rows). Twelve lines up
+  from the bottom lost the working line behind them: warden's compaction
+  was given up on at 66 seconds and had compacted anyway (2026-10-16), so
+  the retry found it done.
+- **`⎿  Compacted` on screen is not a rest** (`PromptBox.showsCompacted`).
+  Claude writes `compact_boundary` to the transcript late and out of
+  order: warden's was stamped 08:16:43, ahead of the `/compact` record
+  stamped a minute earlier, and the poll had still not read it at
+  08:16:50. Those seconds counted toward the three resting reads. The
+  transcript stays the answer; the screen only stops the clock on it. An
+  older `Compacted` line within the window can make a harness that never
+  compacts wait out the five minutes rather than fail at 15 seconds.
   The session id stays the same through a compaction in both harnesses, and
   a wrong transcript ends here, as a failure after 15 seconds, not as a
   5-minute wait.

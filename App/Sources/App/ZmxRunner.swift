@@ -293,7 +293,9 @@ enum ZmxRunner {
             }
             seconds += 1
             guard seconds.isMultiple(of: compactionScreenInterval), let now = screen() else { continue }
+            // Shown as compacted is the transcript catching up, not a rest.
             let resting = !PromptBox.isCompacting(vtScreen: now)
+                && !PromptBox.showsCompacted(vtScreen: now)
                 && PromptBox.readiness(vtScreen: now, agent: agent) == .ready
             restingReads = resting ? restingReads + 1 : 0
             // It answered that there is nothing to compact: already a handoff.

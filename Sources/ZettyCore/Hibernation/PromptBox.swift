@@ -28,19 +28,22 @@ public enum PromptBox {
     }
 
     /// `isEmpty(screen:)` for the screen as `zmx history --vt` gives it, styling and all, with
-    /// faint text taken out first. An empty box in a new or cleared conversation shows a faint
-    /// suggestion (`❯ Try "create a util logging.py that..."`, measured on 2.1.289), which plain
-    /// text can't tell from a draft; typed text is never faint.
+    /// faint text taken out first. An empty box shows a faint placeholder, which plain text can't
+    /// tell from a draft; typed text is never faint.
     ///
-    /// Only that suggestion is let through: the faint text must read `Try "…"`. Anything else drawn
-    /// faint in the box (a pasted-text or image chip, if Claude ever draws one faint) is a draft.
+    /// Claude has several placeholders, not one: `Try "create a util logging.py that..."` in a new
+    /// conversation (measured on 2.1.289), and in 2.1.301 also `Message @<agent>…`, the queued-
+    /// message hints (`Press up to edit queued messages`, `Press Enter to edit the selected
+    /// message…`) and the predicted next prompt. Allowing only the first made every hibernate of a
+    /// pane showing one of the others fail as "holds a draft". So any faint text is let through
+    /// except a chip, `[Pasted text #1 +20 lines]` or `[Image #1]`, should Claude draw one faint.
     public static func isEmpty(vtScreen: String) -> Bool {
         guard isEmpty(screen: withoutFaintText(vtScreen)) else { return false }
         let plain = withoutFaintText(vtScreen, keepFaint: true)
         let lines = plain.split(omittingEmptySubsequences: false, whereSeparator: \.isNewline)
         guard let input = lines.last(where: { $0.drop(while: \.isWhitespace).first == prompt }) else { return false }
-        let typed = input.drop(while: \.isWhitespace).dropFirst().trimmingCharacters(in: .whitespaces)
-        return typed.isEmpty || typed.hasPrefix("Try \"")
+        let placeholder = input.drop(while: \.isWhitespace).dropFirst().trimmingCharacters(in: .whitespaces)
+        return !placeholder.hasPrefix("[")
     }
 
     /// The screen with every escape sequence removed and every run drawn faint (SGR 2) dropped.
@@ -226,11 +229,16 @@ extension PromptBox {
     /// empty box does not mean it has stopped: `Compacting conversation…`
     /// (Claude) and `Compacting context` (Codex), both drawn above the box.
     public static func isCompacting(vtScreen: String) -> Bool {
-        let lines = withoutFaintText(vtScreen, keepFaint: true)
-            .split(omittingEmptySubsequences: true, whereSeparator: \.isNewline)
-        // Only the screen as it stands: a finished compaction's line scrolls
-        // up and stays in the history above.
-        return lines.suffix(compactingWindow).contains { $0.contains("Compacting") }
+        aboveInput(vtScreen).contains { $0.contains("Compacting") }
+    }
+
+    /// Whether Claude shows a compaction as finished, `⎿  Compacted (ctrl+o
+    /// to see full summary)`. Not proof, since the transcript is the answer,
+    /// but not a harness at rest either: Claude writes the marker to its
+    /// transcript late, and out of order (stamped 08:16:43, still unread at
+    /// 08:16:50), so the screen can say done while the transcript does not.
+    public static func showsCompacted(vtScreen: String) -> Bool {
+        aboveInput(vtScreen).contains { $0.contains("Compacted") }
     }
 
     /// Whether Claude has just declined to compact because there is nothing
@@ -239,13 +247,33 @@ extension PromptBox {
     /// checked for this before asking (`HandoffCompaction.needsCompaction`);
     /// this is for whatever that check does not foresee.
     public static func saysNothingToCompact(vtScreen: String) -> Bool {
-        withoutFaintText(vtScreen, keepFaint: true)
-            .split(omittingEmptySubsequences: true, whereSeparator: \.isNewline)
-            .suffix(compactingWindow).contains { $0.contains("Not enough messages to compact") }
+        aboveInput(vtScreen).contains { $0.contains("Not enough messages to compact") }
     }
 
-    /// How many lines up from the bottom a harness draws its working line.
-    private static let compactingWindow = 12
+    /// The non-empty lines a harness draws its working line among: the
+    /// `inputWindow` lines above its input line, and everything below it.
+    /// Only the screen as it stands, since a finished compaction's line
+    /// scrolls up and stays in the history above.
+    ///
+    /// Counted from the input, not from the bottom of the screen. Beneath
+    /// the box Claude draws a status line, the permission mode and whatever
+    /// a hook prints, and between its working line and the box sit a tip
+    /// and any plugin's band. A window of twelve lines from the bottom lost
+    /// `Compacting conversation…` behind them while it was still running,
+    /// and the compaction was given up on as "it did not compact" before it
+    /// finished. A screen with no input line falls back to the bottom.
+    private static func aboveInput(_ vtScreen: String) -> ArraySlice<Substring> {
+        let lines = withoutFaintText(vtScreen, keepFaint: true)
+            .split(omittingEmptySubsequences: true, whereSeparator: \.isNewline)
+        guard let input = lines.lastIndex(where: {
+            let first = $0.drop(while: \.isWhitespace).first
+            return first == prompt || first == codexPrompt
+        }) else { return lines.suffix(inputWindow) }
+        return lines[max(lines.startIndex, input - inputWindow)...]
+    }
+
+    /// How many lines above its input a harness draws its working line, at most.
+    private static let inputWindow = 12
 
     /// The end of a pane's history, which is all a reader looks at: a
     /// preserved pane's scrollback can run to megabytes. Cut forward to a

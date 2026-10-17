@@ -81,6 +81,15 @@ rm -rf /tmp/zti                               # removes the link, not ~/.claude/
   (status dots and needs-attention come from the probe only), and the mod's
   usage snapshot is written under the real `~/.zetty/agent-usage`, where the
   real app sweeps it as a surface it does not own.
+- **So a Claude pane's session is GUESSED, and can be guessed stale.**
+  Without hooks the session store matches the newest transcript in the
+  pane's directory, and it ran before a just-started Claude wrote its own:
+  on 2026-10-17 it picked a reply-less chat left in `-private-tmp-zti-work`
+  by an earlier test, kept it, and `hibernate` logged "holds no
+  conversation, skipped". Give each test a fresh directory, or resume the
+  chat by id (`claude --resume <id>`) once its transcript exists. The CLI
+  also counts an agent pane as busy, so hibernating one needs `--force`
+  (the handoff still runs).
 - **Codex's shared daemon is shared**, and the busy-pane teardown freeze was
   never reproduced in isolation (`DEVELOPMENT.md`).
 - **The test app is a real window on Glen's screen** with the same bundle id.

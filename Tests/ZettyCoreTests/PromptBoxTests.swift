@@ -33,10 +33,20 @@ private let rule = String(repeating: "─", count: 40)
     #expect(!PromptBox.isEmpty(screen: "\(earlier)\nreply\n\(rule)\n❯ draft\n\(rule)"))
 }
 
-@Test func aFaintSuggestionIsStillEmptyButFaintAnythingElseIsADraft() {
+@Test func aFaintPlaceholderIsStillEmptyButAFaintChipIsADraft() {
     let faint = "\u{1B}[2m", reset = "\u{1B}[0m"
-    #expect(PromptBox.isEmpty(vtScreen: "\(rule)\n❯ \(faint)Try \"fix lint errors\"\(reset)\n\(rule)"))
+    // Every placeholder claude 2.1.301 can put in an empty box, not only the
+    // first one ever measured: "holds a draft" failed hibernates on the rest.
+    for placeholder in ["Try \"fix lint errors\"", "Message @researcher…",
+                        "Press up to edit queued messages",
+                        "Press Enter to edit the selected message, or up again for history",
+                        "deploy to both"] {
+        #expect(PromptBox.isEmpty(vtScreen: "\(rule)\n❯ \(faint)\(placeholder)\(reset)\n\(rule)"), "\(placeholder)")
+    }
     #expect(!PromptBox.isEmpty(vtScreen: "\(rule)\n❯ \(faint)[Pasted text #1]\(reset)\n\(rule)"))
+    #expect(!PromptBox.isEmpty(vtScreen: "\(rule)\n❯ \(faint)[Image #1]\(reset)\n\(rule)"))
+    // Typed text beside a faint one is still typed.
+    #expect(!PromptBox.isEmpty(vtScreen: "\(rule)\n❯ fix \(faint)the tests\(reset)\n\(rule)"))
 }
 
 @Test func aColourIsNotMistakenForFaint() {
@@ -179,6 +189,39 @@ private func fixture(_ name: String) throws -> String {
     // One that finished long ago is history, not the screen.
     let old = "✢ Compacting conversation…\n" + String(repeating: "line\n", count: 40) + "❯ \n"
     #expect(!PromptBox.isCompacting(vtScreen: old))
+}
+
+@Test func compactingIsSeenAboveTheBoxWhateverIsDrawnBeneathIt() {
+    // As claude 2.1.301 draws it in a real pane: a tip under the working
+    // line, a plugin's band above the box, and a status line, a hook's line
+    // and the permission mode beneath it. Counted from the bottom, the
+    // working line was out of sight and a running compaction was given up on.
+    let screen = """
+        ❯ /compact Write this summary as a handoff
+        ✳ Compacting conversation… (40s · ↓ 2.1k tokens)
+          ⎿  Tip: Hit shift+tab to cycle between manual mode, auto-accept edit mode,
+             and plan mode
+        warden .env: 1 problem · ~/.secrets: 1 problem [ Open /env ][ Hide ]
+          warn   exposed   A_KEY was written…
+          warn   exposed   B_KEY was written…
+                                                  new task? /clear to save 157.1k tokens
+        \(rule)
+        ❯\u{A0}
+        \(rule)
+          ⚠ hydra: rule matched: shell-navigation
+          Opus 5.5 | ~/AI/warden | main | effort: high | ctx: 16%
+          ⏵⏵ bypass permissions on (shift+tab to cycle)
+          background: 1 task running
+        """
+    #expect(PromptBox.isCompacting(vtScreen: screen))
+    #expect(!PromptBox.showsCompacted(vtScreen: screen))
+    let done = screen.replacingOccurrences(
+        of: "✳ Compacting conversation… (40s · ↓ 2.1k tokens)", with: "  ⎿  Compacted (ctrl+o to see full summary)")
+    #expect(PromptBox.showsCompacted(vtScreen: done))
+    #expect(!PromptBox.isCompacting(vtScreen: done))
+    let declined = screen.replacingOccurrences(
+        of: "✳ Compacting conversation… (40s · ↓ 2.1k tokens)", with: "  ⎿  Not enough messages to compact.")
+    #expect(PromptBox.saysNothingToCompact(vtScreen: declined))
 }
 
 @Test func nothingToCompactIsReadOffTheBottomOfTheScreen() {
