@@ -236,3 +236,26 @@ private func fixture(_ name: String) throws -> String {
     #expect(!PromptBox.saysNothingToCompact(vtScreen: old))
 }
 
+
+// A pane started on a resume stays covered until the harness has drawn its
+// input: the process is seen long before, and lifting then showed the line
+// typed into the shell.
+@Test func aHarnessShowsItsInputOnceItsBoxIsDrawn() {
+    let typed = "➜  work cd '/tmp/work' && claude --resume 'a1b2' 'This project was hibernated…'"
+    #expect(!PromptBox.showsInput(vtScreen: typed, agent: .claude, below: "resume"))
+    // Working on the first message: the box is drawn, and empty or not it counts.
+    let up = "\(typed)\n⏺ Back after the hibernate.\n\(rule)\n❯ \n\(rule)\n  ⏵⏵ bypass permissions on"
+    #expect(PromptBox.showsInput(vtScreen: up, agent: .claude, below: "resume"))
+    // A shell prompt drawn with the same glyph has no rules around it.
+    #expect(!PromptBox.showsInput(vtScreen: "❯ cd work\n❯ ", agent: .claude))
+    #expect(PromptBox.showsInput(vtScreen: "Codex\n› \n  ? for shortcuts", agent: .codex))
+    #expect(!PromptBox.showsInput(vtScreen: "➜  work codex resume 'a1b2'", agent: .codex, below: "resume"))
+}
+
+@Test func theOldAgentsBoxAboveTheResumeLineDoesNotCount() {
+    // After /exit the previous Claude's box is still in the scrollback.
+    let old = "\(rule)\n❯ \n\(rule)\nResume this session with:\nclaude --resume a1b2\n"
+        + "➜  work claude --resume 'a1b2'"
+    #expect(!PromptBox.showsInput(vtScreen: old, agent: .claude, below: "resume"))
+    #expect(PromptBox.showsInput(vtScreen: old + "\n\(rule)\n❯ \n\(rule)", agent: .claude, below: "resume"))
+}

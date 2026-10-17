@@ -326,7 +326,9 @@ Needs `preserve-sessions` (`handoffsEnabled`); without zmx both hibernation and
   (`cd … && claude --resume '…' '<wake line>'`) and was watched being typed
   into a shell. The cover is `ReloadingOverlay`, the refresh button's, with
   its two rules: a CHILD of the terminal view, and lifted only after the
-  agent has stayed in the foreground for `agentReadySightings` polls. It
+  agent has stayed in the foreground for `agentReadySightings` polls AND
+  drawn its input below the typed line (`agentHasDrawnInput`; the
+  sightings alone lifted it mid-load on claude 2.1.302). It
   goes up in `injectStartupCommandIfPending`, before the grace period the
   line waits out, which is what lets a frame draw first. After 30 seconds
   with no agent it lifts anyway, so a line that failed is seen.

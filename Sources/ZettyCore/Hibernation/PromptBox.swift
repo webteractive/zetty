@@ -194,6 +194,36 @@ extension PromptBox {
         return composer.drop(while: \.isWhitespace).dropFirst().allSatisfy(\.isWhitespace)
     }
 
+    /// Whether the harness has drawn its input yet, whatever the input holds:
+    /// Claude's `❯` line between its rules, Codex's `›` composer. Until then a
+    /// pane starting one shows the shell line that started it. Its process
+    /// is seen at once and stays seen while it loads: on claude 2.1.302 a
+    /// resume with a first message was still loading when the 2.5 seconds of
+    /// sightings were up, and lifting the cover then showed the line pasted
+    /// into the shell (Glen, 2026-10-17). A shell prompt drawn with `❯` has
+    /// no rules around it.
+    ///
+    /// Only what is below the last line holding `marker` counts, when one
+    /// does: after `/exit` the old agent's box is still in the scrollback,
+    /// above the resume line typed into the shell.
+    public static func showsInput(vtScreen: String, agent: AgentKind, below marker: String? = nil) -> Bool {
+        var lines = withoutFaintText(vtScreen, keepFaint: true)
+            .split(omittingEmptySubsequences: false, whereSeparator: \.isNewline)[...]
+        if let marker, let typed = lines.lastIndex(where: { $0.contains(marker) }) {
+            lines = lines[lines.index(after: typed)...]
+        }
+        switch agent {
+        case .claude:
+            guard let index = lines.lastIndex(where: { $0.drop(while: \.isWhitespace).first == prompt }),
+                  index > lines.startIndex, index < lines.endIndex - 1 else { return false }
+            return isRule(lines[index - 1]) && isRule(lines[index + 1])
+        case .codex:
+            return lines.contains { $0.drop(while: \.isWhitespace).first == codexPrompt }
+        default:
+            return true
+        }
+    }
+
     /// Whether a pane's agent can be handed a line to act on.
     public enum Readiness: Equatable, Sendable {
         /// An empty prompt box: what is typed now is what gets submitted.

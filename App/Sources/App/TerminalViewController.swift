@@ -2370,6 +2370,15 @@ final class TerminalViewController: NSViewController {
     /// agent being continuously present, which also makes it flap-proof.
     private static let agentReadySightings = 5
 
+    /// And its input drawn below the resume line that started it: the
+    /// process is seen at once and stays seen while the harness loads
+    /// (`PromptBox.showsInput`). An unreadable screen is not drawn; the
+    /// timeout lifts the cover then.
+    nonisolated static func agentHasDrawnInput(session: String, agent: AgentKind, zmxPath: String) -> Bool {
+        guard let history = ZmxRunner.historyVT(session: session, zmxPath: zmxPath, timeout: 2) else { return false }
+        return PromptBox.showsInput(vtScreen: PromptBox.tail(of: history), agent: agent, below: "resume")
+    }
+
     private var agentRestartTimers: [UUID: Timer] = [:]
 
     /// Restarts the pane's agent on its existing conversation.
@@ -2495,7 +2504,10 @@ final class TerminalViewController: NSViewController {
                     // `agentReadySightings`.
                     if resumeSent, isAgent {
                         readySightings += 1
-                        guard readySightings >= Self.agentReadySightings else { return }
+                        guard readySightings >= Self.agentReadySightings,
+                              Self.agentHasDrawnInput(session: session, agent: agent, zmxPath: zmx)
+                                || Date() >= deadline
+                        else { return }
                         return DispatchQueue.main.async {
                             self?.finishAgentRestart(surfaceID, success: true)
                         }
@@ -2759,10 +2771,14 @@ final class TerminalViewController: NSViewController {
                 }
                 DispatchQueue.global(qos: .userInitiated).async { [weak self] in
                     let running = Self.probeForeground([surfaceID], zmxPath: zmx)?[surfaceID] ?? ""
-                    let isAgent = AgentKind(rawValue: running).map(HandoffCompaction.supports) == true
+                    let agent = AgentKind(rawValue: running).flatMap { HandoffCompaction.supports($0) ? $0 : nil }
+                    let drawn = agent.map {
+                        Self.agentHasDrawnInput(session: SessionPersistence.sessionName(for: surfaceID),
+                                                agent: $0, zmxPath: zmx)
+                    } ?? false
                     DispatchQueue.main.async {
-                        sightings = isAgent ? sightings + 1 : 0
-                        let isUp = sightings >= Self.agentReadySightings
+                        sightings = agent != nil ? sightings + 1 : 0
+                        let isUp = sightings >= Self.agentReadySightings && drawn
                         guard isUp || Date() >= deadline, let self,
                               self.handoffBootCovers[surfaceID] != nil else { return }
                         ZettyLog.lifecycle.log(

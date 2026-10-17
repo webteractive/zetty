@@ -72,8 +72,14 @@ triggers:
   `cd … && claude --resume …`, and then the harness's own boot screen, back on
   screen: precisely the churn the cover exists to hide. `agentReadySightings`
   (5 polls, 2.5s of CONTINUOUS presence) is what it waits for instead, which
-  also makes it flap-proof. The settle branch returns before the deadline
-  check, so it is bounded by its own count rather than able to hang.
+  also makes it flap-proof.
+- **And the harness's input drawn below the resume line**
+  (`agentHasDrawnInput`, `PromptBox.showsInput`). 2.5 seconds was not
+  enough on claude 2.1.302: a handoff wake's cover lifted with Claude still
+  loading and the typed line showed (Glen, 2026-10-17). Only the screen
+  below the last line saying `resume` counts, since after `/exit` the old
+  Claude's box is still in the scrollback. The handoff wake's cover uses the
+  same test. An agent seen but never drawn is uncovered at the deadline.
 - **The exit poll is 0.5s and BOUNDED (20s), deliberately faster than the 3s
   foreground probe.** This is a user-initiated wait, not a standing loop: one
   `ps` per tick until the agent goes, then it stops. Riding the probe instead
