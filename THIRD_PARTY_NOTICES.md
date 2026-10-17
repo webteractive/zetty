@@ -24,18 +24,9 @@ library. The libraries compiled into it ship as part of Zetty's binary.
 | [Highway](https://github.com/google/highway) — © The Highway Project Authors | Apache-2.0 or BSD-3-Clause | [`highway.txt`](licenses/highway.txt) |
 | [Wuffs](https://github.com/google/wuffs) — © The Wuffs Authors | Apache-2.0 | [`wuffs-Apache-2.0.txt`](licenses/wuffs-Apache-2.0.txt) |
 | [stb](https://github.com/nothings/stb) — © Sean Barrett | MIT or public domain | [`stb.txt`](licenses/stb.txt) |
-| [GNU libintl](https://www.gnu.org/software/gettext/) (gettext) — © Free Software Foundation | LGPL-2.1-or-later | [`LGPL-2.1.txt`](licenses/LGPL-2.1.txt) |
 
 Portions of this software are copyright © The FreeType Project
 (www.freetype.org). All rights reserved.
-
-**GNU libintl is LGPL-licensed and statically linked** inside libghostty. Its
-source is available from the [GNU gettext project](https://www.gnu.org/software/gettext/).
-To run Zetty with a modified libintl, rebuild libghostty from
-[libghostty-spm's source](https://github.com/Lakr233/libghostty-spm) (which
-builds Ghostty and its dependencies from source) and build Zetty against it
-from [Zetty's source](https://github.com/webteractive/zetty) — see
-[`DEVELOPMENT.md`](DEVELOPMENT.md).
 
 The Zig and LLVM runtime support compiled into libghostty (compiler-rt and a
 libc++ shim) are under the MIT License and Apache-2.0 with the LLVM exception,

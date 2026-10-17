@@ -433,8 +433,8 @@ Contributions are welcome — see [`CONTRIBUTING.md`](CONTRIBUTING.md), and
 
 Zetty is released under the [MIT License](LICENSE). It includes third-party
 software under its own licenses — Ghostty and libghostty-spm (MIT), FreeType,
-Oniguruma, libpng, zlib and others, plus GNU libintl (LGPL-2.1) inside the
-terminal core and Ghostty's bash and zsh shell-integration scripts (GPLv3). See
+Oniguruma, libpng, zlib and others, plus Ghostty's bash and zsh
+shell-integration scripts (GPLv3). See
 [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md) for the full list; the notices
 and license texts also ship inside the app.
 

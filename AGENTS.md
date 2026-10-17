@@ -231,9 +231,10 @@ are in `.hydra/rules/surfaces-and-memory.md`.
   new package, a bundled file (font, logo set, script), and **every libghostty
   bump**: list the static library's members (`ar -t libghostty.a` on a thin
   slice) and compare against the notices, since a Ghostty update can compile in
-  a new C library. Two entries need care: GNU libintl is LGPL and statically
-  linked, and Ghostty's bash/zsh shell-integration scripts under
-  `App/Resources/ghostty` are GPLv3 (derived from Kitty). libghostty-spm ships
+  a new C library (and can drop one: GNU libintl, LGPL, left with
+  `2.2.2026101502`). One entry needs care: Ghostty's bash/zsh
+  shell-integration scripts under `App/Resources/ghostty` are GPLv3 (derived
+  from Kitty). libghostty-spm ships
   an MIT rewrite of those scripts, but it has no `ssh` wrapper (TERM fallback,
   terminfo install), which Zetty's `ssh-env,ssh-terminfo` default relies on.
 - **Keep `CLAUDE.md` and `AGENTS.md` byte-identical.** They share one canonical
