@@ -71,7 +71,23 @@ Needs `preserve-sessions` (`handoffsEnabled`); without zmx both hibernation and
 - **The busy rule is unchanged, and now reads oddly.** An idle agent is still
   "busy" to `confirmClosingBusyPanes` and `cliRefusal` (anything but a bare
   shell), so the GUI asks and the CLI wants `--force` before a hibernate that
-  will hand the conversation off rather than discard it.
+  will hand the conversation off rather than discard it. The one exception is
+  the pane that asked (`--self`, below).
+- **A pane can ask for its own project's hibernate** (`hibernate <name>
+  --self <pane>`, the Claude mod's `/z-hibernate`). That pane is left out
+  of the busy check, and nothing is typed into it: its Claude is running the
+  command that asked, and a `/compact` typed under that turn stays in the box
+  unsent (seen 2026-10-17). The answer is `.text` with a
+  `HandoffCompaction.SelfCompaction`: `compact` when it has a record, `none`
+  when it leaves no handoff. Its job (`compactsItself`) only watches the
+  transcript (`HandoffCompactor.awaitOwnCompaction`), with no screen reads,
+  since until the command returns the pane looks like an agent at rest. The
+  mod compacts and the wait ends; if it cannot, it calls the hibernation off
+  with `zetty wake`. A project with no record to wait on is put away a turn
+  after the answer, so the asking command hears it first. Verified end to
+  end in an isolated instance on claude 2.1.301: compacted and put away in 7
+  seconds, woken into the summary, and a `sleep` in a sibling pane still
+  refused.
 - **The banner's buttons run a turn late** (`DispatchQueue.main.async`):
   each rebuilds the pane area, which removes the banner while its own click
   is still inside it. The same for the cancel on a keystroke.

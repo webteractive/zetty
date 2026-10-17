@@ -122,7 +122,14 @@ public enum ControlRequest: Equatable, Sendable {
     /// that only wants the memory back. With any agent to ask the answer is
     /// `.ok` at once and the project is put away when they have compacted,
     /// or left awake if one cannot.
-    case hibernateProject(name: String, force: Bool = false, handoff: Bool = true)
+    ///
+    /// `asker`: the pane whose agent sent this request (`--self`, the Claude
+    /// mod's `/z-hibernate`). It is not refused as busy, and nothing is
+    /// typed into it: it compacts its own conversation once its command has
+    /// returned, and is waited on like the others. The answer is then
+    /// `.text` with a `HandoffCompaction.SelfCompaction`, which tells it
+    /// whether to.
+    case hibernateProject(name: String, force: Bool = false, handoff: Bool = true, asker: String? = nil)
     /// Wake the named hibernated project: each pane with a handoff resumes
     /// its compacted conversation, the rest get fresh shells; layout intact.
     /// `.ok`.
@@ -214,7 +221,7 @@ extension ControlRequest {
     public var refusesBusyPanes: Bool {
         switch self {
         case .close(_, _, let force), .removeProject(_, _, _, let force),
-             .hibernateProject(_, let force, _), .hibernateSpace(_, let force, _),
+             .hibernateProject(_, let force, _, _), .hibernateSpace(_, let force, _),
              .scratchClear(let force), .quit(_, _, let force):
             return !force
         default:
@@ -225,7 +232,7 @@ extension ControlRequest {
 
 extension ControlRequest: Codable {
     private enum CodingKeys: String, CodingKey {
-        case command, target, text, enter, keys, project, wholeTab, killSessions, simulateRestart, vertical, lines, path, name, gitInit, focus, fetch, discard, line, column, space, newName, color, icon, account, probe, surface, on, profile, slot, collapse, view, force, handoff, wake
+        case command, target, text, enter, keys, project, wholeTab, killSessions, simulateRestart, vertical, lines, path, name, gitInit, focus, fetch, discard, line, column, space, newName, color, icon, account, probe, surface, on, profile, slot, collapse, view, force, handoff, wake, asker
     }
 
     public init(from decoder: Decoder) throws {
@@ -350,7 +357,8 @@ extension ControlRequest: Codable {
             )
         case "hibernate":
             self = .hibernateProject(name: try container.decode(String.self, forKey: .project),
-                                     force: try decodeForce(), handoff: try decodeHandoff())
+                                     force: try decodeForce(), handoff: try decodeHandoff(),
+                                     asker: try container.decodeIfPresent(String.self, forKey: .asker))
         case "wake":
             self = .wakeProject(name: try container.decode(String.self, forKey: .project),
                                 handoffs: try decodeWake())
@@ -524,11 +532,12 @@ extension ControlRequest: Codable {
             try container.encode(fetch, forKey: .fetch)
             try container.encode(discard, forKey: .discard)
             try container.encode(force, forKey: .force)
-        case .hibernateProject(let name, let force, let handoff):
+        case .hibernateProject(let name, let force, let handoff, let asker):
             try container.encode("hibernate", forKey: .command)
             try container.encode(name, forKey: .project)
             try container.encode(force, forKey: .force)
             try container.encode(handoff, forKey: .handoff)
+            try container.encodeIfPresent(asker, forKey: .asker)
         case .wakeProject(let name, let handoffs):
             try container.encode("wake", forKey: .command)
             try container.encode(name, forKey: .project)

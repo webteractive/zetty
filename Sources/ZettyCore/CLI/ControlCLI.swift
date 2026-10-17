@@ -305,8 +305,9 @@ public enum ControlCLI {
         case "remove-project":
             return runRemoveProject(arguments)
         case "hibernate":
-            return runProjectByName(arguments, verb: "hibernate", flags: ["--force", "--no-handoff"],
-                                    { .hibernateProject(name: $0, force: $1.force, handoff: $1.handoff) },
+            return runProjectByName(arguments, verb: "hibernate", flags: ["--force", "--no-handoff", "--self"],
+                                    { .hibernateProject(name: $0, force: $1.force, handoff: $1.handoff,
+                                                        asker: $1.asker) },
                                     space: { .hibernateSpace(name: $0, force: $1.force, handoff: $1.handoff) })
         case "wake":
             return runProjectByName(arguments, verb: "wake", flags: ["--fresh", "--shell"],
@@ -522,7 +523,7 @@ public enum ControlCLI {
         DESTRUCTIVE: ends the project's sessions; a clone's directory is deleted.
         """,
         "hibernate": """
-        usage: zetty hibernate (<name> | --space <name>) [--force] [--no-handoff]
+        usage: zetty hibernate (<name> | --space <name>) [--force] [--no-handoff] [--self <pane>]
 
         Free a project's — or every project in a Space's — sessions, processes
         and panes, keeping its layout. Idle shells are asked to exit first.
@@ -543,6 +544,12 @@ public enum ControlCLI {
           --space <name>   hibernate every project in that Space
           --force          hibernate even when panes are busy
           --no-handoff     free the memory only; panes wake as plain shells
+          --self <pane>    the pane asking, whose agent compacts its own
+                           conversation (Claude's /z-hibernate): it is not
+                           refused as busy and nothing is typed into it.
+                           Prints compact, done or none: whether it should
+                           compact now. A Claude cannot have /compact typed in
+                           while it runs the command that asked.
 
         DESTRUCTIVE: ends every process running in those panes.
         """,
@@ -1277,6 +1284,8 @@ public enum ControlCLI {
         var force = false
         var handoff = true
         var wake = HandoffWake.Choice.resume
+        /// `--self <pane>`: the pane asking (hibernate only).
+        var asker: String?
     }
 
     /// Shared handler for name-targeted project commands (hibernate/wake).
@@ -1290,9 +1299,16 @@ public enum ControlCLI {
         var wantsSpace = false
         var options = ProjectVerbOptions()
         var parts: [String] = []
-        for argument in arguments {
+        var remaining = arguments[...]
+        while let argument = remaining.popFirst() {
             switch argument {
             case "--space": wantsSpace = true
+            case "--self":
+                guard flags.contains(argument) else { return failure("\(verb) does not take \(argument)") }
+                guard let pane = remaining.popFirst(), !pane.hasPrefix("-") else {
+                    return failure("--self needs a pane id")
+                }
+                options.asker = pane
             case "--force", "--no-handoff", "--fresh", "--shell":
                 guard flags.contains(argument) else { return failure("\(verb) does not take \(argument)") }
                 switch argument {
@@ -1314,8 +1330,11 @@ public enum ControlCLI {
         }
         if wantsSpace {
             guard let makeSpace else { return failure("\(verb) does not take --space") }
+            guard options.asker == nil else { return failure("--self names a project's pane; it does not take --space") }
             return expectOK(makeSpace(name, options), success: nil)
         }
+        // The asking pane is answered with what it should do next.
+        guard options.asker == nil else { return expectOKOrText(make(name, options)) }
         return expectOK(make(name, options), success: nil)
     }
 
@@ -1661,6 +1680,17 @@ public enum ControlCLI {
         switch roundTrip(request) {
         case .ok:
             if let success { print(success) }
+            return 0
+        case .error(let message): return failure(message)
+        default: return failure("unexpected response")
+        }
+    }
+
+    private static func expectOKOrText(_ request: ControlRequest) -> Int32 {
+        switch roundTrip(request) {
+        case .ok: return 0
+        case .text(let text):
+            print(text)
             return 0
         case .error(let message): return failure(message)
         default: return failure("unexpected response")

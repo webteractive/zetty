@@ -23,6 +23,26 @@ public enum HandoffCompaction {
         case failed(String)
     }
 
+    /// What a hibernate's answer tells the pane that asked for it (`--self`),
+    /// printed as the raw value: whether it compacts its own conversation
+    /// now. The Claude mod's `/z-hibernate` reads it.
+    ///
+    /// The pane cannot have `/compact` typed into it: its Claude is running
+    /// the command that asked, and a line typed under a running turn sits in
+    /// the box unsent. It compacts itself instead (`$.session.compact`, which
+    /// Claude refuses inside the command's own turn but allows once it has
+    /// returned), and the hibernation waits on its transcript as on any other.
+    public enum SelfCompaction: String, Sendable {
+        /// Compact now; the project is put away once the transcript says so.
+        /// A conversation compacted already, with nothing said since, is a
+        /// handoff as it is: the project is put away without waiting, and
+        /// the asking session ends before it gets to try.
+        case compact
+        /// It leaves no handoff: `--no-handoff`, handoffs off, or no
+        /// conversation found for it. It is ended with the project.
+        case none
+    }
+
     public static func supports(_ kind: AgentKind) -> Bool { line(for: kind) != nil }
 
     /// What is typed into the agent's prompt box, without the Enter. One

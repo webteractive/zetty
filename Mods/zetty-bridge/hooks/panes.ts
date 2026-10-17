@@ -142,11 +142,19 @@ export function otherAccounts(accountsJSON: string, currentDirectory: string, ho
     .map(account => account.name as string)
 }
 
-// MARK: - /zetty-hibernate
+// MARK: - /z-hibernate
 
-export const HIBERNATE_USAGE = 'Usage: /zetty-hibernate [project] [--force] [--no-handoff]'
+export const HIBERNATE_USAGE = 'Usage: /z-hibernate [project] [--force] [--no-handoff]'
 
-// `/zetty-hibernate [project…] [--force] [--no-handoff]`. Every word that is
+// What this Claude is told to keep when it compacts itself for a hibernate:
+// the same instructions Zetty types after `/compact` into every other pane
+// (`HandoffCompaction.instructions`, which a Swift test holds this equal to).
+export const HANDOFF_INSTRUCTIONS = 'Write this summary as a handoff for a fresh agent that picks this work up '
+  + 'later and remembers nothing: the goal; what is done; the current state, naming every file that '
+  + 'matters by its full path; decisions made and why; open questions; the next steps; and anything '
+  + 'the person asked you to remember. Leave out passwords, keys, tokens and other secrets.'
+
+// `/z-hibernate [project…] [--force] [--no-handoff]`. Every word that is
 // not a flag is the project's name (names may hold spaces); an empty name
 // means this pane's own project. The two flags are the CLI's, passed through.
 export function hibernateArgs(args: string): { name: string; flags: string[] } | { error: string } {

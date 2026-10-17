@@ -7803,24 +7803,40 @@ final class TerminalViewController: NSViewController {
     /// to ask, this only starts the attempt (`beginHibernation`), and the
     /// project is put away when every one has compacted, or left awake if
     /// one cannot.
+    ///
+    /// `compactingItself`: a pane whose agent asked for this and compacts its
+    /// own conversation (`--self`). The answer says whether it should; it is
+    /// `.none` for any other pane, and when there is none.
+    @discardableResult
     func hibernateProject(_ project: ProjectRuntime, confirmIfBusy: Bool = true,
-                          handoffs: HandoffRequest = .manual) {
+                          handoffs: HandoffRequest = .manual,
+                          compactingItself asker: UUID? = nil) -> HandoffCompaction.SelfCompaction {
         guard workspace.projects.contains(where: { $0.id == project.id }),
               !project.isHome, !project.isHibernated,
-              hibernationsInProgress[project.id] == nil else { return }
+              hibernationsInProgress[project.id] == nil else { return .none }
         let surfaceIDs = project.tabList.trees.flatMap { $0.layout.surfaces.map(\.id) }
-        if confirmIfBusy, !confirmClosingBusyPanes(surfaceIDs, what: "project “\(project.name)”") { return }
+        if confirmIfBusy, !confirmClosingBusyPanes(surfaceIDs, what: "project “\(project.name)”") { return .none }
         handoffFailures.removeValue(forKey: project.id)     // a new attempt
         let foreground = foregroundForHibernation(surfaceIDs, request: handoffs)
         let records = captureHandoffRecords(for: project, surfaceIDs: surfaceIDs,
                                             request: handoffs, foreground: foreground)
         guard !records.isEmpty else {
-            putAway(project, surfaceIDs: surfaceIDs, foreground: foreground)
-            return
+            // Answered first, put away a turn later: the asking pane's
+            // session ends with the project, and its command is still
+            // waiting on this reply.
+            if asker != nil {
+                DispatchQueue.main.async { [weak self] in
+                    self?.putAway(project, surfaceIDs: surfaceIDs, foreground: foreground)
+                }
+            } else {
+                putAway(project, surfaceIDs: surfaceIDs, foreground: foreground)
+            }
+            return .none
         }
         var isAutomatic = false
         if case .automatic = handoffs { isAutomatic = true }
-        beginHibernation(of: project, panes: surfaceIDs, records: records, isAutomatic: isAutomatic)
+        return beginHibernation(of: project, panes: surfaceIDs, records: records, isAutomatic: isAutomatic,
+                                compactingItself: asker)
     }
 
     /// The hibernation itself: marks the project, ends its sessions and frees
@@ -8043,21 +8059,47 @@ final class TerminalViewController: NSViewController {
     /// Hibernate the named project (CLI, case-insensitive). No confirmation —
     /// the CLI call IS the confirmation. Returns an error message or nil.
     func hibernateProjectNamed(_ name: String, force: Bool, handoff: Bool = true) -> String? {
+        switch hibernateProjectNamed(name, force: force, handoff: handoff, asker: nil) {
+        case .success: return nil
+        case .failure(let error): return error.localizedDescription
+        }
+    }
+
+    /// `hibernateProjectNamed`, for a request that may come from one of the
+    /// project's own panes (`asker`, `--self`): that pane is not refused as
+    /// busy, nothing is typed into it, and the answer says whether its agent
+    /// should compact itself now. Nil without an asker.
+    func hibernateProjectNamed(_ name: String, force: Bool, handoff: Bool,
+                               asker: String?) -> Result<HandoffCompaction.SelfCompaction?, ControlError> {
+        func refuse(_ message: String) -> Result<HandoffCompaction.SelfCompaction?, ControlError> {
+            .failure(.protocolError(message))
+        }
         let matches = workspace.projects.filter { $0.name.lowercased() == name.lowercased() }
-        guard let project = matches.first else { return "no project named \"\(name)\"" }
-        guard matches.count == 1 else { return "\(matches.count) projects named \"\(name)\" — use the sidebar" }
+        guard let project = matches.first else { return refuse("no project named \"\(name)\"") }
+        guard matches.count == 1 else { return refuse("\(matches.count) projects named \"\(name)\" — use the sidebar") }
         // Before the count check, so a Home-only workspace gives the real
         // reason. Same rule as `remove-project Home`.
-        guard !project.isHome else { return "Home can't be hibernated" }
-        guard workspace.projects.count > 1 else { return "cannot hibernate the only project" }
-        guard !project.isHibernated else { return "project \"\(project.name)\" is already hibernated" }
+        guard !project.isHome else { return refuse("Home can't be hibernated") }
+        guard workspace.projects.count > 1 else { return refuse("cannot hibernate the only project") }
+        guard !project.isHibernated else { return refuse("project \"\(project.name)\" is already hibernated") }
         guard hibernationsInProgress[project.id] == nil else {
-            return "project \"\(project.name)\" is already being hibernated; its handoffs are being written"
+            return refuse("project \"\(project.name)\" is already being hibernated; its handoffs are being written")
         }
         let surfaces = project.tabList.trees.flatMap { $0.layout.surfaces.map(\.id) }
-        if let refusal = cliRefusal(closing: surfaces, force: force) { return refusal }
-        hibernateProject(project, confirmIfBusy: false, handoffs: handoff ? .manual : .none)
-        return nil
+        var asking: UUID?
+        if let asker {
+            let prefix = asker.lowercased()
+            let found = surfaces.filter { SessionPersistence.shortID(for: $0).hasPrefix(prefix) }
+            guard found.count == 1, !prefix.isEmpty else {
+                return refuse("pane \(asker) is not one of project \"\(project.name)\"'s panes")
+            }
+            asking = found[0]
+        }
+        // The asking pane is busy running the command that asked.
+        if let refusal = cliRefusal(closing: surfaces.filter { $0 != asking }, force: force) { return refuse(refusal) }
+        let answer = hibernateProject(project, confirmIfBusy: false, handoffs: handoff ? .manual : .none,
+                                      compactingItself: asking)
+        return .success(asking == nil ? nil : answer)
     }
 
     /// Wake the named project (CLI, case-insensitive). Returns an error or nil.

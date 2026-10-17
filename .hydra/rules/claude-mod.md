@@ -222,28 +222,50 @@ workspace is never handed to the model. `read_pane` answers only for panes
 `open_pane` returned in this load of the mod.
 
 **The pane commands are top-level and Claude-only** (Glen, 2026-10-15):
-`/zetty-reload`, `/zetty-hibernate [project]` and `/zetty-open`, registered
+`/z-reload`, `/z-hibernate [project]` and `/z-open`, registered
 beside `/zetty` and answered by their own `command.run` hooks. They are
-`zetty-` prefixed rather than `/zetty <verb>` so each is one word in the
-typeahead, and the prefix keeps them clear of Claude Code's built-ins. Codex
+`z-` prefixed rather than `/zetty <verb>` so each is one word in the
+typeahead, and the prefix keeps them clear of Claude Code's built-ins. They
+were `/zetty-reload` and so on until 0.5.3, renamed because the prefix was
+long to type (Glen, 2026-10-17); `/zetty` itself kept its name. Codex
 and Hermes have no mod, so they have no equivalent; the CLI verbs underneath
 (`restart-agent`, `hibernate`, `edit`) work for any caller. None is
 `immediate`, so each waits for a turn in flight to end.
 
-- **`/zetty-reload` passes `--force`**: see `agent-pane-refresh.md`.
-- **`/zetty-hibernate` never adds `--force` itself.** A first version did
+- **`/z-reload` passes `--force`**: see `agent-pane-refresh.md`.
+- **`/z-hibernate` never adds `--force` itself.** A first version did
   when `status` showed only agents busy in this project (this pane's own
   Claude counts as busy, so every unforced hibernate of it is refused). Run
   for real, it hibernated a project with a `sleep` running and killed it:
   `pollForegroundAgents` returns early while Zetty is not the active app, so
   the map behind `status` (and behind the app's own busy refusal) was frozen
-  and showed no tools at all, and `/zetty-open` had just made the editor
+  and showed no tools at all, and `/z-open` had just made the editor
   frontmost. Busy is the app's call: `cliRefusal` now takes a fresh reading
   for each such request (`control-cli.md`), which the mod cannot.
-  A refusal is passed on with `Run /zetty-hibernate <name> --force`. The
+  A refusal is passed on with `Run /z-hibernate <name> --force`. The
   name is every non-flag word (`hibernateArgs`), so names with spaces work
   unquoted.
-- **`/zetty-open` opens the project ROOT**, not the pane's cwd: it is the
+- **For its own project it names itself (`--self <pane>`) and compacts
+  itself.** Before this, hibernating this project always needed `--force`
+  (this Claude is busy running the command), and Zetty then typed `/compact
+  …` into a Claude still inside that command's turn, where it sat in the box
+  unsent: the person saw a string pasted into the chat and nothing else
+  (Glen, 2026-10-17). Now Zetty leaves the asking pane out of the busy check
+  and types nothing into it, and answers `compact` when it has a handoff to
+  write. The command then calls `$.session.compact` with
+  `HANDOFF_INSTRUCTIONS` (held equal to Zetty's by a Swift test), and Zetty
+  puts the project away when the transcript shows it.
+- **That compaction runs from `$.clock.after`, not from the hook.** Claude
+  rejects `session.compact` inside `command.run` ("it would compact under
+  the turn this hook is holding"), and a local command's turn fires no
+  `turn.complete`, so the error's own advice does not apply. A 300 ms timer
+  started by the command runs after it has returned, and the call resolved
+  with the compaction done (claude 2.1.301). Asking Zetty FIRST is
+  deliberate: a busy refusal then costs nothing, where compacting first
+  would have summarised the chat of a project left awake. A compaction that
+  fails or is skipped calls the hibernation off with `zetty wake` and says
+  so in a toast.
+- **`/z-open` opens the project ROOT**, not the pane's cwd: it is the
   project the person asked for. A scratch pane's root is just home, so it
   falls back to the pane's working directory (`openProjectInEditor`).
 

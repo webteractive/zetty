@@ -2,7 +2,8 @@ import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register, SessionUsage } from 'claude-code'
 
 import {
-  baseName, describePanes, fleetLabel, hibernateArgs, limitWarning, otherAccounts, projectPanes, UUID,
+  baseName, describePanes, fleetLabel, HANDOFF_INSTRUCTIONS, hibernateArgs, limitWarning, otherAccounts,
+  projectPanes, UUID,
 } from './panes'
 
 // Zetty bridge: keeps one snapshot per pane at
@@ -114,8 +115,8 @@ const USAGE = [
   '  /zetty peek <path>[:line]    open a file in Zetty\'s viewer',
   '  /zetty split [--down] [command…]   open a pane beside this one, optionally running a command',
   '',
-  'Also: /zetty-reload (restart this Claude on this conversation), /zetty-hibernate [project],',
-  '/zetty-open (this project in your editor).',
+  'Also: /z-reload (restart this Claude on this conversation), /z-hibernate [project],',
+  '/z-open (this project in your editor).',
 ].join('\n')
 
 // Splits this pane and, with a command, types it into the new one. Shared with
@@ -159,16 +160,16 @@ async function startCommands($: EngineInterface): Promise<void> {
   // Top-level rather than `/zetty <verb>`, so each is one word in the
   // typeahead. Not `immediate`: each waits for a turn in flight to end.
   await $.command.register({
-    name: 'zetty-reload',
+    name: 'z-reload',
     description: 'Zetty: restart this Claude in its pane, back on this conversation',
   })
   await $.command.register({
-    name: 'zetty-hibernate',
+    name: 'z-hibernate',
     description: 'Zetty: hibernate a project (this one by default); its agents hand off first',
     argumentHint: '[project] [--force] [--no-handoff]',
   })
   await $.command.register({
-    name: 'zetty-open',
+    name: 'z-open',
     description: "Zetty: open this pane's project in your editor",
   })
 }
@@ -202,18 +203,46 @@ async function hibernate($: EngineInterface, args: string): Promise<string> {
 
   // Never forced on the person's behalf: which panes are busy is Zetty's call,
   // and the map behind `status` freezes while Zetty is not the active app.
-  const ran = await zetty($, ['hibernate', name, ...parsed.flags])
+  // This pane is named as the one asking (`--self`): it is busy running this
+  // command, so it is not refused for it, and Zetty types nothing into it.
+  // A `/compact` typed under the turn this command holds sat in the box unsent.
+  const asking = isThisProject && me !== undefined
+  const ran = await zetty($, ['hibernate', name, ...parsed.flags, ...(asking ? ['--self', me] : [])])
   if (!ran.ok) {
     // The CLI's own refusal names the busy panes and says "pass --force".
     return ran.out.includes('--force')
-      ? `${ran.out}\nRun /zetty-hibernate ${name} --force to go ahead.`
+      ? `${ran.out}\nRun /z-hibernate ${name} --force to go ahead.`
       : ran.out
+  }
+  if (asking && ran.out.trim() === 'compact') {
+    // Claude refuses a compaction inside this command's own turn, and allows
+    // it once the command has returned.
+    $.clock.after(300, () => { void compactForHandoff($, name) })
+    return `Hibernating ${name}. This conversation compacts into a handoff once this command is done, `
+      + 'and any other agent here compacts its own; then the sessions end. Open the project again to wake it.'
   }
   const how = handoff
     ? 'Each agent compacts its conversation into a handoff first; then its sessions end.'
     : 'Its sessions end now, without handoffs.'
   const here = isThisProject ? ' That includes this pane: open the project again to wake it.' : ''
   return `Hibernating ${name}. ${how}${here}`
+}
+
+// This pane's half of a hibernate it asked for: compact, and Zetty, watching
+// the transcript, puts the project away. One that cannot compact calls the
+// hibernation off (`zetty wake` while handoffs are still being written), so
+// the project stays awake with the conversation as it was.
+async function compactForHandoff($: EngineInterface, name: string): Promise<void> {
+  let failure: string | undefined
+  try {
+    const compacted = await $.session.compact({ instructions: HANDOFF_INSTRUCTIONS })
+    if (compacted.skip !== undefined) failure = compacted.skip
+  } catch (error) {
+    failure = String(error)
+  }
+  if (failure === undefined) return
+  await zetty($, ['wake', name])
+  $.ui.toast(`Not hibernated: this conversation could not compact (${failure}).`, { timeoutMs: 10000 })
 }
 
 async function openInEditor($: EngineInterface): Promise<string> {
@@ -543,11 +572,11 @@ export const register: Register = on => {
     }
   })
 
-  on('command.run', { command: 'zetty-reload' }, async $ => ({ text: await reloadThisPane($) }))
+  on('command.run', { command: 'z-reload' }, async $ => ({ text: await reloadThisPane($) }))
 
-  on('command.run', { command: 'zetty-hibernate' }, async ($, e) => ({ text: await hibernate($, e.args) }))
+  on('command.run', { command: 'z-hibernate' }, async ($, e) => ({ text: await hibernate($, e.args) }))
 
-  on('command.run', { command: 'zetty-open' }, async $ => ({ text: await openInEditor($) }))
+  on('command.run', { command: 'z-open' }, async $ => ({ text: await openInEditor($) }))
 
   on('tool.call', { tool: 'mcp__zetty-bridge__show_file' }, async ($, e) => {
     const input = e as unknown as { path?: unknown; line?: unknown }

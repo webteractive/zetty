@@ -14,7 +14,7 @@ triggers:
 > limit). This file is authoritative: edit it here, then run `hydra sync`.
 
 `⟳` in a pane's gutter restarts Claude or Codex on its existing conversation.
-`zetty restart-agent` and the Claude mod's `/zetty-reload` reach the same
+`zetty restart-agent` and the Claude mod's `/z-reload` reach the same
 `startAgentRestart`; only the button asks before interrupting a turn.
 
 - **One body, two front doors.** `startAgentRestart(surfaceID:allowRunning:)`

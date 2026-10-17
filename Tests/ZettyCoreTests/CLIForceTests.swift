@@ -172,3 +172,25 @@ import Testing
     ]
     for request in ungated { #expect(!request.refusesBusyPanes, "\(request)") }
 }
+
+// MARK: - --self
+
+// The Claude mod's /z-hibernate names its own pane: Zetty cannot type
+// /compact into a Claude running the command that asked.
+@Test func selfNamesTheAskingPaneOfAProjectHibernate() {
+    let (_, recorder) = runIsolated(["hibernate", "my app", "--self", "0a1b2c3d", "--no-handoff"])
+    #expect(recorder.requests == [.hibernateProject(name: "my app", force: false, handoff: false, asker: "0a1b2c3d")])
+    for arguments in [["hibernate", "app", "--self"], ["hibernate", "app", "--self", "--force"],
+                      ["hibernate", "--space", "Work", "--self", "0a1b2c3d"], ["wake", "app", "--self", "0a1b2c3d"]] {
+        let (exit, recorder) = runIsolated(arguments)
+        #expect(recorder.requests.isEmpty, "\(arguments) sent \(recorder.requests)")
+        #expect(exit != 0)
+    }
+}
+
+@Test func theAskingPaneSurvivesTheWireAndOldClientsNameNone() throws {
+    let request = ControlRequest.hibernateProject(name: "a", force: false, handoff: true, asker: "0a1b2c3d")
+    #expect(try ControlWire.decodeRequest(ControlWire.encodeLine(request)) == request)
+    #expect(try ControlWire.decodeRequest(#"{"command":"hibernate","project":"a"}"#)
+        == .hibernateProject(name: "a", asker: nil))
+}

@@ -78,3 +78,18 @@ private let claudeReply = #"{"type":"assistant","message":{"role":"assistant","c
     #expect(HandoffCompaction.needsCompaction(agent: .codex, transcriptTail: codex))
 }
 
+
+// A Claude that asked for the hibernate compacts itself through the mod
+// (`HANDOFF_INSTRUCTIONS`), and its handoff must read like every other.
+@Test func theModCompactsWithTheSameInstructions() throws {
+    let panes = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
+        .deletingLastPathComponent().appendingPathComponent("Mods/zetty-bridge/hooks/panes.ts")
+    let source = try String(contentsOf: panes, encoding: .utf8)
+    let start = try #require(source.range(of: "export const HANDOFF_INSTRUCTIONS = "))
+    let declaration = source[start.upperBound...]
+    let end = try #require(declaration.range(of: "\n\n"))
+    let literal = declaration[..<end.lowerBound]
+    let pieces = literal.split(separator: "'", omittingEmptySubsequences: false)
+        .enumerated().filter { $0.offset % 2 == 1 }.map(\.element)
+    #expect(pieces.joined() == HandoffCompaction.instructions)
+}

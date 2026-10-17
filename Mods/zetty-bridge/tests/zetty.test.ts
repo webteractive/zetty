@@ -1,7 +1,7 @@
 import type { On } from 'claude-code'
 import { expect, mock, test } from 'claude-code/testing'
 
-import { describePanes, hibernateArgs, projectPanes } from '../hooks/panes'
+import { describePanes, HANDOFF_INSTRUCTIONS, hibernateArgs, projectPanes } from '../hooks/panes'
 
 const SURFACE = '0A1B2C3D-1111-2222-3333-444455556666'
 const BIN = '/Applications/zetty.app/Contents/MacOS/zetty'
@@ -30,7 +30,7 @@ function world(on: On, env: Record<string, string>, answer: (argv: readonly stri
   const runs: Run[] = []
   const registered: { commands: string[]; tools: string[] } = { commands: [], tools: [] }
   mock.env(on, env)
-  mock.clock(on, { now: 1000 })
+  const clock = mock.clock(on, { now: 1000 })
   on('session.id', () => ({ value: 'sess-1' }))
   on('session.cwd', () => ({ value: '/work/app' }))
   on('session.model', () => ({ value: 'claude-opus-5-5' }))
@@ -53,7 +53,7 @@ function world(on: On, env: Record<string, string>, answer: (argv: readonly stri
       : { exitCode: said.exitCode, stdout: '', stderr: said.stderr }
     return { value: { exitCode, stdout, stderr, isStdoutTruncated: false, isStderrTruncated: false } }
   })
-  return { runs, registered }
+  return { runs, registered, clock }
 }
 
 const START = { cwd: '/work/app', surface: 'terminal' as const, isInteractive: true }
@@ -73,7 +73,7 @@ test('only the project this pane is in is listed', () => {
 test('inside Zetty the command and the tools are registered', async ($, on) => {
   const { registered } = world(on, IN_PANE)
   await $.session.start(START)
-  expect(registered.commands).toEqual(['zetty', 'zetty-reload', 'zetty-hibernate', 'zetty-open'])
+  expect(registered.commands).toEqual(['zetty', 'z-reload', 'z-hibernate', 'z-open'])
   expect(registered.tools).toEqual(['show_file', 'list_panes', 'open_pane', 'read_pane'])
 })
 
@@ -87,7 +87,7 @@ test('outside Zetty nothing is registered, and the tools can be switched off', a
 test('zetty-claude-tools = false keeps the command and drops the tools', async ($, on) => {
   const { registered } = world(on, { ...IN_PANE, ZETTY_CLAUDE_TOOLS: '0' })
   await $.session.start(START)
-  expect(registered.commands).toEqual(['zetty', 'zetty-reload', 'zetty-hibernate', 'zetty-open'])
+  expect(registered.commands).toEqual(['zetty', 'z-reload', 'z-hibernate', 'z-open'])
   expect(registered.tools).toEqual([])
 })
 
@@ -143,60 +143,95 @@ test('show_file adds the line, and list_panes answers for this project only', as
   expect(String(listed.result)).not.toContain('secret')
 })
 
-// MARK: - /zetty-reload, /zetty-hibernate, /zetty-open
+// MARK: - /z-reload, /z-hibernate, /z-open
 
-test('/zetty-reload restarts this pane\'s agent, forced past a stale running state', async ($, on) => {
+test('/z-reload restarts this pane\'s agent, forced past a stale running state', async ($, on) => {
   const { runs } = world(on, IN_PANE)
-  const ran = await $.command.run({ command: 'zetty-reload', args: '', ...RUN })
+  const ran = await $.command.run({ command: 'z-reload', args: '', ...RUN })
   expect(cli(runs[0])).toBe('restart-agent --pane 0a1b2c3d --force')
   expect(ran.text).toBe('Restarting Claude in this pane; it comes back on this conversation.')
 })
 
-test('/zetty-hibernate with no name hibernates this project, and says this pane goes too', async ($, on) => {
+test('/z-hibernate with no name hibernates this project, and says this pane goes too', async ($, on) => {
   const { runs } = world(on, IN_PANE, argv => (argv[1] === 'status' ? STATUS : ''))
-  const ran = await $.command.run({ command: 'zetty-hibernate', args: '', ...RUN })
+  const ran = await $.command.run({ command: 'z-hibernate', args: '', ...RUN })
   expect(cli(runs[0])).toBe('status --json')
-  expect(cli(runs[1])).toBe('hibernate app')
+  // Named as the asking pane: Zetty cannot type /compact into a Claude busy
+  // running this command, and would refuse it as busy.
+  expect(cli(runs[1])).toBe('hibernate app --self 0a1b2c3d')
   expect(ran.text).toContain('Hibernating app.')
   expect(ran.text).toContain('That includes this pane')
 })
 
+// Zetty answers `compact`: this Claude compacts itself, after the command
+// has returned (Claude refuses it inside the command's own turn).
+test('/z-hibernate compacts this conversation itself once the command is done', async ($, on) => {
+  const { runs, clock } = world(on, IN_PANE, argv =>
+    argv[1] === 'status' ? STATUS : argv[1] === 'hibernate' ? 'compact\n' : '')
+  const asked: (string | undefined)[] = []
+  on('session.compact', (_$, e) => {
+    asked.push(e.instructions)
+    return { messages: [{ role: 'user', text: 'summary', toolUses: [] }] } as never
+  })
+  const ran = await $.command.run({ command: 'z-hibernate', args: '', ...RUN })
+  expect(ran.text).toContain('compacts into a handoff once this command is done')
+  expect(asked.length).toBe(0)
+  await clock.advance(300)
+  expect(asked).toEqual([HANDOFF_INSTRUCTIONS])
+  expect(runs.map(cli)).not.toContain('wake app')
+})
+
+test('/z-hibernate calls the hibernation off when this conversation cannot compact', async ($, on) => {
+  const { runs, clock } = world(on, IN_PANE, argv =>
+    argv[1] === 'status' ? STATUS : argv[1] === 'hibernate' ? 'compact\n' : '')
+  on('session.compact', () => ({ skip: 'a PreCompact hook blocked it' }))
+  const toasts: string[] = []
+  on('ui.toast', (_$, e) => {
+    toasts.push(e.text)
+    return { value: undefined }
+  })
+  await $.command.run({ command: 'z-hibernate', args: '', ...RUN })
+  await clock.advance(300)
+  expect(cli(runs.at(-1))).toBe('wake app')
+  expect(toasts).toEqual(['Not hibernated: this conversation could not compact (a PreCompact hook blocked it).'])
+})
+
 // Which panes are busy is Zetty's call: `status` can be stale (the probe
 // freezes while Zetty is in the background), so the mod never adds --force.
-test('/zetty-hibernate never forces on its own, and points at --force when refused', async ($, on) => {
+test('/z-hibernate never forces on its own, and points at --force when refused', async ($, on) => {
   const refusal = 'Zetty: 1 busy pane: 99999999 (node) — pass --force to close it anyway'
   const { runs } = world(on, IN_PANE, argv =>
     argv[1] === 'status' ? STATUS : { exitCode: 1, stderr: refusal })
-  const ran = await $.command.run({ command: 'zetty-hibernate', args: '', ...RUN })
-  expect(cli(runs.at(-1))).toBe('hibernate app')
-  expect(ran.text).toBe(`${refusal}\nRun /zetty-hibernate app --force to go ahead.`)
+  const ran = await $.command.run({ command: 'z-hibernate', args: '', ...RUN })
+  expect(cli(runs.at(-1))).toBe('hibernate app --self 0a1b2c3d')
+  expect(ran.text).toBe(`${refusal}\nRun /z-hibernate app --force to go ahead.`)
 })
 
-test('/zetty-hibernate names another project and passes its flags through', async ($, on) => {
+test('/z-hibernate names another project and passes its flags through', async ($, on) => {
   const { runs } = world(on, IN_PANE, argv => (argv[1] === 'status' ? STATUS : ''))
-  const ran = await $.command.run({ command: 'zetty-hibernate', args: 'my other --no-handoff', ...RUN })
+  const ran = await $.command.run({ command: 'z-hibernate', args: 'my other --no-handoff', ...RUN })
   expect(cli(runs[1])).toBe('hibernate my other --no-handoff')
   expect(ran.text).toBe('Hibernating my other. Its sessions end now, without handoffs.')
 })
 
-test('/zetty-hibernate with an unknown option runs nothing', async ($, on) => {
+test('/z-hibernate with an unknown option runs nothing', async ($, on) => {
   const { runs } = world(on, IN_PANE)
-  const ran = await $.command.run({ command: 'zetty-hibernate', args: 'app --kill', ...RUN })
+  const ran = await $.command.run({ command: 'z-hibernate', args: 'app --kill', ...RUN })
   expect(ran.text).toContain('Unknown option --kill')
   expect(runs.length).toBe(0)
 })
 
-test('/zetty-open opens this pane\'s project and says what Zetty did', async ($, on) => {
+test('/z-open opens this pane\'s project and says what Zetty did', async ($, on) => {
   const { runs } = world(on, IN_PANE, argv =>
     argv[1] === 'edit' ? 'Opened /work/app in Zed.\n' : '')
-  const ran = await $.command.run({ command: 'zetty-open', args: '', ...RUN })
+  const ran = await $.command.run({ command: 'z-open', args: '', ...RUN })
   expect(cli(runs[0])).toBe('edit --pane 0a1b2c3d')
   expect(ran.text).toBe('Opened /work/app in Zed.')
 })
 
 test('the pane commands outside Zetty run nothing', async ($, on) => {
   const { runs } = world(on, { HOME: '/Users/me' })
-  for (const command of ['zetty-reload', 'zetty-open']) {
+  for (const command of ['z-reload', 'z-open']) {
     const ran = await $.command.run({ command, args: '', ...RUN })
     expect(ran.text).toBe('This session is not running inside a Zetty pane.')
   }
@@ -206,5 +241,5 @@ test('the pane commands outside Zetty run nothing', async ($, on) => {
 test('hibernate arguments: the name keeps its spaces, flags are known or refused', () => {
   expect(hibernateArgs('')).toEqual({ name: '', flags: [] })
   expect(hibernateArgs('  my  app --force --force ')).toEqual({ name: 'my app', flags: ['--force'] })
-  expect(hibernateArgs('app --nope')).toEqual({ error: 'Unknown option --nope.\nUsage: /zetty-hibernate [project] [--force] [--no-handoff]' })
+  expect(hibernateArgs('app --nope')).toEqual({ error: 'Unknown option --nope.\nUsage: /z-hibernate [project] [--force] [--no-handoff]' })
 })

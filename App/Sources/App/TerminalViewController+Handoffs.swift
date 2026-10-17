@@ -139,12 +139,16 @@ extension TerminalViewController {
     /// person can see it, wait for every one, and only then end the
     /// sessions. Until that last step the project is awake, so a failure is
     /// seen while the conversation is still there.
+    ///
+    /// `compactingItself` is a pane that asked for this from its own agent
+    /// and compacts itself (`--self`); it is waited on, never typed into.
+    @discardableResult
     func beginHibernation(of project: ProjectRuntime, panes: [UUID], records: [HandoffRecord],
-                          isAutomatic: Bool) {
+                          isAutomatic: Bool, compactingItself asker: UUID? = nil) -> HandoffCompaction.SelfCompaction {
         guard let zmx = ZmxRunner.locate() else {
             // Nothing can be typed into a pane without it.
             putAway(project, surfaceIDs: panes, foreground: nil)
-            return
+            return .none
         }
         let projectID = project.id
         hibernationsInProgress[projectID] = HibernationInProgress(
@@ -158,8 +162,10 @@ extension TerminalViewController {
             .init(surface: record.surface, agent: record.agent,
                   session: AgentSession(id: record.sessionID, cwd: record.cwd),
                   configDirectory: harnessConfigDirectory(for: record.surface, kind: record.agent),
-                  midTurn: agentDetector.state(for: record.surface).status == .running)
+                  midTurn: agentDetector.state(for: record.surface).status == .running,
+                  compactsItself: record.surface == asker)
         }, zmxPath: zmx)
+        return records.contains { $0.surface == asker } ? .compact : .none
     }
 
     /// `handoffCompactor.onFinished`: a pane compacted, had nothing to, or

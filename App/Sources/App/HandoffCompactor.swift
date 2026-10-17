@@ -24,6 +24,10 @@ final class HandoffCompactor: @unchecked Sendable {
         let configDirectory: String?
         /// Claude's hooks say a turn is running. Codex shows it on screen.
         let midTurn: Bool
+        /// Its agent asked for the hibernation and compacts itself
+        /// (`--self`): nothing is typed into it, and only its transcript is
+        /// watched.
+        var compactsItself = false
     }
 
     /// How a pane ended, and what its harness called the conversation, for a
@@ -71,14 +75,36 @@ final class HandoffCompactor: @unchecked Sendable {
               AgentTranscript.hasReply(at: transcript, agent: job.agent) else { return (.skipped, nil) }
         // Compacted, and nothing said since: it is a handoff already, and
         // asking again gets "Not enough messages to compact" and no marker.
-        let result = AgentTranscript.needsCompaction(at: transcript, agent: job.agent)
-            ? ZmxRunner.compact(
+        let cancelled = { [self] in isCancelled(job.surface) }
+        let result: HandoffCompaction.Result?
+        if !AgentTranscript.needsCompaction(at: transcript, agent: job.agent) {
+            result = .compacted
+        } else if job.compactsItself {
+            result = Self.awaitOwnCompaction(transcript: transcript, agent: job.agent, isCancelled: cancelled)
+        } else {
+            result = ZmxRunner.compact(
                 session: SessionPersistence.sessionName(for: job.surface), agent: job.agent,
-                midTurn: job.midTurn, transcript: transcript, zmxPath: zmxPath,
-                isCancelled: { [self] in isCancelled(job.surface) })
-            : .compacted
+                midTurn: job.midTurn, transcript: transcript, zmxPath: zmxPath, isCancelled: cancelled)
+        }
         // Read after compacting: a harness may retitle as it summarises.
         return (result, AgentTranscript.title(at: transcript, agent: job.agent))
+    }
+
+    /// Waits for a pane compacting itself to show it in its transcript: the
+    /// last compaction there with nothing said after it. Nothing is typed
+    /// and its screen is not read, since an agent at rest is what it looks
+    /// like until its command has returned and the compaction starts. If it
+    /// cannot compact, it calls the hibernation off itself (`zetty wake`).
+    /// Nil when cancelled. Blocking — off-main only.
+    private static func awaitOwnCompaction(transcript: URL, agent: AgentKind,
+                                           isCancelled: () -> Bool) -> HandoffCompaction.Result? {
+        let deadline = Date().addingTimeInterval(HandoffCompaction.timeout)
+        while Date() < deadline {
+            Thread.sleep(forTimeInterval: 1)
+            if isCancelled() { return nil }
+            if !AgentTranscript.needsCompaction(at: transcript, agent: agent) { return .compacted }
+        }
+        return .failed("it did not compact itself within \(Int(HandoffCompaction.timeout / 60)) minutes")
     }
 
     private func finish(_ surface: UUID, _ result: HandoffCompaction.Result?, title: String?) {

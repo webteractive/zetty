@@ -3,7 +3,7 @@ import Testing
 @testable import ZettyCore
 
 /// `restart-agent` and `edit`: the CLI ends of the pane's ⟳ button and its
-/// Open in Editor, which the Claude mod's `/zetty-reload` and `/zetty-open`
+/// Open in Editor, which the Claude mod's `/z-reload` and `/z-open`
 /// call for their own pane.
 
 // MARK: - restart-agent

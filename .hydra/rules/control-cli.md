@@ -64,12 +64,14 @@ Commands (see `zetty --help` for full grammar and agent notes):
   detach|split` edit one. Those three work on the active view (or `--view
   <name>`), take 1-based `--slot` numbers, and never bring the grid up. See
   `.hydra/rules/tile-mode.md` → "Scripting the grid".
-- `hibernate (<name> | --space <name>) [--force] [--no-handoff]` · `wake
-  (<name> | --space <name>)` — put a project away and bring it back. Each
-  Claude or Codex pane leaves a handoff unless `--no-handoff`; the flag decodes
-  with `decodeIfPresent ?? true`, so an older CLI that never sends it gets the
-  default (unlike `force`, where silence must mean refuse). See
-  `hibernation-handoffs.md`.
+- `hibernate (<name> | --space <name>) [--force] [--no-handoff] [--self
+  <pane>]` · `wake (<name> | --space <name>)` — put a project away and bring
+  it back. Each Claude or Codex pane leaves a handoff unless `--no-handoff`;
+  the flag decodes with `decodeIfPresent ?? true`, so an older CLI that never
+  sends it gets the default (unlike `force`, where silence must mean refuse).
+  `--self` (project only) names the pane asking, which is not refused as busy
+  and compacts itself; the answer is `.text` (`compact` / `none`) instead of
+  `.ok`. See `hibernation-handoffs.md`.
 - `restart-agent (--pane|--cwd) [--force]` — the pane's ⟳ button: restart
   its Claude or Codex on the same conversation. `.ok` means STARTED; the quit
   and resume run on timers afterwards. A turn in progress is refused unless
@@ -104,7 +106,7 @@ raised `confirmClosingBusyPanes`, and the CLI froze for everyone.
   every tick while Zetty is not the active app, so it is frozen exactly when
   agents and scripts call the CLI. It happened (Oct 2026): with an editor in
   front, a pane's `sleep 900` read as a bare shell, and an unforced `zetty
-  hibernate` (and the mod's `/zetty-hibernate`) killed it. Now the socket
+  hibernate` (and the mod's `/z-hibernate`) killed it. Now the socket
   queue takes one bounded `zmx list` + `ps` (3s each,
   `readForegroundForRequest`) for any request with
   `ControlRequest.refusesBusyPanes`, hands it to `cliRefusal` as

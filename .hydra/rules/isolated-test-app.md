@@ -18,7 +18,7 @@ beside Glen's Zetty, never by quitting or replacing `/Applications/zetty.app`**
 (Glen, 2026-10-15). His app hosts his sessions, and the agent doing the work
 usually lives in one of them; quitting it for a test costs him his view and
 risks the reap. On 2026-10-15 one session quit and reinstalled it twice to
-verify, and its `/zetty-open` test left his editor in front. Installing to
+verify, and its `/z-open` test left his editor in front. Installing to
 `/Applications` is still the step AFTER the commit ("Installing after a
 change" in `CLAUDE.md`); this rule covers everything before it.
 
@@ -77,6 +77,13 @@ rm -rf /tmp/zti                               # removes the link, not ~/.claude/
   `claude --settings '{"env":{"CLAUDE_CODE_PLUGIN_DIRS":"/tmp/zti/.zetty/mods/zetty-bridge"}}'`.
   That replaces the whole list, so Glen's other mods (warden, hydra) are
   absent in that pane, and the output label reads `zetty-bridge:` alone.
+  A wake or a ⟳ restart types its own plain `claude --resume`, so that
+  Claude is back on the installed mod: `/zetty-reload` names instead of
+  `/z-`, and "busy, pass --force" from a `/z-hibernate` the old mod cannot
+  send `--self` for (2026-10-17). A shell function defined in the test pane,
+  `claude() { command claude --settings '…' "$@"; }`, carries a ⟳ restart,
+  which types into the same shell. A wake starts a new shell without it:
+  exit that Claude, define the function, and `claude --resume <id>` by hand.
 - **Hooks report to the real home**, so no hook event reaches the test app
   (status dots and needs-attention come from the probe only), and the mod's
   usage snapshot is written under the real `~/.zetty/agent-usage`, where the
@@ -100,7 +107,7 @@ rm -rf /tmp/zti                               # removes the link, not ~/.claude/
 - **Activating another app is a test condition, not a side effect.** The
   foreground probe only polls while Zetty is the active app, so focus
   changes what `status` reports. A step that opens an editor or Finder
-  (`/zetty-open`, `zetty edit`) moves focus; say so, and restore it after.
+  (`/z-open`, `zetty edit`) moves focus; say so, and restore it after.
 
 ## What still needs the installed app
 

@@ -2239,9 +2239,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         case .wakeSpace(let name, let handoffs):
             if let message = tvc.wakeSpaceNamed(name, handoffs: handoffs) { return .error(message) }
             return .ok
-        case .hibernateProject(let name, let force, let handoff):
-            if let message = tvc.hibernateProjectNamed(name, force: force, handoff: handoff) { return .error(message) }
-            return .ok
+        case .hibernateProject(let name, let force, let handoff, let asker):
+            switch tvc.hibernateProjectNamed(name, force: force, handoff: handoff, asker: asker) {
+            case .success(let answer?): return .text(answer.rawValue)
+            case .success(nil): return .ok
+            case .failure(let error): return .error(error.localizedDescription)
+            }
         case .wakeProject(let name, let handoffs):
             if let message = tvc.wakeProjectNamed(name, handoffs: handoffs) { return .error(message) }
             return .ok
