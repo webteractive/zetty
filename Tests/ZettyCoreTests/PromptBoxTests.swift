@@ -37,14 +37,18 @@ private let rule = String(repeating: "─", count: 40)
     let faint = "\u{1B}[2m", reset = "\u{1B}[0m"
     // Every placeholder claude 2.1.301 can put in an empty box, not only the
     // first one ever measured: "holds a draft" failed hibernates on the rest.
-    for placeholder in ["Try \"fix lint errors\"", "Message @researcher…",
-                        "Press up to edit queued messages",
-                        "Press Enter to edit the selected message, or up again for history",
-                        "deploy to both"] {
+    for placeholder in ["Try \"fix lint errors\"", "Message @researcher…", "deploy to both"] {
         #expect(PromptBox.isEmpty(vtScreen: "\(rule)\n❯ \(faint)\(placeholder)\(reset)\n\(rule)"), "\(placeholder)")
     }
     #expect(!PromptBox.isEmpty(vtScreen: "\(rule)\n❯ \(faint)[Pasted text #1]\(reset)\n\(rule)"))
     #expect(!PromptBox.isEmpty(vtScreen: "\(rule)\n❯ \(faint)[Image #1]\(reset)\n\(rule)"))
+    // A queued message waits behind these. Interrupted, Claude puts it back
+    // in the box, and the hibernate would clear it.
+    for hint in ["Press up to edit queued messages",
+                 "Press Enter to edit the selected message, or up again for history",
+                 "Press up to select a queued message"] {
+        #expect(!PromptBox.isEmpty(vtScreen: "\(rule)\n❯ \(faint)\(hint)\(reset)\n\(rule)"), "\(hint)")
+    }
     // Typed text beside a faint one is still typed.
     #expect(!PromptBox.isEmpty(vtScreen: "\(rule)\n❯ fix \(faint)the tests\(reset)\n\(rule)"))
 }

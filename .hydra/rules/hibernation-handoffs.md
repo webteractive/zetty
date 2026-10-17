@@ -104,6 +104,15 @@ Needs `preserve-sessions` (`handoffsEnabled`); without zmx both hibernation and
   keeps its project awake either. Which placeholder event-platform showed
   was inferred, not seen: its screen was gone by the time it was looked
   at, and a resumed copy of that conversation read empty.
+- **Except the queued-message hints, which all begin `Press `** (`Press up
+  to edit queued messages`, `Press up to select a queued message…`, `Press
+  Enter to edit the selected message…`). They mean a message is waiting
+  behind the turn. Escape puts it back in the box as plain text (measured
+  2026-10-17), and the interrupt step below clears what an interrupt left
+  in a box seen empty, so letting the hint through would have thrown the
+  message away. The first version of the placeholder rule did; `/verify`
+  caught it before it met a real queued message. The hints show only
+  mid-turn, so an idle pane is unaffected.
 - **Only then is a turn stopped.** Claude panes whose hooks say `running`,
   and a Codex whose screen shows `esc to interrupt`, are sent Escape.
   `needsAttention` is not a reason: it is an idle Claude's notification (box
@@ -178,8 +187,10 @@ Needs `preserve-sessions` (`handoffsEnabled`); without zmx both hibernation and
   mid-way leaves the project awake and nothing on disk; whatever was
   compacting finishes or dies with its session.
 - **Without hooks a working Claude is not known to be working.** Its box
-  reads empty, so `/compact` is typed while it works and queues behind the
-  turn. It still compacts, later, or the five minutes run out.
+  reads empty, so `/compact` is typed while it works. On 2.1.301 it was not
+  queued: it stayed in the box unsent after the turn ended, the five
+  minutes ran out, and the line was left there for the person to clear
+  (2026-10-17, isolated instance, a queued message running).
 
 ## Files
 

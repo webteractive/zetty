@@ -36,14 +36,21 @@ public enum PromptBox {
     /// message hints (`Press up to edit queued messages`, `Press Enter to edit the selected
     /// message…`) and the predicted next prompt. Allowing only the first made every hibernate of a
     /// pane showing one of the others fail as "holds a draft". So any faint text is let through
-    /// except a chip, `[Pasted text #1 +20 lines]` or `[Image #1]`, should Claude draw one faint.
+    /// except a chip, `[Pasted text #1 +20 lines]` or `[Image #1]`, should Claude draw one faint,
+    /// and the queued-message hints, which all begin `Press `.
+    ///
+    /// Those hints mean a message the person typed is waiting behind the turn, not that the box is
+    /// empty. Interrupted, Claude puts that message back in the box as plain text (measured on
+    /// 2.1.301), and a box empty before the interrupt is cleared after it, so letting the hint
+    /// through would throw the message away. They show only mid-turn, which keeps an idle pane
+    /// hibernating.
     public static func isEmpty(vtScreen: String) -> Bool {
         guard isEmpty(screen: withoutFaintText(vtScreen)) else { return false }
         let plain = withoutFaintText(vtScreen, keepFaint: true)
         let lines = plain.split(omittingEmptySubsequences: false, whereSeparator: \.isNewline)
         guard let input = lines.last(where: { $0.drop(while: \.isWhitespace).first == prompt }) else { return false }
         let placeholder = input.drop(while: \.isWhitespace).dropFirst().trimmingCharacters(in: .whitespaces)
-        return !placeholder.hasPrefix("[")
+        return !placeholder.hasPrefix("[") && !placeholder.hasPrefix("Press ")
     }
 
     /// The screen with every escape sequence removed and every run drawn faint (SGR 2) dropped.
