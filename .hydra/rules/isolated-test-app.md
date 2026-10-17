@@ -104,6 +104,11 @@ rm -rf /tmp/zti                               # removes the link, not ~/.claude/
   either copy; see `ssh-url-handover.md`. `open -a` does not activate an
   already-running Zetty; `osascript -e 'tell application id
   "co.webteractive.zetty" to activate'` does, and it may pick either copy.
+  **Tear the test app down before the install ritual.** With it running,
+  the ritual's `open -a /Applications/zetty.app` (and `open -n`) handed the
+  launch to the test copy, and Glen's app stayed quit after its install
+  until the test app was gone (2026-10-18). The sessions survived, but
+  nothing was attached to them.
 - **Activating another app is a test condition, not a side effect.** The
   foreground probe only polls while Zetty is the active app, so focus
   changes what `status` reports. A step that opens an editor or Finder
