@@ -249,6 +249,16 @@ has a `⟳` button: Zetty quits the agent and resumes the same conversation in
 place, scrollback kept. Needs `preserve-sessions`. From inside Claude,
 `/z-reload` does the same.
 
+**Hand the work to a fresh session.** The pane's hand-off button (beside `⟳`)
+asks the Claude or Codex in it to write a brief, then quits it and starts a new
+session in the same pane, on the same login or one you pick from its menu
+(another account, or the other harness). The new session reads the brief and
+carries on; the brief is deleted once its first turn ends. A draft in the
+prompt box is never typed over. Needs `preserve-sessions`. From inside Claude,
+`/z-handoff [account]` does the same: an account by its handle, such as
+`claude-devops` (its hint lists yours), or `claude` / `codex` for that
+harness's default login.
+
 **Multiple accounts.** Run a work login in one tab and a personal one in the
 next (Claude Code and Codex). **Settings → Accounts → Add Account…** creates
 one, optionally sharing your skills, commands and `CLAUDE.md`. Choose an account
@@ -263,6 +273,8 @@ Claude pane. It adds:
 - `/zetty panes`, `/zetty fleet`, `/zetty peek <path>[:line]` and
   `/zetty split [command…]` commands;
 - `/z-reload` (restart this Claude on the same conversation),
+  `/z-handoff [account]` (a fresh session in this pane, on this login or that
+  account, picks the work up from a brief this Claude writes),
   `/z-hibernate [project]` (this project by default; its agents hand off
   first, this Claude included, which compacts its own conversation; `--force` /
   `--no-handoff` work as on the CLI) and `/z-open`
@@ -388,6 +400,7 @@ zetty break --pane 1a2b3c4d              # move a pane into its own tab
 zetty focus --cwd ~/work/api             # switch to a pane
 zetty close --pane 1a2b3c4d --tab        # close a pane, or its whole tab
 zetty restart-agent --pane 1a2b3c4d      # the pane's ⟳: restart its Claude/Codex
+zetty handoff --pane 1a2b3c4d --to work  # a fresh session on "work" takes over from a brief
 zetty edit --pane 1a2b3c4d               # open the pane's project in your editor
 zetty add-project ~/work/api             # add a folder as a project
 zetty new-project ~/work/new --git       # create a folder and add it

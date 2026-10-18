@@ -138,6 +138,10 @@ public enum ControlCLI {
                                               restart the pane's Claude or Codex on
                                               its own conversation (the pane's ⟳);
                                               a turn in progress needs --force
+      zetty handoff (--pane <id> | --cwd <path>) [--to <account>] [--force]
+                                              hand the pane's work to a fresh
+                                              session: its agent writes a brief,
+                                              quits, and the new one reads it
       zetty edit [--pane <id> | --cwd <path>]
                                               open the pane's project in your
                                               configured editor (Finder without one)
@@ -228,7 +232,7 @@ public enum ControlCLI {
         "status", "ls", "send", "capture", "view", "new-tab", "add-project", "new-project",
         "clone", "update-clone", "merge-clone", "push-clone",
         "remove-project", "hibernate", "wake", "split", "break", "focus", "close",
-        "restart-agent", "edit", "reload", "tiles",
+        "restart-agent", "handoff", "edit", "reload", "tiles",
         "scratch", "scratch-clear", "quit", "accounts", "run",
         "new-space", "rename-space", "remove-space", "move-to-space",
     ]
@@ -331,6 +335,8 @@ public enum ControlCLI {
             return runClose(arguments)
         case "restart-agent":
             return runRestartAgent(arguments)
+        case "handoff":
+            return runHandoff(arguments)
         case "edit":
             return runEdit(arguments)
         case "reload":
@@ -675,6 +681,34 @@ public enum ControlCLI {
           --force         restart even while the agent is running a turn
 
         Interrupts a turn in progress only with --force; the conversation is kept.
+        """,
+        "handoff": """
+        usage: zetty handoff (--pane <id> | --cwd <path>) [--to <account>] [--force]
+                             [--self] [--cancel]
+
+        Hand the pane's work to a fresh agent session, in the same pane: its
+        Claude or Codex is asked to write a handoff brief to
+        ~/.zetty/transfers/<pane>.md, and once the file is there and the
+        agent is at rest, the pane is covered, the agent quits, and a new
+        session starts under the chosen login, told to read the brief. The
+        brief is deleted once the new session's first turn ends. Returns once
+        the handoff has STARTED. Needs preserve-sessions. A draft or a
+        question in the agent's prompt box is never typed over: the handoff
+        is refused instead. It never waits on a dialog.
+
+          --pane <id>     the pane whose agent to hand off
+          --cwd <path>    the single pane whose working dir is <path>
+          --to <name>     an account, by handle (claude-devops), name or id,
+                          or claude / codex for that harness's default
+                          login. Default: the same login
+          --force         hand off even while the agent is running a turn
+                          (the turn is interrupted first)
+          --self          the pane's own agent is asking (Claude's
+                          /z-handoff): nothing is typed into it, and the
+                          prompt it must submit is printed instead
+          --cancel        stop a handoff still waiting on its brief
+
+        Ends the agent's session; its conversation stays in its history.
         """,
         "edit": """
         usage: zetty edit [--pane <id> | --cwd <path>]
@@ -1431,6 +1465,48 @@ public enum ControlCLI {
             return failure("restart-agent needs an explicit target: --pane <id> or --cwd <path>")
         }
         return expectOK(.restartAgent(target: target, force: force), success: "restarting")
+    }
+
+    private static func runHandoff(_ arguments: [String]) -> Int32 {
+        var target: PaneSelector?
+        var to: String?
+        var force = false
+        var asking = false
+        var cancel = false
+        var index = 0
+        while index < arguments.count {
+            switch arguments[index] {
+            case "--pane":
+                index += 1
+                guard index < arguments.count else { return failure("--pane needs a value") }
+                target = .pane(arguments[index])
+            case "--cwd":
+                index += 1
+                guard index < arguments.count else { return failure("--cwd needs a value") }
+                target = .cwd(arguments[index])
+            case "--to":
+                index += 1
+                guard index < arguments.count, !arguments[index].isEmpty else { return failure("--to needs a value") }
+                to = arguments[index]
+            case "--force":
+                force = true
+            case "--self":
+                asking = true
+            case "--cancel":
+                cancel = true
+            default:
+                return failure("unknown argument \"\(arguments[index])\"")
+            }
+            index += 1
+        }
+        // Explicit, like `restart-agent`: ending whichever agent holds focus
+        // is not something to do by accident.
+        guard let target else {
+            return failure("handoff needs an explicit target: --pane <id> or --cwd <path>")
+        }
+        let request = ControlRequest.handoffAgent(target: target, to: to, asking: asking,
+                                                  force: force, cancel: cancel)
+        return asking ? expectText(request) : expectOK(request, success: cancel ? "cancelled" : "handing off")
     }
 
     private static func runEdit(_ arguments: [String]) -> Int32 {

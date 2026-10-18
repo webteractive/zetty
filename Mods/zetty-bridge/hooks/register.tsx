@@ -2,7 +2,7 @@ import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register, SessionUsage } from 'claude-code'
 
 import {
-  baseName, describePanes, fleetLabel, HANDOFF_INSTRUCTIONS, hibernateArgs, limitWarning, otherAccounts,
+  baseName, describePanes, fleetLabel, HANDOFF_INSTRUCTIONS, handoffTargets, hibernateArgs, limitWarning, otherAccounts,
   projectPanes, UUID,
 } from './panes'
 
@@ -116,6 +116,7 @@ const USAGE = [
   '  /zetty split [--down] [command…]   open a pane beside this one, optionally running a command',
   '',
   'Also: /z-reload (restart this Claude on this conversation), /z-hibernate [project],',
+  '/z-handoff [account] (a fresh session here picks this work up from a brief),',
   '/z-open (this project in your editor).',
 ].join('\n')
 
@@ -167,6 +168,14 @@ async function startCommands($: EngineInterface): Promise<void> {
     name: 'z-hibernate',
     description: 'Zetty: hibernate a project (this one by default); its agents hand off first',
     argumentHint: '[project] [--force] [--no-handoff]',
+  })
+  // The accounts Zetty has, as the hint lists them, the same handles the
+  // pane's hand-off menu passes.
+  const listed = await zetty($, ['accounts', '--json'])
+  await $.command.register({
+    name: 'z-handoff',
+    description: 'Zetty: hand this work to a fresh session in this pane (same login, or another account)',
+    argumentHint: `[${handoffTargets(listed.ok ? listed.out : '').join(' | ')}]`,
   })
   await $.command.register({
     name: 'z-open',
@@ -243,6 +252,35 @@ async function compactForHandoff($: EngineInterface, name: string): Promise<void
   if (failure === undefined) return
   await zetty($, ['wake', name])
   $.ui.toast(`Not hibernated: this conversation could not compact (${failure}).`, { timeoutMs: 10000 })
+}
+
+// A fresh session takes this pane's work over from a brief this Claude
+// writes. Zetty answers with the request to write it, which is submitted
+// here once the command has returned: Zetty cannot type into a Claude busy
+// running this command (the line sat unsent in the box for hibernate).
+// Zetty then waits for the file, quits this Claude and starts the new one.
+async function handOff($: EngineInterface, args: string): Promise<string> {
+  const me = await paneID($)
+  if (me === undefined) return 'This session is not running inside a Zetty pane.'
+  const to = args.trim()
+  const ran = await zetty($, ['handoff', '--pane', me, '--self', ...(to === '' ? [] : ['--to', to])])
+  if (!ran.ok) return ran.out
+  const prompt = ran.out.trim()
+  $.clock.after(300, () => { void writeBrief($, me, prompt) })
+  const where = to === '' ? 'on this login' : `on ${to}`
+  return `Handing off ${where}. This Claude writes a brief next; once it is written, `
+    + 'this session ends and a fresh one in this pane picks the work up from it.'
+}
+
+// A prompt that cannot be submitted calls the handoff off, so Zetty stops
+// waiting on a brief that will not come.
+async function writeBrief($: EngineInterface, me: string, prompt: string): Promise<void> {
+  try {
+    await $.prompt.submit({ text: prompt })
+  } catch (error) {
+    await zetty($, ['handoff', '--pane', me, '--cancel'])
+    $.ui.toast(`Not handed off: the brief could not be asked for (${String(error)}).`, { timeoutMs: 10000 })
+  }
 }
 
 async function openInEditor($: EngineInterface): Promise<string> {
@@ -575,6 +613,8 @@ export const register: Register = on => {
   on('command.run', { command: 'z-reload' }, async $ => ({ text: await reloadThisPane($) }))
 
   on('command.run', { command: 'z-hibernate' }, async ($, e) => ({ text: await hibernate($, e.args) }))
+
+  on('command.run', { command: 'z-handoff' }, async ($, e) => ({ text: await handOff($, e.args) }))
 
   on('command.run', { command: 'z-open' }, async $ => ({ text: await openInEditor($) }))
 

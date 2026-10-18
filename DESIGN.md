@@ -179,7 +179,8 @@ are authoritative.
 - **Pane** — `bg1`, 8pt radius, **borderless**. Focus is shown by an accent
   status dot in the 24pt top gutter strip (dim `fg3` when unfocused), which
   also carries click targets for hibernate (the pane's project; not in Home) /
-  open (the pane's directory, in an editor or Finder) / split vertically / split horizontally and, in a multi-pane tab, break-into-tab and close.
+  hand off and restart (an agent pane: a fresh session on a brief, or the
+  same conversation again) / open (the pane's directory, in an editor or Finder) / split vertically / split horizontally and, in a multi-pane tab, break-into-tab and close.
   Right-clicking the strip opens the same actions as a menu. *(A pane header
   with name/subtitle and a `RUNNING` badge appeared in the original handoff and
   is still unbuilt.)*

@@ -77,8 +77,9 @@ rm -rf /tmp/zti                               # removes the link, not ~/.claude/
   `claude --settings '{"env":{"CLAUDE_CODE_PLUGIN_DIRS":"/tmp/zti/.zetty/mods/zetty-bridge"}}'`.
   That replaces the whole list, so Glen's other mods (warden, hydra) are
   absent in that pane, and the output label reads `zetty-bridge:` alone.
-  A wake or a ⟳ restart types its own plain `claude --resume`, so that
-  Claude is back on the installed mod: `/zetty-reload` names instead of
+  A wake, a ⟳ restart or a hand-off types its own plain `claude` line, so
+  that Claude is back on the installed mod (a hand-off's new Claude had no
+  `/z-handoff`, 2026-10-18): `/zetty-reload` names instead of
   `/z-`, and "busy, pass --force" from a `/z-hibernate` the old mod cannot
   send `--self` for (2026-10-17). A shell function defined in the test pane,
   `claude() { command claude --settings '…' "$@"; }`, carries a ⟳ restart,

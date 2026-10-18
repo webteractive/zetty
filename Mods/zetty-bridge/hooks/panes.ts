@@ -142,6 +142,27 @@ export function otherAccounts(accountsJSON: string, currentDirectory: string, ho
     .map(account => account.name as string)
 }
 
+// MARK: - /z-handoff
+
+// What `/z-handoff` can be given, from `zetty accounts --json`: each
+// harness's default login, then each Claude or Codex account by its handle,
+// `<harness>-<id>` (`AgentHandoff.handle` in Zetty, which resolves the same).
+export function handoffTargets(accountsJSON: string): string[] {
+  const harnesses = ['claude', 'codex']
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(accountsJSON)
+  } catch {
+    return harnesses
+  }
+  const list = (parsed as { accounts?: unknown }).accounts
+  if (!Array.isArray(list)) return harnesses
+  const handles = (list as Record<string, unknown>[])
+    .filter(account => typeof account.id === 'string' && harnesses.includes(account.agent as string))
+    .map(account => `${account.agent as string}-${account.id as string}`)
+  return [...harnesses, ...handles]
+}
+
 // MARK: - /z-hibernate
 
 export const HIBERNATE_USAGE = 'Usage: /z-hibernate [project] [--force] [--no-handoff]'

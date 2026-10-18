@@ -17,6 +17,21 @@ triggers:
 `zetty restart-agent` and the Claude mod's `/z-reload` reach the same
 `startAgentRestart`; only the button asks before interrupting a turn.
 
+- **The relaunch is shared with the handoff** (`relaunchAgent`, see
+  `agent-handoff.md`): the same cover, quit and wait, with the line, the
+  harness that comes back and the marker its input is looked for below as
+  parameters. A handoff can bring back a different harness, so phase one
+  waits on the OLD one going and phase two on the NEW one appearing.
+- **The quit line and its Enter are two writes** (`ZmxRunner.sendLine`).
+  Sent as one, Codex read `/quit` and the Enter as a paste and kept the
+  Enter as a newline: the line sat in its box, Codex kept running, and a
+  handoff from it timed out (2026-10-18). Three seconds in, a box still
+  holding the quit line (`PromptBox.boxHolds`) gets one kitty-encoded Enter;
+  it is never pressed blind, since after a quit the screen is a shell.
+- **Only the first tick that reaches an outcome finishes it**
+  (`isCurrentRestart`). Ticks are 0.5 s and a screen read takes up to 2 s,
+  so several were in flight at once, and a restart logged "finished ok=true"
+  four times (seen 2026-10-18 while building the handoff).
 - **One body, two front doors.** `startAgentRestart(surfaceID:allowRunning:)`
   returns `.started`, `.refused(why)` or `.declined`, and never shows UI. The
   button (`refreshAgentPane`) turns a refusal into the sheet and asks the busy

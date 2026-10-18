@@ -265,6 +265,9 @@ final class TerminalViewController: NSViewController {
         for leaf in leaves {
             leaf.setRefreshVisible(agentRestartTimers[leaf.surfaceID] != nil
                                    || canRefreshAgent(surfaceID: leaf.surfaceID))
+            leaf.setHandoffVisible(agentHandoffs[leaf.surfaceID] == nil
+                                   && agentRestartTimers[leaf.surfaceID] == nil
+                                   && canHandOffAgent(surfaceID: leaf.surfaceID))
         }
         resolveMissingResumeCommands(for: leaves.map(\.surfaceID))
     }
@@ -1963,7 +1966,7 @@ final class TerminalViewController: NSViewController {
 
     /// Mutates a surface wherever it lives, mirroring `markTitleStale`.
     @discardableResult
-    private func updateSurfaceAnywhere(_ id: UUID, _ mutate: (inout Surface) -> Void) -> Bool {
+    func updateSurfaceAnywhere(_ id: UUID, _ mutate: (inout Surface) -> Void) -> Bool {
         for project in workspace.projects
         where project.tabList.updateSurface(id, mutate) {
             return true
@@ -2360,6 +2363,9 @@ final class TerminalViewController: NSViewController {
     private static let agentExitPollInterval: TimeInterval = 0.5
     /// Give up after this. The resume is NOT typed on a timeout.
     private static let agentExitTimeout: TimeInterval = 30
+    /// How long the agent is given to quit before its box is checked for the
+    /// quit line left there unsent.
+    private static let agentExitEnterRetry: TimeInterval = 3
     /// Consecutive sightings of the NEW agent before the cover lifts.
     ///
     /// A process existing is not a harness that has finished resuming. The
@@ -2374,12 +2380,27 @@ final class TerminalViewController: NSViewController {
     /// process is seen at once and stays seen while the harness loads
     /// (`PromptBox.showsInput`). An unreadable screen is not drawn; the
     /// timeout lifts the cover then.
-    nonisolated static func agentHasDrawnInput(session: String, agent: AgentKind, zmxPath: String) -> Bool {
+    nonisolated static func agentHasDrawnInput(session: String, agent: AgentKind, zmxPath: String,
+                                               below marker: String = "resume") -> Bool {
         guard let history = ZmxRunner.historyVT(session: session, zmxPath: zmxPath, timeout: 2) else { return false }
-        return PromptBox.showsInput(vtScreen: PromptBox.tail(of: history), agent: agent, below: "resume")
+        return PromptBox.showsInput(vtScreen: PromptBox.tail(of: history), agent: agent, below: marker)
     }
 
-    private var agentRestartTimers: [UUID: Timer] = [:]
+    var agentRestartTimers: [UUID: Timer] = [:]
+
+    /// Handoffs waiting on their brief, per pane (`+AgentHandoff`).
+    var agentHandoffs: [UUID: AgentHandoffJob] = [:]
+    /// Briefs a new session has been told to read, until its first turn ends.
+    var pendingBriefs: [UUID: PendingBrief] = [:]
+    /// The conversation each of those panes handed off from.
+    var handoffOldSessions: [UUID: String] = [:]
+
+    /// Drops what is cached about the pane's conversation: the agent that
+    /// comes up next in it is a different one.
+    func forgetResumeSession(for surfaceID: UUID) {
+        lookedUpResumeSessions.removeValue(forKey: surfaceID)
+        resumeLookupAttempted.remove(surfaceID)
+    }
 
     /// Restarts the pane's agent on its existing conversation.
     ///
@@ -2458,6 +2479,22 @@ final class TerminalViewController: NSViewController {
 
         if agentDetector.state(for: surfaceID).status == .running, !allowRunning() { return .declined }
 
+        relaunchAgent(surfaceID: surfaceID, sessionPID: sessionPID, agent: kind, exit: exit,
+                      line: resume, returning: kind, marker: "resume", session: session, zmx: zmx,
+                      notQuit: "\(kind.displayName) did not quit, so nothing was resumed.",
+                      notBack: "\(kind.displayName) was resumed but has not come back yet.",
+                      failureTitle: "Could not restart the agent")
+        return .started
+    }
+
+    /// Covers the pane, sends the agent its quit line, then `line` once it
+    /// has gone, and uncovers the pane when `newAgent` is back with its
+    /// input drawn below `marker`. The restart and the handoff share it.
+    /// `onFinished` hears whether the new agent came up.
+    func relaunchAgent(surfaceID: UUID, sessionPID: Int32, agent: AgentKind, exit: String,
+                       line: String, returning newAgent: AgentKind, marker: String,
+                       session: String, zmx: String, notQuit: String, notBack: String,
+                       failureTitle: String, onFinished: ((Bool) -> Void)? = nil) {
         setRefreshSpinning(true, for: surfaceID)
         setPaneReloading(true, for: surfaceID)
         ZettyLog.lifecycle.log("restart: \(surfaceID.uuidString.prefix(8)) sending \(exit)")
@@ -2468,15 +2505,17 @@ final class TerminalViewController: NSViewController {
         view.layoutSubtreeIfNeeded()
         DispatchQueue.main.async { [weak self] in
             DispatchQueue.global(qos: .userInitiated).async {
-                ZmxRunner.send(session: session, text: exit + "\r", zmxPath: zmx)
+                ZmxRunner.sendLine(exit, session: session, zmxPath: zmx)
                 DispatchQueue.main.async {
                     self?.waitForAgentExit(surfaceID: surfaceID, sessionPID: sessionPID,
-                                           agent: kind, session: session, resume: resume,
-                                           zmx: zmx, deadline: Date() + Self.agentExitTimeout)
+                                           agent: agent, returning: newAgent, marker: marker,
+                                           session: session, resume: line,
+                                           zmx: zmx, deadline: Date() + Self.agentExitTimeout,
+                                           notQuit: notQuit, notBack: notBack,
+                                           failureTitle: failureTitle, onFinished: onFinished)
                 }
             }
         }
-        return .started
     }
 
     /// Polls the pane's foreground process until the agent is gone, sends the
@@ -2486,10 +2525,17 @@ final class TerminalViewController: NSViewController {
     /// posts as a chat message rather than restarting anything — the same rule
     /// restart recovery follows for a cancelled shutdown.
     private func waitForAgentExit(surfaceID: UUID, sessionPID: Int32, agent: AgentKind,
+                                  returning newAgent: AgentKind, marker: String,
                                   session: String, resume: String, zmx: String,
-                                  deadline: Date) {
+                                  deadline: Date, notQuit: String, notBack: String,
+                                  failureTitle: String, onFinished: ((Bool) -> Void)?) {
         var resumeSent = false
         var readySightings = 0
+        // The quit line can sit in the box unsent (its Enter read as part of
+        // a paste): Codex did, and the handoff timed out with Codex running.
+        // One more Enter, only once it is seen there, never blind.
+        let enterRetryAt = Date() + Self.agentExitEnterRetry
+        var enterRetried = false
         let timer = Timer.scheduledTimer(withTimeInterval: Self.agentExitPollInterval,
                                          repeats: true) { [weak self] timer in
             MainActor.assumeIsolated {
@@ -2502,25 +2548,39 @@ final class TerminalViewController: NSViewController {
                     // Phase 2: the resume is away and an agent is visible. Wait
                     // for it to STAY visible before uncovering — see
                     // `agentReadySightings`.
-                    if resumeSent, isAgent {
+                    if resumeSent, running == newAgent.rawValue {
                         readySightings += 1
                         guard readySightings >= Self.agentReadySightings,
-                              Self.agentHasDrawnInput(session: session, agent: agent, zmxPath: zmx)
+                              Self.agentHasDrawnInput(session: session, agent: newAgent, zmxPath: zmx,
+                                                      below: marker)
                                 || Date() >= deadline
                         else { return }
                         return DispatchQueue.main.async {
+                            guard self?.isCurrentRestart(timer, of: surfaceID) == true else { return }
                             self?.finishAgentRestart(surfaceID, success: true)
+                            onFinished?(true)
                         }
                     }
                     // It vanished again mid-settle; start counting over.
                     if resumeSent { readySightings = 0 }
                     // Phase 1: still the OLD agent — keep waiting.
                     if !resumeSent, isAgent {
+                        if !enterRetried, Date() >= enterRetryAt {
+                            enterRetried = true
+                            if let history = ZmxRunner.historyVT(session: session, zmxPath: zmx, timeout: 2),
+                               let exit = AgentResume.exitCommand(for: agent),
+                               PromptBox.boxHolds(exit, vtScreen: PromptBox.tail(of: history), agent: agent) {
+                                ZmxRunner.pressEnterKey(session: session, zmxPath: zmx)
+                                ZettyLog.lifecycle.log(
+                                    "restart: \(surfaceID.uuidString.prefix(8)) \(exit) sat unsent; pressed Enter again")
+                            }
+                        }
                         guard Date() >= deadline else { return }
                         return DispatchQueue.main.async {
+                            guard self?.isCurrentRestart(timer, of: surfaceID) == true else { return }
                             self?.finishAgentRestart(surfaceID, success: false)
-                            self?.presentAgentRestartFailure(
-                                "\(agent.displayName) did not quit, so nothing was resumed.")
+                            onFinished?(false)
+                            self?.presentAgentRestartFailure(notQuit, title: failureTitle)
                         }
                     }
                     if !resumeSent {
@@ -2534,14 +2594,23 @@ final class TerminalViewController: NSViewController {
                     // the same budget rather than uncovering onto a bare shell.
                     guard Date() >= deadline else { return }
                     DispatchQueue.main.async {
+                        guard self?.isCurrentRestart(timer, of: surfaceID) == true else { return }
                         self?.finishAgentRestart(surfaceID, success: false)
-                        self?.presentAgentRestartFailure(
-                            "\(agent.displayName) was resumed but has not come back yet.")
+                        onFinished?(false)
+                        self?.presentAgentRestartFailure(notBack, title: failureTitle)
                     }
                 }
             }
         }
         agentRestartTimers[surfaceID] = timer
+    }
+
+    /// Whether `timer` still drives the pane's restart. Its ticks overlap
+    /// (a screen read takes up to 2s, a tick is 0.5s), so several can reach
+    /// an outcome: only the first may finish it, or the restart finished up
+    /// to four times and its outcome flashed and was reported each time.
+    private func isCurrentRestart(_ timer: Timer, of surfaceID: UUID) -> Bool {
+        agentRestartTimers[surfaceID] === timer
     }
 
     private func finishAgentRestart(_ surfaceID: UUID, success: Bool) {
@@ -2574,10 +2643,10 @@ final class TerminalViewController: NSViewController {
         restartPresenter(for: surfaceID)?.setRefreshSpinning(spinning, success: success)
     }
 
-    private func presentAgentRestartFailure(_ message: String) {
+    func presentAgentRestartFailure(_ message: String, title: String = "Could not restart the agent") {
         guard let window = view.window else { return }
         let alert = NSAlert()
-        alert.messageText = "Could not restart the agent"
+        alert.messageText = title
         alert.informativeText = message
         alert.addButton(withTitle: "OK")
         alert.beginSheetModal(for: window, completionHandler: nil)
@@ -2909,6 +2978,8 @@ final class TerminalViewController: NSViewController {
                 if notify { applyReportedAccount(from: event, to: surface) }
                 // The agent a wake line started is reporting: it is back.
                 if notify { consumeHandoff(surfaceID) }
+                // A session a handoff started may have read its brief.
+                if notify { observeHandoffBrief(event, surfaceID: surfaceID) }
                 continue
             }
             // Fallback: an older helper, or a pane Zetty no longer has — every
@@ -4949,7 +5020,7 @@ final class TerminalViewController: NSViewController {
         return nil
     }
 
-    private func surface(withShortID shortID: String) -> Surface? {
+    func surface(withShortID shortID: String) -> Surface? {
         for project in workspace.projects {
             for tree in project.tabList.trees {
                 if let surface = tree.layout.surfaces.first(where: {
@@ -8736,6 +8807,9 @@ final class TerminalViewController: NSViewController {
                 },
                 canRefreshAgent: { [weak self] id in self?.canRefreshAgent(surfaceID: id) ?? false },
                 onRefreshAgent: { [weak self] id in self?.refreshAgentPane(surfaceID: id) },
+                canHandOffAgent: { [weak self] id in self?.canHandOffAgent(surfaceID: id) ?? false },
+                handoffMenu: { [weak self] id in self?.agentHandoffMenu(for: id) ?? [] },
+                onHandOff: { [weak self] id, name in self?.handOffAgentPane(surfaceID: id, to: name) },
                 onOpen: { [weak self] id, anchor in
                     self?.showEditorMenu(from: anchor, forSurface: id)
                 },

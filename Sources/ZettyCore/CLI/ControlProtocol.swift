@@ -196,6 +196,18 @@ public enum ControlRequest: Equatable, Sendable {
     /// STARTED: the quit and resume run afterwards, behind the pane's cover.
     /// An agent in the middle of a turn is refused unless `force`.
     case restartAgent(target: PaneSelector, force: Bool = false)
+    /// Hand the targeted pane's work to a fresh agent session (`AgentHandoff`):
+    /// its agent writes a brief, quits, and a new session under `to` starts
+    /// on it, in the same pane. `to` nil is the same login; `claude` / `codex`
+    /// a harness's default login; else an account name. `.ok` means it
+    /// STARTED: the brief, the quit and the new session follow.
+    ///
+    /// `asking`: the pane's own agent sent this (the mod's `/z-handoff`).
+    /// Nothing is typed into it, and the answer is `.text` with the prompt it
+    /// must submit itself. `cancel` stops a handoff still waiting on its
+    /// brief. An agent in the middle of a turn is refused unless `force`.
+    case handoffAgent(target: PaneSelector, to: String? = nil, asking: Bool = false,
+                      force: Bool = false, cancel: Bool = false)
     /// Open the targeted pane's project (its root; a scratch pane's working
     /// directory) in the configured `editor`, Finder without one. Response
     /// `.text` naming what was opened, and with what.
@@ -229,11 +241,20 @@ extension ControlRequest {
             return false
         }
     }
+
+    /// True for a request answered from a fresh `BusyPaneGate.Reading`: the
+    /// busy-gated ones, and a `handoff`, which must see the agent in its pane
+    /// while the cached map is frozen (Zetty not frontmost), as it is when a
+    /// script or another agent calls the CLI.
+    public var takesForegroundReading: Bool {
+        if case .handoffAgent(_, _, _, _, let cancel) = self { return !cancel }
+        return refusesBusyPanes
+    }
 }
 
 extension ControlRequest: Codable {
     private enum CodingKeys: String, CodingKey {
-        case command, target, text, enter, keys, project, wholeTab, killSessions, simulateRestart, vertical, lines, path, name, gitInit, focus, fetch, discard, line, column, space, newName, color, icon, account, probe, surface, on, profile, slot, collapse, view, force, handoff, wake, asker
+        case command, target, text, enter, keys, project, wholeTab, killSessions, simulateRestart, vertical, lines, path, name, gitInit, focus, fetch, discard, line, column, space, newName, color, icon, account, probe, surface, on, profile, slot, collapse, view, force, handoff, wake, asker, asking, cancel
     }
 
     public init(from decoder: Decoder) throws {
@@ -399,6 +420,13 @@ extension ControlRequest: Codable {
             self = .restartAgent(
                 target: try container.decodeIfPresent(PaneSelector.self, forKey: .target) ?? .focused,
                 force: try decodeForce())
+        case "handoff":
+            self = .handoffAgent(
+                target: try container.decodeIfPresent(PaneSelector.self, forKey: .target) ?? .focused,
+                to: try container.decodeIfPresent(String.self, forKey: .account),
+                asking: try container.decodeIfPresent(Bool.self, forKey: .asking) ?? false,
+                force: try decodeForce(),
+                cancel: try container.decodeIfPresent(Bool.self, forKey: .cancel) ?? false)
         case "edit":
             self = .openInEditor(
                 target: try container.decodeIfPresent(PaneSelector.self, forKey: .target) ?? .focused)
@@ -576,6 +604,13 @@ extension ControlRequest: Codable {
             try container.encode("restart-agent", forKey: .command)
             try container.encode(target, forKey: .target)
             try container.encode(force, forKey: .force)
+        case .handoffAgent(let target, let to, let asking, let force, let cancel):
+            try container.encode("handoff", forKey: .command)
+            try container.encode(target, forKey: .target)
+            try container.encodeIfPresent(to, forKey: .account)
+            try container.encode(asking, forKey: .asking)
+            try container.encode(force, forKey: .force)
+            try container.encode(cancel, forKey: .cancel)
         case .openInEditor(let target):
             try container.encode("edit", forKey: .command)
             try container.encode(target, forKey: .target)

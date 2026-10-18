@@ -132,6 +132,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         sigterm.setEventHandler { NSApp.terminate(nil) }
         sigterm.resume()
         sigtermSource = sigterm
+        // Handoff briefs nobody read (their session took no turn, or hooks
+        // are off) are a day old before they go.
+        TerminalViewController.sweepStaleHandoffBriefs()
 
         // Load config and resolve the active scheme BEFORE the view controller
         // is created (it reads ZTheme.current in viewDidLoad).
@@ -1907,7 +1910,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             // Taken here, off-main, before any of the paths below reaches
             // `cliRefusal`. The socket queue is serial, so the reading belongs
             // to this request alone until it is cleared.
-            if request.refusesBusyPanes {
+            if request.takesForegroundReading {
                 let reading = Self.readForegroundForRequest()
                 DispatchQueue.main.sync { self.terminalViewController?.cliForegroundReading = reading }
             }
@@ -1917,11 +1920,33 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             // app. Main is serial, so the clear still lands before the next
             // request reads it.
             defer {
-                if request.refusesBusyPanes {
+                if request.takesForegroundReading {
                     DispatchQueue.main.async { self.terminalViewController?.cliForegroundReading = nil }
                 }
             }
             switch request {
+            case .handoffAgent(let target, let to, let asking, let force, let cancel):
+                // Started on main; the request is then typed HERE, off it, so a
+                // draft in the box is the caller's error rather than a dialog
+                // it never sees. The wait for the brief is a timer on main.
+                let answer = DispatchQueue.main.sync {
+                    () -> Result<TerminalViewController.AgentHandoffAnswer, ControlError> in
+                    guard let tvc = self.terminalViewController else {
+                        return .failure(.protocolError("Zetty is still starting up"))
+                    }
+                    return tvc.handOffAgent(target: target, to: to, asking: asking, force: force, cancel: cancel)
+                }
+                switch answer {
+                case .failure(let error): return .error(error.localizedDescription)
+                case .success(.prompt(let prompt)): return .text(prompt)
+                case .success(.cancelled): return .ok
+                case .success(.typing(let typing)):
+                    guard let reason = typing.submit() else { return .ok }
+                    DispatchQueue.main.sync {
+                        _ = self.terminalViewController?.cancelAgentHandoff(typing.surfaceID, why: reason)
+                    }
+                    return .error("nothing was handed off: \(reason)")
+                }
             case .capture(let target, let lines):
                 let resolved = DispatchQueue.main.sync { () -> Result<TerminalViewController.CaptureSource, ControlError> in
                     guard let tvc = self.terminalViewController else {
@@ -2293,7 +2318,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             case .failure(let error): return .error(error.localizedDescription)
             }
         case .capture, .quit, .cloneProject, .removeProject, .updateClone, .mergeClone,
-             .pushClone, .accounts:
+             .pushClone, .accounts, .handoffAgent:
             // Slow verbs — handled on the socket queue in startControlSocket.
             return .error("internal: slow verb routed to the main handler")
         }

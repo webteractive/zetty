@@ -222,7 +222,7 @@ workspace is never handed to the model. `read_pane` answers only for panes
 `open_pane` returned in this load of the mod.
 
 **The pane commands are top-level and Claude-only** (Glen, 2026-10-15):
-`/z-reload`, `/z-hibernate [project]` and `/z-open`, registered
+`/z-reload`, `/z-hibernate [project]`, `/z-handoff [account]` and `/z-open`, registered
 beside `/zetty` and answered by their own `command.run` hooks. They are
 `z-` prefixed rather than `/zetty <verb>` so each is one word in the
 typeahead, and the prefix keeps them clear of Claude Code's built-ins. They
@@ -265,6 +265,13 @@ and Hermes have no mod, so they have no equivalent; the CLI verbs underneath
   would have summarised the chat of a project left awake. A compaction that
   fails or is skipped calls the hibernation off with `zetty wake` and says
   so in a toast.
+- **`/z-handoff [account]` asks Zetty first, then submits the brief
+  request as this Claude's own prompt** (`$.prompt.submit`, from
+  `$.clock.after(300)`, for the same reason the hibernate compaction runs
+  from a timer). It calls `zetty handoff --pane <me> --self [--to <name>]`,
+  which answers with the prompt to submit; Zetty then waits for the brief,
+  quits this Claude and starts the new session. A submit that fails calls it
+  off with `--cancel`. See `agent-handoff.md`.
 - **`/z-open` opens the project ROOT**, not the pane's cwd: it is the
   project the person asked for. A scratch pane's root is just home, so it
   falls back to the pane's working directory (`openProjectInEditor`).

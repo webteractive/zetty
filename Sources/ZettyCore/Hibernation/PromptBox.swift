@@ -224,6 +224,33 @@ extension PromptBox {
         }
     }
 
+    /// Whether the agent's input holds exactly `text`: a line typed into it
+    /// and not submitted. A quit line typed together with its Enter can be
+    /// read as a paste, the Enter kept as a newline, and the line left there
+    /// (Codex, 2026-10-18), so this is what a retry of the Enter checks
+    /// before it presses anything. False for a screen with no input at all,
+    /// such as a shell the agent has already quit to.
+    public static func boxHolds(_ text: String, vtScreen: String, agent: AgentKind) -> Bool {
+        let lines = withoutFaintText(vtScreen)
+            .split(omittingEmptySubsequences: false, whereSeparator: \.isNewline)
+        let mark: Character
+        switch agent {
+        case .claude: mark = prompt
+        case .codex:  mark = codexPrompt
+        default:      return false
+        }
+        guard let index = lines.lastIndex(where: { $0.drop(while: \.isWhitespace).first == mark }) else {
+            return false
+        }
+        if agent == .claude {
+            // Claude's box sits between rules; a shell prompt drawn with ❯ does not.
+            guard index > lines.startIndex, index < lines.endIndex - 1,
+                  isRule(lines[index - 1]), isRule(lines[index + 1]) else { return false }
+        }
+        let typed = lines[index].drop(while: \.isWhitespace).dropFirst()
+        return typed.trimmingCharacters(in: .whitespaces) == text
+    }
+
     /// Whether a pane's agent can be handed a line to act on.
     public enum Readiness: Equatable, Sendable {
         /// An empty prompt box: what is typed now is what gets submitted.

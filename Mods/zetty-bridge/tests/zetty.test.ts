@@ -1,7 +1,7 @@
 import type { On } from 'claude-code'
 import { expect, mock, test } from 'claude-code/testing'
 
-import { describePanes, HANDOFF_INSTRUCTIONS, hibernateArgs, projectPanes } from '../hooks/panes'
+import { describePanes, HANDOFF_INSTRUCTIONS, handoffTargets, hibernateArgs, projectPanes } from '../hooks/panes'
 
 const SURFACE = '0A1B2C3D-1111-2222-3333-444455556666'
 const BIN = '/Applications/zetty.app/Contents/MacOS/zetty'
@@ -28,7 +28,8 @@ type Run = { argv: readonly string[] }
 type Answer = string | { exitCode: number; stderr: string }
 function world(on: On, env: Record<string, string>, answer: (argv: readonly string[]) => Answer = () => '') {
   const runs: Run[] = []
-  const registered: { commands: string[]; tools: string[] } = { commands: [], tools: [] }
+  const registered: { commands: string[]; tools: string[]; hints: Record<string, string | undefined> } =
+    { commands: [], tools: [], hints: {} }
   mock.env(on, env)
   const clock = mock.clock(on, { now: 1000 })
   on('session.id', () => ({ value: 'sess-1' }))
@@ -39,6 +40,7 @@ function world(on: On, env: Record<string, string>, answer: (argv: readonly stri
   on('session.start', (_$, e) => ({ cwd: e.cwd }))
   on('command.register', (_$, e) => {
     registered.commands.push(e.name)
+    registered.hints[e.name] = e.argumentHint
     return { value: { command: e.name } }
   })
   on('tool.register', (_$, e) => {
@@ -73,7 +75,7 @@ test('only the project this pane is in is listed', () => {
 test('inside Zetty the command and the tools are registered', async ($, on) => {
   const { registered } = world(on, IN_PANE)
   await $.session.start(START)
-  expect(registered.commands).toEqual(['zetty', 'z-reload', 'z-hibernate', 'z-open'])
+  expect(registered.commands).toEqual(['zetty', 'z-reload', 'z-hibernate', 'z-handoff', 'z-open'])
   expect(registered.tools).toEqual(['show_file', 'list_panes', 'open_pane', 'read_pane'])
 })
 
@@ -87,7 +89,7 @@ test('outside Zetty nothing is registered, and the tools can be switched off', a
 test('zetty-claude-tools = false keeps the command and drops the tools', async ($, on) => {
   const { registered } = world(on, { ...IN_PANE, ZETTY_CLAUDE_TOOLS: '0' })
   await $.session.start(START)
-  expect(registered.commands).toEqual(['zetty', 'z-reload', 'z-hibernate', 'z-open'])
+  expect(registered.commands).toEqual(['zetty', 'z-reload', 'z-hibernate', 'z-handoff', 'z-open'])
   expect(registered.tools).toEqual([])
 })
 
@@ -150,6 +152,47 @@ test('/z-reload restarts this pane\'s agent, forced past a stale running state',
   const ran = await $.command.run({ command: 'z-reload', args: '', ...RUN })
   expect(cli(runs[0])).toBe('restart-agent --pane 0a1b2c3d --force')
   expect(ran.text).toBe('Restarting Claude in this pane; it comes back on this conversation.')
+})
+
+test('/z-handoff lists the accounts Zetty has as handles', async ($, on) => {
+  const accountsJSON = JSON.stringify({ accounts: [
+    { id: 'devops', name: 'Devops', agent: 'claude', directory: '~/.zetty/accounts/devops' },
+    { id: 'side', name: 'Side', agent: 'codex', directory: '~/.zetty/accounts/side' },
+    { id: 'g', name: 'G', agent: 'gemini', directory: '~/.zetty/accounts/g' },
+  ] })
+  const { registered } = world(on, IN_PANE, argv => (argv[1] === 'accounts' ? accountsJSON : ''))
+  await $.session.start(START)
+  expect(registered.hints['z-handoff']).toBe('[claude | codex | claude-devops | codex-side]')
+})
+
+test('handoff targets fall back to the harnesses when Zetty lists nothing', () => {
+  expect(handoffTargets('')).toEqual(['claude', 'codex'])
+  expect(handoffTargets('{"accounts": []}')).toEqual(['claude', 'codex'])
+})
+
+// Zetty answers with the request to write the brief; it is submitted as this
+// Claude's own prompt once the command has returned.
+test('/z-handoff asks Zetty, then submits the brief request after the command', async ($, on) => {
+  const { runs, clock } = world(on, IN_PANE, argv => (argv[1] === 'handoff' ? 'Write a handoff brief to /b.md\n' : ''))
+  const submitted: string[] = []
+  on('prompt.submit', (_$, e) => {
+    submitted.push(e.text)
+    return { text: e.text }
+  })
+  const ran = await $.command.run({ command: 'z-handoff', args: ' work ', ...RUN })
+  expect(cli(runs[0])).toBe('handoff --pane 0a1b2c3d --self --to work')
+  expect(ran.text).toContain('Handing off on work.')
+  expect(submitted.length).toBe(0)
+  await clock.advance(300)
+  expect(submitted).toEqual(['Write a handoff brief to /b.md'])
+})
+
+test('/z-handoff with no account stays on this login, and passes a refusal on', async ($, on) => {
+  const { runs } = world(on, IN_PANE, argv =>
+    argv[1] === 'handoff' ? { exitCode: 1, stderr: 'Zetty: no account or agent named "x"' } : '')
+  const ran = await $.command.run({ command: 'z-handoff', args: '', ...RUN })
+  expect(cli(runs[0])).toBe('handoff --pane 0a1b2c3d --self')
+  expect(ran.text).toContain('no account or agent named')
 })
 
 test('/z-hibernate with no name hibernates this project, and says this pane goes too', async ($, on) => {

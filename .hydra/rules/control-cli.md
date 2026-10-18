@@ -77,6 +77,13 @@ Commands (see `zetty --help` for full grammar and agent notes):
   and resume run on timers afterwards. A turn in progress is refused unless
   `--force` (no dialog, per the rule below). Target is required, like `close`.
   See `agent-pane-refresh.md`.
+- `handoff (--pane|--cwd) [--to <name>] [--force] [--self] [--cancel]` —
+  hand the pane's work to a fresh session on a brief its agent writes (the
+  gutter's hand-off button). A slow verb: the request is typed into the
+  agent before the answer, so a draft in its box is the caller's error; and
+  it takes a fresh foreground reading (`takesForegroundReading`). `--self`
+  answers `.text` with the prompt the asking agent submits. See
+  `agent-handoff.md`.
 - `edit [--pane|--cwd]` — open the pane's project root (a scratch pane's cwd)
   in the configured `editor`, Finder without one; `.text` says what it did.
   No menu: the per-pane Open button's picker is GUI-only.

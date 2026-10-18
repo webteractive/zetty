@@ -227,16 +227,8 @@ enum ZmxRunner {
     /// and waits for the harness to say it has. Nil when cancelled. Blocking
     /// for up to `HandoffCompaction.timeout` — off-main only.
     ///
-    /// A box that holds a draft or a question is left exactly as it is, and
-    /// is a failure: the line would join the draft or answer the question,
-    /// and neither is ours to throw away. Only then is a turn in progress
-    /// stopped (`midTurn` is Claude's hooks saying so; a working Codex shows
-    /// on its screen). Claude puts an interrupted prompt back in its box, so
-    /// a box that was empty before the interrupt and is not after it holds
-    /// only that, and is cleared.
-    ///
-    /// The Enter goes in a write of its own: both harnesses read text and
-    /// Enter arriving together as a paste and keep the Enter as a newline.
+    /// The request is typed by `submit`, which never types over a draft or a
+    /// question.
     static func compact(session: String, agent: AgentKind, midTurn: Bool, transcript: URL,
                         zmxPath: String, isCancelled: () -> Bool) -> HandoffCompaction.Result? {
         guard let line = HandoffCompaction.line(for: agent) else { return .failed("its harness cannot compact") }
@@ -244,57 +236,12 @@ enum ZmxRunner {
         func screen() -> String? {
             historyVT(session: session, zmxPath: zmxPath, timeout: timeout).map { PromptBox.tail(of: $0) }
         }
-        func press(_ key: String) -> PromptBox.Readiness? {
-            guard send(session: session, text: key, zmxPath: zmxPath, timeout: timeout) else { return nil }
-            Thread.sleep(forTimeInterval: interruptSettle)
-            return screen().map { PromptBox.readiness(vtScreen: $0, agent: agent) }
-        }
-        let unreadable = HandoffCompaction.Result.failed("its screen could not be read")
-
-        guard let first = screen() else { return unreadable }
-        guard PromptBox.boxIsEmpty(vtScreen: first, agent: agent) else {
-            return .failed("its prompt box holds a draft or a question")
-        }
-        var state = PromptBox.readiness(vtScreen: first, agent: agent)
-        if midTurn || state == .working {
-            // The bare byte is the second try, for a harness with the
-            // keyboard protocol off.
-            for escape in [kittyEscape, "\u{1B}"] {
-                guard let after = press(escape) else { return unreadable }
-                state = after
-                if state != .working { break }
-            }
-            if state == .blocked {
-                guard let cleared = press(kittyControlC) else { return unreadable }
-                state = cleared
-            }
-            guard state == .ready else { return .failed("its turn could not be stopped") }
-        }
-        guard state == .ready else { return .failed("its prompt box holds a draft or a question") }
-        if isCancelled() { return nil }
-
         let sizeBefore = fileSize(transcript)
-        guard send(session: session, text: line, zmxPath: zmxPath, timeout: timeout) else {
-            return .failed("the request could not be typed")
-        }
-        Thread.sleep(forTimeInterval: enterDelay)
-        guard press("\r") != nil else { return .failed("the request could not be submitted") }
-        // An unreadable screen is taken as submitted: no key is pressed blind.
-        func boxIsEmpty() -> Bool {
-            screen().map { PromptBox.boxIsEmpty(vtScreen: $0, agent: agent) } ?? true
-        }
-        if !boxIsEmpty() {
-            // The Enter was kept as a newline and the line sits in the box
-            // unsent: a hibernate from the pane gutter on claude 2.1.302
-            // waited out its 5 minutes on it, the app busy with the click.
-            // Enter in the kitty encoding is a key press, never pasted text.
-            ZettyLog.lifecycle.log("handoff: \(session) kept the Enter as a newline; pressing it again")
-            guard press(kittyEnter) != nil else { return unreadable }
-            if !boxIsEmpty() {
-                // Ours, typed into a box that was empty: take it back out.
-                _ = press(kittyControlC)
-                return .failed("the request sat in its prompt box unsent")
-            }
+        switch submit(line, session: session, agent: agent, midTurn: midTurn, zmxPath: zmxPath,
+                      isCancelled: isCancelled) {
+        case .cancelled: return nil
+        case .failed(let reason): return .failed(reason)
+        case .submitted: break
         }
         ZettyLog.lifecycle.log("handoff: asked \(session) to compact")
 
@@ -321,6 +268,100 @@ enum ZmxRunner {
             if restingReads >= compactionRestingReads { return .failed("it did not compact") }
         }
         return .failed("compacting took over \(Int(HandoffCompaction.timeout / 60)) minutes")
+    }
+
+    /// Types `line` and then, in a write of its own, Enter: arriving together
+    /// they are read as a paste, and the Enter kept as a newline. Blocking.
+    static func sendLine(_ line: String, session: String, zmxPath: String) {
+        send(session: session, text: line, zmxPath: zmxPath, timeout: teardownCallTimeout)
+        Thread.sleep(forTimeInterval: enterDelay)
+        send(session: session, text: "\r", zmxPath: zmxPath, timeout: teardownCallTimeout)
+    }
+
+    /// Enter in the kitty keyboard encoding: a key press, never pasted text.
+    /// For a line `sendLine` left sitting in an agent's box. Blocking.
+    static func pressEnterKey(session: String, zmxPath: String) {
+        send(session: session, text: kittyEnter, zmxPath: zmxPath, timeout: teardownCallTimeout)
+    }
+
+    /// How typing a request into an agent's prompt box went.
+    enum Submission: Equatable {
+        case submitted
+        case failed(String)
+        case cancelled
+    }
+
+    /// Types `line` into the agent's prompt box in `session` and submits it.
+    /// Blocking — off-main only.
+    ///
+    /// A box that holds a draft or a question is left exactly as it is, and
+    /// is a failure: the line would join the draft or answer the question,
+    /// and neither is ours to throw away. Only then is a turn in progress
+    /// stopped (`midTurn` is Claude's hooks saying so; a working Codex shows
+    /// on its screen). Claude puts an interrupted prompt back in its box, so
+    /// a box that was empty before the interrupt and is not after it holds
+    /// only that, and is cleared.
+    ///
+    /// The Enter goes in a write of its own: both harnesses read text and
+    /// Enter arriving together as a paste and keep the Enter as a newline.
+    static func submit(_ line: String, session: String, agent: AgentKind, midTurn: Bool,
+                       zmxPath: String, isCancelled: () -> Bool) -> Submission {
+        let timeout = teardownCallTimeout
+        func screen() -> String? {
+            historyVT(session: session, zmxPath: zmxPath, timeout: timeout).map { PromptBox.tail(of: $0) }
+        }
+        func press(_ key: String) -> PromptBox.Readiness? {
+            guard send(session: session, text: key, zmxPath: zmxPath, timeout: timeout) else { return nil }
+            Thread.sleep(forTimeInterval: interruptSettle)
+            return screen().map { PromptBox.readiness(vtScreen: $0, agent: agent) }
+        }
+        let unreadable = Submission.failed("its screen could not be read")
+
+        guard let first = screen() else { return unreadable }
+        guard PromptBox.boxIsEmpty(vtScreen: first, agent: agent) else {
+            return .failed("its prompt box holds a draft or a question")
+        }
+        var state = PromptBox.readiness(vtScreen: first, agent: agent)
+        if midTurn || state == .working {
+            // The bare byte is the second try, for a harness with the
+            // keyboard protocol off.
+            for escape in [kittyEscape, "\u{1B}"] {
+                guard let after = press(escape) else { return unreadable }
+                state = after
+                if state != .working { break }
+            }
+            if state == .blocked {
+                guard let cleared = press(kittyControlC) else { return unreadable }
+                state = cleared
+            }
+            guard state == .ready else { return .failed("its turn could not be stopped") }
+        }
+        guard state == .ready else { return .failed("its prompt box holds a draft or a question") }
+        if isCancelled() { return .cancelled }
+
+        guard send(session: session, text: line, zmxPath: zmxPath, timeout: timeout) else {
+            return .failed("the request could not be typed")
+        }
+        Thread.sleep(forTimeInterval: enterDelay)
+        guard press("\r") != nil else { return .failed("the request could not be submitted") }
+        // An unreadable screen is taken as submitted: no key is pressed blind.
+        func boxIsEmpty() -> Bool {
+            screen().map { PromptBox.boxIsEmpty(vtScreen: $0, agent: agent) } ?? true
+        }
+        if !boxIsEmpty() {
+            // The Enter was kept as a newline and the line sits in the box
+            // unsent: a hibernate from the pane gutter on claude 2.1.302
+            // waited out its 5 minutes on it, the app busy with the click.
+            // Enter in the kitty encoding is a key press, never pasted text.
+            ZettyLog.lifecycle.log("submit: \(session) kept the Enter as a newline; pressing it again")
+            guard press(kittyEnter) != nil else { return unreadable }
+            if !boxIsEmpty() {
+                // Ours, typed into a box that was empty: take it back out.
+                _ = press(kittyControlC)
+                return .failed("the request sat in its prompt box unsent")
+            }
+        }
+        return .submitted
     }
 
     /// How often the screen is read while a compaction is awaited, in

@@ -26,6 +26,14 @@ struct PaneActionWiring {
     let canRefreshAgent: (UUID) -> Bool
     /// Restart the agent on its existing conversation.
     let onRefreshAgent: (UUID) -> Void
+    /// Whether this pane runs a Claude or Codex that can be handed off: one
+    /// the probe sees, with a quit line. No session id is needed.
+    let canHandOffAgent: (UUID) -> Bool
+    /// The handoff menu's entries; `name` is the target `zetty handoff --to`
+    /// takes, nil for a fresh session on the same login.
+    let handoffMenu: (UUID) -> [(title: String, name: String?)]
+    /// Hand the pane's work to a fresh session under that target.
+    let onHandOff: (UUID, String?) -> Void
     /// Show the Open picker for this pane's own directory, under that button.
     let onOpen: (UUID, NSView) -> Void
     /// Whether this pane's project can be hibernated: every project but Home,
@@ -225,6 +233,8 @@ final class LeafContainerView: NSView, AgentRestartPresenting {
     /// Created unconditionally so visibility is a toggle rather than a rebuild
     /// — the same reason the account dots exist at zero width.
     private var refreshButton: NSButton?
+    /// The handoff button, toggled the same way.
+    private var handoffButton: NSButton?
     // MARK: - AgentRestartPresenting
 
     var restartButton: NSButton? { refreshButton }
@@ -277,7 +287,8 @@ final class LeafContainerView: NSView, AgentRestartPresenting {
 
         addStatusDot()
         addGutterButtons(showsClose: showsClose, showsFileTree: showsFileTree,
-                         showsRefresh: paneActions?.canRefreshAgent(surfaceID) ?? false)
+                         showsRefresh: paneActions?.canRefreshAgent(surfaceID) ?? false,
+                         showsHandoff: paneActions?.canHandOffAgent(surfaceID) ?? false)
         menu = makePaneMenu(showsClose: showsClose, showsFileTree: showsFileTree)
 
         if showsFileTree, let wiring = fileTree {
@@ -393,13 +404,13 @@ final class LeafContainerView: NSView, AgentRestartPresenting {
     }
 
     /// Lays the gutter actions out against the trailing edge:
-    /// hibernate · refresh · open · file tree · split-vertical · split-horizontal · break · close.
+    /// hibernate · handoff · refresh · open · file tree · split-vertical · split-horizontal · break · close.
     /// The split pair is always available; break and × only when the pane is
     /// closable. Scroll-to-bottom is deliberately NOT here — its button did
     /// nothing in panes running an agent CLI and the cause is unfound, so the
     /// action stays on the pane's right-click menu and ⌘↓ until it's diagnosed.
     private func addGutterButtons(showsClose: Bool, showsFileTree: Bool,
-                                  showsRefresh: Bool) {
+                                  showsRefresh: Bool, showsHandoff: Bool) {
         let stack = NSStackView()
         stack.orientation = .horizontal
         stack.spacing = 4
@@ -419,6 +430,17 @@ final class LeafContainerView: NSView, AgentRestartPresenting {
                 action: #selector(hibernateTapped)
             ))
         }
+
+        // Beside the refresh, and like it away from ×: it also ends the
+        // running agent, then starts a fresh one on a brief the old one
+        // writes (the login is picked from its menu).
+        let handoff = makeGutterButton(
+            symbol: "arrowshape.turn.up.forward", fallback: "⇥",
+            toolTip: "Hand off to a fresh session: the agent writes a brief, and a new one picks it up",
+            action: #selector(handoffTapped(_:)))
+        handoff.isHidden = !showsHandoff
+        handoffButton = handoff
+        stack.addArrangedSubview(handoff)
 
         // Leading in the gutter, away from × — a refresh ends the running
         // agent, so it should not sit under the pointer that just missed close.
@@ -521,6 +543,30 @@ final class LeafContainerView: NSView, AgentRestartPresenting {
 
     @objc private func refreshAgentTapped() {
         paneActions?.onRefreshAgent(surfaceID)
+    }
+
+    @objc private func handoffTapped(_ sender: NSButton) {
+        guard let entries = paneActions?.handoffMenu(surfaceID), !entries.isEmpty else { return }
+        let menu = NSMenu()
+        for (index, entry) in entries.enumerated() {
+            if index == 1 { menu.addItem(.separator()) }
+            let item = NSMenuItem(title: entry.title, action: #selector(handoffPicked(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = entry.name.map { $0 as NSString } ?? NSNull()
+            menu.addItem(item)
+        }
+        menu.popUp(positioning: nil, at: NSPoint(x: 0, y: sender.bounds.maxY + 4), in: sender)
+    }
+
+    @objc private func handoffPicked(_ sender: NSMenuItem) {
+        paneActions?.onHandOff(surfaceID, sender.representedObject as? String)
+    }
+
+    /// Shows or hides the handoff button without a rebuild, as
+    /// `setRefreshVisible` does.
+    func setHandoffVisible(_ visible: Bool) {
+        guard let handoffButton, handoffButton.isHidden == visible else { return }
+        handoffButton.isHidden = !visible
     }
 
     @objc private func hibernateTapped() {
