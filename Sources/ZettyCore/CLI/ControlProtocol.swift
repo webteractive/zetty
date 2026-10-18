@@ -115,7 +115,8 @@ public enum ControlRequest: Equatable, Sendable {
     /// `force`: busy panes (anything but a bare shell in front) are REFUSED
     /// with an error naming them unless this is set. A socket request never
     /// raises a confirmation dialog — a modal on the main thread froze every
-    /// zetty command until someone clicked it.
+    /// zetty command until someone clicked it. A Claude at rest that will
+    /// hand off is not busy (`HibernationEligibility.handsOffQuietly`).
     ///
     /// `handoff`: each Claude or Codex pane compacts its conversation into
     /// a handoff first unless this is false (`--no-handoff`), for a caller

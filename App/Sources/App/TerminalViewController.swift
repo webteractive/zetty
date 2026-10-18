@@ -6365,7 +6365,9 @@ final class TerminalViewController: NSViewController {
                 .first { $0.layout.surfaces.contains { $0.id == surfaceID } }?
                 .layout.surfaces.map(\.id) ?? [surfaceID]
         case .hibernateProject:
-            closing = project.tabList.trees.flatMap { $0.layout.surfaces.map(\.id) }
+            let panes = project.tabList.trees.flatMap { $0.layout.surfaces.map(\.id) }
+            let quiet = panesHandingOffQuietly(panes, of: project, handoffs: .manual, reading: nil)
+            closing = panes.filter { !quiet.contains($0) }
         }
         // One dialog, here, naming what is still running; the paths below are
         // told not to ask again.
@@ -7831,7 +7833,11 @@ final class TerminalViewController: NSViewController {
               !project.isHome, !project.isHibernated,
               hibernationsInProgress[project.id] == nil else { return .none }
         let surfaceIDs = project.tabList.trees.flatMap { $0.layout.surfaces.map(\.id) }
-        if confirmIfBusy, !confirmClosingBusyPanes(surfaceIDs, what: "project “\(project.name)”") { return .none }
+        if confirmIfBusy {
+            let quiet = panesHandingOffQuietly(surfaceIDs, of: project, handoffs: handoffs, reading: nil)
+            guard confirmClosingBusyPanes(surfaceIDs.filter { !quiet.contains($0) },
+                                          what: "project “\(project.name)”") else { return .none }
+        }
         handoffFailures.removeValue(forKey: project.id)     // a new attempt
         let foreground = foregroundForHibernation(surfaceIDs, request: handoffs)
         let records = captureHandoffRecords(for: project, surfaceIDs: surfaceIDs,
@@ -8111,9 +8117,14 @@ final class TerminalViewController: NSViewController {
             }
             asking = found[0]
         }
-        // The asking pane is busy running the command that asked.
-        if let refusal = cliRefusal(closing: surfaces.filter { $0 != asking }, force: force) { return refuse(refusal) }
-        let answer = hibernateProject(project, confirmIfBusy: false, handoffs: handoff ? .manual : .none,
+        let handoffs: HandoffRequest = handoff ? .manual : .none
+        // The asking pane is busy running the command that asked, and a
+        // resting Claude is handed off rather than ended.
+        let quiet = force ? [] : panesHandingOffQuietly(surfaces, of: project, handoffs: handoffs,
+                                                        reading: cliForegroundReading)
+        if let refusal = cliRefusal(closing: surfaces.filter { $0 != asking && !quiet.contains($0) },
+                                    force: force) { return refuse(refusal) }
+        let answer = hibernateProject(project, confirmIfBusy: false, handoffs: handoffs,
                                       compactingItself: asking)
         return .success(asking == nil ? nil : answer)
     }
@@ -8266,11 +8277,17 @@ final class TerminalViewController: NSViewController {
             return "no Space named \"\(name)\""
         }
         let awake = workspace.projects(inSpace: space.id).filter { !$0.isHibernated }
-        let surfaces = awake.flatMap { $0.tabList.trees.flatMap { $0.layout.surfaces.map(\.id) } }
+        let handoffs: HandoffRequest = handoff ? .manual : .none
+        let surfaces = awake.flatMap { project in
+            let panes = project.tabList.trees.flatMap { $0.layout.surfaces.map(\.id) }
+            let quiet = force ? [] : panesHandingOffQuietly(panes, of: project, handoffs: handoffs,
+                                                            reading: cliForegroundReading)
+            return panes.filter { !quiet.contains($0) }
+        }
         // All or nothing: a Space half-hibernated by a refusal is worse than none.
         if let refusal = cliRefusal(closing: surfaces, force: force) { return refusal }
         for project in awake {
-            hibernateProject(project, confirmIfBusy: false, handoffs: handoff ? .manual : .none)
+            hibernateProject(project, confirmIfBusy: false, handoffs: handoffs)
         }
         return nil
     }

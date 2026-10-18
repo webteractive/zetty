@@ -539,7 +539,8 @@ public enum ControlCLI {
         Home can't be hibernated.
         Busy panes (anything but a bare shell in front) are refused with an
         error naming them; --force closes them anyway. It never waits on a
-        dialog.
+        dialog. An idle Claude is not busy unless --no-handoff is passed: it
+        hands off rather than losing its conversation.
 
           --space <name>   hibernate every project in that Space
           --force          hibernate even when panes are busy

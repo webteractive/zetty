@@ -68,11 +68,25 @@ Needs `preserve-sessions` (`handoffsEnabled`); without zmx both hibernation and
 - **The CLI answers at once.** `zetty hibernate` returns `.ok` with the
   project still awake; `status` is how a script follows it. A second
   `hibernate` meanwhile is an error, not a second attempt.
-- **The busy rule is unchanged, and now reads oddly.** An idle agent is still
-  "busy" to `confirmClosingBusyPanes` and `cliRefusal` (anything but a bare
-  shell), so the GUI asks and the CLI wants `--force` before a hibernate that
-  will hand the conversation off rather than discard it. The one exception is
-  the pane that asked (`--self`, below).
+- **An idle Claude is not busy to a hibernate somebody asks for** (Glen,
+  2026-10-18: "Idle claude should not be busy"). Its conversation is handed
+  off rather than discarded, so the GUI's dialog and the CLI's `--force`
+  leave it out (`panesHandingOffQuietly`, `HibernationEligibility.handsOffQuietly`):
+  foreground `claude`, hook status `idle` or `needsAttention`, and no work of
+  its own still running. Everything else is still busy, the pane that asked
+  is left out as before (`--self`, below), and nothing is spared under
+  `--no-handoff` or with handoffs off for the project.
+  - **The prompt box is not read for it.** The handoff reads it before
+    typing anything, so a draft or a permission menu fails the hibernate
+    with the reason and leaves the project awake, rather than asking first.
+  - **Codex stays busy**: its one hook is turn ended, so `idle` is all it
+    ever reports, and the handoff would stop a working one without asking.
+  - **No hook status is not idle.** The isolated test app gets no hook
+    events, so a Claude there is still busy to the CLI.
+  - **The dev-server guard needs `ps`.** The CLI's request reading carries
+    each session's detached work (`BusyPaneGate.Reading.taken(_:detached:)`).
+    A click has no reading, so the panes the cache shows as a resting Claude
+    are probed on the click, and a failed probe spares nothing.
 - **A pane can ask for its own project's hibernate** (`hibernate <name>
   --self <pane>`, the Claude mod's `/z-hibernate`). That pane is left out
   of the busy check, and nothing is typed into it: its Claude is running the
@@ -392,8 +406,9 @@ Needs `preserve-sessions` (`handoffsEnabled`); without zmx both hibernation and
   at rest the line above the composer reads `1 background terminal running ·
   /ps to view · /stop to close`. `PromptBox` refuses either as empty, which is
   what keeps such a project awake.
-- **The busy rule for a hibernate somebody asks for is unchanged on purpose**
-  (`confirmClosingBusyPanes`, `BusyPaneGate`, `--force`).
+- **A hibernate somebody asks for uses its own, looser busy rule**: an idle
+  Claude is spared, but nothing else this section excuses is (see "An idle
+  Claude is not busy" above).
 - **Codex's hook cannot tell working from idle** (its one hook is turn ended),
   so `PromptBox.isCodexComposerEmpty` is what keeps a working Codex awake: it
   refuses any screen with an `esc to interrupt` line. That line is drawn FAINT,

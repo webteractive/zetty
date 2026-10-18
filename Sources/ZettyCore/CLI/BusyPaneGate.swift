@@ -31,8 +31,10 @@ public enum BusyPaneGate {
     public enum Reading: Equatable, Sendable {
         /// Session name → foreground tool, "" for a bare shell. A session
         /// missing from it (a pane without a preserved session) falls back to
-        /// the cached map, which is all there is for it.
-        case taken([String: String])
+        /// the cached map, which is all there is for it. `detached` names the
+        /// sessions whose foreground program still runs work of its own
+        /// (`ForegroundProcess.detachedWork`).
+        case taken([String: String], detached: Set<String> = [])
         /// `ps` failed or timed out. Busy cannot be known, so nothing that
         /// ends a session goes ahead unforced.
         case failed
@@ -41,8 +43,15 @@ public enum BusyPaneGate {
     /// What runs in front of the pane whose session is `session`: this
     /// request's reading when it has one, else the cached map's `cached`.
     public static func command(session: String, reading: Reading?, cached: String?) -> String? {
-        if case .taken(let commands) = reading, let fresh = commands[session] { return fresh }
+        if case .taken(let commands, _) = reading, let fresh = commands[session] { return fresh }
         return cached
+    }
+
+    /// Whether the program in front of `session` still runs work of its own,
+    /// per this request's reading; nil when the reading does not cover it.
+    public static func hasDetachedWork(session: String, reading: Reading?) -> Bool? {
+        guard case .taken(let commands, let detached) = reading, commands[session] != nil else { return nil }
+        return detached.contains(session)
     }
 
     /// The answer when the reading failed and nothing was forced.

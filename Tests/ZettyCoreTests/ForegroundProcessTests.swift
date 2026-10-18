@@ -143,6 +143,14 @@ private let agentTask = """
                                               psOutput: agentHelpers + "\n" + agentTask))
 }
 
+// The CLI's request reading takes this for every session from one snapshot.
+@Test func detachedWorkIsReadForEverySessionAtOnce() {
+    let pids: [String: Int32] = ["zetty-busy": 30938, "zetty-shell": 33333]
+    #expect(ForegroundProcess.detachedWork(forSessionPIDs: pids, psOutput: agentHelpers + "\n" + agentTask)
+        == ["zetty-busy"])
+    #expect(ForegroundProcess.detachedWork(forSessionPIDs: pids, psOutput: agentHelpers).isEmpty)
+}
+
 @Test func someoneElsesDetachedProcessIsNotThisAgents() {
     let stranger = "70001 1 70001 Ss ?? 0:00.01 1232 /bin/zsh -c eval 'npm run dev'"
     #expect(!ForegroundProcess.hasDetachedWork(forSessionPID: 30938,

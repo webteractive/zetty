@@ -149,7 +149,8 @@ copy-bind = n copy-cursor-down
   hands off first, in its own chat where you can watch it: a turn in
   progress is stopped, Zetty types `/compact` (for Claude, with handoff
   instructions) and the agent compacts its conversation, and only then is the
-  project put away. Until then it stays awake, the sidebar row and a strip
+  project put away. A Claude sitting idle is not counted as busy: hibernating
+  asks first (and the CLI wants `--force`) only for other running work. Until then it stays awake, the sidebar row and a strip
   above its panes read "Writing handoffs…", and typing in it, **Cancel** on
   the strip, or waking it calls the hibernation off (a chat that has already
   compacted stays compacted). A hibernated project's screen lists its
@@ -420,7 +421,7 @@ zetty quit --kill-sessions               # quit and end preserved sessions
   `wake` on a project still writing its handoffs cancels the hibernation.
 - **Destructive commands never wait on a dialog.** `close`, `remove-project`,
   `hibernate`, `scratch-clear` and `quit --kill-sessions` refuse busy panes with an error naming them; pass
-  `--force` to go ahead.
+  `--force` to go ahead. For `hibernate`, an idle Claude that will hand off is not busy.
 - **`zetty <command> --help`** shows usage and does nothing else. Run
   `zetty --help` for every command.
 

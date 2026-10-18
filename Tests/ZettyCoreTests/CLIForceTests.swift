@@ -144,6 +144,17 @@ import Testing
     #expect(BusyPaneGate.command(session: "zetty-ee11ff22", reading: reading, cached: "claude") == "")
 }
 
+@Test func theReadingSaysWhichPanesStillRunWorkOfTheirOwn() {
+    let reading = BusyPaneGate.Reading.taken(["zetty-ab12cd34": "claude", "zetty-ee11ff22": "claude"],
+                                             detached: ["zetty-ab12cd34"])
+    #expect(BusyPaneGate.hasDetachedWork(session: "zetty-ab12cd34", reading: reading) == true)
+    #expect(BusyPaneGate.hasDetachedWork(session: "zetty-ee11ff22", reading: reading) == false)
+    // Not covered is unknown, never "nothing running".
+    #expect(BusyPaneGate.hasDetachedWork(session: "zetty-00000000", reading: reading) == nil)
+    #expect(BusyPaneGate.hasDetachedWork(session: "zetty-ab12cd34", reading: .failed) == nil)
+    #expect(BusyPaneGate.hasDetachedWork(session: "zetty-ab12cd34", reading: nil) == nil)
+}
+
 @Test func aPaneTheReadingCannotSeeFallsBackToTheCache() {
     let reading = BusyPaneGate.Reading.taken([:])
     #expect(BusyPaneGate.command(session: "zetty-ab12cd34", reading: reading, cached: "node") == "node")

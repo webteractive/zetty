@@ -96,7 +96,8 @@ rm -rf /tmp/zti                               # removes the link, not ~/.claude/
   conversation, skipped". Give each test a fresh directory, or resume the
   chat by id (`claude --resume <id>`) once its transcript exists. The CLI
   also counts an agent pane as busy, so hibernating one needs `--force`
-  (the handoff still runs).
+  (the handoff still runs): an idle Claude is spared only on its hooks' word,
+  and none reach the test app.
 - **Codex's shared daemon is shared**, and the busy-pane teardown freeze was
   never reproduced in isolation (`DEVELOPMENT.md`).
 - **The test app is a real window on Glen's screen** with the same bundle id.

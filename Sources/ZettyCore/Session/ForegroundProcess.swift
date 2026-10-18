@@ -52,7 +52,19 @@ public enum ForegroundProcess {
     /// under a shared daemon, not under the pane (`PromptBox` reads its
     /// screen for that).
     public static func hasDetachedWork(forSessionPID sessionPID: Int32, psOutput: String) -> Bool {
+        hasDetachedWork(forSessionPID: sessionPID, in: parse(psOutput))
+    }
+
+    /// `hasDetachedWork(forSessionPID:psOutput:)` for every session at once,
+    /// parsing the snapshot a single time: the names of the sessions whose
+    /// foreground program has work of its own still running.
+    public static func detachedWork(forSessionPIDs sessionPIDs: [String: Int32],
+                                    psOutput: String) -> Set<String> {
         let rows = parse(psOutput)
+        return Set(sessionPIDs.filter { hasDetachedWork(forSessionPID: $0.value, in: rows) }.keys)
+    }
+
+    private static func hasDetachedWork(forSessionPID sessionPID: Int32, in rows: [Row]) -> Bool {
         guard let leader = foregroundLeader(forSessionPID: sessionPID, in: rows) else { return false }
         return rows.contains { $0.ppid == leader.row.pid && $0.tty == "??" }
     }

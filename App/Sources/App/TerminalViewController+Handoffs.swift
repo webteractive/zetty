@@ -50,6 +50,39 @@ extension TerminalViewController {
         return (commands, working)
     }
 
+    /// The panes a hibernate somebody asked for may end without asking: each
+    /// Claude at rest whose conversation it will hand off
+    /// (`HibernationEligibility.handsOffQuietly`). None when no handoff will
+    /// be written, since then the conversation is what the question protects.
+    ///
+    /// `reading` is a CLI request's own. A click has none, so the panes the
+    /// cache shows as a resting Claude are probed here: only `ps` shows a dev
+    /// server one left running. A probe that fails spares nothing.
+    func panesHandingOffQuietly(_ surfaceIDs: [UUID], of project: ProjectRuntime,
+                                handoffs: HandoffRequest,
+                                reading: BusyPaneGate.Reading?) -> Set<UUID> {
+        guard case .manual = handoffs, handoffsEnabled?(project) == true else { return [] }
+        func quiet(_ id: UUID, foreground: String?, work: Bool) -> Bool {
+            HibernationEligibility.handsOffQuietly(.init(
+                foreground: foreground, agentStatus: agentDetector.state(for: id).status,
+                hasBackgroundWork: work))
+        }
+        if let reading {
+            return Set(surfaceIDs.filter { id in
+                let session = SessionPersistence.sessionName(for: id)
+                guard let work = BusyPaneGate.hasDetachedWork(session: session, reading: reading) else { return false }
+                return quiet(id, foreground: BusyPaneGate.command(session: session, reading: reading, cached: nil),
+                             work: work)
+            })
+        }
+        let resting = surfaceIDs.filter { quiet($0, foreground: foregroundBySurface[$0], work: false) }
+        guard !resting.isEmpty, let zmx = ZmxRunner.locate(),
+              let probed = Self.probePanes(resting, zmxPath: zmx) else { return [] }
+        return Set(resting.filter {
+            quiet($0, foreground: probed.foreground[$0], work: probed.backgroundWork.contains($0))
+        })
+    }
+
     /// What is in each pane's foreground, for a hibernation about to happen:
     /// the reading `hibernate-after` just took, or a fresh one when Zetty is
     /// in the background and the probe's own is stale. nil is "use the

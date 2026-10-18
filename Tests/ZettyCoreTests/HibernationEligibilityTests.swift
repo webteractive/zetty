@@ -89,3 +89,23 @@ private func pane(_ foreground: String?, _ status: AgentStatus? = nil,
     // Nothing on its screen can change that, so it is not read.
     #expect(!HibernationEligibility.needsPromptBox(pane("claude", .idle, work: true)))
 }
+
+// A hibernate somebody asks for hands an idle Claude's conversation off, so
+// that Claude is not "busy" and needs neither a dialog nor --force (Glen,
+// 2026-10-18). Its box is read later, by the handoff, which refuses a draft.
+@Test func aRequestedHibernateEndsAnIdleClaudeWithoutAsking() {
+    #expect(HibernationEligibility.handsOffQuietly(pane("claude", .idle)))
+    // Claude's notification after a minute at its prompt.
+    #expect(HibernationEligibility.handsOffQuietly(pane("claude", .needsAttention)))
+}
+
+@Test func aRequestedHibernateStillAsksAboutAnythingElse() {
+    #expect(!HibernationEligibility.handsOffQuietly(pane("claude", .running)))
+    // No hook has spoken: at rest is not proven.
+    #expect(!HibernationEligibility.handsOffQuietly(pane("claude", nil)))
+    #expect(!HibernationEligibility.handsOffQuietly(pane("claude", .idle, work: true)))
+    // Codex's one hook is turn ended, so idle is all it ever says.
+    #expect(!HibernationEligibility.handsOffQuietly(pane("codex", .idle)))
+    #expect(!HibernationEligibility.handsOffQuietly(pane("sleep", .idle)))
+    #expect(!HibernationEligibility.handsOffQuietly(pane(nil, .idle)))
+}

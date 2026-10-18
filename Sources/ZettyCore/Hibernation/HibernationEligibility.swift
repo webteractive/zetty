@@ -45,6 +45,17 @@ public enum HibernationEligibility {
         return pane.promptBoxEmpty != true
     }
 
+    /// Whether a hibernate somebody asked for may end this pane without
+    /// asking: a Claude its hooks PROVE at rest, with nothing of its own still
+    /// running, whose conversation is handed off rather than lost (Glen,
+    /// 2026-10-18: "Idle claude should not be busy"). Codex is not, because
+    /// its one hook cannot tell working from idle. The prompt box is not read
+    /// here: the handoff reads it before typing anything, and a draft or a
+    /// question leaves the project awake with the reason.
+    public static func handsOffQuietly(_ pane: Pane) -> Bool {
+        pane.foreground == AgentKind.claude.rawValue && isAtRest(pane.agentStatus) && !pane.hasBackgroundWork
+    }
+
     /// Whether reading this pane's screen could change the answer, so the
     /// caller only pays for `zmx history` where it matters.
     public static func needsPromptBox(_ pane: Pane) -> Bool {

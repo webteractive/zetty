@@ -2141,7 +2141,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         guard let zmx = ZmxRunner.locate() else { return nil }
         let pids = ZmxRunner.sessionPIDs(zmxPath: zmx, timeout: foregroundReadTimeout)
         guard let ps = ZmxRunner.psSnapshot(timeout: foregroundReadTimeout) else { return .failed }
-        return .taken(ForegroundProcess.commands(forSessionPIDs: pids, psOutput: ps))
+        return .taken(ForegroundProcess.commands(forSessionPIDs: pids, psOutput: ps),
+                      detached: ForegroundProcess.detachedWork(forSessionPIDs: pids, psOutput: ps))
     }
 
     /// Seconds each of `readForegroundForRequest`'s two calls may take.
