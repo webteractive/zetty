@@ -38,128 +38,33 @@ Tests: `mise exec -- tuist test` runs the app test target. The pure `ZettyCore`
 suite is faster via SwiftPM — `mise exec -- swift test` — and a single test with
 `--filter`, e.g. `mise exec -- swift test --filter moveProjectRejectsCrossGroupMove`.
 
-## Design rules  ← read before any UI work
+## Every change  ← always applies; the details are in the rules named
 
-The *visual* spec (tokens, schemes, typography, component anatomy) is in
-**[`DESIGN.md`](DESIGN.md)**; tokens live in
-[`App/Sources/App/Theme.swift`](App/Sources/App/Theme.swift) (`ZTheme`). DESIGN.md
-is appearance-only — these enforceable rules (and Configuration, below) live here.
-A change that violates one should be corrected before merge:
-
-1. **Never hardcode a color.** Read from `ZTheme.current.<token>Color`; add a
-   token rather than inlining hex or a system color (`.controlAccentColor`,
-   `.separatorColor`, `.windowBackgroundColor`, …).
-2. **Fonts:** only the terminal and the status bar use `ZTheme.monoFont`, which
-   follows the user's configured terminal `font-family`/`font-size`. Every other
-   piece of chrome — tab bar, sidebar, command palette, dialogs, sheets, chips —
-   uses `ZTheme.chromeFont` (system font, fixed point size), so changing the
-   terminal font never reflows the app chrome. This is deliberate and the
-   opposite of what "terminal-native" suggests; don't "fix" a system-font tab
-   label back to mono.
-3. **Accent = focus/active/brand only, and it glows.** Selection/active fills use
-   `bg3`, never a saturated accent block.
-4. **Respect the surface ramp:** `bg0` chrome (sidebar / tab bar / status bar) ·
-   `bg1` base/panes/terminal · `bg2` elevated inputs & hover · `bg3`
-   chips/selection. Don't invent intermediate greys.
-5. **Panes are borderless;** focus is shown by the accent status dot, not a border.
-6. **The terminal tracks the scheme** via `ZTheme.current.terminalTheme()`,
-   applied through `SurfaceRegistry.terminalTheme` — set it nowhere else. (Pasted
-   ghostty directives may override terminal colors; see Configuration.)
-7. **Schemes are all-or-nothing:** a new `ZColorScheme` fills every token plus
-   its `isDark` flag.
-8. **Semantic colors carry meaning** (green=ok, yellow=attention, red=error,
-   purple=git, `fg3`=idle). Don't repurpose them for decoration.
-9. **Chrome depth is borders + surfaces, not shadows;** reserve glow for the
-   accent on focused/active elements.
-
-When adding UI, match the component anatomy in DESIGN.md (radii, bar heights,
-status dots, accent top-bar on the active tab, etc.).
-
-## Configuration
-
-Zetty reads `~/.config/zetty/config` (or `$XDG_CONFIG_HOME/zetty/config`),
-seeded with a documented default on first launch. Parsing is pure + unit-tested
-in `ZettyCore` (`AppConfig` / `ConfigStore`); `AppDelegate` resolves + applies it.
-
-- **`appearance = system | dark | light`** — `system` (default) follows macOS
-  live (KVO on `NSApp.effectiveAppearance`); `dark`/`light` pin one axis.
-- **`theme-dark` / `theme-light`** — the `ZColorScheme` for each axis (case-insensitive).
-- **Every other `key = value` is a ghostty directive**, forwarded verbatim to
-  libghostty via `TerminalConfiguration.withCustom` — so a user can paste an
-  existing ghostty config straight in (no prefix; we do NOT read the external
-  `~/.config/ghostty/config`). Ghostty defines none of the reserved keys, so no
-  collision. Comments are **full-line only** (`#` at line start) so `#`-prefixed
-  color values survive.
-- **Ghostty validates all-or-nothing** — `TerminalController.prepareConfig`
-  frees the WHOLE config if any key yields a diagnostic, so a single stray
-  directive silently drops every custom setting *including the per-surface
-  `command`*, which strands preserved sessions (panes launch plain shells).
-  Two guards, both regression-tested: `AppConfig.isReservedButUnsupported`
-  swallows Zetty's own keys this build lacks (the `zetty-` namespace — which
-  **all new keys must use** — plus the grandfathered `notify-` one and
-  `retiredReservedKeys`; add a retired key there, don't just delete its
-  `case`, since deleting it makes old configs *forward* the key rather than
-  ignore it. They're recorded in `unsupportedKeys` and dropped by `rendered()`),
-  and `SurfaceRegistry.pair(for:)` retries with a Zetty-only config when
-  `setTerminalConfiguration` returns false, reporting via
-  `onConfigurationRejected` → one-time alert. Real cause of a
-  4-relaunch session-loss incident (`notify-poke` from a feature branch).
-- **Precedence:** scheme theme → pasted ghostty directives (last wins). Pasted
-  directives may override terminal colors; the app chrome stays scheme-driven.
-- **Reload:** ⇧⌘, (also App menu + command palette) re-reads config and
-  re-applies theme + terminal overrides to every live pane. Runtime scheme /
-  appearance switches persist back to the file (`AppConfig.rendered()`).
-- **Every config key has a control in Settings (⌘,)** — a new key ships with
-  one in `SettingsWindowController`, or with the reason it has none written in
-  that file's doc comment (today only `free-background-panes-after`, whose
-  feature is disabled). Settings writes through `updateConfig`, which calls
-  `onConfigSaved` so `AppDelegate` reloads at once: its in-memory `appConfig`
-  is otherwise stale until the 1s file poll, and an `AppDelegate` save in that
-  window would overwrite the Settings write.
-- **`preserve-sessions = true|false`** (default false) — panes run inside
-  [zmx](https://zmx.sh) sessions so they survive quit/relaunch. The reattach,
-  scrollback-restore, scratch-pane deadlock, title persistence and restart-
-  recovery rules are in `.hydra/rules/session-preservation.md` — read it before
-  touching anything session-related.
-
-## Chrome refresh  ← read before touching the tab bar / sidebar / status bar
-
-Agent CLIs animate a spinner glyph **in their terminal title**, so every frame
-is a title escape sequence. Refreshing the chrome synchronously per event once
-put 59% of the main thread in Auto Layout and leaked ~550 MB of AppKit KVO
-records over two days (1.2 GB footprint, 2.8 GB peak, CPU pinned near 100%).
-Three rules keep it flat; breaking any one reintroduces the whole class of bug:
-
-1. **Machine-driven refreshes coalesce.** Terminal titles, the
-   foreground-process probe and agent hook events call
-   `TerminalViewController.setNeedsChromeRefresh(tabBar:sidebar:)`, which
-   refreshes ONCE ~0.1s later. Only user-driven changes call
-   `refreshTabBar()`/`refreshSidebar()` directly (same run-loop turn, so input
-   still feels immediate). `SurfaceRegistry`'s title subscription also
-   `removeDuplicates()` — `combineLatest` re-emits when *either* of title/cwd
-   fires, so an unchanged republish used to wake everything.
-2. **Every view-layer `update(...)` no-ops on unchanged input.**
-   `SidebarProject` is `Equatable` for exactly this (`NSImage`/`NSColor` compare
-   via `isEqual:`, and `AgentIcons` caches logos so an unchanged icon is the
-   same instance); `TabBarView` caches its last titles/icons/selection and
-   re-renders pills **in place** when only content moved, instead of
-   destroying and rebuilding every pill's constraints.
-   **Corollary — a scheme change must invalidate those caches**, because the
-   inputs are equal and only the colors differ: `StatusBarView.applyTheme`
-   calls `invalidateRenderCaches()`, `TabBarView.applyTheme` calls
-   `item.restyle()` per pill, and `SidebarView.applyTheme` calls
-   `rebuildOutline()`. Forget one and that widget freezes in the old palette.
-3. **A re-render must never move the sidebar scroller.**
-   `rebuildOutline()` calls `scrollRowToVisible` only when the *logical*
-   selection (project + tab, not the row index — rows shift when a section
-   collapses) actually changed. Unconditional scrolling made the sidebar
-   impossible to scroll while any agent was running: it snapped back to the
-   active project several times a second.
-
-The layout rules for the chrome (tab strip, window floor, status bar
-compaction, command palette, sidebar drawer) are in
-`.hydra/rules/chrome-layout.md`; memory, surface and session-lifetime rules
-are in `.hydra/rules/surfaces-and-memory.md`.
+- **Before starting any feature, fix or other change, run
+  `scripts/check-libghostty.sh`** (once per working session) and state the
+  result in the summary: "libghostty is current", or what is newer. Exit 2
+  means GitHub could not be reached, which is not "up to date". Anything
+  newer: read `libghostty-bump.md` before touching the pin.
+- **Verify before the commit in the isolated test app**
+  (`isolated-test-app.md`), never by quitting or replacing
+  `/Applications/zetty.app`.
+- **After the commit, install the new build and relaunch, without asking**
+  (`install-after-change.md`): build after committing, `ditto` in place, and
+  confirm this session's surface is tracked before `zetty quit`.
+- **UI follows the design rules** (`design-rules.md`, visual spec in
+  [`DESIGN.md`](DESIGN.md)): never hardcode a color; chrome uses
+  `ZTheme.chromeFont`, only the terminal and status bar the mono font.
+- **Machine-driven chrome refreshes coalesce** through
+  `setNeedsChromeRefresh` (`chrome-refresh.md`).
+- **A new config key uses the `zetty-` namespace and ships with a Settings
+  control** (`configuration.md`).
+- **A new keyboard shortcut needs proof its chord is free** on all four
+  shortcut surfaces (`keybindings-copy-mode.md`).
+- **Anything new that ships in the app needs its license** in
+  `THIRD_PARTY_NOTICES.md` and `licenses/`, every libghostty bump included
+  (`third-party-notices.md`).
+- **Release only with `scripts/release.sh` and human-written notes**
+  (`releasing.md`): a generic release tool silently ships a broken release.
 
 ## Conventions
 
@@ -171,41 +76,6 @@ are in `.hydra/rules/surfaces-and-memory.md`.
   a detector hook that don't fit a native AppKit terminal app. The visual
   authority here is [`DESIGN.md`](DESIGN.md) plus `ZTheme`; do UI and copy work
   directly against those.
-- **Never add a keyboard shortcut without first proving the chord is free.**
-  Zetty has four independent shortcut surfaces, and a silent collision is the
-  usual failure — AppKit just lets the first responder win, so the new binding
-  "sometimes doesn't work". Before adding one, check **all four**:
-
-  ```sh
-  # 1. Native menu key equivalents (character + modifier mask must BOTH match
-  #    an existing pair to collide — ⌘B, ⌃⇧B and ⇧⌘B are three distinct chords)
-  grep -B4 'keyEquivalentModifierMask' App/Sources/App/AppDelegate.swift \
-    | grep -E 'title:|keyEquivalent'
-  # 2. Prefix layer (Ctrl+B then a key)
-  grep -n 'bind("' Sources/ZettyCore/Keybindings/BindingCommand.swift
-  # 3. Copy mode
-  grep -n 'copyBind\|defaultCopyTable' -A40 Sources/ZettyCore/Keybindings/BindingCommand.swift
-  # 4. The user's own config — `bind` / `copy-bind` lines are additive
-  grep -E '^(prefix|bind|copy-bind)' ~/.config/zetty/config
-  ```
-
-  Then state the result before writing code, and say what the chord costs.
-  Two costs are easy to miss:
-
-  - **A native equivalent is resolved in `NSApplication.sendEvent` *before* the
-    terminal surface sees the event**, so a Control-modified chord bound here
-    permanently stops that keystroke reaching the pty. Prefer ⌘-based chords for
-    menu items — Command is never sent to the shell — and leave Control chords
-    to the prefix layer.
-  - **A well-known chord spent here is spent for good.** Say what else it
-    conventionally means and let the user decide. Recorded precedent: ⇧⌘F is
-    "find in files" in VS Code and Zed, and it is deliberately spent on Toggle
-    File Tree; a future project-wide content search needs a different chord
-    rather than stealing this one back. ⇧⌘G is spent on Toggle Tile Mode,
-    costing find-previous and Finder's Go to Folder — plain ⌘G was left free on
-    purpose, for the viewer's deferred find-in-file. ⇧⌘J is spent on the tile
-    manager, beside ⌘J for Sessions (the two docked drawers), costing Chrome's
-    Downloads and Xcode's Reveal in Project Navigator.
 - Do not commit debug `NSLog`/`print` statements.
 - Never commit or push without being asked; never add `Co-Authored-By` or a
   session link to commit messages.
@@ -225,211 +95,8 @@ are in `.hydra/rules/surfaces-and-memory.md`.
   Keep only cross-cutting rules in `CLAUDE.md`; record a feature's gotchas in
   its rule file (or a new one via `hydra add` / `hydra new`) and run
   `hydra sync` so the index below stays current.
-- **Anything new that ships in the app needs its license in
-  `THIRD_PARTY_NOTICES.md` and `licenses/`** (both are bundled into the app —
-  MIT, BSD and FTL require the notice to travel with the binary). That covers a
-  new package, a bundled file (font, logo set, script), and **every libghostty
-  bump**: list the static library's members (`ar -t libghostty.a` on a thin
-  slice) and compare against the notices, since a Ghostty update can compile in
-  a new C library (and can drop one: GNU libintl, LGPL, left with
-  `2.2.2026101502`). One entry needs care: Ghostty's bash/zsh
-  shell-integration scripts under `App/Resources/ghostty` are GPLv3 (derived
-  from Kitty). libghostty-spm ships
-  an MIT rewrite of those scripts, but it has no `ssh` wrapper (TERM fallback,
-  terminfo install), which Zetty's `ssh-env,ssh-terminfo` default relies on.
 - **Keep `CLAUDE.md` and `AGENTS.md` byte-identical.** They share one canonical
   content; any edit to one must be replicated to the other in the same commit.
-- **Every release ships human-written notes.** When cutting a release, add a
-  note to the GitHub release body summarizing the updates and new features it
-  introduces — a short, user-facing "What's new" list, not just the
-  auto-generated "Full Changelog" link. Group by feature/fix and phrase it for
-  users, mirroring the same changes documented in `README.md`.
-
-## Checking libghostty before a change  ← every feature, fix or other change
-
-**Before starting any feature, bug fix or other change to the app, run
-`scripts/check-libghostty.sh`** — once per working session is enough. It
-compares the `libghostty-spm` pin in `Project.swift` with upstream's release
-tags and changes nothing. Zetty IS libghostty with chrome around it, so a
-terminal fix that already exists upstream is the cheapest fix available, and
-the pin only moves when somebody looks.
-
-- **When the script reports anything newer, delegate the research to a
-  subagent before touching the pin** — one read-only agent, briefed with the
-  pinned version and revision, the newer tag(s), and where Zetty's bridge code
-  lives (`App/Sources/ZettyGhostty/`). It must come back with, each backed by
-  a tag, commit or quoted release note: what changed between the two versions,
-  split into the Swift wrapper's API and the bundled upstream ghostty build;
-  any symbol Zetty uses that was removed, renamed or changed; anything
-  touching what Zetty is sensitive to (per-surface memory, `ghostty_surface_free`,
-  config validation, key handling, rendering, shell-integration resources);
-  and whether an existing tag was moved. It is delegated because the answer
-  is a read across release notes, commit ranges and upstream ghostty, and
-  only the conclusion belongs in the session doing the actual work.
-- **Show Glen what the new version contains BEFORE bumping**, in the reply,
-  not only in a commit message: the changes, what was verified against what
-  was inferred, and where upstream recorded nothing. "A newer version exists"
-  is not a reason to bump, and an empty release note is a finding to state
-  rather than to skip past.
-- **A newer release on the pinned line** (same `major.minor`, e.g. `1.6.x`):
-  once that has been shown, bump `from:` in `Project.swift` to it, as its OWN
-  commit ahead of the work the session was started for. `tuist generate` then
-  rewrites the tracked `.package.resolved`, which belongs in the same commit:
-  it is the lockfile, and a transitive dependency can change with the bump
-  (`1.6.20261003` swapped `MSDisplayLink` for `DisplayLink`).
-- **Clean before building a bump** (`xcodebuild … clean`). The precompiled
-  libghostty module from the old pin is rejected with "ghostty.h has been
-  modified since the module file was built", which reads like a broken
-  release and is only a stale cache.
-- **Clean the RELEASE build folder too**, which is a separate cache:
-  `xcodebuild -project zetty.xcodeproj -scheme zetty -configuration Release
-  -destination 'generic/platform=macOS' -derivedDataPath build clean`. Skip it
-  and `scripts/release.sh` fails at packaging with that same error — AFTER it
-  has committed and pushed the `chore(release)` commit, which leaves a pushed
-  version bump with no tag and no release. That happened on v0.1.49. The way
-  out is to clean `build/`, run `scripts/package.sh`, repeat the script's own
-  checks (checksum against the sidecar, packaged version, commit stamp), then
-  tag the release commit and `gh release create` with both assets. Do NOT
-  re-run `release.sh`: it would bump the version a second time.
-- **A newer LINE** (e.g. `2.2.x` while pinned to `1.6.x`): not a routine bump.
-  The same research covers it; say what the line is and let Glen decide; a new line can remove API, and the last move
-  across lines (`32ae982`) lost `TerminalSurface.sendText`.
-- **State the result either way** — "libghostty is current" or what is newer —
-  in the summary of the work. A check nobody reports is a check nobody can
-  tell was run.
-- **A bump is a change like any other**: it ends with the install ritual
-  below, and it is not verified until the installed app has been exercised —
-  typing, splits, copy mode, and a preserved session reattaching. `swift test`
-  never links libghostty, so a bump that compiles and passes is still unproven.
-- **Read the resolved revision after bumping** (`.package.resolved`) and
-  compare it with `git ls-remote --tags` for that tag. Upstream has
-  rewritten history under existing tags before, leaving a pin pointing at a
-  revision a fresh clone no longer contains.
-- The script exits 2 when it cannot reach GitHub. Offline is not "up to date":
-  say the check could not be run.
-
-## Installing after a change  ← not optional, and not only for releases
-
-**Every feature, fix or dependency bump ends with the running app on the new
-build.** Verifying BEFORE the commit is not this: that runs in a temporary
-isolated copy beside Glen's app (`.hydra/rules/isolated-test-app.md`), never
-by quitting or replacing `/Applications/zetty.app`. Glen runs `/Applications/zetty.app`, so work that only reached
-DerivedData is work he cannot see — a feature reported as "not there" when it
-was built but never installed is what put this rule here. Do it automatically
-after the commit; do not ask first.
-
-```sh
-zetty quit; sleep 2
-xcodebuild -project zetty.xcodeproj -scheme zetty \
-  -destination 'platform=macOS' build
-ditto <DerivedData>/Build/Products/Debug/zetty.app /Applications/zetty.app
-defaults read /Applications/zetty.app/Contents/Info.plist ZettyBuildCommit
-open -a /Applications/zetty.app
-```
-
-- **Build AFTER committing.** The stamp script writes the short commit with a
-  `*` suffix on a dirty tree, so a build run before the commit installs a
-  bundle whose `ZettyBuildCommit` does not match HEAD. Verify the two are
-  equal rather than assuming; they are the only evidence the copy is current.
-- **Regenerate first if `tuist test` ran** — it rewrites the xcodeproj without
-  the script phases, so the stamp silently does not run at all.
-- **Restarting is part of it.** The live process keeps executing the OLD
-  in-memory code until it is relaunched, so an install without a restart looks
-  exactly like an install that did not happen. `preserve-sessions` reattaches
-  the workspace, so the restart is cheap.
-- **`ditto` in place, never `rm -rf` first.** Overwriting the bundle while the
-  app runs is safe; deleting it is not — `ZettyGhostty.framework` is
-  lazy-loaded, so once the bundle vanishes the live process dies with a
-  `DYLD library missing` SIGABRT and pops a crash report. That crash is a
-  self-inflicted install race, NOT a defect in the new build, and it has been
-  misread as one.
-- **Before `zetty quit`, confirm this session's own surface is in
-  `zetty status`** (`${ZMX_SESSION#zetty-}`). The startup reap kills every
-  `zetty-*` session no restored surface owns, so an untracked one is killed on
-  relaunch — taking the agent doing the install with it. Run quit → wait →
-  open as one backgrounded command so it survives the GUI being briefly down.
-- **`ditto` never removes what the new build dropped.** It merges into the
-  existing bundle, so a file deleted or renamed in the repo stays in
-  `/Applications/zetty.app` from an older install. Renaming the mod's
-  `register.ts` to `register.tsx` left both in the installed bundle, and
-  `ModInstaller` then copied the dead one out. After an install whose change
-  removed or renamed a bundled resource, delete the leftover by hand and run
-  `codesign --verify --deep /Applications/zetty.app` — an extra file breaks the
-  bundle's seal until it is gone. A released DMG is a fresh bundle and is not
-  affected.
-- **For a release, install the Release build** (`build/Build/Products/Release/`
-  from `package.sh`), so `/Applications` matches the shipped DMG.
-- **A dependency bump counts as a change.** `swift test` covers only the pure
-  `ZettyCore` target and never links libghostty, so a bump that compiles is
-  still unverified — the installed app being exercised is the verification.
-
-## Releasing  ← use `scripts/release.sh`, not a generic release tool
-
-```sh
-scripts/release.sh --notes notes.md patch      # or minor | major | X.Y.Z
-```
-
-The script is the whole process: preflight (clean tree, on `main`, up to date,
-`gh` authed, tag free) → `swift test` → bump → commit → push → package → verify
-→ tag → GitHub release with both assets. `--dry-run` prints the plan and
-changes nothing; it refuses to run without a notes file. Afterwards it prints
-the `ditto` line to refresh `/Applications` (Glen runs that copy, so it should
-match the release — verify `ZettyBuildCommit` against HEAD).
-
-**A generic release skill/tool WILL silently produce a broken release here.**
-Zetty is a distributed macOS app, and the two failure modes are quiet:
-
-- **The version lives in `Project.swift`** (`CFBundleShortVersionString`), not in
-  a package manifest. A tool that looks for `composer.json`/`Cargo.toml` finds
-  nothing to bump and ships a DMG stamped with the *previous* version — and
-  since the update check gates on `SemVer.isNewer(latest:than:)`, the release is
-  never offered.
-- **The release must carry `Zetty-<version>.dmg` AND its `.sha256` sidecar**
-  (`scripts/package.sh` writes both). `UpdateAssets.select` pairs them by name
-  suffix and `UpdateChecker.isInstallable` requires *both*, with
-  `UpdateChecksum.verify` checking the download — so a release missing either
-  asset silently loses in-app updating and drops users back to a manual
-  download. Artifact detection keyed to `Cargo.toml`/`go.mod`/`package.json`
-  `bin` matches none of this and skips the upload *without warning* — the exact
-  trap that motivated the script.
-
-Other conventions the script encodes: the annotated tag lands on the
-`chore(release): vX.Y.Z` commit (not on whatever HEAD happens to be), and the
-tag/commit use `v`-prefixed SemVer. Notes are never generated from the commit
-log — see the human-written-notes rule above.
-
-**The self-update swap must never delete the target before the replacement is
-verified.** A field crash on 0.1.40 was a `/Applications/zetty.app` whose
-`MacOS/zetty` was present but whose `ZettyGhostty.framework` was simply absent —
-dyld rejects that before `main` runs, so nothing inside the app can detect or
-repair it, and the user's only route back is a manual DMG reinstall. The shipped
-DMG was verified complete, so the bundle lost the framework *after* install; the
-one mechanism Zetty owns is the swap helper, which used to `rm -rf` the target
-and then `ditto`, leaving whatever the copy managed to write if it was cut short
-(a restart, a full disk). `SelfUpdateScript` now checks the staged bundle
-against `requiredBundlePaths` before touching the target, moves the old bundle
-to `<target>.zetty-previous` instead of deleting it, verifies the copy, and
-restores the old bundle if anything failed — and every path still relaunches, so
-a failed update leaves a working app rather than nothing.
-`UpdateInstaller.mountAndCopy` runs the same completeness check on the bundle it
-stages out of the DMG, while the app is still alive and the failure can surface
-as an error instead of a silent rollback.
-
-Signing: `scripts/package.sh` signs Release builds with the **Developer ID**
-in the login keychain (hardened runtime, `--timestamp`, no entitlements),
-notarizes and staples the app, THEN builds, signs, notarizes and staples the
-DMG, and checks both with `spctl`. Order matters three ways: nested code
-(`ZettyGhostty.framework`) is signed before the app whose seal covers it; the
-app is stapled before the DMG is made, so the copy dragged out — and the copy
-the self-updater lifts out — carries its own ticket; and the `.sha256` sidecar
-is written last, because stapling rewrites the DMG. `notarytool` exits 0 on an
-`Invalid` verdict, so the script reads the status from its JSON and prints
-Apple's log on rejection. No secret lives in the repo: notarytool uses the
-`notary` keychain profile (`ZETTY_NOTARY_PROFILE` / `ZETTY_SIGN_IDENTITY`
-override). `release.sh` runs `package.sh --preflight` before its bump, so a
-missing certificate or profile stops it before it pushes; `--adhoc` packages
-an un-notarized build for a machine without the certificate — never ship it.
-Releases up to 0.1.52 were ad-hoc signed.
 
 <!-- hydra:rules:start -->
 ## Rules
@@ -453,21 +120,28 @@ Rule files are in `.hydra/rules`.
 | handing a pane's work to a fresh agent session or another account · changing /z-handoff, the pane's handoff button, or zetty handoff | `Sources/ZettyCore/Transfer/**` · `App/Sources/App/TerminalViewController+AgentHandoff.swift` · `zetty handoff` | agent-handoff.md |
 | changing the pane refresh button or restarting an agent in place | `App/Sources/App/Tiles/ReloadingOverlay.swift` · `App/Sources/App/Tiles/RefreshSpinner.swift` · `App/Sources/App/Tiles/AgentRestartPresenting.swift` · `Sources/ZettyCore/Recovery/AgentResume.swift` | agent-pane-refresh.md |
 | changing the tab bar, status bar, sidebar, or command palette · the window refuses to resize or its minimum size grows · adding an overlay or anything inside the main window | `App/Sources/App/TabBarView.swift` · `App/Sources/App/StatusBarView.swift` · `App/Sources/App/SidebarView.swift` · `App/Sources/App/SidebarDrawer.swift` · `App/Sources/App/CommandPaletteView.swift` · `Sources/ZettyCore/StatusBar/**` · `Sources/ZettyCore/Support/CommandSearch.swift` · `Sources/ZettyCore/Support/FuzzyMatch.swift` · `Sources/ZettyCore/Model/SidebarMetrics.swift` | chrome-layout.md |
+| refreshing the tab bar, sidebar or status bar from a title, hook or probe event · adding a color scheme or changing a widget's applyTheme · high CPU, memory growth or a sidebar that will not scroll while agents run | `App/Sources/App/TabBarView.swift` · `App/Sources/App/StatusBarView.swift` · `App/Sources/App/SidebarView.swift` · `App/Sources/App/Tiles/TileGridView.swift` | chrome-refresh.md |
 | changing any file of a mod under Mods/ — bump version in its plugin.json in the same change · changing Zetty's Claude Code mod or what it reports · adding chrome fed by agent usage (rate limits, cost, context, turn outcome) | `Mods/**` · `Sources/ZettyCore/Agents/AgentUsage.swift` · `Sources/ZettyCore/Agents/ModInstall.swift` · `App/Sources/App/AgentUsageWatcher.swift` · `App/Sources/App/ModInstaller.swift` · `Sources/ZettyCore/Accounts/AccountLimits.swift` · `claude plugin validate` · `claude plugin test` | claude-mod.md |
+| adding, retiring or changing a config key · changing how the config file is parsed, applied or reloaded · custom ghostty directives or the per-surface command are silently dropped | `Sources/ZettyCore/Config/**` · `App/Sources/App/SettingsWindowController.swift` · `zetty reload` | configuration.md |
 | adding or changing a zetty CLI verb · changing the control socket or StatusSnapshot | `Sources/ZettyCore/CLI/**` · `App/Sources/App/ControlSocketServer.swift` · `App/Sources/App/CLILink.swift` · `App/Sources/App/main.swift` | control-cli.md |
+| adding or changing any UI: chrome, dialogs, sheets, colors or fonts · adding or changing a color scheme or theme token | `App/Sources/App/Theme.swift` · `DESIGN.md` · `App/Sources/App/**/*View.swift` · `App/Sources/App/**/*Sheet.swift` · `App/Sources/App/**/*Overlay.swift` · `App/Sources/App/**/*WindowController.swift` | design-rules.md |
 | changing the per-pane file tree | `Sources/ZettyCore/FileTree/**` · `App/Sources/App/FileTree/**` | file-tree.md |
 | changing the file viewer peek or cmd-click path handling · the file viewer shows a blank panel · opening files from terminal output | `Sources/ZettyCore/Viewer/**` · `Sources/ZettyCore/Diagnostics/**` · `App/Sources/App/FileViewerLoader.swift` · `App/Sources/App/FileViewerOverlay.swift` · `App/Sources/App/PathHoverTracker.swift` · `App/Sources/App/ZettyLog.swift` · `zetty view` | file-viewer.md |
 | changing hibernation handoffs or hibernate-after eligibility · a hibernated pane wakes without its handoff, or into the wrong conversation · a project with an idle agent is not auto-hibernated, or a busy one is | `Sources/ZettyCore/Hibernation/**` · `App/Sources/App/Handoff*.swift` · `App/Sources/App/AgentTranscript.swift` · `App/Sources/App/TerminalViewController+Handoffs.swift` · `zetty hibernate` · `zetty wake` | hibernation-handoffs.md |
 | changing the Home project or zetty-home-path · removing, hibernating, or restoring projects | — | home-project.md |
+| finishing a committed feature, fix or dependency bump · installing a build into /Applications/zetty.app | `ditto ` · `open -a /Applications/zetty.app` · `zetty quit` | install-after-change.md |
 | verifying a change in the running app before it is committed · driving the app to check a feature or a fix (/verify, prepare-for-release) · trying anything that quits, hibernates, closes panes or ends sessions | `zetty quit` · `ditto ` · `open -a /Applications/zetty.app` | isolated-test-app.md |
 | changing prefix keys, key bindings, or copy mode · adding a keyboard shortcut | `Sources/ZettyCore/Keybindings/**` · `App/Sources/App/KeyInterceptor.swift` · `App/Sources/App/CopyModeController.swift` | keybindings-copy-mode.md |
+| check-libghostty reports a newer libghostty than the pin · bumping the libghostty-spm pin in Project.swift | `.package.resolved` · `scripts/check-libghostty.sh` | libghostty-bump.md |
 | changing project clones, merge-back, or clone removal | `Sources/ZettyCore/Clone/**` · `App/Sources/App/CloneRunner.swift` · `App/Sources/App/CloneWarningBanner.swift` · `App/Sources/App/CloneMergeGuideView.swift` · `App/Sources/App/FileCopyBackRunner.swift` · `App/Sources/App/FileCopyBackSheet.swift` · `zetty clone` · `zetty update-clone` · `zetty remove-project` | project-clones.md |
 | changing per-project settings, color, icon, or theme overrides · layout templates or .zetty/project.json · per-project env vars or startup commands | `Sources/ZettyCore/Settings/**` · `App/Sources/App/ProjectSettingsSheet.swift` · `App/Sources/App/IconPicker.swift` | project-settings.md |
+| cutting a release or writing its notes · changing packaging, signing, notarization or the self-updater | `scripts/release.sh` · `scripts/package.sh` · `Sources/ZettyCore/Update/**` · `App/Sources/App/UpdateChecker.swift` · `App/Sources/App/UpdateInstaller.swift` · `scripts/release.sh` · `scripts/package.sh` | releasing.md |
 | changing preserve-sessions or zmx session handling · restart recovery or resuming agents after a power-off · a preserved pane reattaches wrong, loses scrollback, or launches a plain shell · changing scratch panes or how sessions are reaped | `Sources/ZettyCore/Session/**` · `Sources/ZettyCore/Recovery/**` · `App/Sources/App/ZmxRunner.swift` · `App/Sources/App/ScrollbackRestore.swift` · `App/Sources/App/RestartRecoveryRunner.swift` · `App/Sources/App/AgentSessionLookup.swift` · `zmx ` · `zetty quit` | session-preservation.md |
 | changing the Sessions view or task manager · killing or interrupting sessions from the UI | `Sources/ZettyCore/Monitor/**` · `App/Sources/App/SessionSampler.swift` · `App/Sources/App/SessionsView.swift` · `App/Sources/App/TaskManagerWindowController.swift` · `App/Sources/App/ProcessFootprint.swift` | session-task-manager.md |
 | changing sidebar sections, Spaces, or project ordering · drag-and-drop in the sidebar | `Sources/ZettyCore/Model/Space.swift` · `App/Sources/App/SpaceSheet.swift` · `App/Sources/App/SidebarView.swift` · `zetty new-space` · `zetty rename-space` · `zetty remove-space` · `zetty move-to-space` | spaces.md |
 | handling ssh:// URLs or other URL schemes · an external open lands in the wrong app copy (Launch Services) | `Sources/ZettyCore/CLI/SSHURLHandler.swift` | ssh-url-handover.md |
 | investigating a memory or leak report · adding a pane close path or changing when surfaces are freed · changing hibernation or registry prune | `App/Sources/ZettyGhostty/**` · `App/Sources/App/ProcessFootprint.swift` · `Sources/ZettyCore/Session/BackgroundPanePolicy.swift` | surfaces-and-memory.md |
 | changing tab titles, tool logos, or the foreground-process probe · adding a bundled logo for a tool | `Sources/ZettyCore/Model/TabTitle.swift` · `Sources/ZettyCore/Session/ForegroundProcess.swift` · `Sources/ZettyCore/Agents/*ForegroundProcessProbe.swift` · `App/Sources/App/AgentIcons.swift` · `App/Resources/AgentLogos/**` | tab-identity.md |
+| adding a package, bundled file, font, logo set or script to the app · bumping libghostty | `THIRD_PARTY_NOTICES.md` · `licenses/**` · `App/Resources/**` · `Package.swift` | third-party-notices.md |
 | changing tile mode, tile views, or tile profiles | `Sources/ZettyCore/Tiles/**` · `App/Sources/App/Tiles/**` · `zetty tiles` | tile-mode.md |
 <!-- hydra:rules:end -->

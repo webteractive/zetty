@@ -109,7 +109,7 @@ final class TileGridView: NSView {
 
     /// Pushes each tile's footer IN PLACE. Never route this through
     /// `update(tiles:)`, which rebuilds every tile: a `cd` in one pane would
-    /// then rebuild sixteen (`CLAUDE.md` → Chrome refresh).
+    /// then rebuild sixteen (`.hydra/rules/chrome-refresh.md`).
     func updateStatusLines(_ lines: [UUID: TileStatusLine]) {
         for tile in tiles {
             guard let id = tile.surfaceID else { continue }

@@ -19,8 +19,8 @@ beside Glen's Zetty, never by quitting or replacing `/Applications/zetty.app`**
 usually lives in one of them; quitting it for a test costs him his view and
 risks the reap. On 2026-10-15 one session quit and reinstalled it twice to
 verify, and its `/z-open` test left his editor in front. Installing to
-`/Applications` is still the step AFTER the commit ("Installing after a
-change" in `CLAUDE.md`); this rule covers everything before it.
+`/Applications` is still the step AFTER the commit
+(`install-after-change.md`); this rule covers everything before it.
 
 The test app has its own home (`CFFIXED_USER_HOME`: workspace, config,
 control socket, mods, handoffs) and its own `zmx` socket directory

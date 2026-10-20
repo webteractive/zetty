@@ -2,8 +2,10 @@
 
 Building, testing and releasing Zetty from source. For how to contribute (pull
 requests, bug reports) see [`CONTRIBUTING.md`](CONTRIBUTING.md); for the full
-contributor guide — repo layout, design rules, subsystem internals and gotchas —
-see [`AGENTS.md`](AGENTS.md). [`DESIGN.md`](DESIGN.md) is the visual spec.
+contributor guide — repo layout and the rules every change follows — see
+[`AGENTS.md`](AGENTS.md), which indexes the design rules, subsystem internals
+and gotchas in [`.hydra/rules/`](.hydra/rules). [`DESIGN.md`](DESIGN.md) is
+the visual spec.
 
 ## Agent instructions: `AGENTS.md` and `CLAUDE.md`
 
@@ -12,12 +14,14 @@ instructions:
 
 - **[`AGENTS.md`](AGENTS.md)** and **[`CLAUDE.md`](CLAUDE.md)** are the same
   file under the two names agents look for — Claude Code reads `CLAUDE.md`,
-  Codex and most others read `AGENTS.md`. They hold the rules every change
-  follows: design rules, how to build and install, how to release, and the
-  conventions behind them. **Keep them byte-identical**: edit one and copy the
+  Codex and most others read `AGENTS.md`. They hold what every change
+  follows — the layout, how to build, a short always-on checklist (libghostty
+  check, isolated test app, install after the commit, release script) and
+  the conventions. **Keep them byte-identical**: edit one and copy the
   change to the other in the same commit.
-- **`.hydra/rules/`** holds the feature deep-dives — session preservation,
-  tile mode, the Claude mod, the chrome layout and so on. They are indexed
+- **`.hydra/rules/`** holds the feature deep-dives and the detailed procedures —
+  session preservation, tile mode, the Claude mod, the design rules,
+  configuration, installing and releasing, and so on. They are indexed
   from `CLAUDE.md` / `AGENTS.md` and read when a change touches that feature,
   which keeps the always-loaded files short. They are managed with
   [hydra](https://github.com/webteractive/hydra): add or edit a rule there,
@@ -158,8 +162,8 @@ Releases go through `scripts/release.sh`: it runs the tests, bumps the version i
 `Project.swift`, packages a Developer ID signed and notarized DMG, tags, and
 uploads both the DMG and the `.sha256` sidecar the in-app updater verifies
 against. Release notes are a required, human-written input. Don't assemble a
-release by hand or with a generic release tool — see the **Releasing** section of
-[`AGENTS.md`](AGENTS.md) for why.
+release by hand or with a generic release tool — see
+[`.hydra/rules/releasing.md`](.hydra/rules/releasing.md) for why.
 
 ## Diagnostic logs
 

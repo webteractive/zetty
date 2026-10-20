@@ -118,6 +118,6 @@ old one had been asked to remember), `/z-handoff codex` from the mod under
 change (Codex read the brief and acted on it), Codex back to Claude (after
 the quit-line fix), the brief deleted after the
 first turn with hook events fed by hand, and refusals for a draft, an
-unknown target, a shell pane and a cancel with nothing waiting. Not driven:
-the gutter button and its menu (a click could land in Glen's app), and a
-handoff to a real second account (the test app has none).
+unknown target, a shell pane and a cancel with nothing waiting. Glen drove
+the gutter button and its menu by hand (2026-10-19). Not driven: a handoff
+to a real second account (the test app has none).

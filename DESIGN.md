@@ -18,8 +18,9 @@ view reads colors and fonts from it.
 > two disagree, the code wins and this file is the bug.
 
 > **Contributor rules and configuration behavior live in
-> [`CLAUDE.md`](CLAUDE.md) / [`AGENTS.md`](AGENTS.md)**, not here — this file is
-> the visual reference only.
+> [`.hydra/rules/design-rules.md`](.hydra/rules/design-rules.md) and
+> [`.hydra/rules/configuration.md`](.hydra/rules/configuration.md)**, not
+> here — this file is the visual reference only.
 
 ---
 
@@ -175,7 +176,8 @@ are authoritative.
   dot, inactive pills are clear with an `fg3` dot. Each pill shows the tool's
   bundled logo (tinted to match the row's text) beside the title, then × close
   (hidden on a lone tab), then `+` and the split buttons. Pills re-render **in
-  place** when only content changed — see the chrome-refresh rules in CLAUDE.md.
+  place** when only content changed — see
+  `.hydra/rules/chrome-refresh.md`.
 - **Pane** — `bg1`, 8pt radius, **borderless**. Focus is shown by an accent
   status dot in the 24pt top gutter strip (dim `fg3` when unfocused), which
   also carries click targets for hibernate (the pane's project; not in Home) /

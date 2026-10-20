@@ -14,12 +14,13 @@ mise exec -- tuist generate --no-open
 xcodebuild -project zetty.xcodeproj -scheme zetty -destination 'platform=macOS' build
 ```
 
-Read [`AGENTS.md`](AGENTS.md) before diving in — it's the full contributor
-guide (repo layout, subsystem internals, build gotchas), and
-[`DESIGN.md`](DESIGN.md) is the visual spec. The design rules in
-[`CLAUDE.md`](CLAUDE.md) are enforced in review — in particular: no
-hardcoded colors (use `ZTheme` tokens), and keep `ZettyCore` pure
-(no AppKit imports).
+Read [`AGENTS.md`](AGENTS.md) before diving in — it holds the rules every
+change follows and indexes the feature deep-dives in
+[`.hydra/rules/`](.hydra/rules) (subsystem internals, build and release
+gotchas). [`DESIGN.md`](DESIGN.md) is the visual spec. The design rules in
+[`.hydra/rules/design-rules.md`](.hydra/rules/design-rules.md) are enforced in
+review — in particular: no hardcoded colors (use `ZTheme` tokens), and keep
+`ZettyCore` pure (no AppKit imports).
 
 ## Pull requests
 

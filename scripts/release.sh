@@ -13,7 +13,7 @@
 #     release missing it breaks updates for everyone already running Zetty.
 #
 # Release notes are deliberately a required input, never generated: see the
-# "Releasing" section of CLAUDE.md.
+# Releasing rule, .hydra/rules/releasing.md.
 #
 # Usage:
 #   scripts/release.sh --notes <file> (patch | minor | major | X.Y.Z) [--yes] [--dry-run]
@@ -34,7 +34,7 @@ usage() {
 usage: scripts/release.sh --notes <file> (patch | minor | major | X.Y.Z) [--yes] [--dry-run]
 
   --notes <file>  release notes body (required — releases ship human-written
-                  notes; see the "Releasing" section of CLAUDE.md)
+                  notes; see .hydra/rules/releasing.md)
   patch|minor|major|X.Y.Z
                   how to bump CFBundleShortVersionString in Project.swift
   --yes, -y       skip the confirmation prompt
@@ -56,7 +56,7 @@ while [ $# -gt 0 ]; do
 done
 
 [ -n "$LEVEL" ] || die "specify a bump level (patch|minor|major) or an explicit X.Y.Z"
-[ -n "$NOTES" ] || die "--notes <file> is required; releases ship human-written notes (see CLAUDE.md)"
+[ -n "$NOTES" ] || die "--notes <file> is required; releases ship human-written notes (see .hydra/rules/releasing.md)"
 [ -f "$NOTES" ] || die "notes file not found: $NOTES"
 [ -s "$NOTES" ] || die "notes file is empty: $NOTES"
 
@@ -179,7 +179,7 @@ gh release view "$TAG" --json url,assets \
 echo
 # `ditto` in place, never `rm -rf` first: ZettyGhostty.framework is lazy-loaded,
 # so deleting the bundle under a live process kills it with a dyld SIGABRT.
-# See "Installing after a change" in CLAUDE.md.
+# See .hydra/rules/install-after-change.md.
 echo "Reminder: install the packaged build so /Applications matches the release:"
 echo "  ditto build/Build/Products/Release/zetty.app /Applications/zetty.app \\"
 echo "    && defaults read /Applications/zetty.app/Contents/Info.plist ZettyBuildCommit \\"
