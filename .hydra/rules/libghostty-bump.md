@@ -20,6 +20,17 @@ tags and changes nothing. Zetty IS libghostty with chrome around it, so a
 terminal fix that already exists upstream is the cheapest fix available, and
 the pin only moves when somebody looks.
 
+- **A libghostty-spm version names the wrapper, not the Ghostty inside it.**
+  The script's second block reads `Ghostty.ref` at the resolved tag (and the
+  newest one on the line) and compares that commit with Ghostty's newest
+  stable `vX.Y.Z` tag: "N commits behind vX" means part of that Ghostty
+  release is not in Zetty yet. Several wrapper releases can share one Ghostty
+  commit (`2.2.2026101502` and `2.2.2026102101` both carry `1e9e14af5df1`,
+  303 commits behind v1.4.0), and the script then says the newer one is
+  wrapper-only. That Ghostty block never changes the exit code, and it is
+  skipped with a message when `jq` or GitHub is unavailable. Report both in
+  the summary: the wrapper result and where the bundled Ghostty stands.
+
 - **When the script reports anything newer, delegate the research to a
   subagent before touching the pin** — one read-only agent, briefed with the
   pinned version and revision, the newer tag(s), and where Zetty's bridge code

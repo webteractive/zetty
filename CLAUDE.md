@@ -42,9 +42,11 @@ suite is faster via SwiftPM — `mise exec -- swift test` — and a single test 
 
 - **Before starting any feature, fix or other change, run
   `scripts/check-libghostty.sh`** (once per working session) and state the
-  result in the summary: "libghostty is current", or what is newer. Exit 2
-  means GitHub could not be reached, which is not "up to date". Anything
-  newer: read `libghostty-bump.md` before touching the pin.
+  result in the summary: "libghostty is current", or what is newer, plus
+  where the bundled Ghostty commit stands against Ghostty's latest release
+  (the script's `ghostty in …` line). Exit 2 means GitHub could not be
+  reached, which is not "up to date". Anything newer: read
+  `libghostty-bump.md` before touching the pin.
 - **Verify before the commit in the isolated test app**
   (`isolated-test-app.md`), never by quitting or replacing
   `/Applications/zetty.app`.
