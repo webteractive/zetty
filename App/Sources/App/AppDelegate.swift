@@ -1968,7 +1968,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             return
         }
         if remoteServer == nil {
-            let server = RemoteServer(machineName: thisMachineName, zettyVersion: zettyVersion)
+            let host = RemoteTerminalHost(viewController: tvc, machineName: thisMachineName)
+            let server = RemoteServer(machineName: thisMachineName, zettyVersion: zettyVersion,
+                                      terminalHost: host)
             remoteServer = server
             tvc.onSnapshotChanged = { [weak server] in server?.publish($0) }
             server.publish(tvc.statusSnapshot())

@@ -12,6 +12,11 @@ public enum PeerAdmission: Equatable, Sendable {
     /// belongs to the tag, not to a person, so "another user" would mislead.
     public static func decide(me: TailscaleNode, peer: TailscaleNode?) -> PeerAdmission {
         guard let peer else { return .refuse(.unknownNode) }
+        // This Mac itself (a relay dialling its own Zetty). `whois` on our
+        // own address carries no Hostinfo, so the OS check below would call
+        // it "not a Mac". Discovery never lists this Mac, so only a hand-run
+        // `zetty attach` or a test gets here.
+        if peer.stableID == me.stableID { return .admit }
         if !peer.tags.isEmpty { return .refuse(.tagged) }
         if peer.userID != me.userID { return .refuse(.otherUser) }
         if peer.os != "macOS" { return .refuse(.notMac) }

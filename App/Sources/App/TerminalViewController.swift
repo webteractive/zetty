@@ -4991,6 +4991,28 @@ final class TerminalViewController: NSViewController {
         return live
     }
 
+    /// Gets a pane ready for another Mac to open (`RemoteTerminalHost`): it must
+    /// exist, be awake, keep a zmx session, and be live. Never moves this Mac's
+    /// view: a dead pane is spawned offscreen, never by selecting its tab.
+    /// `pane` is an exact 8-hex short id. Main only.
+    func prepareRemoteAttach(pane: String, machine: String) -> RemoteAttachPreparation {
+        guard let location = locate(shortID: pane) else {
+            return .refused("that pane is gone on \(machine)")
+        }
+        let project = workspace.projects[location.projectIndex]
+        if project.isHibernated {
+            return .refused("\(project.name) is hibernated on \(machine)")
+        }
+        guard sessionCommandProvider?(location.surfaceID) != nil else {
+            return .refused("\(project.name) on \(machine) doesn't keep sessions, so it can't be opened from "
+                            + "another Mac. Turn on Keep sessions for it on \(machine).")
+        }
+        if !registry.isLive(location.surfaceID), !spawnOffscreen(location.surfaceID) {
+            return .refused("couldn't start that pane on \(machine)")
+        }
+        return .ready(surfaceID: location.surfaceID)
+    }
+
     /// Makes the pane at `location` the focused pane of the visible tab. Wakes a
     /// hibernated project first — unlike the background verbs, `focus` exists to
     /// switch the view, so it wakes and *stays* rather than restoring.

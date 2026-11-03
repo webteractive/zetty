@@ -54,3 +54,12 @@ private func node(_ id: String, user: Int64, os: String = "macOS", tags: [String
     #expect(PeerAdmission.Refusal.notMac.message(machine: "Studio") == "Studio isn't a Mac")
     #expect(PeerAdmission.Refusal.unknownNode.message(machine: "Studio") == "Tailscale doesn't know Studio")
 }
+
+@Test func thisMacsOwnNodeIsAdmittedThoughWhoisOmitsItsOS() {
+    // `tailscale whois` on this Mac's own address carries no Hostinfo, so the
+    // node reads as OS "" and would be refused as "isn't a Mac".
+    let me = node("self", user: 1)
+    let selfAsWhoisSeesIt = node("self", user: 1, os: "")
+    #expect(PeerAdmission.decide(me: me, peer: selfAsWhoisSeesIt) == .admit)
+    #expect(PeerAdmission.decide(me: me, peer: node("other", user: 1, os: "")) != .admit)
+}
