@@ -857,11 +857,15 @@ public struct StatusSnapshot: Codable, Equatable, Sendable {
         /// For a clone, the directory it was forked from; nil for an ordinary
         /// project. What `update-clone` / `merge-clone` / `push-clone` act on.
         public let cloneOf: String?
+        /// The project's UUID. Optional so an older app's payload still decodes;
+        /// another Mac's sidebar keys rows and colors by it.
+        public let id: String?
         public let tabs: [Tab]
 
         public init(name: String, isActive: Bool, hibernated: Bool, space: String? = nil,
-                    cloneOf: String? = nil, tabs: [Tab]) {
+                    cloneOf: String? = nil, id: String? = nil, tabs: [Tab]) {
             self.name = name
+            self.id = id
             self.isActive = isActive
             self.hibernated = hibernated
             self.space = space
@@ -870,7 +874,7 @@ public struct StatusSnapshot: Codable, Equatable, Sendable {
         }
 
         private enum CodingKeys: String, CodingKey {
-            case name, isActive, hibernated, space, cloneOf, tabs
+            case name, isActive, hibernated, space, cloneOf, id, tabs
         }
 
         /// Hand-written for the same reason as `Pane.init(from:)`: `hibernated`
@@ -882,6 +886,7 @@ public struct StatusSnapshot: Codable, Equatable, Sendable {
             hibernated = try c.decodeIfPresent(Bool.self, forKey: .hibernated) ?? false
             space = try c.decodeIfPresent(String.self, forKey: .space)
             cloneOf = try c.decodeIfPresent(String.self, forKey: .cloneOf)
+            id = try c.decodeIfPresent(String.self, forKey: .id)
             tabs = try c.decodeIfPresent([Tab].self, forKey: .tabs) ?? []
         }
     }

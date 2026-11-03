@@ -4023,7 +4023,8 @@ final class TerminalViewController: NSViewController {
             return StatusSnapshot.Project(name: project.name, isActive: isActiveProject,
                                          hibernated: project.isHibernated,
                                          space: effectiveSpaceID.flatMap { spaceNames[$0] },
-                                         cloneOf: project.cloneSource, tabs: tabs)
+                                         cloneOf: project.cloneSource,
+                                         id: project.id.uuidString, tabs: tabs)
         }
         return StatusSnapshot(projects: projects,
                                spaces: workspace.spaces.map { .init(name: $0.name, collapsed: $0.isCollapsed) },
