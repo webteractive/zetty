@@ -4030,7 +4030,8 @@ final class TerminalViewController: NSViewController {
                     workingDir: tree.focusedSurface?.workingDir,
                     index: tIdx
                 )
-                return StatusSnapshot.Tab(title: title, isActive: isActiveTab, panes: panes)
+                return StatusSnapshot.Tab(title: title, isActive: isActiveTab, panes: panes,
+                                          layout: PaneLayout(tree.layout.root))
             }
             let effectiveSpaceID = workspace.effectiveSpaceID(of: project)
             return StatusSnapshot.Project(name: project.name, isActive: isActiveProject,

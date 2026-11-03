@@ -835,11 +835,25 @@ public struct StatusSnapshot: Codable, Equatable, Sendable {
         public let title: String
         public let isActive: Bool
         public let panes: [Pane]
+        /// The tab's split tree, so another Mac can draw the same splits. Nil
+        /// from an app older than remote panes.
+        public let layout: PaneLayout?
 
-        public init(title: String, isActive: Bool, panes: [Pane]) {
+        public init(title: String, isActive: Bool, panes: [Pane], layout: PaneLayout? = nil) {
             self.title = title
             self.isActive = isActive
             self.panes = panes
+            self.layout = layout
+        }
+
+        private enum CodingKeys: String, CodingKey { case title, isActive, panes, layout }
+
+        public init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            title = try c.decode(String.self, forKey: .title)
+            isActive = try c.decode(Bool.self, forKey: .isActive)
+            panes = try c.decode([Pane].self, forKey: .panes)
+            layout = try c.decodeIfPresent(PaneLayout.self, forKey: .layout)
         }
     }
 
