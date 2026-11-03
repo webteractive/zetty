@@ -253,3 +253,16 @@ import Testing
     #expect(AppConfig.parse(off.rendered()).hibernateHandoffs == false)
     #expect(AppConfig.parse(AppConfig.parse("").rendered()).hibernateHandoffs)
 }
+
+@Test func remoteMachineKeysAreZettysOwnAndDefaultOff() {
+    let empty = AppConfig.parse("")
+    #expect(!empty.serveRemote)
+    #expect(!empty.showRemoteMachines)
+    let on = AppConfig.parse("zetty-serve = on\nzetty-remote-machines = true")
+    #expect(on.serveRemote)
+    #expect(on.showRemoteMachines)
+    #expect(!on.ghostty.contains { $0.key.hasPrefix("zetty-") })
+    let back = AppConfig.parse(on.rendered())
+    #expect(back.serveRemote && back.showRemoteMachines)
+    #expect(!AppConfig.parse(empty.rendered()).serveRemote)
+}

@@ -66,6 +66,12 @@ public struct AppConfig: Equatable, Sendable {
     /// Poll GitHub for newer releases and show an update pill (default true).
     /// Only gates automatic checks; the manual menu item always runs.
     public var checkUpdates: Bool
+    /// Let other Macs on the same Tailscale account connect and see this
+    /// workspace (`zetty-serve`, default false). Nothing listens when off.
+    public var serveRemote: Bool
+    /// Show other Macs on the same Tailscale account in the sidebar
+    /// (`zetty-remote-machines`, default false). Nothing polls when off.
+    public var showRemoteMachines: Bool
     /// Auto-hibernate an idle, quiet project after this many seconds (0 = off).
     public var hibernateAfter: TimeInterval
     /// When true (default), hibernating a project has each Claude or Codex
@@ -173,6 +179,8 @@ public struct AppConfig: Equatable, Sendable {
         restoreScrollback: Bool = true,
         restartRecovery: Bool = true,
         checkUpdates: Bool = true,
+        serveRemote: Bool = false,
+        showRemoteMachines: Bool = false,
         hibernateAfter: TimeInterval = 0,
         hibernateHandoffs: Bool = true,
         freeBackgroundPanesAfter: TimeInterval = 0,
@@ -200,6 +208,8 @@ public struct AppConfig: Equatable, Sendable {
         self.restoreScrollback = restoreScrollback
         self.restartRecovery = restartRecovery
         self.checkUpdates = checkUpdates
+        self.serveRemote = serveRemote
+        self.showRemoteMachines = showRemoteMachines
         self.hibernateAfter = hibernateAfter
         self.hibernateHandoffs = hibernateHandoffs
         self.freeBackgroundPanesAfter = freeBackgroundPanesAfter
@@ -321,6 +331,10 @@ public struct AppConfig: Equatable, Sendable {
                 config.tileManagerView = SessionsViewMode(rawValue: value.lowercased()) ?? .drawer
             case "zetty-restart-recovery":
                 config.restartRecovery = ["true", "yes", "on", "1"].contains(value.lowercased())
+            case "zetty-serve":
+                config.serveRemote = ["true", "yes", "on", "1"].contains(value.lowercased())
+            case "zetty-remote-machines":
+                config.showRemoteMachines = ["true", "yes", "on", "1"].contains(value.lowercased())
             case "zetty-hibernate-handoffs":
                 config.hibernateHandoffs = ["true", "yes", "on", "1"].contains(value.lowercased())
             case "zetty-file-tree-show-hidden":
@@ -466,6 +480,13 @@ public struct AppConfig: Equatable, Sendable {
 
         # Check GitHub for newer Zetty releases and show an update pill.
         check-updates = \(checkUpdates)
+
+        # Let other Macs on your Tailscale connect to this one and see its
+        # workspace (only Macs signed in to Tailscale as you).
+        zetty-serve = \(serveRemote)
+
+        # Show other Macs on your Tailscale in the sidebar.
+        zetty-remote-machines = \(showRemoteMachines)
 
         # Auto-hibernate a project after it's idle and quiet (0/off = disabled,
         # e.g. 60m or 2h). Frees its sessions/processes; waking spawns fresh shells.
