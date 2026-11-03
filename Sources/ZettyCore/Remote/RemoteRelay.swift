@@ -23,6 +23,33 @@ public struct RemoteAttachTarget: Equatable, Sendable {
     }
 }
 
+/// Where a relay may connect: Tailscale's own ranges, and loopback for local
+/// testing. A name that resolves anywhere else (plain DNS, a LAN, the
+/// internet) is refused, so keystrokes never leave the tailnet.
+public enum TailnetAddress {
+    public static func isAllowed(_ ip: String) -> Bool {
+        var v4 = in_addr()
+        if inet_pton(AF_INET, ip, &v4) == 1 {
+            let a = UInt32(bigEndian: v4.s_addr)
+            return a & 0xFFC0_0000 == 0x6440_0000 // 100.64.0.0/10
+                || a >> 24 == 127
+        }
+        var v6 = in6_addr()
+        guard inet_pton(AF_INET6, ip, &v6) == 1 else { return false }
+        let b = withUnsafeBytes(of: &v6) { Array($0) }
+        if b[0 ..< 15].allSatisfy({ $0 == 0 }) && b[15] == 1 { return true } // ::1
+        return b[0 ..< 6] == [0xFD, 0x7A, 0x11, 0x5C, 0xA1, 0xE0] // fd7a:115c:a1e0::/48
+    }
+
+    /// The numeric form of a resolved address.
+    static func text(of address: UnsafePointer<sockaddr>) -> String? {
+        var host = [CChar](repeating: 0, count: Int(NI_MAXHOST))
+        guard getnameinfo(address, socklen_t(address.pointee.sa_len), &host, socklen_t(host.count),
+                          nil, 0, NI_NUMERICHOST) == 0 else { return nil }
+        return String(cString: host)
+    }
+}
+
 /// When the relay retries, and what it says in the pane. Pure, so the timing
 /// and the wording are testable without a network.
 public struct RelayPolicy: Sendable {
@@ -158,7 +185,13 @@ public enum RemoteRelay {
     // MARK: - Connecting
 
     private static func attach(_ target: RemoteAttachTarget, scrollback: Bool) -> Attempt {
-        guard let fd = connect(host: target.host) else { return .failed(.connectFailed) }
+        let fd: Int32
+        switch connect(host: target.host) {
+        case .connected(let socket): fd = socket
+        case .unreachable: return .failed(.connectFailed)
+        case .outsideTailnet:
+            return .failed(.refused("\(target.host) isn't on your tailnet, so Zetty won't connect to it"))
+        }
         let deadline = Date().addingTimeInterval(RemoteProtocol.attachTimeout)
         var decoder = RemoteFrameDecoder()
 
@@ -221,34 +254,40 @@ public enum RemoteRelay {
     /// Resolves `host` (a MagicDNS name works) and connects to the first
     /// address that answers within 3s, with the feed's keepalive so a sleeping
     /// Mac is noticed in about 16s.
-    private static func connect(host: String) -> Int32? {
+    private enum Dial { case connected(Int32), unreachable, outsideTailnet }
+
+    private static func connect(host: String) -> Dial {
         var hints = addrinfo()
         hints.ai_family = AF_UNSPEC
         hints.ai_socktype = SOCK_STREAM
         var list: UnsafeMutablePointer<addrinfo>?
-        guard getaddrinfo(host, String(RemoteProtocol.port), &hints, &list) == 0, let first = list else { return nil }
+        guard getaddrinfo(host, String(RemoteProtocol.port), &hints, &list) == 0, let first = list else { return .unreachable }
         defer { freeaddrinfo(list) }
 
+        var sawTailnet = false
         var entry: UnsafeMutablePointer<addrinfo>? = first
         while let info = entry {
             entry = info.pointee.ai_next
+            guard let address = info.pointee.ai_addr, let ip = TailnetAddress.text(of: address),
+                  TailnetAddress.isAllowed(ip) else { continue }
+            sawTailnet = true
             let fd = socket(info.pointee.ai_family, info.pointee.ai_socktype, info.pointee.ai_protocol)
             guard fd >= 0 else { continue }
             configure(fd)
             let flags = fcntl(fd, F_GETFL)
             _ = fcntl(fd, F_SETFL, flags | O_NONBLOCK)
-            if Darwin.connect(fd, info.pointee.ai_addr, info.pointee.ai_addrlen) == 0 { return fd }
+            if Darwin.connect(fd, address, info.pointee.ai_addrlen) == 0 { return .connected(fd) }
             guard errno == EINPROGRESS else { Darwin.close(fd); continue }
             var fds = pollfd(fd: fd, events: Int16(POLLOUT), revents: 0)
             var error: Int32 = 0
             var length = socklen_t(MemoryLayout<Int32>.size)
             if poll(&fds, 1, Int32(connectTimeout * 1000)) > 0,
                getsockopt(fd, SOL_SOCKET, SO_ERROR, &error, &length) == 0, error == 0 {
-                return fd
+                return .connected(fd)
             }
             Darwin.close(fd)
         }
-        return nil
+        return sawTailnet ? .unreachable : .outsideTailnet
     }
 
     private static func configure(_ fd: Int32) {

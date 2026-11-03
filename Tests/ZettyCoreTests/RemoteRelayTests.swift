@@ -55,3 +55,12 @@ import Testing
 @Test func badTargetIsAUsageError() {
     #expect(ControlCLI.run(["attach", "nocolon"]) == 64)
 }
+
+@Test func relayOnlyDialsTailnetAddresses() {
+    for ok in ["100.64.0.1", "100.112.139.61", "100.127.255.255", "fd7a:115c:a1e0::1", "fd7a:115c:a1e0:ab12::5", "127.0.0.1", "::1"] {
+        #expect(TailnetAddress.isAllowed(ok), "\(ok) should be allowed")
+    }
+    for bad in ["100.63.255.255", "100.128.0.1", "8.8.8.8", "192.168.1.10", "fd7a:115c:a1e1::1", "2606:4700::1", "nonsense"] {
+        #expect(!TailnetAddress.isAllowed(bad), "\(bad) should be refused")
+    }
+}
