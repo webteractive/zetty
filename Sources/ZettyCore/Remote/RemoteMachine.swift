@@ -81,11 +81,13 @@ public struct RemoteMachineCache {
         return machines.map { var m = $0; m.state = .offline; return m }
     }
 
+    /// Owner-only (0600): it holds other Macs' pane titles and directories.
     public func save(_ machines: [RemoteMachine]) {
         guard let data = try? JSONEncoder.cache.encode(machines) else { return }
         try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(),
                                                  withIntermediateDirectories: true)
-        try? data.write(to: url, options: .atomic)
+        guard (try? data.write(to: url, options: .atomic)) != nil else { return }
+        try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
     }
 }
 

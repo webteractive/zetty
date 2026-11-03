@@ -75,3 +75,11 @@ private func machine(_ state: RemoteMachine.State) -> RemoteMachine {
     try Data("x".utf8).write(to: corrupt)
     #expect(RemoteMachineCache(url: corrupt).load().isEmpty)
 }
+
+@Test func cacheIsReadableOnlyByTheUser() throws {
+    let url = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString + ".json")
+    defer { try? FileManager.default.removeItem(at: url) }
+    RemoteMachineCache(url: url).save([mini(projects: 1, hibernated: 0, needsYou: 0)])
+    let mode = try FileManager.default.attributesOfItem(atPath: url.path)[.posixPermissions] as? Int
+    #expect(mode == 0o600)
+}
