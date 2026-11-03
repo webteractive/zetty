@@ -1,0 +1,18 @@
+{
+  "Version": "1.102.4",
+  "BackendState": "Stopped",
+  "TailscaleIPs": null,
+  "Self": {
+    "ID": "",
+    "HostName": "WebteractiveGlen",
+    "DNSName": "",
+    "OS": "macOS",
+    "UserID": 0,
+    "TailscaleIPs": null,
+    "Online": false,
+    "Tags": null,
+    "LastSeen": "0001-01-01T00:00:00Z"
+  },
+  "Peer": null,
+  "User": null
+}

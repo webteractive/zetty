@@ -1,0 +1,35 @@
+{
+  "Version": "1.102.4",
+  "BackendState": "Running",
+  "TailscaleIPs": ["100.101.1.1", "fd7a:115c:a1e0::1"],
+  "Self": {
+    "ID": "nSELF111CNTRL", "HostName": "Glens-MacBook-Pro", "DNSName": "glens-macbook-pro.tail1234.ts.net.",
+    "OS": "macOS", "UserID": 111, "TailscaleIPs": ["100.101.1.1", "fd7a:115c:a1e0::1"],
+    "Online": true, "LastSeen": "0001-01-01T00:00:00Z"
+  },
+  "Peer": {
+    "nodekey:aa": {
+      "ID": "nMINI111CNTRL", "HostName": "Mac-mini", "DNSName": "mac-mini.tail1234.ts.net.",
+      "OS": "macOS", "UserID": 111, "TailscaleIPs": ["100.101.1.2", "fd7a:115c:a1e0::2"],
+      "Online": true, "LastSeen": "0001-01-01T00:00:00Z"
+    },
+    "nodekey:bb": {
+      "ID": "nSTUDIO11CNTRL", "HostName": "Studio", "DNSName": "studio.tail1234.ts.net.",
+      "OS": "macOS", "UserID": 111, "TailscaleIPs": ["100.101.1.3"],
+      "Online": false, "LastSeen": "2026-11-03T06:00:00Z"
+    },
+    "nodekey:cc": {
+      "ID": "nHOMELAB1CNTRL", "HostName": "homelab", "DNSName": "homelab.tail1234.ts.net.",
+      "OS": "linux", "UserID": 111, "TailscaleIPs": ["100.101.1.4"], "Online": true
+    },
+    "nodekey:dd": {
+      "ID": "nBUILD111CNTRL", "HostName": "build-box", "DNSName": "build-box.tail1234.ts.net.",
+      "OS": "macOS", "UserID": 999, "Tags": ["tag:server"], "TailscaleIPs": ["100.101.1.5"], "Online": true
+    },
+    "nodekey:ee": {
+      "ID": "nKIN11111CNTRL", "HostName": "Kins-MacBook", "DNSName": "kins-macbook.tail1234.ts.net.",
+      "OS": "macOS", "UserID": 222, "Tags": null, "TailscaleIPs": ["100.101.1.6"], "Online": true
+    }
+  },
+  "User": { "111": { "ID": 111, "LoginName": "glen@example.com", "DisplayName": "Glen" } }
+}

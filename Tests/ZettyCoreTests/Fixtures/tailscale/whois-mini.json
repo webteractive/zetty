@@ -1,0 +1,9 @@
+{
+  "Node": {
+    "ID": 4242, "StableID": "nMINI111CNTRL", "Name": "mac-mini.tail1234.ts.net.",
+    "User": 111, "Tags": null, "Addresses": ["100.101.1.2/32", "fd7a:115c:a1e0::2/128"],
+    "Hostinfo": { "OS": "macOS", "Hostname": "Mac-mini" }
+  },
+  "UserProfile": { "ID": 111, "LoginName": "glen@example.com", "DisplayName": "Glen" },
+  "CapMap": null
+}

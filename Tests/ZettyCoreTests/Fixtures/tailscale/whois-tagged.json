@@ -1,0 +1,8 @@
+{
+  "Node": {
+    "ID": 4243, "StableID": "nBUILD111CNTRL", "Name": "build-box.tail1234.ts.net.",
+    "User": 999, "Tags": ["tag:server"], "Addresses": ["100.101.1.5/32"],
+    "Hostinfo": { "OS": "macOS", "Hostname": "build-box" }
+  },
+  "UserProfile": { "ID": 999, "LoginName": "tagged-devices", "DisplayName": "Tagged Devices" }
+}
