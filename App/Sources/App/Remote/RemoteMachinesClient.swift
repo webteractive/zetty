@@ -55,26 +55,15 @@ final class RemoteMachinesClient {
     func update(_ state: TailscaleState) {
         queue.async { [self] in
             guard !stopped else { return }
-            guard case .running(let status) = state, let me = status.me else {
+            guard case .running(let status) = state, status.me != nil else {
                 disconnectAll()
                 return
             }
-            let listable = PeerAdmission.listable(in: status)
             candidates = Dictionary(PeerAdmission.candidates(in: status).map { ($0.stableID, $0) },
                                     uniquingKeysWith: { first, _ in first })
-            for node in listable {
-                var machine = byID[node.stableID]
-                    ?? RemoteMachine(stableID: node.stableID, name: node.hostName, state: .offline,
-                                     lastSeen: node.lastSeen, workspace: nil)
-                if case .refuse(let reason) = PeerAdmission.decide(me: me, peer: node) {
-                    // Listed so its header explains itself, but never dialled.
-                    machine.state = .refused(reason.message(machine: node.hostName))
-                } else if candidates[node.stableID] == nil {
-                    machine.state = .offline
-                    if machine.lastSeen == nil { machine.lastSeen = node.lastSeen }
-                }
-                byID[node.stableID] = machine
-            }
+            // A candidate becomes a group when it answers (`received`), so a
+            // Mac that runs no Zetty, or doesn't serve, never shows up.
+            byID = RemoteRoster.reconcile(byID, with: status)
             // Gone from the tailnet's online, admitted set: hang up.
             for id in links.keys where candidates[id] == nil { drop(id, retry: false) }
             for id in retries.keys where candidates[id] == nil { cancelRetry(id) }
@@ -101,7 +90,13 @@ final class RemoteMachinesClient {
         for id in links.keys { drop(id, retry: false) }
         for id in retries.keys { cancelRetry(id) }
         candidates = [:]
-        for id in byID.keys { byID[id]?.state = .offline }
+        // Without Tailscale no reason can be vouched for, so every Mac goes
+        // offline, its last sighting stamped if it was online.
+        let now = Date()
+        for id in byID.keys {
+            byID[id]?.markDisconnected(at: now)
+            byID[id]?.state = .offline
+        }
         emit()
     }
 
@@ -158,7 +153,9 @@ final class RemoteMachinesClient {
     }
 
     private func received(_ messages: [RemoteMessage], from id: String) {
-        guard var machine = byID[id] else { return }
+        guard var machine = byID[id]
+            ?? candidates[id].map({ RemoteMachine(stableID: id, name: $0.hostName, state: .connecting,
+                                                  lastSeen: nil, workspace: nil) }) else { return }
         for message in messages {
             switch message {
             case .hello(let theirs):
@@ -184,10 +181,7 @@ final class RemoteMachinesClient {
     /// why it won't talk to us; that reason stays on its header.
     private func drop(_ id: String, retry: Bool) {
         links.removeValue(forKey: id)?.close()
-        switch byID[id]?.state {
-        case .refused?, .needsUpdate?: break
-        default: byID[id]?.state = .offline
-        }
+        byID[id]?.markDisconnected(at: Date())
         if retry, !stopped { scheduleRetry(id) }
         emit()
     }

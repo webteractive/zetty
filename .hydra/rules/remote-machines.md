@@ -56,14 +56,28 @@ Other people's Macs are only counted, in the Settings status line.
 - The server drops a peer with more than 8 frames queued (a slow or dead
   reader), and accepts at most 32 connections, since each one costs a
   `whois` process.
-- Snapshots are `StatusSnapshot` (the `zetty status` model), published from
-  the end of `refreshSidebar()` only when they differ from the last one sent.
-  That is the coalesced path, so a busy agent can't flood the wire.
+- Snapshots are `StatusSnapshot` (the `zetty status` model), offered from
+  the end of `refreshSidebar()` and paced by `SnapshotThrottle` to **one a
+  second**, the last one always delivered. The coalesced chrome refresh alone
+  is not enough: a running agent retitles its pane ~10 times a second, and
+  each snapshot reads a file per pane on main. A snapshot is built only when
+  one is sent, and only if it differs from the last.
 - The client dials a node's first IPv4 with a 3s connect timeout and TCP
   keepalive (10s idle, 3s × 2 probes), so a Mac that sleeps without a FIN
   goes offline in about 16s. It retries a drop after 5, 10, 30, then 60s, and
   the backoff resets on the next snapshot.
 - `TailscaleMonitor` polls every 10s, and only while one of the two keys is on.
+
+## Which Macs are listed
+
+A Mac becomes a sidebar group only once it has answered a hello. Until then,
+a same-user Mac that runs no Zetty, or doesn't serve, is just dialled with
+backoff and never shown. `RemoteRoster.reconcile` keeps the known ones honest
+against Tailscale. It also lists **tagged** Macs with their refusal, because
+the spec says a refusal must explain itself rather than leave a Mac missing.
+"Seen N ago" counts from the drop (`RemoteMachine.markDisconnected`), not
+from the last snapshot. An idle Mac sends none for hours. With Tailscale not
+running, every Mac shows offline, reasons included.
 
 ## Cache
 

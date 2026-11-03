@@ -30,6 +30,20 @@ public struct RemoteMachine: Codable, Equatable, Sendable {
         self.workspace = workspace
     }
 
+    /// The connection dropped. "Seen N ago" counts from now if it was online;
+    /// a refusal or "needs update" keeps saying why.
+    public mutating func markDisconnected(at now: Date) {
+        switch state {
+        case .refused, .needsUpdate:
+            return
+        case .online:
+            lastSeen = now
+            state = .offline
+        case .connecting, .offline:
+            state = .offline
+        }
+    }
+
     /// Panes on that Mac whose agent is waiting on the user.
     public var needsYouCount: Int {
         (workspace?.panes ?? []).filter { $0.agentStatus == AgentStatus.needsAttention.rawValue }.count

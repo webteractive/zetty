@@ -2048,6 +2048,8 @@ final class TerminalViewController: NSViewController {
         didSet { lastPublishedSnapshot = nil }
     }
     private var lastPublishedSnapshot: StatusSnapshot?
+    /// At most one snapshot a second goes out, the last one always.
+    private var snapshotThrottle = SnapshotThrottle(interval: 1)
 
     /// The user's other Macs (`zetty-remote-machines`), as the client last
     /// reported them. Empty while the feature is off.
@@ -7070,9 +7072,26 @@ final class TerminalViewController: NSViewController {
     }
 
     /// Hands the workspace to the remote server when it changed. Runs with
-    /// every sidebar refresh, which machine-driven events already coalesce, so
-    /// user-driven changes (a new tab, a switch) go out at once too.
+    /// every sidebar refresh, paced by `snapshotThrottle`: a running agent
+    /// refreshes the sidebar ~10 times a second, and the snapshot (a file
+    /// read per pane) is built only when one is actually sent.
     private func publishSnapshotIfChanged() {
+        guard onSnapshotChanged != nil else { return }
+        switch snapshotThrottle.offer(at: Date()) {
+        case .sendNow:
+            sendSnapshotIfChanged()
+        case .sendAfter(let delay):
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+                guard let self else { return }
+                self.snapshotThrottle.sent(at: Date())
+                self.sendSnapshotIfChanged()
+            }
+        case .alreadyPending:
+            break
+        }
+    }
+
+    private func sendSnapshotIfChanged() {
         guard let onSnapshotChanged else { return }
         let snapshot = statusSnapshot()
         guard snapshot != lastPublishedSnapshot else { return }
