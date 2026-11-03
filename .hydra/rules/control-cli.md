@@ -235,6 +235,11 @@ Two halves fix it, both regression-tested:
   standalone `zetty` build doesn't throw on a newer app's payload. Plain-text
   rendering lives in the pure `ControlCLI.statusLines` (`☾ name (hibernated)`,
   `-` per dead pane) so the markers are unit-testable.
+- **`StatusSnapshot` is also the remote-machines wire format** (a `snapshot`
+  frame between Macs; `remote-machines.md`). `Project.id` (the project's UUID,
+  `decodeIfPresent`) exists for that feed. Keep every new field optional on
+  decode: a Mac on an older build must still read a newer one's snapshot, and
+  anything incompatible needs a `RemoteProtocol.version` bump.
 - **`ensurePaneIsLive(at:)` is the only place that knows the rule.** It wakes the
   project if needed, transiently selects that project AND the pane's tab (the tab
   half is load-bearing — waking alone leaves a background tab just as dead), then
