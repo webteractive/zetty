@@ -39,6 +39,10 @@ final class TailscaleMonitor {
 
     func start() {
         guard timer == nil else { return }
+        // Before the first tick (same serial queue): a poll still in flight
+        // when `stop` ran can leave a stale state here, and a restart that
+        // matched it would never report.
+        queue.async { [weak self] in self?.lastOnQueue = nil }
         let timer = DispatchSource.makeTimerSource(queue: queue)
         timer.schedule(deadline: .now(), repeating: interval, leeway: .seconds(1))
         timer.setEventHandler { [weak self] in self?.poll() }

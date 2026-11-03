@@ -2042,6 +2042,13 @@ final class TerminalViewController: NSViewController {
     /// Every configured agent account, for the pickers.
     var accountsProvider: (() -> [AgentAccount])?
 
+    /// Set while this Mac serves its workspace (`zetty-serve`). Called with
+    /// each snapshot that differs from the last one sent.
+    var onSnapshotChanged: ((StatusSnapshot) -> Void)? {
+        didSet { lastPublishedSnapshot = nil }
+    }
+    private var lastPublishedSnapshot: StatusSnapshot?
+
     /// The status-bar account chip was clicked — open Settings → Accounts.
     var onOpenAccountSettings: (() -> Void)?
 
@@ -7014,6 +7021,18 @@ final class TerminalViewController: NSViewController {
             activeProject: workspace.activeIndex,
             activeTab: workspace.activeTabList.activeIndex
         )
+        publishSnapshotIfChanged()
+    }
+
+    /// Hands the workspace to the remote server when it changed. Runs with
+    /// every sidebar refresh, which machine-driven events already coalesce, so
+    /// user-driven changes (a new tab, a switch) go out at once too.
+    private func publishSnapshotIfChanged() {
+        guard let onSnapshotChanged else { return }
+        let snapshot = statusSnapshot()
+        guard snapshot != lastPublishedSnapshot else { return }
+        lastPublishedSnapshot = snapshot
+        onSnapshotChanged(snapshot)
     }
 
     /// Severity ranking for rolling up multiple tab statuses to a project glyph.

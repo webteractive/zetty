@@ -221,6 +221,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         // every preserved session would look like an orphan and be killed.
         if restoredFromDisk { reapOrphanSessions(tvc) }
         startControlSocket()
+        applyRemoteConfig()
 
         // Agent needs-attention notifications (two levels, config-gated).
         UNUserNotificationCenter.current().delegate = self
@@ -839,6 +840,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             tvc.sidebarPosition = appConfig.sidebarPosition                   // re-pins only on change
             tvc.applyKeyBindings(appConfig.keybindings)                       // prefix/bind/copy-bind lines
         }
+        applyRemoteConfig()                                                   // zetty-serve / zetty-remote-machines
     }
 
     /// Applies a sidebar-position choice live and persists it to the config
@@ -1871,6 +1873,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
 
     func applicationWillTerminate(_: Notification) {
         controlSocketServer?.stop()
+        remoteServer?.stop()
         killScratchSessions()
         saveWorkspace()
     }
@@ -1891,6 +1894,44 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         guard !sessions.isEmpty else { return }
         // Synchronous: an async kill would race app termination.
         ZmxRunner.killAndWait(sessions: sessions, zmxPath: zmx)
+    }
+
+    // MARK: - Remote machines (Tailscale)
+
+    /// Polls Tailscale only while serving or showing other Macs is on.
+    private lazy var tailscaleMonitor = TailscaleMonitor { [weak self] _ in self?.syncRemoteServer() }
+    /// Exists only while `zetty-serve` is on and Tailscale is running.
+    private var remoteServer: RemoteServer?
+
+    /// Starts or stops everything the two remote keys control. Safe to call
+    /// repeatedly: launch, every config reload, every Settings toggle.
+    func applyRemoteConfig() {
+        if appConfig.serveRemote || appConfig.showRemoteMachines {
+            tailscaleMonitor.start()
+        } else {
+            tailscaleMonitor.stop()
+        }
+        syncRemoteServer()
+    }
+
+    /// Serves on this Mac's current Tailscale addresses, or stops serving.
+    private func syncRemoteServer() {
+        guard appConfig.serveRemote, let tvc = terminalViewController,
+              case .running(let status)? = tailscaleMonitor.latest, let me = status.me else {
+            remoteServer?.stop()
+            remoteServer = nil
+            terminalViewController?.onSnapshotChanged = nil
+            return
+        }
+        if remoteServer == nil {
+            let server = RemoteServer(
+                machineName: Host.current().localizedName ?? me.hostName,
+                zettyVersion: (Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String) ?? "")
+            remoteServer = server
+            tvc.onSnapshotChanged = { [weak server] in server?.publish($0) }
+            server.publish(tvc.statusSnapshot())
+        }
+        remoteServer?.listen(on: me.addresses, me: me)
     }
 
     // MARK: - Control socket (Zetty CLI)
