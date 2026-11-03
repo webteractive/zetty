@@ -322,6 +322,10 @@ Zetty checks GitHub for new releases; click the **↑ Update** pill to download,
 verify and install one in place (`check-updates = false` to opt out). It also
 handles `ssh://` links, opening each in a new Home tab.
 
+`ssh` from a pane works on hosts that don't know Zetty's terminal: the first
+connection installs its `xterm-ghostty` terminfo there, and falls back to
+`xterm-256color` when it can't.
+
 ## Troubleshooting
 
 - **Zetty won't launch, with a "Library not loaded" error naming

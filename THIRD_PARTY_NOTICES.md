@@ -36,7 +36,7 @@ which require no notice in binary form.
 
 | Component | Where in the app | License | Text |
 |---|---|---|---|
-| Ghostty shell integration for **bash** and **zsh** (`ghostty.bash`, `zsh/.zshenv`, `zsh/ghostty-integration`) — derived from [Kitty](https://github.com/kovidgoyal/kitty)'s | `Resources/ghostty/shell-integration` | **GPL-3.0-or-later** | [`GPL-3.0.txt`](licenses/GPL-3.0.txt) |
+| Ghostty shell integration for **bash** and **zsh** (`ghostty.bash`, `zsh/.zshenv`, `zsh/ghostty-integration`) — derived from [Kitty](https://github.com/kovidgoyal/kitty)'s | `Resources/ghostty/shell-integration`, copied over libghostty-spm's in `Resources/GhosttyKit_GhosttyTerminal.bundle/Contents/Resources/Ghostty/shell-integration` | **GPL-3.0-or-later** | [`GPL-3.0.txt`](licenses/GPL-3.0.txt) |
 | Ghostty shell integration for fish, elvish and nushell; the `xterm-ghostty` terminfo | `Resources/ghostty` | MIT (Ghostty) | [`ghostty-MIT.txt`](licenses/ghostty-MIT.txt) |
 | [bash-preexec](https://github.com/rcaloras/bash-preexec) — © Ryan Caloras | `Resources/ghostty/shell-integration/bash` | MIT | [`bash-preexec-MIT.txt`](licenses/bash-preexec-MIT.txt) |
 | [JetBrains Mono](https://www.jetbrains.com/lp/mono/) font | `Resources` | SIL Open Font License 1.1 | [`JetBrainsMono-OFL-1.1.txt`](licenses/JetBrainsMono-OFL-1.1.txt) |

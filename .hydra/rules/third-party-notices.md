@@ -26,3 +26,10 @@ shell-integration scripts under `App/Resources/ghostty` are GPLv3 (derived
 from Kitty). libghostty-spm ships
 an MIT rewrite of those scripts, but it has no `ssh` wrapper (TERM fallback,
 terminfo install), which Zetty's `ssh-env,ssh-terminfo` default relies on.
+The package also points `GHOSTTY_RESOURCES_DIR` at its own bundle right
+before `ghostty_init`, so from v0.1.50 panes silently ran the rewrite and
+`ssh` sent `TERM=xterm-ghostty` to hosts without it ("terminal is not
+supported"). The build now copies Ghostty's scripts over the package's
+inside the app (`Project.swift`, "Use Ghostty's shell integration"), and
+fails if the package moves them. A libghostty bump must keep that step
+green; check a new pane with `whence -w ssh` (a function, not a command).

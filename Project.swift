@@ -26,6 +26,23 @@ BUILDNUM=$(git -C "${SRCROOT}" rev-list --count HEAD 2>/dev/null || echo 1)
   || /usr/libexec/PlistBuddy -c "Add :CFBundleVersion string ${BUILDNUM}" "${PLIST}"
 """
 
+// Panes run Ghostty's own bash/zsh shell integration, not libghostty-spm's.
+// The package points GHOSTTY_RESOURCES_DIR at its bundle right before
+// ghostty_init (GhosttyRuntimeResources), which is the only time Ghostty reads
+// it, so Zetty cannot redirect it at runtime. The package's scripts are an MIT
+// rewrite with no ssh wrapper, which left `ssh-env,ssh-terminfo` doing nothing
+// and remote hosts receiving TERM=xterm-ghostty (from v0.1.50 to the fix). So
+// the build copies Ghostty's scripts over the package's, and fails if the
+// package moves them rather than shipping a silent regression again.
+let overlayShellIntegration = """
+DEST="${TARGET_BUILD_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}/GhosttyKit_GhosttyTerminal.bundle/Contents/Resources/Ghostty/shell-integration"
+if [ ! -d "${DEST}/zsh" ]; then
+  echo "error: libghostty-spm's shell integration is not at ${DEST}; update the overlay in Project.swift (third-party-notices.md)" >&2
+  exit 1
+fi
+ditto "${SRCROOT}/App/Resources/ghostty/shell-integration" "${DEST}"
+"""
+
 let project = Project(
     name: "zetty",
     packages: [
@@ -103,6 +120,9 @@ let project = Project(
                 .post(script: stampBuildCommit,
                       name: "Stamp build commit",
                       inputPaths: ["$(TARGET_BUILD_DIR)/$(INFOPLIST_PATH)"],
+                      basedOnDependencyAnalysis: false),
+                .post(script: overlayShellIntegration,
+                      name: "Use Ghostty's shell integration",
                       basedOnDependencyAnalysis: false),
             ],
             dependencies: [

@@ -52,15 +52,12 @@ if isatty(STDIN_FILENO) != 0 {
 // env) must not put every Default-login pane on that pane's account.
 LaunchEnvironment.clearInherited()
 
-// Point libghostty at our bundled resources (shell-integration scripts +
-// terminfo) so spawned shells get working-directory reports (for the status
-// bar) and prompt marks. The bundled terminfo keeps `xterm-ghostty` resolvable
-// once resources are present — without it ghostty switches TERM to
-// xterm-ghostty but can't find its terminfo, breaking keys like backspace.
-// Set before the first `ghostty_init` (lazy, on the first terminal surface).
+// GHOSTTY_RESOURCES_DIR is NOT set here: libghostty-spm overwrites it with
+// its own bundle just before `ghostty_init`, so the shell-integration scripts
+// panes run are the ones the build copies into that bundle (Project.swift,
+// "Use Ghostty's shell integration").
 if let ghosttyResources = Bundle.main.resourceURL?
     .appendingPathComponent("ghostty", isDirectory: true).path {
-    setenv("GHOSTTY_RESOURCES_DIR", ghosttyResources, 1)
     // Ghostty sets TERM=xterm-ghostty but the embedded lib doesn't install that
     // terminfo, so shells can't resolve it (breaking keys like backspace). Point
     // them at our bundled copy; a trailing empty entry keeps the system default
