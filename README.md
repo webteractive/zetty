@@ -63,7 +63,7 @@ row at the top of the sidebar — is a permanent terminal at your home folder
 | `⌘D` / `⇧⌘D` | Split vertically / horizontally |
 | `⌥⌘T` | Break focused pane into its own tab |
 | `⌥⌘←` `⌥⌘→` `⌥⌘↑` `⌥⌘↓` | Resize the focused pane |
-| `⌘W` / `⇧⌘W` | Close pane / close tab |
+| `⌘W` / `⇧⌘W` | Close pane (its tab, if it is the only pane) / close tab |
 | `⌘}` / `⌘{` | Next / previous tab (tile view, while the grid is up) |
 | `⌘1`–`⌘9` | Jump to tab (tile view, while the grid is up) |
 | `⌘J` | Toggle Sessions (docked drawer, or its own window) |
@@ -94,7 +94,7 @@ Press `Ctrl+B`, then:
 | `%` / `"` | Split vertically / horizontally |
 | `h` `j` `k` `l` / arrows | Focus pane in that direction |
 | `o` | Cycle pane focus |
-| `x` | Close pane |
+| `x` | Close pane (its tab, if it is the only pane) |
 | `z` | Zoom / unzoom pane |
 | `!` | Break pane into a new tab |
 | `e` | Toggle the pane's file tree |

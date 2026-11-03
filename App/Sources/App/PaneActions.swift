@@ -127,16 +127,23 @@ extension TerminalViewController {
 
     // MARK: - Close action
 
-    /// Close the focused pane.  If it is the only pane, this is a no-op.
+    /// Close the focused pane, or its whole tab when it is the tab's only
+    /// pane (so the project's last pane stays: `closeTab` keeps that tab).
     /// Asks first when something is still running in it.  Key equivalent: ⌘W.
     @objc func closePane(_ sender: Any?) {
         // In the grid this detaches the focused slot instead. The pane keeps
         // running: closing the real thing from a grid of sixteen is too
         // expensive to sit on ⌘W, so it lives on the tile's own menu.
         if isTileModeActive { detachFocusedTileSlot(); return }
-        guard let focusedID = paneTree.focusedSurfaceID,
-              paneTree.layout.surfaces.count > 1,
-              confirmClosingBusyPanes([focusedID], what: "Pane") else { return }
+        guard let focusedID = paneTree.focusedSurfaceID else { return }
+        // A tab's only pane: close the tab, as `zetty close` and other Mac
+        // terminals do. It used to be a silent no-op, which read as ⌘W being
+        // broken on every fresh tab (issue #2).
+        guard paneTree.layout.surfaces.count > 1 else {
+            closeTab(atIndex: workspace.activeTabList.activeIndex)
+            return
+        }
+        guard confirmClosingBusyPanes([focusedID], what: "Pane") else { return }
         let closed = paneTree.closeFocused()
         guard closed else { return }
         rebuildAndFocus()
