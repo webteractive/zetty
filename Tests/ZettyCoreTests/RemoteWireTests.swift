@@ -65,3 +65,61 @@ private func header(_ length: UInt32) -> Data {
     let snapshot = try JSONDecoder().decode(StatusSnapshot.self, from: Data(json.utf8))
     #expect(snapshot.projects[0].id == nil)
 }
+
+// MARK: - Terminal connections (phase 2)
+
+private let attachRequest = RemoteAttachRequest(pane: "ab12cd34", rows: 30, cols: 90, scrollback: true)
+
+@Test func helloCarriesAnAttachRequest() throws {
+    let hello = RemoteMessage.hello(.init(machine: "MacBook", zettyVersion: "0.1.60",
+                                          protocolVersion: RemoteProtocol.version, attach: attachRequest))
+    var decoder = RemoteFrameDecoder()
+    let got = try decoder.push(RemoteFrame.encode(hello))
+    #expect(got == [hello])
+    guard case .hello(let back) = got.first else { Issue.record("not a hello"); return }
+    #expect(back.attach == attachRequest)
+}
+
+@Test func phaseOneHelloDecodesWithoutAttach() throws {
+    let json = #"{"machine":"m","zettyVersion":"0.1.59","protocolVersion":1}"#
+    let hello = try JSONDecoder().decode(RemoteHello.self, from: Data(json.utf8))
+    #expect(hello.attach == nil)
+    #expect(hello.protocolVersion == 1)
+}
+
+@Test func attachedRoundTrips() throws {
+    let data = try RemoteFrame.encode(.attached)
+    #expect(String(data: data.dropFirst(4), encoding: .utf8) == #"{"type":"attached"}"#)
+    var decoder = RemoteFrameDecoder()
+    #expect(try decoder.push(data) == [.attached])
+}
+
+@Test func remainderHandsOverBytesAfterTheHello() throws {
+    var decoder = RemoteFrameDecoder()
+    let hello = RemoteMessage.hello(.init(machine: "m", zettyVersion: "v", protocolVersion: RemoteProtocol.version))
+    let got = try decoder.push(RemoteFrame.encode(hello) + Data([1, 2, 3]))
+    #expect(got == [hello])
+    #expect(decoder.takeRemainder() == Data([1, 2, 3]))
+    #expect(decoder.takeRemainder().isEmpty)
+}
+
+@Test func decodingStopsAfterTheRequestedMessages() throws {
+    var decoder = RemoteFrameDecoder()
+    let hello = RemoteMessage.hello(.init(machine: "m", zettyVersion: "v", protocolVersion: RemoteProtocol.version))
+    let terminal = TerminalFrame.data(Data(repeating: 0, count: 300)).encode()
+    let bytes = try RemoteFrame.encode(hello) + RemoteFrame.encode(.attached) + terminal
+    #expect(try decoder.push(bytes, stopAfter: 1) == [hello])
+    #expect(try decoder.push(Data(), stopAfter: 1) == [.attached])
+    #expect(decoder.takeRemainder() == terminal)
+}
+
+@Test func paneIDsAreValidatedStrictly() {
+    func valid(_ pane: String) -> Bool {
+        RemoteAttachRequest(pane: pane, rows: 1, cols: 1, scrollback: false).isValidPane
+    }
+    #expect(valid("ab12cd34"))
+    #expect(valid("ab1"))
+    for bad in ["", "AB12", "ab12cd34e", "../x", "ab 1"] {
+        #expect(!valid(bad), "\(bad) should be refused")
+    }
+}

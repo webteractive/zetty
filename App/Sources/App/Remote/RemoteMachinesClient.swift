@@ -171,6 +171,9 @@ final class RemoteMachinesClient {
                 scheduleSave()
             case .refused(let reason):
                 machine.state = .refused(reason)
+            case .attached:
+                // Only a terminal connection gets this; a feed never asks.
+                break
             }
         }
         byID[id] = machine
