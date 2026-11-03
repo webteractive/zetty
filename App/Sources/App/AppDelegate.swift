@@ -1874,6 +1874,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     func applicationWillTerminate(_: Notification) {
         controlSocketServer?.stop()
         remoteServer?.stop()
+        remoteMachinesClient?.stop()
         killScratchSessions()
         saveWorkspace()
     }
@@ -1899,9 +1900,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     // MARK: - Remote machines (Tailscale)
 
     /// Polls Tailscale only while serving or showing other Macs is on.
-    private lazy var tailscaleMonitor = TailscaleMonitor { [weak self] _ in self?.syncRemoteServer() }
+    private lazy var tailscaleMonitor = TailscaleMonitor { [weak self] state in
+        self?.syncRemoteServer()
+        self?.remoteMachinesClient?.update(state)
+    }
     /// Exists only while `zetty-serve` is on and Tailscale is running.
     private var remoteServer: RemoteServer?
+    /// Exists only while `zetty-remote-machines` is on.
+    private var remoteMachinesClient: RemoteMachinesClient?
+
+    private var thisMachineName: String { Host.current().localizedName ?? "Mac" }
+    private var zettyVersion: String {
+        (Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String) ?? ""
+    }
 
     /// Starts or stops everything the two remote keys control. Safe to call
     /// repeatedly: launch, every config reload, every Settings toggle.
@@ -1912,6 +1923,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             tailscaleMonitor.stop()
         }
         syncRemoteServer()
+        syncRemoteMachinesClient()
+    }
+
+    /// Mirrors the other Macs while `zetty-remote-machines` is on.
+    private func syncRemoteMachinesClient() {
+        guard appConfig.showRemoteMachines else {
+            remoteMachinesClient?.stop()
+            remoteMachinesClient = nil
+            return
+        }
+        guard remoteMachinesClient == nil else { return }
+        let cacheURL = URL(fileURLWithPath: NSHomeDirectory())
+            .appendingPathComponent(".zetty", isDirectory: true)
+            .appendingPathComponent("remote-machines.json")
+        let client = RemoteMachinesClient(cache: RemoteMachineCache(url: cacheURL),
+                                          machineName: thisMachineName, zettyVersion: zettyVersion,
+                                          onChange: { _ in })
+        remoteMachinesClient = client
+        if let state = tailscaleMonitor.latest { client.update(state) }
     }
 
     /// Serves on this Mac's current Tailscale addresses, or stops serving.
@@ -1924,9 +1954,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             return
         }
         if remoteServer == nil {
-            let server = RemoteServer(
-                machineName: Host.current().localizedName ?? me.hostName,
-                zettyVersion: (Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String) ?? "")
+            let server = RemoteServer(machineName: thisMachineName, zettyVersion: zettyVersion)
             remoteServer = server
             tvc.onSnapshotChanged = { [weak server] in server?.publish($0) }
             server.publish(tvc.statusSnapshot())

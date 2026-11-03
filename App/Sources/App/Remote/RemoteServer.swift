@@ -69,13 +69,18 @@ final class RemoteServer {
         }
     }
 
+    /// Returns once the listening sockets are closed, so a server started
+    /// right after (serving switched off and on) can bind the same addresses.
     func stop() {
-        queue.sync { [self] in
-            for listener in listeners.values { listener.close() }
+        let closing: [DispatchGroup] = queue.sync { [self] in
+            let groups = listeners.values.map { $0.close() }
             listeners.removeAll()
             closeAllConnections()
             latestFrame = nil
+            return groups
         }
+        // The cancel handlers that close the fds run on `queue`, after the sync.
+        for group in closing { _ = group.wait(timeout: .now() + 1) }
     }
 
     // MARK: - Connections
@@ -156,12 +161,12 @@ final class RemoteServer {
 // MARK: - Listener
 
 private final class Listener {
-    private let fd: Int32
     private let source: DispatchSourceRead
+    private let closed: DispatchGroup
 
-    private init(fd: Int32, source: DispatchSourceRead) {
-        self.fd = fd
+    private init(source: DispatchSourceRead, closed: DispatchGroup) {
         self.source = source
+        self.closed = closed
     }
 
     /// A listening socket on exactly `address`, or nil if it can't be bound
@@ -191,12 +196,22 @@ private final class Listener {
                 onAccept(client)
             }
         }
-        source.setCancelHandler { Darwin.close(fd) }
+        let closed = DispatchGroup()
+        closed.enter()
+        source.setCancelHandler {
+            Darwin.close(fd)
+            closed.leave()
+        }
         source.resume()
-        return Listener(fd: fd, source: source)
+        return Listener(source: source, closed: closed)
     }
 
-    func close() { source.cancel() }
+    /// Cancels the listener. The returned group finishes once its fd is closed.
+    @discardableResult
+    func close() -> DispatchGroup {
+        source.cancel()
+        return closed
+    }
 }
 
 // MARK: - Connection
