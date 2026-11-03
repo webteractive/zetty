@@ -178,6 +178,9 @@ public enum ControlCLI {
                                               --simulate-restart runs the restart-
                                               recovery snapshot first, then kills
                                               sessions like a real restart (testing aid)
+      zetty attach <machine>:<pane>          show another Mac's pane in this terminal
+                                              (Zetty runs it in each pane of another
+                                              Mac's project)
 
       zetty --version | -v | version        print the version and build commit
 
@@ -235,6 +238,7 @@ public enum ControlCLI {
         "restart-agent", "handoff", "edit", "reload", "tiles",
         "scratch", "scratch-clear", "quit", "accounts", "run",
         "new-space", "rename-space", "remove-space", "move-to-space",
+        "attach",
     ]
 
     /// True when `arguments` look like a CLI invocation (used by the app
@@ -286,6 +290,8 @@ public enum ControlCLI {
             return runAccounts(arguments)
         case "run":
             return runRunAccount(arguments)
+        case "attach":
+            return runAttach(arguments)
         case "send":
             return runSend(arguments)
         case "capture":
@@ -812,6 +818,19 @@ public enum ControlCLI {
 
         \(readOnly)
         """,
+        "attach": """
+        usage: zetty attach <machine>:<pane>
+
+        Show another Mac's pane in this terminal. Zetty runs this for you when you
+        open another Mac's project; <machine> is its Tailscale name or address,
+        <pane> the pane's 8-hex id there (from `zetty status` on that Mac).
+
+        The only verb that opens a network connection, straight to that Mac's
+        Zetty (it must serve, and keep sessions for the pane's project). It
+        reconnects by itself when the link drops, and says so in the pane.
+
+        Changes nothing on either Mac: closing the pane only lets go of it.
+        """,
         "run": """
         usage: zetty run <account> [args …]
 
@@ -984,6 +1003,18 @@ public enum ControlCLI {
     /// Deliberately does not touch the control socket to do its job, so it works
     /// with the app closed, in Terminal.app, or over SSH. Everything after the
     /// account name is passthrough, so the harness sees its own flags untouched.
+    /// `zetty attach <machine>:<pane>`: the relay inside a remote pane. The
+    /// machine's display name comes from `ZETTY_REMOTE_MACHINE` (set by the
+    /// app, since a surface command can't quote a name with spaces).
+    private static func runAttach(_ arguments: [String]) -> Int32 {
+        guard arguments.count == 1, let target = RemoteAttachTarget.parse(arguments[0]) else {
+            FileHandle.standardError.write(Data("zetty attach: expected <machine>:<pane>, e.g. inggos-mac-mini:ab12cd34\n".utf8))
+            return 64
+        }
+        let name = ProcessInfo.processInfo.environment["ZETTY_REMOTE_MACHINE"].flatMap { $0.isEmpty ? nil : $0 }
+        return RemoteRelay.run(target: target, machineName: name ?? target.host)
+    }
+
     private static func runRunAccount(_ arguments: [String]) -> Int32 {
         let home = NSHomeDirectory()
         let store = AgentAccountStore(
