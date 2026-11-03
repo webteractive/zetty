@@ -51,6 +51,11 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     private let homeDefaultButton = NSButton(title: "Default", target: nil, action: nil)
     private let checkUpdatesSwitch = NSSwitch()
 
+    // General: Other Macs (zetty-serve / zetty-remote-machines).
+    private let serveRemoteSwitch = NSSwitch()
+    private let showRemoteSwitch = NSSwitch()
+    private let tailscaleStatusLabel = NSTextField(wrappingLabelWithString: "")
+
     // Sessions section controls.
     private let preserveSwitch = NSSwitch()
     private let restoreScrollbackSwitch = NSSwitch()
@@ -169,6 +174,10 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
 
     /// The Claude status-hook toggle changed; mirror it into every account.
     var onHooksChanged: (() -> Void)?
+
+    /// Answers with Tailscale's current state on main: at once when the
+    /// monitor is running, else after a one-off read off the main thread.
+    var tailscaleStateProvider: ((@escaping (TailscaleState) -> Void) -> Void)?
 
     private let accountsTable = NSTableView()
     private var accountRows: [AgentAccount] = []
@@ -364,6 +373,25 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
             "Checks GitHub every 6 hours and shows a pill when a release is out. "
             + "Check for Updates… in the Zetty menu works either way."
         ))
+
+        stack.addArrangedSubview(spacer())
+        stack.addArrangedSubview(sectionHeader("Other Macs"))
+        serveRemoteSwitch.target = self
+        serveRemoteSwitch.action = #selector(serveRemoteToggled(_:))
+        addFullWidth(switchRow("Let other Macs connect", control: serveRemoteSwitch), to: stack)
+        stack.addArrangedSubview(caption(
+            "Your other Macs signed in to Tailscale as you can see this Mac's projects and "
+            + "agent status. View-only, and only over Tailscale."
+        ))
+        showRemoteSwitch.target = self
+        showRemoteSwitch.action = #selector(showRemoteToggled(_:))
+        addFullWidth(switchRow("Show other Macs in the sidebar", control: showRemoteSwitch), to: stack)
+        stack.addArrangedSubview(caption(
+            "Lists the projects of every Mac that lets you connect, below this Mac's own."
+        ))
+        tailscaleStatusLabel.font = ZTheme.chromeFont(size: 11)
+        tailscaleStatusLabel.textColor = ZTheme.current.fg3Color
+        addFullWidth(tailscaleStatusLabel, to: stack)
 
         stack.addArrangedSubview(spacer())
         stack.addArrangedSubview(sectionHeader("Command Line"))
@@ -1296,6 +1324,9 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         homePathLabel.toolTip = home
         homeDefaultButton.isHidden = config.homePath == nil
         checkUpdatesSwitch.state = config.checkUpdates ? .on : .off
+        serveRemoteSwitch.state = config.serveRemote ? .on : .off
+        showRemoteSwitch.state = config.showRemoteMachines ? .on : .off
+        tailscaleStateProvider? { [weak self] state in self?.showTailscaleState(state) }
 
         if let index = SessionsViewMode.allCases.firstIndex(of: config.sessionsView) {
             sessionsViewPopup.selectItem(at: index)
@@ -1373,6 +1404,37 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
 
     @objc private func checkUpdatesToggled(_ sender: NSSwitch) {
         updateConfig { $0.checkUpdates = sender.state == .on }
+    }
+
+    @objc private func serveRemoteToggled(_ sender: NSSwitch) {
+        updateConfig { $0.serveRemote = sender.state == .on }
+    }
+
+    @objc private func showRemoteToggled(_ sender: NSSwitch) {
+        updateConfig { $0.showRemoteMachines = sender.state == .on }
+    }
+
+    /// The status line under the Other Macs switches.
+    func showTailscaleState(_ state: TailscaleState) {
+        tailscaleStatusLabel.stringValue = Self.tailscaleStatusText(state)
+    }
+
+    static func tailscaleStatusText(_ state: TailscaleState) -> String {
+        switch state {
+        case .notInstalled: return "Tailscale isn't installed."
+        case .stopped:      return "Tailscale isn't running."
+        case .needsLogin:   return "Sign in to Tailscale."
+        case .running(let status):
+            let name = status.me?.hostName ?? "this Mac"
+            var text = "On Tailscale as \(name); other Macs signed in as you can connect."
+            let others = PeerAdmission.otherUsersMacs(in: status)
+            if others == 1 {
+                text += " 1 Mac on your tailnet is signed in as someone else, so it won't show."
+            } else if others > 1 {
+                text += " \(others) Macs on your tailnet are signed in as someone else, so they won't show."
+            }
+            return text
+        }
     }
 
     @objc private func restoreScrollbackToggled(_ sender: NSSwitch) {

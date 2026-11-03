@@ -16,6 +16,9 @@ final class RemoteMachinesClient {
 
     /// Main-thread copy, sorted by name.
     private(set) var machines: [RemoteMachine] = []
+    /// Main-thread: set by `stop`, so an emit already queued for main can't
+    /// put the machines back after the owner cleared them.
+    private var stoppedOnMain = false
 
     // Everything below is confined to `queue`.
     private var byID: [String: RemoteMachine] = [:]
@@ -83,6 +86,7 @@ final class RemoteMachinesClient {
     }
 
     func stop() {
+        stoppedOnMain = true
         queue.sync { [self] in
             stopped = true
             disconnectAll()
@@ -104,7 +108,7 @@ final class RemoteMachinesClient {
     private func emit() {
         let sorted = byID.values.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
         DispatchQueue.main.async { [weak self] in
-            guard let self else { return }
+            guard let self, !self.stoppedOnMain else { return }
             self.machines = sorted
             self.onChange(sorted)
         }

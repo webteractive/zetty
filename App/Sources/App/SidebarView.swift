@@ -52,6 +52,17 @@ struct SidebarSpace: Equatable {
     let isCollapsed: Bool
 }
 
+/// One of the user's other Macs, as its sidebar group shows it: a header
+/// (name + summary) and its awake projects as view-only rows. Equatable for
+/// the same reason `SidebarProject` is.
+struct SidebarMachine: Equatable {
+    let id: String               // Tailscale stable node ID
+    let name: String
+    let summary: String          // "2 · 1 needs you", "offline · seen 2h ago"
+    let online: Bool
+    let projects: [SidebarProject]
+}
+
 /// Maps an agent status to its status-dot color, or nil for "no agent".
 func agentStatusColor(_ status: AgentStatus?) -> NSColor? {
     switch status {
@@ -73,8 +84,12 @@ private enum SidebarSection: Hashable {
     case scratch
     case hibernated
     case space(UUID)
+    /// "This Mac", above the local sections, only while other Macs are shown.
+    case thisMac
+    /// Another Mac's group, by Tailscale stable ID.
+    case machine(String)
 
-    func title(spaces: [SidebarSpace]) -> String {
+    func title(spaces: [SidebarSpace], machines: [SidebarMachine]) -> String {
         switch self {
         case .home:       return "Home"
         case .pinned:     return "Pinned"
@@ -83,6 +98,9 @@ private enum SidebarSection: Hashable {
         case .hibernated: return "Hibernating"
         case .space(let id):
             return spaces.first { $0.id == id }?.name ?? "Space"
+        case .thisMac:    return "This Mac"
+        case .machine(let id):
+            return machines.first { $0.id == id }?.name ?? "Mac"
         }
     }
 }
@@ -98,6 +116,8 @@ private final class OutlineItem: NSObject {
         case header(SidebarSection)
         case project(Int)
         case tab(project: Int, tab: Int)
+        /// A project on another Mac: view-only, never selected, dragged or dropped on.
+        case remoteProject(machine: String, index: Int)
     }
     let kind: Kind
     init(_ kind: Kind) { self.kind = kind }
@@ -195,6 +215,7 @@ final class SidebarView: NSView {
     /// The full (unfiltered) project list as last received, pinned-first sorted.
     private var projects: [SidebarProject] = []
     private var spaces: [SidebarSpace] = []
+    private var machines: [SidebarMachine] = []
     private var activeProject: Int = -1
     private var activeTab: Int = -1
 
@@ -220,6 +241,20 @@ final class SidebarView: NSView {
     /// Whether the Hibernating section is collapsed (its dormant project rows
     /// hidden). Transient — resets to expanded on relaunch, like zoom.
     private var hibernatedCollapsed = false
+
+    /// Whether "This Mac" is collapsed (every local section hidden). View-local
+    /// and transient, like `hibernatedCollapsed`.
+    private var thisMacCollapsed = false
+    /// A machine group's collapse state as the user set it, by stable ID.
+    /// Without one, a group is collapsed exactly while its Mac is offline, and
+    /// the choice is dropped whenever that Mac goes on- or offline, so a Mac
+    /// that drops off folds away.
+    private var machineCollapseOverride: [String: Bool] = [:]
+    private var machineWasOnline: [String: Bool] = [:]
+
+    private func isCollapsed(_ machine: SidebarMachine) -> Bool {
+        machineCollapseOverride[machine.id] ?? !machine.online
+    }
 
     // Item-object cache — keyed by Kind so we reuse the same object across
     // reloads (NSOutlineView uses pointer/isEqual identity for expansion state).
@@ -581,7 +616,7 @@ final class SidebarView: NSView {
     private var hasRenderedOnce = false
 
     /// Replaces the displayed data, then rebuilds the sectioned outline.
-    func update(projects: [SidebarProject], spaces: [SidebarSpace],
+    func update(projects: [SidebarProject], spaces: [SidebarSpace], machines: [SidebarMachine] = [],
                 activeProject: Int, activeTab: Int) {
         // Reloading mid-drag cancels the outline view's drag session (live
         // agents retitle rows every second) — freeze until the drop lands.
@@ -589,13 +624,18 @@ final class SidebarView: NSView {
         // Identical data → nothing to do. `reloadData()` recreates every row
         // view and dirties the whole layout tree, and this is called on every
         // agent title/status tick.
-        if projects == self.projects, spaces == self.spaces, activeProject == self.activeProject,
-           activeTab == self.activeTab, hasRenderedOnce {
+        if projects == self.projects, spaces == self.spaces, machines == self.machines,
+           activeProject == self.activeProject, activeTab == self.activeTab, hasRenderedOnce {
             return
         }
         hasRenderedOnce = true
+        for machine in machines where machineWasOnline[machine.id] != machine.online {
+            machineCollapseOverride[machine.id] = nil
+            machineWasOnline[machine.id] = machine.online
+        }
         self.projects = projects
         self.spaces = spaces
+        self.machines = machines
         self.activeProject = activeProject
         self.activeTab = activeTab
         rebuildOutline()
@@ -604,6 +644,17 @@ final class SidebarView: NSView {
     /// Toggles the Hibernating section's collapsed state and rebuilds.
     private func toggleHibernatedCollapsed() {
         hibernatedCollapsed.toggle()
+        rebuildOutline()
+    }
+
+    private func toggleThisMacCollapsed() {
+        thisMacCollapsed.toggle()
+        rebuildOutline()
+    }
+
+    private func toggleMachineCollapsed(_ id: String) {
+        guard let machine = machines.first(where: { $0.id == id }) else { return }
+        machineCollapseOverride[id] = !isCollapsed(machine)
         rebuildOutline()
     }
 
@@ -712,6 +763,19 @@ final class SidebarView: NSView {
                 rows += hibernated.map { .project($0.offset) }
             }
         }
+        // Other Macs: "This Mac" heads the local sections (collapsing it hides
+        // them all), then one group per Mac. With none, the outline is exactly
+        // the local one.
+        if !machines.isEmpty {
+            rows = [.header(.thisMac)] + (thisMacCollapsed ? [] : rows)
+            for machine in machines {
+                rows.append(.header(.machine(machine.id)))
+                guard !isCollapsed(machine) else { continue }
+                rows += machine.projects.indices
+                    .filter { query.isEmpty || machine.projects[$0].name.lowercased().contains(query) }
+                    .map { .remoteProject(machine: machine.id, index: $0) }
+            }
+        }
         topLevel = rows
 
         // A collapsed Space still renders its active member — an invisible
@@ -732,7 +796,7 @@ final class SidebarView: NSView {
             let active = projects[activeProject]
             let effectiveSpaceID = active.spaceID
                 ?? active.cloneSourceIndex.flatMap { projects.indices.contains($0) ? projects[$0].spaceID : nil }
-            if let spaceID = effectiveSpaceID,
+            if !(thisMacCollapsed && !machines.isEmpty), let spaceID = effectiveSpaceID,
                spaces.first(where: { $0.id == spaceID })?.isCollapsed == true,
                let headerIndex = topLevel.firstIndex(of: .header(.space(spaceID))) {
                 topLevel.insert(.project(activeProject), at: headerIndex + 1)
@@ -746,6 +810,8 @@ final class SidebarView: NSView {
             case .project(let p):       return projects.indices.contains(p)
             case .tab(let p, let t):
                 return projects.indices.contains(p) && projects[p].tabTitles.indices.contains(t)
+            case .remoteProject(let id, let index):
+                return machines.first { $0.id == id }?.projects.indices.contains(index) ?? false
             }
         }
 
@@ -1121,6 +1187,8 @@ extension SidebarView: NSOutlineViewDataSource {
             let pb = NSPasteboardItem()
             pb.setString("\(p)", forType: SidebarView.projectDragType)
             return pb
+        case .remoteProject:
+            return nil
         case .header(.space(let id)):
             // Same filter guard as a project drag: visible rows (incl. header
             // positions) are a subset while filtering, so offsets don't map.
@@ -1380,6 +1448,10 @@ extension SidebarView: NSOutlineViewDataSource {
                 // folded into `default`) so a future `Kind` case fails to
                 // compile here instead of silently matching this arm.
                 return first..<end
+            case .remoteProject:
+                // Another Mac's rows always follow a machine header, so the
+                // band has already ended; listed for the same reason as `.tab`.
+                return first..<end
             case .header:
                 // A non-space header ends the band.
                 return first..<end
@@ -1448,6 +1520,9 @@ extension SidebarView: NSOutlineViewDelegate {
             var symbol: String?
             var draggable = false
             var onToggle: (() -> Void)?
+            var trailing: String?
+            var dimmed = false
+            var hairline = false
             switch section {
             case .home:       count = homeCount
             case .pinned:     count = pinnedCount
@@ -1476,9 +1551,24 @@ extension SidebarView: NSOutlineViewDelegate {
                 // only they give up the full-bleed click target.
                 draggable = true
                 onToggle = { [weak self] in self?.onToggleSpaceCollapsed?(id) }
+            case .thisMac:
+                count = 0
+                trailing = ""
+                collapsible = true
+                collapsed = thisMacCollapsed
+                onToggle = { [weak self] in self?.toggleThisMacCollapsed() }
+            case .machine(let id):
+                let machine = machines.first { $0.id == id }
+                count = 0
+                trailing = machine?.summary ?? ""
+                dimmed = !(machine?.online ?? false)
+                hairline = true
+                collapsible = true
+                collapsed = machine.map(isCollapsed) ?? true
+                onToggle = { [weak self] in self?.toggleMachineCollapsed(id) }
             }
             cellView.configure(
-                title: section.title(spaces: spaces),
+                title: section.title(spaces: spaces, machines: machines),
                 count: count,
                 dormant: dormant,
                 collapsible: collapsible,
@@ -1486,7 +1576,38 @@ extension SidebarView: NSOutlineViewDelegate {
                 accent: accent,
                 symbol: symbol,
                 draggable: draggable,
+                trailing: trailing,
+                dimmed: dimmed,
+                hairline: hairline,
                 onToggle: onToggle
+            )
+            return cellView
+
+        case .remoteProject(let id, let index):
+            guard let machine = machines.first(where: { $0.id == id }),
+                  machine.projects.indices.contains(index) else { return nil }
+            let project = machine.projects[index]
+            let identifier = NSUserInterfaceItemIdentifier("ProjectCell")
+            let cellView: ProjectCellView
+            if let recycled = outlineView.makeView(withIdentifier: identifier, owner: nil) as? ProjectCellView {
+                cellView = recycled
+            } else {
+                cellView = ProjectCellView()
+                cellView.identifier = identifier
+            }
+            cellView.configure(
+                name: project.name,
+                isPinned: false,
+                isActive: false,
+                agentStatus: machine.online ? project.status : nil,
+                projectColor: project.projectColor,
+                customGlyph: project.customGlyph,
+                // An offline Mac's rows are its last known state: dimmed.
+                isHibernated: !machine.online,
+                isRemote: true,
+                projectIndex: -1,
+                target: self,
+                action: #selector(pinButtonClicked(_:))
             )
             return cellView
 
@@ -1554,6 +1675,7 @@ extension SidebarView: NSOutlineViewDelegate {
     func outlineView(_ outlineView: NSOutlineView, shouldSelectItem item: Any) -> Bool {
         guard let obj = item as? OutlineItem else { return false }
         if case .header = obj.kind { return false }
+        if case .remoteProject = obj.kind { return false }
         // "Cloning…" placeholders aren't real projects yet — not selectable.
         if case .project(let p) = obj.kind,
            projects.indices.contains(p), projects[p].isPendingClone { return false }
@@ -1577,7 +1699,7 @@ extension SidebarView: NSOutlineViewDelegate {
               let obj = outlineView.item(atRow: row) as? OutlineItem else { return }
 
         switch obj.kind {
-        case .header:
+        case .header, .remoteProject:
             break
         case .project(let p):
             onSelectProject?(p)
@@ -1601,6 +1723,8 @@ private final class HeaderCellView: NSTableCellView {
     private let glyphView = NSImageView()
     private let titleLabel = NSTextField(labelWithString: "")
     private let countLabel = NSTextField(labelWithString: "")
+    /// A hairline above the header, separating one Mac's group from the next.
+    private let hairlineView = NSView()
     /// Full-bleed transparent button that toggles a collapsible section — a
     /// button (not a gesture recognizer) so clicks land reliably inside the
     /// outline view, mirroring the project row's pin button.
@@ -1634,7 +1758,15 @@ private final class HeaderCellView: NSTableCellView {
         countLabel.textColor = ZTheme.current.fg3Color
         countLabel.alignment = .right
         countLabel.translatesAutoresizingMaskIntoConstraints = false
+        countLabel.lineBreakMode = .byTruncatingTail
+        // The title keeps its room; a long summary truncates instead.
+        countLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         addSubview(countLabel)
+
+        hairlineView.wantsLayer = true
+        hairlineView.isHidden = true
+        hairlineView.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(hairlineView)
 
         toggleButton.title = ""
         toggleButton.isBordered = false
@@ -1661,6 +1793,11 @@ private final class HeaderCellView: NSTableCellView {
             titleLabel.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -3),
             countLabel.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
             countLabel.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -3),
+            countLabel.leadingAnchor.constraint(greaterThanOrEqualTo: titleLabel.trailingAnchor, constant: 8),
+            hairlineView.topAnchor.constraint(equalTo: topAnchor, constant: 4),
+            hairlineView.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 4),
+            hairlineView.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
+            hairlineView.heightAnchor.constraint(equalToConstant: 1),
             toggleButton.topAnchor.constraint(equalTo: topAnchor),
             toggleButton.bottomAnchor.constraint(equalTo: bottomAnchor),
             toggleButton.leadingAnchor.constraint(equalTo: leadingAnchor),
@@ -1687,8 +1824,13 @@ private final class HeaderCellView: NSTableCellView {
                    accent: NSColor? = nil,
                    symbol: String? = nil,
                    draggable: Bool = false,
+                   trailing: String? = nil,
+                   dimmed: Bool = false,
+                   hairline: Bool = false,
                    onToggle: (() -> Void)? = nil) {
         self.onToggle = onToggle
+        hairlineView.isHidden = !hairline
+        hairlineView.layer?.backgroundColor = ZTheme.current.borderColor.cgColor
         // A draggable header keeps its click target on the chevron so the rest
         // of the row reaches the outline view and can begin a drag.
         toggleFullWidth.isActive = !draggable
@@ -1735,8 +1877,11 @@ private final class HeaderCellView: NSTableCellView {
         // "3" normally, "3/1" when the section also has dormant members —
         // awake/dormant. Plain digits: a moon glyph next to a number read as
         // decoration rather than a count.
-        countLabel.stringValue = dormant > 0 ? "\(count)/\(dormant)" : "\(count)"
-        countLabel.textColor = ZTheme.current.fg3Color
+        // `trailing` replaces the count (a Mac's summary; "" for none).
+        countLabel.stringValue = trailing ?? (dormant > 0 ? "\(count)/\(dormant)" : "\(count)")
+        // A live Mac's summary reads a step brighter than a count; an offline
+        // one (`dimmed`) stays at fg3, as last-known rather than live.
+        countLabel.textColor = trailing != nil && !dimmed ? ZTheme.current.fg2Color : ZTheme.current.fg3Color
     }
 }
 
@@ -1872,6 +2017,7 @@ private final class ProjectCellView: NSTableCellView {
                    isPendingClone: Bool = false,
                    accountColor: NSColor? = nil,
                    accountName: String? = nil,
+                   isRemote: Bool = false,
                    projectIndex: Int, target: AnyObject, action: Selector) {
         glyphLeading.constant = isClone ? 18 : 4
 
@@ -1971,7 +2117,8 @@ private final class ProjectCellView: NSTableCellView {
         // Scratch terminals and Home can't be pinned — hide the star entirely.
         // A Space member lives in its Space, not in Pinned, so it has no star —
         // same reasoning as Scratch and Home, which own their own sections.
-        pinButton.isHidden = isScratch || isHome || inSpace
+        // Another Mac's row is view-only, so nothing to pin either.
+        pinButton.isHidden = isScratch || isHome || inSpace || isRemote
 
         // Pinned rows use a filled accent star; unpinned rows show a dim hollow star.
         let symbolName = isPinned ? "star.fill" : "star"

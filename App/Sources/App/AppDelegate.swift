@@ -1580,6 +1580,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         controller.onSignInAccount = { [weak self] account in self?.signInToAccount(account) }
         controller.onCheckAccounts = { [weak self] done in self?.refreshAccountIdentities(then: done) }
         controller.onHooksChanged = { [weak self] in self?.installHooksForAccounts() }
+        controller.tailscaleStateProvider = { [weak self] reply in self?.readTailscaleState(reply) }
         controller.onConfigSaved = { [weak self] in
             self?.reloadConfiguration(nil)
             self?.configWatcher?.markSaved()   // already applied; skip the poll's repeat
@@ -1903,6 +1904,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     private lazy var tailscaleMonitor = TailscaleMonitor { [weak self] state in
         self?.syncRemoteServer()
         self?.remoteMachinesClient?.update(state)
+        self?.settingsWindowController?.showTailscaleState(state)
     }
     /// Exists only while `zetty-serve` is on and Tailscale is running.
     private var remoteServer: RemoteServer?
@@ -1926,11 +1928,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         syncRemoteMachinesClient()
     }
 
+    /// Tailscale's state for Settings: the monitor's when it runs, else one
+    /// read off the main thread (both remote keys off).
+    private func readTailscaleState(_ reply: @escaping (TailscaleState) -> Void) {
+        if let state = tailscaleMonitor.latest { reply(state); return }
+        DispatchQueue.global(qos: .userInitiated).async {
+            let installed = TailscaleCLI.locate() != nil
+            let state = TailscaleState(status: installed ? TailscaleCLI.status() : nil, installed: installed)
+            DispatchQueue.main.async { reply(state) }
+        }
+    }
+
     /// Mirrors the other Macs while `zetty-remote-machines` is on.
     private func syncRemoteMachinesClient() {
         guard appConfig.showRemoteMachines else {
             remoteMachinesClient?.stop()
             remoteMachinesClient = nil
+            terminalViewController?.setRemoteMachines([])
             return
         }
         guard remoteMachinesClient == nil else { return }
@@ -1939,7 +1953,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             .appendingPathComponent("remote-machines.json")
         let client = RemoteMachinesClient(cache: RemoteMachineCache(url: cacheURL),
                                           machineName: thisMachineName, zettyVersion: zettyVersion,
-                                          onChange: { _ in })
+                                          onChange: { [weak self] in self?.terminalViewController?.setRemoteMachines($0) })
         remoteMachinesClient = client
         if let state = tailscaleMonitor.latest { client.update(state) }
     }

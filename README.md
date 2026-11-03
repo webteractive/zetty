@@ -20,6 +20,8 @@ Ghostty terminal, with a Swift AppKit app around it.
   broadcast input, alongside native ⌘ shortcuts.
 - **Sessions that survive** — with `preserve-sessions`, panes keep running
   across quits and come back with their scrollback, even after a restart.
+- **Other Macs** — over Tailscale, see the projects and agents on your other
+  Macs in the same sidebar.
 - **Scriptable** — a `zetty` CLI to inspect, drive and reshape the workspace,
   usable by the agents running inside it.
 
@@ -316,6 +318,17 @@ work into the source locally or push the branch for a pull request, then
 **Remove Clone…**. (A source that isn't a git repo gets a per-file diff to copy
 changes back instead.)
 
+### Other Macs
+
+Run Zetty on more than one Mac and each can show the others in its sidebar,
+under **This Mac**: every awake project with its agent dots, and a header like
+`Mac mini · 2 · 1 needs you`. A Mac that is off or away stays listed, dimmed,
+with its last known projects. Turn on **Let other Macs connect** on the Mac to
+watch and **Show other Macs in the sidebar** on the one you sit at, in Settings
+→ General → Other Macs (`zetty-serve`, `zetty-remote-machines`). Both Macs need
+Tailscale signed in as you; Zetty only listens on Tailscale. For now it is
+view-only: you can see another Mac's projects, not open them.
+
 ### Updates and links
 
 Zetty checks GitHub for new releases; click the **↑ Update** pill to download,
@@ -345,7 +358,7 @@ with a documented starter file on first launch. Lines are `key = value`;
 comments are full-line `#`. Reload with **⇧⌘,**.
 
 Every key below can also be set from **Settings (⌘,)**: General (Home
-directory, update checks), Appearance, Sessions, **Files** (file tree and
+directory, update checks, other Macs), Appearance, Sessions, **Files** (file tree and
 viewer), **Keys** (prefix key, tmux passthrough, `bind`/`copy-bind` lines) and
 **Terminal** (pasted ghostty lines). The Keys and Terminal editors apply with
 their **Apply** button and name any line they couldn't use.
@@ -361,6 +374,8 @@ their **Apply** button and name any line they couldn't use.
 | `hibernate-after` | `off` | Hibernate a project after it has been idle this long (e.g. `60m`, `2h`) |
 | `zetty-hibernate-handoffs` | `true` | Hibernating has each Claude or Codex pane leave a handoff, and waking starts a fresh agent from it (needs `preserve-sessions`) |
 | `check-updates` | `true` | Notify when a newer release is available |
+| `zetty-serve` | `false` | Let your other Macs on Tailscale see this Mac's projects |
+| `zetty-remote-machines` | `false` | Show your other Macs' projects in the sidebar |
 | `notify-sound` / `notify-badge` / `notify-system` | `true` | Agent needs-attention alerts |
 | `zetty-claude-mod` | `true` | Load Zetty's Claude Code mod into new Claude panes |
 | `zetty-claude-tools` | `true` | Let that mod give Claude its pane and file tools |

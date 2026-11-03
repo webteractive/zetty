@@ -2049,6 +2049,10 @@ final class TerminalViewController: NSViewController {
     }
     private var lastPublishedSnapshot: StatusSnapshot?
 
+    /// The user's other Macs (`zetty-remote-machines`), as the client last
+    /// reported them. Empty while the feature is off.
+    private var remoteMachines: [RemoteMachine] = []
+
     /// The status-bar account chip was clicked — open Settings → Accounts.
     var onOpenAccountSettings: (() -> Void)?
 
@@ -7018,10 +7022,51 @@ final class TerminalViewController: NSViewController {
         sidebarView?.update(
             projects: sidebarProjects,
             spaces: sidebarSpaces,
+            machines: sidebarMachines(),
             activeProject: workspace.activeIndex,
             activeTab: workspace.activeTabList.activeIndex
         )
         publishSnapshotIfChanged()
+    }
+
+    /// Stores the other Macs and refreshes the sidebar on the coalesced path:
+    /// a remote feed can tick as fast as a local title.
+    func setRemoteMachines(_ machines: [RemoteMachine]) {
+        guard machines != remoteMachines else { return }
+        remoteMachines = machines
+        setNeedsChromeRefresh(sidebar: true)
+    }
+
+    /// One sidebar group per other Mac: its summary and its awake projects.
+    private func sidebarMachines() -> [SidebarMachine] {
+        let now = Date()
+        return remoteMachines.map { machine in
+            let projects = (machine.workspace?.projects ?? []).filter { !$0.hibernated }.map { project in
+                let statuses = project.tabs.flatMap(\.panes).compactMap { $0.agentStatus.flatMap(AgentStatus.init(rawValue:)) }
+                return SidebarProject(
+                    name: project.name, isPinned: false,
+                    tabTitles: [], tabStatuses: [], tabIcons: [], icon: nil,
+                    status: statuses.max { Self.severity($0) < Self.severity($1) },
+                    projectColor: Self.remoteProjectColor(id: project.id ?? project.name),
+                    customGlyph: nil, isHibernated: false, isWritingHandoffs: false, handoffFailed: false,
+                    isScratch: false, isHome: false, isClone: false, cloneSourceIndex: nil,
+                    isPendingClone: false, spaceID: nil, spaceName: nil,
+                    accountColor: nil, accountName: nil, tabAccountColors: [])
+            }
+            return SidebarMachine(id: machine.stableID, name: machine.name,
+                                  summary: RemoteMachineSummary.text(for: machine, now: now),
+                                  online: machine.state == .online, projects: projects)
+        }
+    }
+
+    /// A palette color picked from the project's id, so a remote project keeps
+    /// the same color across launches (snapshots carry no colors yet). FNV-1a,
+    /// because `hashValue` is reseeded every launch.
+    private static func remoteProjectColor(id: String) -> NSColor? {
+        let palette = ZTheme.projectPalette
+        guard !palette.isEmpty else { return nil }
+        let hash = id.utf8.reduce(UInt64(14_695_981_039_346_656_037)) { ($0 ^ UInt64($1)) &* 1_099_511_628_211 }
+        return ZTheme.projectColor(id: palette[Int(hash % UInt64(palette.count))].id)
     }
 
     /// Hands the workspace to the remote server when it changed. Runs with
