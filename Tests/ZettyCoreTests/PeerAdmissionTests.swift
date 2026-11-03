@@ -55,11 +55,12 @@ private func node(_ id: String, user: Int64, os: String = "macOS", tags: [String
     #expect(PeerAdmission.Refusal.unknownNode.message(machine: "Studio") == "Tailscale doesn't know Studio")
 }
 
-@Test func thisMacsOwnNodeIsAdmittedThoughWhoisOmitsItsOS() {
-    // `tailscale whois` on this Mac's own address carries no Hostinfo, so the
-    // node reads as OS "" and would be refused as "isn't a Mac".
+@Test func thisMacsOwnAddressIsNeverAdmitted() {
+    // `tailscale whois` on this Mac's own address carries no Hostinfo, so a
+    // connection from it reads as OS "" and is refused. That is wanted: any
+    // local user can reach the tailnet address, while only this user can
+    // reach the control socket. A self-admit would let another macOS user on
+    // this Mac open this user's panes.
     let me = node("self", user: 1)
-    let selfAsWhoisSeesIt = node("self", user: 1, os: "")
-    #expect(PeerAdmission.decide(me: me, peer: selfAsWhoisSeesIt) == .admit)
-    #expect(PeerAdmission.decide(me: me, peer: node("other", user: 1, os: "")) != .admit)
+    #expect(PeerAdmission.decide(me: me, peer: node("self", user: 1, os: "")) == .refuse(.notMac))
 }
