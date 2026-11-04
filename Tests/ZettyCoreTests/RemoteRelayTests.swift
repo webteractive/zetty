@@ -64,3 +64,16 @@ import Testing
         #expect(!TailnetAddress.isAllowed(bad), "\(bad) should be refused")
     }
 }
+
+@Test func relayCommandOnlyCarriesAWellFormedTarget() {
+    let zetty = "/Applications/zetty.app/Contents/MacOS/zetty"
+    #expect(RemoteAttachTarget.relayCommand(executable: zetty, address: "100.64.0.5", pane: "ab12cd34")
+            == "\(zetty) attach 100.64.0.5:ab12cd34")
+    // Both halves come from the other Mac's feed, and the command runs
+    // through a shell: anything but hex and a numeric tailnet address is refused.
+    #expect(RemoteAttachTarget.relayCommand(executable: zetty, address: "100.64.0.5", pane: "ab;rm -rf ~") == nil)
+    #expect(RemoteAttachTarget.relayCommand(executable: zetty, address: "100.64.0.5", pane: "$(id)") == nil)
+    #expect(RemoteAttachTarget.relayCommand(executable: zetty, address: "100.64.0.5;id", pane: "ab12cd34") == nil)
+    #expect(RemoteAttachTarget.relayCommand(executable: zetty, address: "8.8.8.8", pane: "ab12cd34") == nil)
+    #expect(RemoteAttachTarget.relayCommand(executable: "/tmp/my app/zetty", address: "100.64.0.5", pane: "ab12cd34") == nil)
+}

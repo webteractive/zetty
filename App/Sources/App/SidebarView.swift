@@ -61,6 +61,9 @@ struct SidebarMachine: Equatable {
     let summary: String          // "2 · 1 needs you", "offline · seen 2h ago"
     let online: Bool
     let projects: [SidebarProject]
+    /// Each row's project id on that Mac (its name when it sent none), in
+    /// `projects` order, so a click names the project rather than a row.
+    var projectIDs: [String] = []
 }
 
 /// Maps an agent status to its status-dot color, or nil for "no agent".
@@ -151,6 +154,10 @@ final class SidebarView: NSView {
 
     /// Called with (projectIndex, tabIndex) when the user clicks a tab child row.
     var onSelectTab: ((Int, Int) -> Void)?
+
+    /// A project of another Mac was clicked: its machine's stable id and the
+    /// project's id from `SidebarMachine.projectIDs`.
+    var onSelectRemoteProject: ((_ machineID: String, _ projectID: String) -> Void)?
 
     /// Called when a tab child row is drag-reordered within its project:
     /// (projectIndex, fromTab, toTab).
@@ -607,7 +614,16 @@ final class SidebarView: NSView {
     private struct Selection: Equatable {
         let project: Int
         let tab: Int
+        var remote: RemoteSelection? = nil
     }
+
+    /// Another Mac's project showing in the window, which then owns the
+    /// sidebar's selection instead of the local active project.
+    private struct RemoteSelection: Equatable {
+        let machine: String
+        let project: String
+    }
+    private var activeRemote: RemoteSelection?
     private var lastScrolledSelection: Selection?
 
     /// False until the first `update(...)` lands, so the initial render can't be
@@ -617,7 +633,9 @@ final class SidebarView: NSView {
 
     /// Replaces the displayed data, then rebuilds the sectioned outline.
     func update(projects: [SidebarProject], spaces: [SidebarSpace], machines: [SidebarMachine] = [],
-                activeProject: Int, activeTab: Int) {
+                activeProject: Int, activeTab: Int,
+                activeRemote: (machine: String, project: String)? = nil) {
+        let activeRemote = activeRemote.map { RemoteSelection(machine: $0.machine, project: $0.project) }
         // Reloading mid-drag cancels the outline view's drag session (live
         // agents retitle rows every second) — freeze until the drop lands.
         guard !isReordering else { return }
@@ -625,7 +643,8 @@ final class SidebarView: NSView {
         // view and dirties the whole layout tree, and this is called on every
         // agent title/status tick.
         if projects == self.projects, spaces == self.spaces, machines == self.machines,
-           activeProject == self.activeProject, activeTab == self.activeTab, hasRenderedOnce {
+           activeProject == self.activeProject, activeTab == self.activeTab,
+           activeRemote == self.activeRemote, hasRenderedOnce {
             return
         }
         hasRenderedOnce = true
@@ -638,6 +657,7 @@ final class SidebarView: NSView {
         self.machines = machines
         self.activeProject = activeProject
         self.activeTab = activeTab
+        self.activeRemote = activeRemote
         rebuildOutline()
     }
 
@@ -830,7 +850,12 @@ final class SidebarView: NSView {
 
         // Select the active tab child (or the project row), if visible.
         let rowToSelect: Int
-        if activeVisible, activeExpandable {
+        if let remote = activeRemote {
+            let index = machines.first { $0.id == remote.machine }?.projectIDs.firstIndex(of: remote.project)
+            rowToSelect = index.map {
+                outlineView.row(forItem: item(for: .remoteProject(machine: remote.machine, index: $0)))
+            } ?? -1
+        } else if activeVisible, activeExpandable {
             rowToSelect = outlineView.row(forItem: item(for: .tab(project: activeProject, tab: activeTab)))
         } else if activeVisible {
             rowToSelect = outlineView.row(forItem: item(for: .project(activeProject)))
@@ -847,7 +872,7 @@ final class SidebarView: NSView {
             // Keyed on the logical selection, not the row index: rows shift when
             // a section collapses or a project hibernates without the user's
             // selection having moved at all.
-            let selection = Selection(project: activeProject, tab: activeTab)
+            let selection = Selection(project: activeProject, tab: activeTab, remote: activeRemote)
             if lastScrolledSelection != selection {
                 outlineView.scrollRowToVisible(rowToSelect)
                 lastScrolledSelection = selection
@@ -1675,7 +1700,6 @@ extension SidebarView: NSOutlineViewDelegate {
     func outlineView(_ outlineView: NSOutlineView, shouldSelectItem item: Any) -> Bool {
         guard let obj = item as? OutlineItem else { return false }
         if case .header = obj.kind { return false }
-        if case .remoteProject = obj.kind { return false }
         // "Cloning…" placeholders aren't real projects yet — not selectable.
         if case .project(let p) = obj.kind,
            projects.indices.contains(p), projects[p].isPendingClone { return false }
@@ -1699,8 +1723,12 @@ extension SidebarView: NSOutlineViewDelegate {
               let obj = outlineView.item(atRow: row) as? OutlineItem else { return }
 
         switch obj.kind {
-        case .header, .remoteProject:
+        case .header:
             break
+        case .remoteProject(let machineID, let index):
+            guard let ids = machines.first(where: { $0.id == machineID })?.projectIDs,
+                  ids.indices.contains(index) else { break }
+            onSelectRemoteProject?(machineID, ids[index])
         case .project(let p):
             onSelectProject?(p)
         case .tab(let p, let t):

@@ -83,3 +83,13 @@ private func machine(_ state: RemoteMachine.State) -> RemoteMachine {
     let mode = try FileManager.default.attributesOfItem(atPath: url.path)[.posixPermissions] as? Int
     #expect(mode == 0o600)
 }
+
+@Test func cacheWithoutAddressStillLoads() throws {
+    let json = #"[{"stableID":"n1","name":"Mac mini","state":{"online":{}},"lastSeen":"2026-11-01T10:00:00Z"}]"#
+    let url = FileManager.default.temporaryDirectory.appendingPathComponent("remote-\(UUID().uuidString).json")
+    defer { try? FileManager.default.removeItem(at: url) }
+    try Data(json.utf8).write(to: url)
+    let machines = RemoteMachineCache(url: url).load()
+    #expect(machines.count == 1)
+    #expect(machines.first?.address == nil)
+}

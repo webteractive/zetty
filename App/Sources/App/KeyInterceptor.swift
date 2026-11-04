@@ -163,6 +163,15 @@ final class KeyInterceptor: NSObject {
         // does not count: this is a key on its way to a pane.
         viewController.noteUserInput()
 
+        // Another Mac's project: a menu chord that would change this Mac's
+        // panes beeps here, before its disabled menu item lets it fall
+        // through to the remote terminal as a keystroke.
+        if engine.mode == .normal, viewController.isShowingRemoteProject,
+           viewController.isUnavailableMenuChord(event) {
+            NSSound.beep()
+            return nil
+        }
+
         guard let chord = KeyChord(event: event) else { return event }
 
         let modeBefore = engine.mode
@@ -200,6 +209,20 @@ extension TerminalViewController {
     /// existing action methods; copy-mode commands forward to the
     /// `CopyModeController`.
     func perform(binding command: BindingCommand, interceptor: KeyInterceptor) {
+        // Another Mac's project: navigation moves this window's view of it,
+        // and nothing may change its panes or tabs.
+        if isShowingRemoteProject {
+            switch RemoteModeBindings.effect(of: command) {
+            case .unavailable:
+                NSSound.beep()
+                return
+            case .passThrough:
+                break   // the prefix itself: cancel, or send it literally
+            case let effect:
+                performRemote(effect)
+                return
+            }
+        }
         // Tile mode re-interprets the pane and tab bindings rather than adding
         // a third table: the grid is a pane layout, so pane verbs keep their
         // meaning and tab verbs have none.
@@ -301,6 +324,10 @@ extension TerminalViewController {
             text = String(UnicodeScalar(ascii - 96))
         } else {
             text = String(character)
+        }
+        if isShowingRemoteProject {
+            sendTextToRemotePane(text)
+            return
         }
         _ = sendInput(target: .focused, text: text, enter: false, keys: [])
     }

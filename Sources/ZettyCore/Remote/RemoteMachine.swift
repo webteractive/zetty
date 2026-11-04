@@ -21,13 +21,18 @@ public struct RemoteMachine: Codable, Equatable, Sendable {
     /// When a snapshot last arrived, or Tailscale's LastSeen if never connected.
     public var lastSeen: Date?
     public var workspace: StatusSnapshot?
+    /// The address this Mac last dialled it on (its first IPv4), which a
+    /// remote pane's relay connects to. Nil until it has been reached.
+    public var address: String?
 
-    public init(stableID: String, name: String, state: State, lastSeen: Date?, workspace: StatusSnapshot?) {
+    public init(stableID: String, name: String, state: State, lastSeen: Date?, workspace: StatusSnapshot?,
+                address: String? = nil) {
         self.stableID = stableID
         self.name = name
         self.state = state
         self.lastSeen = lastSeen
         self.workspace = workspace
+        self.address = address
     }
 
     /// The connection dropped. "Seen N ago" counts from now if it was online;

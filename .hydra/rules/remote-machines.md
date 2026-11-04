@@ -117,8 +117,32 @@ through `setNeedsChromeRefresh`, since a feed can tick as fast as a title.
 - Screenshots are TCC-denied in agent sessions, so the sidebar's look needs a
   human.
 
-## Open for phase 2
+## Phase 2: zmx with two clients at different sizes
 
-zmx with two clients at different sizes: confirm what zmx 0.6 does before
-relying on "last typist wins". If it can't follow input, pick the least
-surprising rule and record it here.
+Checked on zmx 0.6.0 (2026-11-03) with two pty clients on one session. The
+session takes the size of the client that **typed last**, and zmx keeps each
+client's size.
+
+- **Attaching changes nothing.** A new client sees the session at the
+  current size until it types.
+- **Typing switches the size** to that client's window.
+- **A resize applies only from the client that typed last.** Other clients'
+  resizes are stored and used once they type.
+- **Detaching keeps the size.** When the client that typed last leaves, the
+  session stays at its size until another client resizes or types.
+
+What that means for the relay:
+- A pane opened on the laptop shows at the mini's size until the first
+  keystroke. Only input switches it, and no byte is harmless to every
+  program.
+- After the laptop lets go, the mini's pane stays at the laptop's size until
+  the mini types or its window resizes. The serving side can fix this by
+  re-sending its own size when a remote client detaches.
+
+**SIGWINCH puts it back** (checked 2026-11-04): after the last typist
+detaches, `kill -WINCH` on another client's `zmx attach` pid makes zmx apply
+that client's size (20×60 back to 40×100). So `RemoteTerminalHost.detached`
+signals the session's own attach clients; no view jiggle is needed.
+
+To repeat the check, point `ZMX_DIR` at a short path such as `/tmp/zsz`. A
+long scratchpad path fails with "socket directory path is too long".

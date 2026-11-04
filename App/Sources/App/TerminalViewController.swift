@@ -154,7 +154,7 @@ final class TerminalViewController: NSViewController {
     var broadcastScopeProvider: ((ProjectRuntime) -> BroadcastScope)?
     var onSetBroadcastScope: ((ProjectRuntime, BroadcastScope) -> Void)?
     var broadcastScope: BroadcastScope { broadcastScopeProvider?(workspace.activeProject) ?? .off }
-    var isBroadcasting: Bool { broadcastScope.isActive }
+    var isBroadcasting: Bool { broadcastScope.isActive && !isShowingRemoteProject }
 
     /// The pinned libghostty-spm version (no runtime version API is exposed).
     /// Keep in sync with `Project.swift`'s package requirement.
@@ -941,6 +941,7 @@ final class TerminalViewController: NSViewController {
         sidebarScrim?.applyTheme()
         if let sidebarPinButton { SidebarPinButton.style(sidebarPinButton) }
         registry.reapplyTerminalTheme(ZTheme.current.terminalTheme())
+        remoteProject?.applyTheme()
         refreshTabBar()
         refreshSidebar()
         rebuildSurfaceNodeView()
@@ -1033,6 +1034,13 @@ final class TerminalViewController: NSViewController {
                 self.leaveTileModeForSidebarClick()
                 self.selectProject(at: projectIndex, tabIndex: tabIndex)
             }
+            self.closeSidebarDrawer()
+        }
+
+        sidebar.onSelectRemoteProject = { [weak self] machineID, projectID in
+            guard let self else { return }
+            self.leaveTileModeForSidebarClick()
+            self.showRemoteProject(machineID: machineID, projectID: projectID)
             self.closeSidebarDrawer()
         }
 
@@ -1273,14 +1281,21 @@ final class TerminalViewController: NSViewController {
             // The first click of a double-click-to-rename lands here too, so
             // re-clicking the showing view must not rebuild the grid and reset
             // tile focus under the field about to open.
-            self.tileMode ? self.selectTileViewIfDifferent(at: index) : self.selectTab(at: index)
+            if self.tileMode {
+                self.selectTileViewIfDifferent(at: index)
+            } else if let remote = self.shownRemoteProject {
+                remote.selectTab(at: index)
+                self.refreshTabBar()
+            } else {
+                self.selectTab(at: index)
+            }
         }
         tabBar.onNewTab = { [weak self] in
             guard let self else { return }
             self.tileMode ? self.newTileView() : self.newTab(nil)
         }
         tabBar.onRenameTab = { [weak self] index, newName in
-            guard let self else { return }
+            guard let self, !self.isShowingRemoteProject else { return }
             if self.tileMode {
                 self.renameTileView(at: index, to: newName)
             } else {
@@ -1297,7 +1312,7 @@ final class TerminalViewController: NSViewController {
             return trees.indices.contains(index) ? trees[index].manualTitle : nil
         }
         tabBar.onCloseTab = { [weak self] index in
-            guard let self else { return }
+            guard let self, !self.isShowingRemoteProject else { return }
             self.tileMode ? self.closeTileView(at: index) : self.closeTab(atIndex: index)
         }
         tabBar.onToggleSidebar = { [weak self] in
@@ -1313,7 +1328,7 @@ final class TerminalViewController: NSViewController {
             self.showTileLibraryMenu(from: anchor)
         }
         tabBar.onMoveTab = { [weak self] source, destination in
-            guard let self else { return }
+            guard let self, !self.isShowingRemoteProject else { return }
             if self.tileMode {
                 self.moveTileView(from: source, to: destination)
                 return
@@ -1373,6 +1388,10 @@ final class TerminalViewController: NSViewController {
         // agents `cd` several times a second.
         setNeedsFileTreeRootRefresh()
         guard let statusBar = statusBarView else { return }
+        if let remote = shownRemoteProject {
+            refreshStatusBarForRemote(remote, statusBar: statusBar)
+            return
+        }
         // In tile mode the bar describes the tile you are typing into, not the
         // active project's focused pane — which is not even on screen.
         let focused = statusBarSurface
@@ -1630,6 +1649,11 @@ final class TerminalViewController: NSViewController {
 
     /// Jump to tab N (1-based, prefix + 1…9). Out-of-range is a no-op.
     func selectTab(number: Int) {
+        if let remote = shownRemoteProject {
+            remote.perform(.selectTab(number))
+            refreshTabBar()
+            return
+        }
         let index = number - 1
         guard workspace.activeTabList.trees.indices.contains(index) else { return }
         selectTab(at: index)
@@ -2054,6 +2078,135 @@ final class TerminalViewController: NSViewController {
     /// The user's other Macs (`zetty-remote-machines`), as the client last
     /// reported them. Empty while the feature is off.
     private var remoteMachines: [RemoteMachine] = []
+
+    // MARK: - Another Mac's project
+
+    /// Built on first use; it keeps the viewer's remembered tabs and focus
+    /// for the app's life.
+    private var remoteProject: RemoteProjectController?
+
+    /// The controller while one of another Mac's projects is in the window
+    /// (never in tile mode, which spans this Mac's projects only).
+    private var shownRemoteProject: RemoteProjectController? {
+        guard !tileMode, let remoteProject, remoteProject.projectID != nil else { return nil }
+        return remoteProject
+    }
+
+    var isShowingRemoteProject: Bool { shownRemoteProject != nil }
+
+    /// Shows `projectID` from that Mac in place of the active project's tabs
+    /// and panes. The local project stays selected underneath.
+    func showRemoteProject(machineID: String, projectID: String) {
+        guard let machine = remoteMachines.first(where: { $0.stableID == machineID }) else { return }
+        exitCopyModeIfActive()
+        let remote = remoteProject ?? {
+            let made = RemoteProjectController(
+                zettyExecutable: Bundle.main.executablePath ?? "/Applications/zetty.app/Contents/MacOS/zetty",
+                terminalConfiguration: ghosttyConfiguration)
+            made.onChange = { [weak self] in self?.setNeedsChromeRefresh(tabBar: true) }
+            remoteProject = made
+            return made
+        }()
+        remote.show(machine, projectID: projectID)
+        lastGitProbeDirectory = nil
+        refreshTabBar()
+        refreshSidebar()
+        rebuildSurfaceNodeView()
+        if let terminal = remote.focusedTerminalView {
+            view.window?.makeFirstResponder(terminal)
+        }
+    }
+
+    /// Back to this Mac's active project, as it was left.
+    func leaveRemoteProject() {
+        guard isShowingRemoteProject else { return }
+        dropRemoteProject()
+        refreshTabBar()
+        refreshSidebar()
+        rebuildSurfaceNodeView()
+        if let focused = focusedTerminalView() {
+            view.window?.makeFirstResponder(focused)
+        }
+    }
+
+    /// Ends the remote view without refreshing, for callers that rebuild
+    /// anyway (selecting a local project or tab, entering tile mode).
+    private func dropRemoteProject() {
+        guard let remoteProject, remoteProject.projectID != nil else { return }
+        remoteProject.close()
+        remoteProject.view.removeFromSuperview()
+        tabBarView?.isReadOnly = false
+        lastGitProbeDirectory = nil
+    }
+
+    /// `"<machine> · <cwd>"` for the focused remote pane. The account, git
+    /// and broadcast pills describe this Mac's panes, so they stand down.
+    private func refreshStatusBarForRemote(_ remote: RemoteProjectController, statusBar: StatusBarView) {
+        let machine = remote.machine?.name ?? "Another Mac"
+        let location = remote.focusedPane?.cwd.map { "\(machine) · \($0)" } ?? machine
+        let shell = URL(fileURLWithPath: ProcessInfo.processInfo.environment["SHELL"] ?? "/bin/zsh")
+            .lastPathComponent
+        statusBar.update(
+            cwd: location,
+            appearance: appearanceModeName?() ?? "System",
+            scheme: ZTheme.scheme.displayName,
+            shell: shell,
+            zetty: "v\(Self.buildStamp)",
+            ghostty: "libghostty \(Self.libghosttyVersion)"
+        )
+        statusBar.setZoomed(false)
+        statusBar.setBroadcasting(.off)
+        statusBar.setAccount(nil, hasAccounts: false, limit: nil)
+        statusBar.updateGit(GitStatus(branch: "", ahead: 0, behind: 0, changes: 0, isRepo: false))
+    }
+
+    /// A prefix binding's effect on the remote view (focus or tab moves).
+    func performRemote(_ effect: RemoteModeBindings.Effect) {
+        shownRemoteProject?.perform(effect)
+        refreshTabBar()
+    }
+
+    /// The literal prefix (prefix pressed twice) goes to the remote pane.
+    func sendTextToRemotePane(_ text: String) {
+        shownRemoteProject?.sendText(text)
+    }
+
+    /// Menu commands that change this Mac's panes, tabs or projects. Greyed
+    /// out while another Mac's project shows, and their key equivalents beep
+    /// instead of falling through to the terminal (see `KeyInterceptor`).
+    static let unavailableWhileRemote: Set<Selector> = [
+        #selector(newTab(_:)), #selector(closeTab(_:)), #selector(closePane(_:)),
+        #selector(splitVertical(_:)), #selector(splitHorizontal(_:)),
+        #selector(breakPaneIntoTab(_:)), #selector(zoomPane(_:)), #selector(scrollToBottom(_:)),
+        #selector(removeProject(_:)), #selector(newScratchTerminal(_:)), #selector(toggleFileTree(_:)),
+        #selector(resizePaneLeft(_:)), #selector(resizePaneRight(_:)),
+        #selector(resizePaneUp(_:)), #selector(resizePaneDown(_:)),
+        #selector(broadcastCycle(_:)), #selector(broadcastOff(_:)), #selector(broadcastTab(_:)),
+        #selector(broadcastProject(_:)), #selector(broadcastAgents(_:)), #selector(broadcastWorkspace(_:)),
+    ]
+
+    /// True when `event` is the key equivalent of a main-menu item in
+    /// `unavailableWhileRemote`. A disabled item's chord would otherwise go
+    /// on to the focused remote terminal as a keystroke.
+    func isUnavailableMenuChord(_ event: NSEvent) -> Bool {
+        guard let menu = NSApp.mainMenu,
+              let typed = event.charactersIgnoringModifiers?.lowercased(), !typed.isEmpty else { return false }
+        let mods = event.modifierFlags.intersection([.command, .shift, .option, .control])
+        guard mods.contains(.command) else { return false }
+        func matches(_ item: NSMenuItem) -> Bool {
+            guard !item.keyEquivalent.isEmpty else { return false }
+            var mask = item.keyEquivalentModifierMask.intersection([.command, .shift, .option, .control])
+            if item.keyEquivalent != item.keyEquivalent.lowercased() { mask.insert(.shift) }
+            return item.keyEquivalent.lowercased() == typed && mask == mods
+        }
+        func search(_ menu: NSMenu) -> Bool {
+            menu.items.contains { item in
+                if let action = item.action, Self.unavailableWhileRemote.contains(action), matches(item) { return true }
+                return item.submenu.map(search) ?? false
+            }
+        }
+        return search(menu)
+    }
 
     /// The status-bar account chip was clicked — open Settings → Accounts.
     var onOpenAccountSettings: (() -> Void)?
@@ -3693,7 +3846,15 @@ final class TerminalViewController: NSViewController {
     /// so an empty query shows them before the per-project entries, which are
     /// the ones that grow with the workspace.
     private func buildCommands() -> [PaletteCommand] {
-        paneCommands()
+        if let remote = shownRemoteProject {
+            return remoteCommands(remote)
+                + viewCommands()
+                + appCommands()
+                + appearanceCommands()
+                + projectCommands()
+                + spaceCommands()
+        }
+        return paneCommands()
             + tabCommands()
             + viewCommands()
             + appCommands()
@@ -3701,6 +3862,17 @@ final class TerminalViewController: NSViewController {
             + projectCommands()
             + spaceCommands()
             + accountCommands()
+    }
+
+    /// Another Mac's project replaces the pane, tab and account verbs, which
+    /// would act on the hidden local project, with its own navigation.
+    private func remoteCommands(_ remote: RemoteProjectController) -> [PaletteCommand] {
+        RemoteModeBindings.paletteEntries(tabTitles: remote.tabTitles, selectedTab: remote.selectedTabIndex)
+            .map { entry in
+                PaletteCommand(glyph: entry.glyph, label: entry.label, kbd: entry.kbd) { [weak self] in
+                    self?.performRemote(entry.effect)
+                }
+            }
     }
 
     /// One entry per configured account. Opens a NEW tab stamped with the
@@ -3784,14 +3956,12 @@ final class TerminalViewController: NSViewController {
 
     /// Chrome toggles, the terminal's own view verbs, and broadcast scopes.
     private func viewCommands() -> [PaletteCommand] {
-        [
-            PaletteCommand(glyph: "⛶", label: "Toggle Sidebar", kbd: "⌘B") { [weak self] in self?.toggleSidebar(nil) },
+        // The file tree, scroll and broadcast entries act on this Mac's panes.
+        let localPanes: [PaletteCommand] = isShowingRemoteProject ? [] : [
             PaletteCommand(glyph: "▤", label: "Toggle File Tree", kbd: "⇧⌘F") { [weak self] in self?.toggleFileTree(nil) },
             PaletteCommand(glyph: "⤓", label: "Scroll to Bottom", kbd: "⌘↓") { [weak self] in self?.scrollToBottom(nil) },
-            PaletteCommand(glyph: "▦", label: "Tile Running Sessions", kbd: "⇧⌘G") { [weak self] in self?.toggleTileMode() },
-            PaletteCommand(glyph: "▦", label: "New Tile View", kbd: "") { [weak self] in self?.setTileMode(true); self?.newTileView() },
-            PaletteCommand(glyph: "✎", label: "Rename Tile View…", kbd: "") { [weak self] in self?.configureActiveTileView() },
-            PaletteCommand(glyph: "▦", label: "Manage Tile Views…", kbd: "⇧⌘J") { [weak self] in self?.onShowTileManager?() },
+        ]
+        let broadcast: [PaletteCommand] = isShowingRemoteProject ? [] : [
             PaletteCommand(glyph: "⇉", label: "Broadcast: Tab", kbd: "") { [weak self] in self?.setBroadcast(.currentTab) },
             PaletteCommand(glyph: "⇉", label: "Broadcast: Project", kbd: "") { [weak self] in self?.setBroadcast(.project) },
             PaletteCommand(glyph: "⇉", label: "Broadcast: Agents", kbd: "") { [weak self] in self?.setBroadcast(.agents) },
@@ -3799,6 +3969,14 @@ final class TerminalViewController: NSViewController {
             PaletteCommand(glyph: "⇥", label: "Broadcast: Cycle Scope", kbd: "⇧⌘B") { [weak self] in self?.cycleBroadcast() },
             PaletteCommand(glyph: "○", label: "Broadcast: Off", kbd: "") { [weak self] in self?.setBroadcast(.off) },
         ]
+        return [
+            PaletteCommand(glyph: "⛶", label: "Toggle Sidebar", kbd: "⌘B") { [weak self] in self?.toggleSidebar(nil) },
+        ] + localPanes + [
+            PaletteCommand(glyph: "▦", label: "Tile Running Sessions", kbd: "⇧⌘G") { [weak self] in self?.toggleTileMode() },
+            PaletteCommand(glyph: "▦", label: "New Tile View", kbd: "") { [weak self] in self?.setTileMode(true); self?.newTileView() },
+            PaletteCommand(glyph: "✎", label: "Rename Tile View…", kbd: "") { [weak self] in self?.configureActiveTileView() },
+            PaletteCommand(glyph: "▦", label: "Manage Tile Views…", kbd: "⇧⌘J") { [weak self] in self?.onShowTileManager?() },
+        ] + broadcast
     }
 
     /// App-level verbs. Settings gets one entry per pane as well as the plain
@@ -3863,13 +4041,19 @@ final class TerminalViewController: NSViewController {
     /// clones can't be cloned; only clones merge back) — an entry the model
     /// would refuse is omitted rather than shown and ignored.
     private func projectCommands() -> [PaletteCommand] {
-        var commands: [PaletteCommand] = [
-            PaletteCommand(glyph: "＋", label: "Add Project…", kbd: "⌘O") { [weak self] in self?.addProject(nil) },
+        // "Current project" would be the hidden local one behind another
+        // Mac's project, and a scratch terminal opens over it.
+        let current: [PaletteCommand] = isShowingRemoteProject ? [] : [
             PaletteCommand(glyph: "★", label: "Pin / Unpin Current Project", kbd: "") { [weak self] in self?.togglePinActiveProject() },
             PaletteCommand(glyph: "⧉", label: "New Scratch Terminal", kbd: "⌃⌘N") { [weak self] in self?.newScratchTerminal() },
-            PaletteCommand(glyph: "⌦", label: "Close All Scratch Terminals", kbd: "") { [weak self] in self?.closeAllScratchTerminals() },
-            PaletteCommand(glyph: "−", label: "Remove Current Project…", kbd: "") { [weak self] in self?.removeProject(nil) },
         ]
+        var commands: [PaletteCommand] = [
+            PaletteCommand(glyph: "＋", label: "Add Project…", kbd: "⌘O") { [weak self] in self?.addProject(nil) },
+        ] + current + [
+            PaletteCommand(glyph: "⌦", label: "Close All Scratch Terminals", kbd: "") { [weak self] in self?.closeAllScratchTerminals() },
+        ] + (isShowingRemoteProject ? [] : [
+            PaletteCommand(glyph: "−", label: "Remove Current Project…", kbd: "") { [weak self] in self?.removeProject(nil) },
+        ])
 
         for project in workspace.projects {
             let name = project.name
@@ -6256,6 +6440,7 @@ final class TerminalViewController: NSViewController {
 
     func setTileMode(_ on: Bool) {
         guard tileMode != on else { return }
+        if on { dropRemoteProject() }
         tileMode = on
         defer { tileManagerView?.reload() }
         // The location cluster leaves the bar while the grid is up; each tile
@@ -6907,6 +7092,13 @@ final class TerminalViewController: NSViewController {
     ///   static `Surface.workingDir` as a fallback),
     /// - and a positional fallback ("Tab N").
     func refreshTabBar() {
+        // Another Mac's tabs: titles and selection only.
+        tabBarView?.isReadOnly = shownRemoteProject != nil
+        if let remote = shownRemoteProject {
+            tabBarView?.update(titles: remote.tabTitles, selectedIndex: remote.selectedTabIndex)
+            refreshStatusBar()
+            return
+        }
         // The strip shows tile views while the grid is up. `alwaysShowClose`
         // because a single view still wants closing — unlike a lone tab.
         if tileMode {
@@ -7049,7 +7241,10 @@ final class TerminalViewController: NSViewController {
             spaces: sidebarSpaces,
             machines: sidebarMachines(),
             activeProject: workspace.activeIndex,
-            activeTab: workspace.activeTabList.activeIndex
+            activeTab: workspace.activeTabList.activeIndex,
+            activeRemote: shownRemoteProject.flatMap { remote in
+                remote.machine.flatMap { machine in remote.projectID.map { (machine.stableID, $0) } }
+            }
         )
         publishSnapshotIfChanged()
     }
@@ -7059,6 +7254,13 @@ final class TerminalViewController: NSViewController {
     func setRemoteMachines(_ machines: [RemoteMachine]) {
         guard machines != remoteMachines else { return }
         remoteMachines = machines
+        if let remote = shownRemoteProject, let id = remote.machine?.stableID {
+            if let machine = machines.first(where: { $0.stableID == id }) {
+                remote.update(machine)
+            } else {
+                leaveRemoteProject()
+            }
+        }
         setNeedsChromeRefresh(sidebar: true)
     }
 
@@ -7078,9 +7280,10 @@ final class TerminalViewController: NSViewController {
                     isPendingClone: false, spaceID: nil, spaceName: nil,
                     accountColor: nil, accountName: nil, tabAccountColors: [])
             }
+            let ids = (machine.workspace?.projects ?? []).filter { !$0.hibernated }.map { $0.id ?? $0.name }
             return SidebarMachine(id: machine.stableID, name: machine.name,
                                   summary: RemoteMachineSummary.text(for: machine, now: now),
-                                  online: machine.state == .online, projects: projects)
+                                  online: machine.state == .online, projects: projects, projectIDs: ids)
         }
     }
 
@@ -7381,6 +7584,7 @@ final class TerminalViewController: NSViewController {
 
     /// Removes the active project after confirmation.  Menu: Project → Remove Project…
     @objc func removeProject(_ sender: Any?) {
+        guard !isShowingRemoteProject else { NSSound.beep(); return }
         confirmRemoveProject(at: workspace.activeIndex)
     }
 
@@ -7715,6 +7919,7 @@ final class TerminalViewController: NSViewController {
 
     /// Open a new tab and focus its single fresh pane.  Key equivalent: ⌘T.
     @objc func newTab(_ sender: Any?) {
+        guard !isShowingRemoteProject else { NSSound.beep(); return }
         chooseAgentThenSpawn { [weak self] command, accountID in
             self?.performNewTab(startupCommand: command, accountID: accountID)
         }
@@ -7722,6 +7927,7 @@ final class TerminalViewController: NSViewController {
 
     /// Close the active tab.  No-op if it is the only tab.  Key equivalent: ⇧⌘W.
     @objc func closeTab(_ sender: Any?) {
+        guard !isShowingRemoteProject else { NSSound.beep(); return }
         // ⇧⌘W closes the tile VIEW while the grid is up — the strip is showing
         // views, so that is what "tab" means there.
         if tileMode { closeTileView(at: activeTileViewIndex); return }
@@ -7829,6 +8035,7 @@ final class TerminalViewController: NSViewController {
     /// Switch to the next tab, wrapping.  Key equivalent: ⌘}.
     @objc func selectNextTab(_ sender: Any?) {
         if tileMode { cycleTileView(by: 1); return }
+        if let remote = shownRemoteProject { remote.perform(.nextTab); refreshTabBar(); return }
         workspace.activeTabList.selectNext()
         refreshTabBar()
         refreshSidebar()
@@ -7841,6 +8048,7 @@ final class TerminalViewController: NSViewController {
     /// Switch to the previous tab, wrapping.  Key equivalent: ⌘{.
     @objc func selectPreviousTab(_ sender: Any?) {
         if tileMode { cycleTileView(by: -1); return }
+        if let remote = shownRemoteProject { remote.perform(.previousTab); refreshTabBar(); return }
         workspace.activeTabList.selectPrevious()
         refreshTabBar()
         refreshSidebar()
@@ -7878,6 +8086,11 @@ final class TerminalViewController: NSViewController {
             selectTileViewIfDifferent(at: index)
             return
         }
+        if let remote = shownRemoteProject {
+            remote.perform(.selectTab(index + 1))
+            refreshTabBar()
+            return
+        }
         guard workspace.activeTabList.trees.indices.contains(index) else { return }
         selectTab(at: index)
     }
@@ -7899,6 +8112,7 @@ final class TerminalViewController: NSViewController {
     }
 
     private func selectTab(at index: Int) {
+        dropRemoteProject()
         workspace.activeTabList.select(index: index)
         refreshTabBar()
         refreshSidebar()
@@ -7912,6 +8126,7 @@ final class TerminalViewController: NSViewController {
     func reloadGhosttyConfiguration(_ config: TerminalConfiguration?) {
         ghosttyConfiguration = config
         registry.reapplyTerminalConfiguration(config)
+        remoteProject?.reloadConfiguration(config)
     }
 
     /// Switches to the project at `index`, optionally selects one of its tabs,
@@ -7923,6 +8138,7 @@ final class TerminalViewController: NSViewController {
            !workspace.projects[index].tabList.trees.indices.contains(tabIndex) {
             return false
         }
+        dropRemoteProject()
         workspace.select(index: index)
         if let tabIndex { workspace.activeTabList.select(index: tabIndex) }
         // Stamp on activation, not just on the 60s tick: a project visited
@@ -8610,6 +8826,7 @@ final class TerminalViewController: NSViewController {
 
     private func handleFirstResponderChange() {
         guard let responder = view.window?.firstResponder as? NSView else { return }
+        if let remoteProject, remoteProject.noteFirstResponder(responder) { return }
         // Walk the superview chain of the new first responder to find which
         // registry view it belongs to (the terminal view itself, or a child of it).
         if let surfaceID = registry.surfaceID(containing: responder) {
@@ -8671,6 +8888,10 @@ final class TerminalViewController: NSViewController {
         tileChooserView?.removeFromSuperview()
         tileChooserView = nil
         tileGridView?.removeFromSuperview()
+        let remoteHadKeyboard = remoteProject.map { remote in
+            (view.window?.firstResponder as? NSView)?.isDescendant(of: remote.view) == true
+        } ?? false
+        remoteProject?.view.removeFromSuperview()
 
         // Pin below the tab bar (28 pt), or to the top if there is no tab bar yet;
         // and above the status bar (if present), else to the container bottom.
@@ -8709,6 +8930,22 @@ final class TerminalViewController: NSViewController {
                 drawer.heightAnchor.constraint(greaterThanOrEqualToConstant: 80),
             ])
             bottomGuide = drawer.topAnchor
+        }
+
+        // Another Mac's project takes the pane area. The local panes stay
+        // alive behind it, exactly as a background project's do.
+        if let remote = shownRemoteProject {
+            container.addSubview(remote.view)
+            NSLayoutConstraint.activate([
+                remote.view.topAnchor.constraint(equalTo: topGuide),
+                remote.view.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+                remote.view.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+                remote.view.bottomAnchor.constraint(equalTo: bottomGuide),
+            ])
+            if remoteHadKeyboard, let terminal = remote.focusedTerminalView {
+                view.window?.makeFirstResponder(terminal)
+            }
+            return
         }
 
         // A clone's working copy is disposable — slot a caution strip below the
@@ -9094,6 +9331,7 @@ final class TerminalViewController: NSViewController {
     /// Returns the `NSView` for the currently focused surface, if any.
     /// Declared `internal` so the `PaneActions` extension (same module) can call it.
     func focusedTerminalView() -> NSView? {
+        if let remote = shownRemoteProject { return remote.focusedTerminalView }
         guard let surface = paneTree.focusedSurface else { return nil }
         return registry.terminalView(for: surface)
     }
@@ -9137,6 +9375,10 @@ final class TerminalViewController: NSViewController {
 
 extension TerminalViewController: NSMenuItemValidation {
     func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
+        if isShowingRemoteProject, let action = menuItem.action,
+           Self.unavailableWhileRemote.contains(action) {
+            return false
+        }
         if menuItem.action == #selector(removeProject(_:)) {
             return workspace.projects.count > 1
         }

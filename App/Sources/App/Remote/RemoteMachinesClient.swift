@@ -26,6 +26,9 @@ final class RemoteMachinesClient {
     private var candidates: [String: TailscaleNode] = [:]
     private var links: [String: Link] = [:]
     private var retries: [String: Retry] = [:]
+    /// The IPv4 each open link dialled; a snapshot over that link stamps it on
+    /// the machine, so a viewer knows where to send `zetty attach`.
+    private var dialled: [String: String] = [:]
     private var lastSave: Date?
     private var pendingSave: DispatchWorkItem?
     private var stopped = false
@@ -133,6 +136,7 @@ final class RemoteMachinesClient {
             return
         }
         links[id] = link
+        dialled[id] = address
         byID[id]?.state = .connecting
         link.onConnected = { [weak self, weak link] in
             guard let self, let link else { return }
@@ -165,6 +169,7 @@ final class RemoteMachinesClient {
                 }
             case .snapshot(let snapshot):
                 machine.workspace = snapshot
+                machine.address = dialled[id] ?? machine.address
                 machine.lastSeen = Date()
                 machine.state = .online
                 retries[id] = nil

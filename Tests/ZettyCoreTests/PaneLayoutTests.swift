@@ -34,3 +34,61 @@ private let expected = PaneLayout.split(direction: .vertical, ratio: 0.3, first:
     #expect(back == tab)
     #expect(back.layout == expected)
 }
+
+// MARK: - Rebuilding a remote tab (phase 2)
+
+private func pane(_ id: String, cwd: String? = "/srv") -> StatusSnapshot.Pane {
+    StatusSnapshot.Pane(id: id, title: nil, cwd: cwd, tool: nil, agentStatus: nil, isFocused: false, live: true)
+}
+
+private func shape(_ node: SurfaceNode) -> PaneLayout {
+    switch node {
+    case .leaf(let s): return .pane(s.id.uuidString)
+    case .split(let d, let r, let a, let b): return .split(direction: d, ratio: r, first: shape(a), second: shape(b))
+    }
+}
+
+@Test func remoteTabFollowsItsLayout() throws {
+    var ids = RemoteSurfaceIDs()
+    let tab = StatusSnapshot.Tab(title: "t", isActive: true,
+                                 panes: [pane("aaaaaaaa"), pane("bbbbbbbb"), pane("cccccccc")], layout: expected)
+    let node = try #require(PaneLayout.surfaceTree(for: tab, ids: &ids, machine: "mini"))
+    let a = ids.id(machine: "mini", pane: "aaaaaaaa").uuidString
+    let b = ids.id(machine: "mini", pane: "bbbbbbbb").uuidString
+    let c = ids.id(machine: "mini", pane: "cccccccc").uuidString
+    #expect(shape(node) == .split(direction: .vertical, ratio: 0.3, first: .pane(a),
+                                  second: .split(direction: .horizontal, ratio: 0.5, first: .pane(b), second: .pane(c))))
+    #expect(node.surfaces.map(\.workingDir) == ["/srv", "/srv", "/srv"])
+}
+
+@Test func remoteTabWithoutLayoutLaysPanesInARow() throws {
+    var ids = RemoteSurfaceIDs()
+    let tab = StatusSnapshot.Tab(title: "t", isActive: true, panes: [pane("a1"), pane("b2"), pane("c3", cwd: nil)])
+    let node = try #require(PaneLayout.surfaceTree(for: tab, ids: &ids, machine: "mini"))
+    #expect(node.surfaces.map(\.id) == ["a1", "b2", "c3"].map { ids.id(machine: "mini", pane: $0) })
+    #expect(node.surfaces.last?.workingDir == "/")
+    guard case .split(let direction, _, _, _) = node else { Issue.record("not a split"); return }
+    #expect(direction == .vertical)
+}
+
+@Test func layoutNamingAMissingPaneFallsBackToARow() throws {
+    var ids = RemoteSurfaceIDs()
+    let tab = StatusSnapshot.Tab(title: "t", isActive: true, panes: [pane("aaaaaaaa"), pane("bbbbbbbb")],
+                                 layout: expected) // names cccccccc, which isn't in panes
+    let node = try #require(PaneLayout.surfaceTree(for: tab, ids: &ids, machine: "mini"))
+    #expect(node.surfaces.count == 2)
+}
+
+@Test func emptyTabHasNoTree() {
+    var ids = RemoteSurfaceIDs()
+    #expect(PaneLayout.surfaceTree(for: StatusSnapshot.Tab(title: "t", isActive: true, panes: []),
+                                   ids: &ids, machine: "mini") == nil)
+}
+
+@Test func remoteSurfaceIDsAreStableAndFresh() {
+    var ids = RemoteSurfaceIDs()
+    let first = ids.id(machine: "mini", pane: "aaaaaaaa")
+    #expect(ids.id(machine: "mini", pane: "aaaaaaaa") == first)
+    #expect(ids.id(machine: "studio", pane: "aaaaaaaa") != first)
+    #expect(SessionPersistence.shortID(for: first) != "aaaaaaaa")
+}

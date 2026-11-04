@@ -331,7 +331,7 @@ final class TabBarView: NSView {
         // `editingIndex` before the owner refreshes, so nothing is stranded.
         guard !isReordering, editingIndex < 0 else { return }
 
-        let showsClose = alwaysShowClose || titles.count > 1
+        let showsClose = !isReadOnly && (alwaysShowClose || titles.count > 1)
         let resolvedIcons = titles.indices.map { $0 < icons.count ? icons[$0] : nil }
         let resolvedAccounts = titles.indices.map {
             $0 < accountColorIDs.count ? accountColorIDs[$0] : nil
@@ -447,6 +447,7 @@ final class TabBarView: NSView {
 
     /// Live reorder: slide the dragged pill into the slot under the cursor.
     private func itemDragged(_ item: TabItemView, locationInWindow: NSPoint) {
+        guard !isReadOnly else { return }
         isReordering = true
         if dragSourceIndex == nil { dragSourceIndex = item.index }
         guard tabItems.count > 1,
@@ -482,6 +483,18 @@ final class TabBarView: NSView {
     /// That button is CONSTRAINED to the bar's trailing chrome rather than
     /// frame-positioned beside `+`, so it holds still — a toggle that moved
     /// between its two states would be hard to click twice.
+    /// Another Mac's tabs: selection only. `+` hides, no pill shows ×, and
+    /// rename and drag-reorder never start, because those tabs aren't ours
+    /// to change.
+    var isReadOnly = false {
+        didSet {
+            guard oldValue != isReadOnly else { return }
+            addButton.isHidden = isReadOnly
+            cancelRename()
+            pillIndicesAreStale = true
+        }
+    }
+
     var isTileMode = false {
         didSet {
             guard oldValue != isTileMode else { return }
@@ -589,6 +602,7 @@ final class TabBarView: NSView {
 
     private func beginRename(at index: Int) {
         cancelRename()
+        guard !isReadOnly else { return }
 
         guard tabItems.indices.contains(index) else { return }
         let item = tabItems[index]

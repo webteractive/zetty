@@ -19,6 +19,7 @@ extension TerminalViewController {
     /// items validate to disabled there too — this guard covers the command
     /// palette, which reaches the action directly.
     @objc func splitVertical(_ sender: Any?) {
+        guard !isShowingRemoteProject else { NSSound.beep(); return }
         // In tile mode the same chord splits the focused SLOT. The reason these
         // were disabled there still holds — there is no pane tree on screen, so
         // splitting a PANE would reshape the active project's layout out of
@@ -31,6 +32,7 @@ extension TerminalViewController {
 
     /// Split the focused pane horizontally (top / bottom).  Key equivalent: ⇧⌘D.
     @objc func splitHorizontal(_ sender: Any?) {
+        guard !isShowingRemoteProject else { NSSound.beep(); return }
         if isTileMode { return splitFocusedTileSlot(.horizontal) }
         chooseAgentThenSpawn { [weak self] command, accountID in
             self?.performSplit(direction: .horizontal, startupCommand: command, accountID: accountID)
@@ -131,6 +133,9 @@ extension TerminalViewController {
     /// pane (so the project's last pane stays: `closeTab` keeps that tab).
     /// Asks first when something is still running in it.  Key equivalent: ⌘W.
     @objc func closePane(_ sender: Any?) {
+        // Another Mac's panes are never ours to close; ⌘W can reach here
+        // without the menu.
+        guard !isShowingRemoteProject else { NSSound.beep(); return }
         // In the grid this detaches the focused slot instead. The pane keeps
         // running: closing the real thing from a grid of sixteen is too
         // expensive to sit on ⌘W, so it lives on the tile's own menu.
@@ -171,6 +176,7 @@ extension TerminalViewController {
     /// Move the focused pane into a new tab right after the current one.
     /// No-op if it is the only pane in the tab. Prefix `!` · ⌥⌘T · palette · menu.
     @objc func breakPaneIntoTab(_ sender: Any?) {
+        guard !isShowingRemoteProject else { NSSound.beep(); return }
         guard workspace.activeTabList.breakFocusedPaneIntoNewTab() else { return }
         refreshTabBar()
         refreshSidebar()

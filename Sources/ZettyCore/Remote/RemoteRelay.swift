@@ -21,6 +21,18 @@ public struct RemoteAttachTarget: Equatable, Sendable {
               RemoteAttachRequest(pane: pane, rows: 0, cols: 0, scrollback: false).isValidPane else { return nil }
         return RemoteAttachTarget(host: host, pane: pane)
     }
+
+    /// The command a viewer's pane runs to relay `pane` from `address`. The
+    /// pane id and address arrive in the other Mac's feed and the line runs
+    /// through a shell, so it is built only from a hex pane id, a numeric
+    /// tailnet address and an executable path without spaces; anything else
+    /// is nil and the pane never starts.
+    public static func relayCommand(executable: String, address: String, pane: String) -> String? {
+        guard RemoteAttachRequest(pane: pane, rows: 0, cols: 0, scrollback: false).isValidPane,
+              TailnetAddress.isAllowed(address), !address.contains(":"),
+              !executable.isEmpty, !executable.contains(where: \.isWhitespace) else { return nil }
+        return "\(executable) attach \(address):\(pane)"
+    }
 }
 
 /// Where a relay may connect: Tailscale's own ranges, and loopback for local
