@@ -93,3 +93,12 @@ private func machine(_ state: RemoteMachine.State) -> RemoteMachine {
     #expect(machines.count == 1)
     #expect(machines.first?.address == nil)
 }
+
+@Test func disconnectingForgetsTheAddress() {
+    for state in [RemoteMachine.State.online, .connecting, .refused("tagged"), .needsUpdate(theirs: 9)] {
+        var machine = RemoteMachine(stableID: "n1", name: "mini", state: state, lastSeen: nil, workspace: nil,
+                                    address: "100.64.0.5")
+        machine.markDisconnected(at: Date())
+        #expect(machine.address == nil, "\(state)")
+    }
+}

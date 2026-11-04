@@ -77,3 +77,12 @@ import Testing
     #expect(RemoteAttachTarget.relayCommand(executable: zetty, address: "8.8.8.8", pane: "ab12cd34") == nil)
     #expect(RemoteAttachTarget.relayCommand(executable: "/tmp/my app/zetty", address: "100.64.0.5", pane: "ab12cd34") == nil)
 }
+
+@Test func paneCommandNeverFallsBackToAShell() {
+    let zetty = "/Applications/zetty.app/Contents/MacOS/zetty"
+    #expect(RemoteAttachTarget.paneCommand(executable: zetty, address: "100.64.0.5", pane: "ab12cd34")
+            == "\(zetty) attach 100.64.0.5:ab12cd34")
+    // nil would leave ghostty to start this Mac's own login shell in the pane.
+    #expect(RemoteAttachTarget.paneCommand(executable: zetty, address: "100.64.0.5", pane: "x;id") == "/usr/bin/false")
+    #expect(RemoteAttachTarget.paneCommand(executable: zetty, address: "8.8.8.8", pane: "ab12cd34") == "/usr/bin/false")
+}

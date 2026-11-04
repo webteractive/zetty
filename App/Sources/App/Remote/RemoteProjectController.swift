@@ -65,7 +65,8 @@ final class RemoteProjectController {
         view.translatesAutoresizingMaskIntoConstraints = false
         registry.terminalTheme = ZTheme.current.terminalTheme()
         registry.terminalConfiguration = terminalConfiguration
-        registry.surfaceCommand = { [weak self] surface in self?.command(for: surface) }
+        // Never nil: a surface with no command gets this Mac's login shell.
+        registry.surfaceCommand = { [weak self] surface in self?.command(for: surface) ?? "/usr/bin/false" }
         registry.surfaceEnvironment = { [weak self] _ in
             self?.machine.map { ["ZETTY_REMOTE_MACHINE": $0.name] }
         }
@@ -77,7 +78,7 @@ final class RemoteProjectController {
     /// spaces) travels in the environment and only the target is an argument.
     private func command(for surface: Surface) -> String? {
         guard let address = machine?.address, let pane = paneBySurface[surface.id] else { return nil }
-        return RemoteAttachTarget.relayCommand(executable: zettyExecutable, address: address, pane: pane.id)
+        return RemoteAttachTarget.paneCommand(executable: zettyExecutable, address: address, pane: pane.id)
     }
 
     var focusedPane: StatusSnapshot.Pane? {
@@ -118,7 +119,9 @@ final class RemoteProjectController {
 
     private func render() {
         guard let machine, let projectID else { return }
-        guard machine.address != nil else {
+        // Only while its feed is live: the address is the one that feed
+        // reached, so a relay never dials a stale one.
+        guard machine.state == .online, machine.address != nil else {
             showPlaceholder("\(machine.name) is offline. Its panes open here when it's back.")
             return
         }

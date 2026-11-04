@@ -37,7 +37,10 @@ public struct RemoteMachine: Codable, Equatable, Sendable {
 
     /// The connection dropped. "Seen N ago" counts from now if it was online;
     /// a refusal or "needs update" keeps saying why.
+    /// The address goes too: it is dialled again on reconnect, and a relay
+    /// must never reach whatever answers on a stale one.
     public mutating func markDisconnected(at now: Date) {
+        address = nil
         switch state {
         case .refused, .needsUpdate:
             return

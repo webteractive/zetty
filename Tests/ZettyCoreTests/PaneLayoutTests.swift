@@ -58,7 +58,8 @@ private func shape(_ node: SurfaceNode) -> PaneLayout {
     let c = ids.id(machine: "mini", pane: "cccccccc").uuidString
     #expect(shape(node) == .split(direction: .vertical, ratio: 0.3, first: .pane(a),
                                   second: .split(direction: .horizontal, ratio: 0.5, first: .pane(b), second: .pane(c))))
-    #expect(node.surfaces.map(\.workingDir) == ["/srv", "/srv", "/srv"])
+    // The peer's directory is only a label: a relay never starts where it says.
+    #expect(node.surfaces.map(\.workingDir) == ["/", "/", "/"])
 }
 
 @Test func remoteTabWithoutLayoutLaysPanesInARow() throws {
@@ -91,4 +92,43 @@ private func shape(_ node: SurfaceNode) -> PaneLayout {
     #expect(ids.id(machine: "mini", pane: "aaaaaaaa") == first)
     #expect(ids.id(machine: "studio", pane: "aaaaaaaa") != first)
     #expect(SessionPersistence.shortID(for: first) != "aaaaaaaa")
+}
+
+@Test func remoteTabDropsBadAndDuplicatePaneIDs() throws {
+    var ids = RemoteSurfaceIDs()
+    let tab = StatusSnapshot.Tab(title: "t", isActive: true,
+                                 panes: [pane("aaaaaaaa"), pane("ab;rm -rf"), pane("aaaaaaaa"), pane("bbbbbbbb")])
+    let node = try #require(PaneLayout.surfaceTree(for: tab, ids: &ids, machine: "mini"))
+    #expect(node.surfaces.map(\.id) == ["aaaaaaaa", "bbbbbbbb"].map { ids.id(machine: "mini", pane: $0) })
+}
+
+@Test func remoteTabWithOnlyBadPaneIDsHasNoTree() {
+    var ids = RemoteSurfaceIDs()
+    let tab = StatusSnapshot.Tab(title: "t", isActive: true, panes: [pane("$(x)"), pane("")])
+    #expect(PaneLayout.surfaceTree(for: tab, ids: &ids, machine: "mini") == nil)
+}
+
+@Test func remoteTabIsCappedAtMaxPanes() throws {
+    var ids = RemoteSurfaceIDs()
+    let many = (0..<5_000).map { pane(String(format: "%08x", $0)) }
+    let node = try #require(PaneLayout.surfaceTree(for: StatusSnapshot.Tab(title: "t", isActive: true, panes: many),
+                                                   ids: &ids, machine: "mini"))
+    #expect(node.surfaces.count == PaneLayout.maxRemotePanes)
+    #expect(PaneLayout.maxRemotePanes == 16)
+}
+
+@Test func remoteRatiosAreClampedToAUsableRange() throws {
+    func ratio(_ r: Double) throws -> Double {
+        var ids = RemoteSurfaceIDs()
+        let layout = PaneLayout.split(direction: .vertical, ratio: r, first: .pane("aaaaaaaa"), second: .pane("bbbbbbbb"))
+        let tab = StatusSnapshot.Tab(title: "t", isActive: true, panes: [pane("aaaaaaaa"), pane("bbbbbbbb")], layout: layout)
+        guard case .split(_, let got, _, _) = try #require(PaneLayout.surfaceTree(for: tab, ids: &ids, machine: "mini"))
+        else { Issue.record("not a split"); return .nan }
+        return got
+    }
+    #expect(try ratio(0.3) == 0.3)
+    #expect(try ratio(0) == 0.05)
+    #expect(try ratio(7) == 0.95)
+    #expect(try ratio(.nan) == 0.5)
+    #expect(try ratio(-.infinity) == 0.5)
 }

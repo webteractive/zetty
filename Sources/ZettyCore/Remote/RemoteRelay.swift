@@ -27,6 +27,13 @@ public struct RemoteAttachTarget: Equatable, Sendable {
     /// through a shell, so it is built only from a hex pane id, a numeric
     /// tailnet address and an executable path without spaces; anything else
     /// is nil and the pane never starts.
+    /// The command for a remote pane's surface: its relay, or `/usr/bin/false`
+    /// for a target `relayCommand` refuses. Never nil, because a surface with
+    /// no command gets ghostty's default, this Mac's own login shell.
+    public static func paneCommand(executable: String, address: String, pane: String) -> String {
+        relayCommand(executable: executable, address: address, pane: pane) ?? "/usr/bin/false"
+    }
+
     public static func relayCommand(executable: String, address: String, pane: String) -> String? {
         guard RemoteAttachRequest(pane: pane, rows: 0, cols: 0, scrollback: false).isValidPane,
               TailnetAddress.isAllowed(address), !address.contains(":"),

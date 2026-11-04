@@ -76,33 +76,53 @@ public struct RemoteSurfaceIDs: Sendable {
 }
 
 extension PaneLayout {
+    /// The most panes a remote tab shows. The tree comes from another Mac's
+    /// feed, so its size is the peer's to choose; the cap bounds the views
+    /// and relay processes one tab can cost here.
+    public static let maxRemotePanes = 16
+
     /// The split tree to draw for another Mac's tab: its own layout when it
-    /// sent one that names exactly its panes, otherwise its panes side by side.
-    /// Nil for a tab with no panes. The working directory is only a label;
-    /// the relay ignores it.
+    /// sent one that names exactly the panes shown, otherwise those panes side
+    /// by side. Panes whose id isn't a well-formed pane id, repeats and
+    /// anything past `maxRemotePanes` are left out, and ratios are clamped.
+    /// Nil for a tab with nothing left to show. Every surface starts in `/`:
+    /// the peer's working directory is only a label.
     public static func surfaceTree(for tab: StatusSnapshot.Tab, ids: inout RemoteSurfaceIDs,
                                    machine: String) -> SurfaceNode? {
-        guard !tab.panes.isEmpty else { return nil }
-        let panes = Dictionary(tab.panes.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
-        func leaf(_ pane: StatusSnapshot.Pane) -> SurfaceNode {
-            .leaf(Surface(id: ids.id(machine: machine, pane: pane.id), workingDir: pane.cwd ?? "/"))
+        var seen = Set<String>()
+        let shown = Array(tab.panes.filter {
+            RemoteAttachRequest(pane: $0.id, rows: 0, cols: 0, scrollback: false).isValidPane
+                && seen.insert($0.id).inserted
+        }.prefix(maxRemotePanes))
+        guard !shown.isEmpty else { return nil }
+        var leaves: [String: SurfaceNode] = [:]
+        for pane in shown {
+            leaves[pane.id] = .leaf(Surface(id: ids.id(machine: machine, pane: pane.id), workingDir: "/"))
         }
-        if let layout = tab.layout, Set(layout.paneIDs) == Set(panes.keys), layout.paneIDs.count == panes.count {
+        if let layout = tab.layout, layout.paneIDs.count == shown.count, Set(layout.paneIDs) == Set(leaves.keys) {
+            // Depth is bounded: a tree naming at most `maxRemotePanes` leaves
+            // has fewer splits than that.
             func build(_ layout: PaneLayout) -> SurfaceNode {
                 switch layout {
                 case .pane(let id):
-                    return leaf(panes[id]!)
+                    return leaves[id]!
                 case .split(let direction, let ratio, let first, let second):
-                    return .split(direction: direction, ratio: ratio, first: build(first), second: build(second))
+                    return .split(direction: direction, ratio: usableRatio(ratio), first: build(first), second: build(second))
                 }
             }
             return build(layout)
         }
-        func row(_ rest: ArraySlice<StatusSnapshot.Pane>) -> SurfaceNode {
-            guard rest.count > 1 else { return leaf(rest.first!) }
-            return .split(direction: .vertical, ratio: 1 / Double(rest.count),
-                          first: leaf(rest.first!), second: row(rest.dropFirst()))
+        // Built from the right, so the row needs no recursion.
+        var node = leaves[shown[shown.count - 1].id]!
+        for index in stride(from: shown.count - 2, through: 0, by: -1) {
+            node = .split(direction: .vertical, ratio: 1 / Double(shown.count - index),
+                          first: leaves[shown[index].id]!, second: node)
         }
-        return row(tab.panes[...])
+        return node
+    }
+
+    /// A peer's split ratio, kept where both sides of the split stay visible.
+    static func usableRatio(_ ratio: Double) -> Double {
+        ratio.isFinite ? min(max(ratio, 0.05), 0.95) : 0.5
     }
 }
