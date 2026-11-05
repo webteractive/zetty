@@ -51,6 +51,8 @@ final class RemoteProjectController {
 
     /// Remote pane per local surface, for the relay command and the status bar.
     private var paneBySurface: [UUID: StatusSnapshot.Pane] = [:]
+    /// What each surface's relay was started with; teardown kills by this.
+    private var relayTargets = RelayTargets()
     private var focusedSurfaceID: UUID?
     /// Surfaces whose relay is being ended; freed after the drain.
     private var awaitingTeardown: Set<UUID> = []
@@ -78,6 +80,7 @@ final class RemoteProjectController {
     /// spaces) travels in the environment and only the target is an argument.
     private func command(for surface: Surface) -> String? {
         guard let address = machine?.address, let pane = paneBySurface[surface.id] else { return nil }
+        relayTargets.record(surface.id, address: address, pane: pane.id)
         return RemoteAttachTarget.paneCommand(executable: zettyExecutable, address: address, pane: pane.id)
     }
 
@@ -345,10 +348,7 @@ final class RemoteProjectController {
         let gone = gone.subtracting(awaitingTeardown)
         guard !gone.isEmpty else { return }
         awaitingTeardown.formUnion(gone)
-        let targets = Set(gone.compactMap { id -> String? in
-            guard let address = machine?.address, let pane = paneBySurface[id] else { return nil }
-            return "\(address):\(pane.id)"
-        })
+        let targets = relayTargets.take(gone)
         let root = getpid()
         DispatchQueue.global(qos: .utility).async { [weak self] in
             for pid in RelayProcesses.pids(relaying: targets, under: root, psOutput: ZmxRunner.psSnapshot(timeout: 2) ?? "") {

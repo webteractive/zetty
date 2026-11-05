@@ -31,3 +31,22 @@ public enum RelayProcesses {
         }.sorted()
     }
 }
+
+/// The `<address>:<pane>` each remote surface's relay was started with, so
+/// teardown kills it by what it runs rather than by the machine's address
+/// now. A Mac going offline loses its address (`markDisconnected`) before
+/// its panes are released, and a lookup then would find nothing to kill.
+public struct RelayTargets: Sendable {
+    private var bySurface: [UUID: String] = [:]
+
+    public init() {}
+
+    public mutating func record(_ surface: UUID, address: String, pane: String) {
+        bySurface[surface] = "\(address):\(pane)"
+    }
+
+    /// The targets of `surfaces`, forgotten as they are returned.
+    public mutating func take(_ surfaces: Set<UUID>) -> Set<String> {
+        Set(surfaces.compactMap { bySurface.removeValue(forKey: $0) })
+    }
+}
