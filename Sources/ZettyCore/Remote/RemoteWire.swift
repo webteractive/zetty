@@ -4,7 +4,8 @@ import Foundation
 public enum RemoteProtocol {
     /// Bump when a message changes incompatibly. A peer on another version is
     /// shown as "needs update" rather than dropped.
-    public static let version = 2
+    /// 3: the pairing-key challenge-response (`RemoteAuth`).
+    public static let version = 3
     public static let defaultPort: UInt16 = 47_391
     /// `ZETTY_REMOTE_PORT` names the environment variable that moves serving,
     /// dialling and relays to another port, read once at launch. It exists
@@ -81,15 +82,24 @@ public struct RemoteHello: Codable, Equatable, Sendable {
     /// Set by a relay: this connection carries one pane's terminal, not the
     /// workspace feed.
     public let attach: RemoteAttachRequest?
+    /// A fresh random challenge for the other end to prove the pairing key
+    /// over (`RemoteAuth`). Both hellos carry one.
+    public let challenge: String?
+    /// The client's proof, over the server's challenge and its own. Only the
+    /// client's hello has one: it is the second hello sent.
+    public let proof: String?
 
-    public init(machine: String, zettyVersion: String, protocolVersion: Int, attach: RemoteAttachRequest? = nil) {
+    public init(machine: String, zettyVersion: String, protocolVersion: Int, attach: RemoteAttachRequest? = nil,
+                challenge: String? = nil, proof: String? = nil) {
         self.machine = machine
         self.zettyVersion = zettyVersion
         self.protocolVersion = protocolVersion
         self.attach = attach
+        self.challenge = challenge
+        self.proof = proof
     }
 
-    private enum CodingKeys: String, CodingKey { case machine, zettyVersion, protocolVersion, attach }
+    private enum CodingKeys: String, CodingKey { case machine, zettyVersion, protocolVersion, attach, challenge, proof }
 
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -97,6 +107,8 @@ public struct RemoteHello: Codable, Equatable, Sendable {
         zettyVersion = try c.decode(String.self, forKey: .zettyVersion)
         protocolVersion = try c.decode(Int.self, forKey: .protocolVersion)
         attach = try c.decodeIfPresent(RemoteAttachRequest.self, forKey: .attach)
+        challenge = try c.decodeIfPresent(String.self, forKey: .challenge)
+        proof = try c.decodeIfPresent(String.self, forKey: .proof)
     }
 }
 
@@ -108,8 +120,11 @@ public enum RemoteMessage: Codable, Equatable, Sendable {
     case refused(String)
     /// The server accepted an attach. Binary `TerminalFrame`s follow.
     case attached
+    /// The server's proof of the pairing key, sent once it has checked the
+    /// client's and before anything else (`RemoteAuth`).
+    case proof(String)
 
-    private enum CodingKeys: String, CodingKey { case type, hello, snapshot, reason }
+    private enum CodingKeys: String, CodingKey { case type, hello, snapshot, reason, proof }
 
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -118,6 +133,7 @@ public enum RemoteMessage: Codable, Equatable, Sendable {
         case "snapshot": self = .snapshot(try c.decode(StatusSnapshot.self, forKey: .snapshot))
         case "refused": self = .refused(try c.decode(String.self, forKey: .reason))
         case "attached": self = .attached
+        case "proof": self = .proof(try c.decode(String.self, forKey: .proof))
         case let other:
             throw DecodingError.dataCorruptedError(forKey: .type, in: c,
                                                    debugDescription: "unknown message type \(other)")
@@ -138,6 +154,9 @@ public enum RemoteMessage: Codable, Equatable, Sendable {
             try c.encode(reason, forKey: .reason)
         case .attached:
             try c.encode("attached", forKey: .type)
+        case .proof(let proof):
+            try c.encode("proof", forKey: .type)
+            try c.encode(proof, forKey: .proof)
         }
     }
 }

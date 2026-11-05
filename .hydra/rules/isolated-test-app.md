@@ -61,6 +61,9 @@ zmx list | grep -c zetty-                     # note the count first
 iz quit --kill-sessions --force
 zmx list | grep -c zetty-                     # same count
 rm -rf /tmp/zti                               # removes the link, not ~/.claude/projects
+# With either Other Macs key on, the test app made a pairing key in the
+# login Keychain for home /tmp/zti; it outlives the folder:
+security delete-generic-password -s co.webteractive.zetty.remote-key -a /tmp/zti >/dev/null 2>&1
 ```
 
 ## What is NOT isolated, and how to get around it

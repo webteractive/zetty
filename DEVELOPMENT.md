@@ -65,7 +65,9 @@ open /Applications/zetty.app
 
 The generated project lists source files explicitly, so **run `tuist generate`
 again after adding or removing a file**. A build you compile yourself is ad-hoc
-signed, so macOS asks for folder access again after each build.
+signed, so macOS asks for folder access again after each build, and, with Other
+Macs on, once for the pairing key in the login Keychain (each build is a new
+signature to macOS).
 
 ## Tests
 
@@ -156,7 +158,7 @@ scripts/remote-e2e.sh --peer <user>@<lan-address>            # builds first
 scripts/remote-e2e.sh --peer <user>@<lan-address> --network  # also takes this Mac off Tailscale for a minute
 ```
 
-It needs SSH to the other Mac without a password (a key such as
+The pair gets a pairing key of its own, never yours. It needs SSH to the other Mac without a password (a key such as
 `~/.ssh/zetty-e2e`, picked up by default), both Macs on Tailscale as you, zmx
 here, and the other Mac awake and logged in. Use its LAN address: `--network`
 runs `tailscale down` here. `.hydra/rules/remote-machines.md` → "Testing" has

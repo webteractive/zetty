@@ -833,7 +833,10 @@ public enum ControlCLI {
         <pane> the pane's 8-hex id there (from `zetty status` on that Mac).
 
         The only verb that opens a network connection, straight to that Mac's
-        Zetty (it must serve, and keep sessions for the pane's project). It
+        Zetty (it must serve, and keep sessions for the pane's project). Both
+        Macs prove the pairing key before anything is typed (Settings →
+        General → Other Macs → Copy / Paste); this Mac's Zetty app proves it
+        for the relay, so the app must be running here. It
         reconnects by itself when the link drops, and says so in the pane.
 
         Changes nothing on either Mac: closing the pane only lets go of it.
@@ -1968,7 +1971,8 @@ public enum ControlCLI {
     /// connect at once: an app whose socket reads fail instead of blocking
     /// (see `ControlSocketIO`) answered "malformed request" to every client
     /// that spent those few ms in `JSONEncoder` after connecting.
-    private static func roundTrip(_ request: ControlRequest) -> ControlResponse {
+    /// Internal, not private: the `zetty attach` relay asks the app to sign.
+    static func roundTrip(_ request: ControlRequest) -> ControlResponse {
         if let transport { return transport(request) }
         guard let out = try? ControlWire.encodeLine(request) else { return .error("cannot encode request") }
         let path = (NSHomeDirectory() as NSString).appendingPathComponent(".zetty/zetty.sock")

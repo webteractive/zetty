@@ -252,7 +252,10 @@ Two halves fix it, both regression-tested:
   connection.** It never talks to the local socket: it dials the other Mac's
   Zetty on port 47391, or `ZETTY_REMOTE_PORT` (`remote-machines.md`,
   "Terminal connections") and
-  relays this terminal to that pane. It is what a remote pane runs, built by
+  relays this terminal to that pane, after both ends prove the pairing key
+  (`remote-machines.md`). It never holds the key: it sends this Mac's app the
+  internal requests `remote-sign` and `remote-check`, which are not CLI
+  verbs (like `account-running`) and are answered on the socket queue. It is what a remote pane runs, built by
   `RemoteAttachTarget.relayCommand`, which accepts only a hex pane id and a
   numeric tailnet address because the command goes through `bash -c`. Its
   `--help` text is in `ControlCLI.swift` with the rest.

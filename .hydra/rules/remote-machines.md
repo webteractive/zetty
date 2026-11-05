@@ -66,13 +66,110 @@ closing, renaming, reordering) is not part of phase 2.
 ## Who may connect
 
 `PeerAdmission.decide` checks in this order: no node from `whois` (unknown),
-then **tagged**, then **another user**, then **not macOS**. Tagged comes
+then **this Mac itself** (its stable ID, or any of its addresses), then
+**tagged**, then **another user**, then **not macOS**. This Mac comes first
+because any local macOS user can reach its tailnet address; it used to be
+refused only because `whois` of this Mac reports no OS (Tailscale 1.104),
+which nothing promises. Tagged comes
 before the user check because a tagged node belongs to the tag, not to a
 person, so "isn't signed in as you" would be the wrong explanation. The server
 runs `whois` on every connection *before reading anything*, and answers a
 refusal with a `refused` frame and a close. The client never dials a node it
 would refuse. Tagged Macs are still listed, with the refusal as their summary.
 Other people's Macs are only counted, in the Settings status line.
+
+## The pairing key: who is on that Mac
+
+**Admission vouches for the machine, never for who opened the socket.**
+Tailscale's tunnel on macOS is machine-wide, so another macOS account, a
+daemon, a Docker container or a NAT'd VM on the laptop all connect with the
+laptop's address and pass `whois` as Glen's Mac. Before the key, any of them
+could attach to a pane on the mini and type as Glen, and a second account on
+the mini could hold port 47391 while Zetty wasn't serving and pose as the mini
+to capture what Glen typed (security review, 2026-11-05, before 0.1.60).
+
+- **The key** is 32 random bytes, written as `zetty-pair-` and 43 base64url
+  characters (`RemotePairingKey`), in the **login Keychain**: a generic
+  password, service `co.webteractive.zetty.remote-key`, account = the home
+  folder (`RemotePairingKeyStore`), so an isolated test app has its own. It
+  started as a 0600 file in `~/.zetty`, never released: a re-review found
+  that Lima and Colima mount the home folder into their VMs by default (and
+  OrbStack exposes `/Users`), so anything in such a VM could read it and
+  connect as Glen. A VM only ever sees the encrypted Keychain database.
+- **Only the app reads it, once per launch, off main** (`loadPairingKeyIfNeeded`
+  → `RemotePairingKeyHolder`), and the server, the client and Settings use
+  that copy. macOS ties an item to the signature of the app that made it
+  (its partition list): any other reader gets a Keychain prompt, and plain
+  code can't widen that without the login password. Setting an "any app"
+  ACL with `SecAccess` was tried and changed nothing: `security
+  find-generic-password -w` still waited on a prompt (2026-11-05, Glen saw
+  it). So a self-signed dev rebuild prompts once at launch, with a remote
+  key on; Developer ID releases share the team partition and don't. That
+  launch read is the only one allowed to show UI.
+- **The relay never holds the key.** `zetty attach` asks this Mac's app over
+  the control socket: `remote-sign` (a client proof for the connection it has
+  open) and `remote-check` (the server's proof), answered on the socket queue
+  without touching main, since the relay may be in one of the app's own
+  panes. Lima and Colima can't connect to a host Unix socket through their
+  home mount; OrbStack may forward sockets, but anything that reaches the
+  control socket can already `zetty send` into panes, so that adds nothing. With no
+  app to ask, the relay says "Zetty isn't running on this Mac, and only it can
+  prove the pairing key". Over SSH it works whenever the app runs, because
+  the app, not the SSH session, reads the Keychain.
+- **It is made when either remote key is turned on, and only when missing.**
+  An unusable item (a locked Keychain, a key file with a typo, one others can
+  read) is never replaced, since that would unpair this Mac. It is never in
+  the config file, which people share and sync.
+- **`ZETTY_REMOTE_KEY_FILE` swaps the Keychain for a file**, for the test pair
+  only: the peer's copy starts over SSH, where the login Keychain is locked
+  ("User interaction is not allowed"). The file must be a regular file owned
+  by the user with no group or other access; a symlink is refused. Env vars
+  are trusted configuration; a real install never sets it.
+- **Pairing** is Settings → General → Other Macs → Copy on one Mac, Paste on
+  the others (Universal Clipboard carries it; the copy is marked
+  `org.nspasteboard.ConcealedType`). Settings shows a six-digit fingerprint to
+  compare, never the key. Paste calls `RemoteMachinesClient.retryNow`, so the
+  other Macs are dialled at once rather than at the next backoff.
+- **The exchange** (`RemoteAuth`, protocol 3): the server's hello carries a
+  random challenge; the client answers with its own hello carrying its
+  challenge and an HMAC-SHA256 proof; the server checks it before it sends
+  anything else or touches a pane, then sends a `proof` message, which the
+  client checks before it trusts a snapshot or sends a keystroke. A snapshot
+  before the proof is a refusal. Each proof covers its role, both challenges
+  and **both socket addresses as that end reads them** (`SocketEnds`), so a
+  process on one of Glen's Macs can't relay a real Zetty's answers: the real
+  one signs for its own address, not the one the viewer dialled. The
+  comparison is `HMAC.isValidAuthenticationCode` (constant time).
+- **The holder is asked for every connection**, so a pasted key counts at
+  once. Paste saves off main (replacing an item another build made may ask),
+  then updates the holder. A relay in a pane of the isolated test app asks
+  that app (its `CFFIXED_USER_HOME`), so it proves the test app's key. The
+  isolated app's item stays in the login Keychain after teardown; remove it
+  with `security delete-generic-password -s co.webteractive.zetty.remote-key -a /tmp/zti`.
+- **What each refusal says:** no key on the server ("<Mac> has no pairing key
+  yet"); different keys ("<this> and <that> have different pairing keys");
+  a server that can't prove it ("Couldn't confirm this is <Mac>'s Zetty").
+  Until a server has proved the key, the header keeps Tailscale's name for it,
+  so an impostor can't name itself, and the relay names the address it dialled.
+- **Anything a server says before its proof is plain text**
+  (`RemoteText.displayable`: no C0, DEL, C1 or format characters, 300
+  characters at most), in the sidebar and in a relay's pane. Ghostty lets a
+  program write the clipboard with OSC 52, so an impostor's `refused` reason
+  could otherwise have put its own key on the clipboard beside "click Paste".
+  **Key-shaped text is blanked too** (`zetty-pair-`, and any run of 20 or more
+  base64url characters): a third review found a refusal could simply print a
+  key to copy, with zero-width characters to hide it from a naive filter.
+- **Paste over a key takes a second click**, with both fingerprints named in
+  the status line, and an unknown key (the remote switches off, or the launch
+  read not landed) counts as one being replaced. The launch read lands with
+  `setIfUnknown`, so it can't overwrite a key pasted while it waited. Replacing
+  the key decides who reaches this Mac's panes, so text on a screen alone must
+  never be enough.
+- **Copy leaves the clipboard in a minute** unless something else was copied
+  since: VMs that share the clipboard (Parallels, VMware, UTM) would read it.
+- **Not covered:** a process running as Glen's own macOS user can read the
+  key. That one already owns his account on that Mac. Neither is root, or a
+  login password weak enough to crack the Keychain database offline.
 
 ## Wire and limits
 
@@ -88,8 +185,9 @@ Other people's Macs are only counted, in the Settings status line.
   other.
 - A frame over **8 MiB** closes the connection before its body is read.
 - Each side sends `hello` first. The server waits 5s for the client's, then
-  closes. Another `protocolVersion` keeps the connection open with no
-  snapshots, and the client shows "needs update". Bump
+  closes. The client sends its hello only after the server's, because it
+  answers the server's challenge. Another `protocolVersion` keeps the
+  connection open with no snapshots, and the client shows "needs update". Bump
   `RemoteProtocol.version` only for an incompatible message change.
 - The server drops a feed peer with more than 8 frames queued (a slow or
   dead reader), and accepts at most 64 connections, since each one costs a
@@ -213,8 +311,18 @@ through `setNeedsChromeRefresh`, since a feed can tick as fast as a title.
   and drives the view with `remote open|close`. It types through a relay
   from a Python pty on the peer, then reads the result back with `capture`.
   `--network` adds the offline check (`tailscale down --accept-risk=lose-ssh`
-  here: without the flag the CLI refuses and changes nothing). First full
-  run, 2026-11-05: 25 checks pass, offline seen in 13s, back in 15s.
+  here: without the flag the CLI refuses and changes nothing). The pair gets
+  a fresh pairing key of its own, in a file. A relay with no Zetty to sign for
+  it, and clients from the peer with a guessed proof or none, must be
+  refused, and two stand-in servers on this Mac's address and port
+  (Python, `fake.py`) must read "needs update" (protocol 2) and "Couldn't
+  confirm" (protocol 3 with a made-up proof), with nothing of theirs in the
+  sidebar and no relay typing into them; a third sends an OSC 52 escape in
+  its refusal, which must reach neither the relay's pane nor the sidebar.
+  The Keychain path itself is not on that run (the peer's Keychain is locked
+  to SSH): check it in the isolated test app, where the launch makes the
+  item and a relay to a loopback stand-in carries a proof. Run on
+  2026-11-05: 32 checks pass with `--network`.
 - **The peer's copy is started as a bare binary over SSH, with nohup.**
   `open -n` can't start it: `LSMultipleInstancesProhibited` makes Launch
   Services hand the launch to the installed app (and drop `--env`). Started
@@ -247,8 +355,7 @@ through `setNeedsChromeRefresh`, since a feed can tick as fast as a title.
   remote pane (the relay and its login parent, above), gone within about a
   second of the pane closing on either Mac.
 - **Two Macs, both signed in to Tailscale as Glen.** Serve on the mini, show on
-  the laptop. `remote-e2e.sh` covers all of this but the version mismatch.
-  Check: the mini's projects and dots appear and update within
+  the laptop. `remote-e2e.sh` covers all of this. Check: the mini's projects and dots appear and update within
   ~1s; `tailscale down` or sleeping the mini gives offline within ~16s and
   online again after; `printf '\xff\xff\xff\xff' | nc <ip> 47391` from the
   mini closes only that connection; a build with another `RemoteProtocol.version`

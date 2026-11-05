@@ -12,6 +12,9 @@ final class RemoteMachinesClient {
     private let machineName: String
     private let zettyVersion: String
     private let onChange: ([RemoteMachine]) -> Void
+    /// The app's copy (`RemotePairingKeyHolder`), asked for each connection,
+    /// so a key pasted in Settings counts at once.
+    private let pairingKey: () -> RemotePairingKey?
     private let queue = DispatchQueue(label: "co.webteractive.zetty.remote-client")
 
     /// Main-thread copy, sorted by name.
@@ -43,10 +46,12 @@ final class RemoteMachinesClient {
     }
 
     init(cache: RemoteMachineCache, machineName: String, zettyVersion: String,
+         pairingKey: @escaping () -> RemotePairingKey?,
          onChange: @escaping ([RemoteMachine]) -> Void) {
         self.cache = cache
         self.machineName = machineName
         self.zettyVersion = zettyVersion
+        self.pairingKey = pairingKey
         self.onChange = onChange
         queue.async { [self] in
             for machine in cache.load() { byID[machine.stableID] = machine }
@@ -74,6 +79,18 @@ final class RemoteMachinesClient {
             // count), so only a still-pending one means "wait".
             for id in candidates.keys where links[id] == nil && retries[id]?.work == nil { connect(id) }
             emit()
+        }
+    }
+
+    /// Dials every Mac not connected now, skipping the backoff: the pairing
+    /// key changed, so a Mac that refused it may take it.
+    func retryNow() {
+        queue.async { [self] in
+            guard !stopped else { return }
+            for id in candidates.keys where links[id] == nil {
+                cancelRetry(id)
+                connect(id)
+            }
         }
     }
 
@@ -138,16 +155,9 @@ final class RemoteMachinesClient {
         links[id] = link
         dialled[id] = address
         byID[id]?.state = .connecting
-        link.onConnected = { [weak self, weak link] in
-            guard let self, let link else { return }
-            let hello = RemoteHello(machine: self.machineName, zettyVersion: self.zettyVersion,
-                                    protocolVersion: RemoteProtocol.version)
-            guard let frame = try? RemoteFrame.encode(.hello(hello)), link.send(frame) else {
-                self.drop(id, retry: true)
-                return
-            }
-            link.startReading()
-        }
+        // The server speaks first: its hello carries the challenge this
+        // side's hello answers (`answer`).
+        link.onConnected = { [weak link] in link?.startReading() }
         link.onMessages = { [weak self] messages in self?.received(messages, from: id) }
         link.onFailed = { [weak self] in self?.drop(id, retry: true) }
         queue.asyncAfter(deadline: .now() + Self.connectTimeout) { [weak self, weak link] in
@@ -157,17 +167,46 @@ final class RemoteMachinesClient {
     }
 
     private func received(_ messages: [RemoteMessage], from id: String) {
-        guard var machine = byID[id]
+        guard let link = links[id], var machine = byID[id]
             ?? candidates[id].map({ RemoteMachine(stableID: id, name: $0.hostName, state: .connecting,
                                                   lastSeen: nil, workspace: nil) }) else { return }
+        /// Records why, then hangs up. It is retried, so a key pasted on
+        /// either Mac takes effect without a restart.
+        func distrust(_ reason: String) {
+            machine.state = .refused(reason)
+            byID[id] = machine
+            drop(id, retry: true)
+        }
         for message in messages {
             switch message {
             case .hello(let theirs):
-                machine.name = theirs.machine
-                if theirs.protocolVersion != RemoteProtocol.version {
+                // The name a server gives itself counts once it has proved
+                // the key; until then the header keeps Tailscale's name, so
+                // an impostor can't put words in it.
+                link.serverName = RemoteText.displayable(theirs.machine, limit: 80)
+                guard theirs.protocolVersion == RemoteProtocol.version else {
                     machine.state = .needsUpdate(theirs: theirs.protocolVersion)
+                    continue
                 }
+                guard let key = pairingKey() else {
+                    return distrust("This Mac has no pairing key yet: open Settings → General → Other Macs")
+                }
+                guard let frame = answer(theirs, key: key, on: link), link.send(frame) else {
+                    return distrust("\(machine.name) didn't start the pairing check")
+                }
+            case .proof(let proof):
+                guard let key = pairingKey(), let ends = link.ends, let serverChallenge = link.serverChallenge,
+                      RemoteAuth.isValid(proof, key: key, role: .server, server: ends.peer, client: ends.local,
+                                         serverChallenge: serverChallenge, clientChallenge: link.challenge) else {
+                    return distrust("Couldn't confirm this is \(machine.name)'s Zetty: the pairing keys don't match. "
+                        + "Copy it from one Mac to the other in Settings → General → Other Macs")
+                }
+                link.verified = true
+                if let name = link.serverName { machine.name = name }
             case .snapshot(let snapshot):
+                // Nothing from a server that hasn't proved the key reaches
+                // the sidebar, and no relay ever dials its address.
+                guard link.verified else { return distrust("\(machine.name) sent its workspace before proving it's yours") }
                 machine.workspace = snapshot
                 machine.address = dialled[id] ?? machine.address
                 machine.lastSeen = Date()
@@ -175,7 +214,8 @@ final class RemoteMachinesClient {
                 retries[id] = nil
                 scheduleSave()
             case .refused(let reason):
-                machine.state = .refused(reason)
+                // Sent before any proof, so it is only ever shown as plain text.
+                machine.state = .refused(RemoteText.displayable(reason))
             case .attached:
                 // Only a terminal connection gets this; a feed never asks.
                 break
@@ -183,6 +223,18 @@ final class RemoteMachinesClient {
         }
         byID[id] = machine
         emit()
+    }
+
+    /// This side's hello in reply to the server's: a fresh challenge, and a
+    /// proof over both. Nil when the server sent no challenge.
+    private func answer(_ theirs: RemoteHello, key: RemotePairingKey, on link: Link) -> Data? {
+        guard let serverChallenge = theirs.challenge, !serverChallenge.isEmpty, let ends = link.ends else { return nil }
+        link.serverChallenge = serverChallenge
+        let proof = RemoteAuth.proof(key: key, role: .client, server: ends.peer, client: ends.local,
+                                     serverChallenge: serverChallenge, clientChallenge: link.challenge)
+        let hello = RemoteHello(machine: machineName, zettyVersion: zettyVersion,
+                                protocolVersion: RemoteProtocol.version, challenge: link.challenge, proof: proof)
+        return try? RemoteFrame.encode(.hello(hello))
     }
 
     /// Closes `id`'s connection. A dropped peer goes offline, unless it said
@@ -224,6 +276,15 @@ private final class Link {
     private var decoder = RemoteFrameDecoder()
     private var closed = false
     private(set) var isConnected = false
+    /// This side's challenge, the server's, and whether the server has
+    /// proved the pairing key over both.
+    let challenge = RemoteAuth.challenge()
+    var serverChallenge: String?
+    var verified = false
+    /// The name in the server's hello, used once it is verified.
+    var serverName: String?
+    /// The socket's own address and the server's, as the proofs name them.
+    var ends: (local: String, peer: String)? { SocketEnds.of(fd) }
 
     var onConnected: (() -> Void)?
     var onMessages: (([RemoteMessage]) -> Void)?

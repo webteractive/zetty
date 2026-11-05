@@ -43,6 +43,9 @@ final class RemoteServer {
     private let machineName: String
     private let zettyVersion: String
     private let whois: (String) -> TailscaleNode?
+    /// The app's copy (`RemotePairingKeyHolder`), asked for each connection,
+    /// so a key pasted in Settings counts at once.
+    private let pairingKey: () -> RemotePairingKey?
     private let terminalHost: RemoteTerminalHosting?
     private let queue = DispatchQueue(label: "co.webteractive.zetty.remote-server")
     /// `whois` shells out and can take a while, so it never runs on `queue`.
@@ -68,11 +71,13 @@ final class RemoteServer {
 
     /// With no `terminalHost`, every attach is refused.
     init(machineName: String, zettyVersion: String, terminalHost: RemoteTerminalHosting? = nil,
-         whois: @escaping (String) -> TailscaleNode? = { TailscaleCLI.whois($0) }) {
+         whois: @escaping (String) -> TailscaleNode? = { TailscaleCLI.whois($0) },
+         pairingKey: @escaping () -> RemotePairingKey?) {
         self.machineName = machineName
         self.zettyVersion = zettyVersion
         self.terminalHost = terminalHost
         self.whois = whois
+        self.pairingKey = pairingKey
     }
 
     /// Binds one listener per address on `RemoteProtocol.port`, closes the
@@ -162,8 +167,9 @@ final class RemoteServer {
             }
             return
         }
+        connection.challenge = RemoteAuth.challenge()
         let hello = RemoteHello(machine: machineName, zettyVersion: zettyVersion,
-                                protocolVersion: RemoteProtocol.version)
+                                protocolVersion: RemoteProtocol.version, challenge: connection.challenge)
         guard let frame = try? RemoteFrame.encode(.hello(hello)) else { connection.close(); return }
         connection.phase = .awaitingHello
         send(frame, on: connection)
@@ -202,6 +208,11 @@ final class RemoteServer {
                 connection.phase = .mismatched
                 return
             }
+            // Admission vouched for the machine; the pairing key vouches for
+            // the Zetty on it. Nothing else is sent, and no pane is touched,
+            // until the client has proved it.
+            guard let proof = proveBack(theirs, on: connection) else { return }
+            connection.enqueue(proof)
             if let request = theirs.attach {
                 beginAttach(request, on: connection)
                 return
@@ -213,6 +224,28 @@ final class RemoteServer {
         default:
             do { _ = try connection.decoder.push(bytes) } catch { connection.close() }
         }
+    }
+
+    /// Checks the client's proof in `theirs`, and answers with this side's
+    /// proof frame, or refuses and returns nil.
+    private func proveBack(_ theirs: RemoteHello, on connection: Connection) -> Data? {
+        guard let key = pairingKey() else {
+            refuse(connection, "\(machineName) has no pairing key yet: open Zetty's Settings → General → Other Macs there")
+            return nil
+        }
+        guard let ends = SocketEnds.of(connection.fd), let clientChallenge = theirs.challenge,
+              let clientProof = theirs.proof,
+              RemoteAuth.isValid(clientProof, key: key, role: .client, server: ends.local, client: ends.peer,
+                                 serverChallenge: connection.challenge, clientChallenge: clientChallenge),
+              let frame = try? RemoteFrame.encode(.proof(RemoteAuth.proof(
+                  key: key, role: .server, server: ends.local, client: ends.peer,
+                  serverChallenge: connection.challenge, clientChallenge: clientChallenge)))
+        else {
+            refuse(connection, "\(theirs.machine) and \(machineName) have different pairing keys. "
+                + "Copy it from one to the other in Settings → General → Other Macs")
+            return nil
+        }
+        return frame
     }
 
     // MARK: - Terminal connections
@@ -353,6 +386,8 @@ private final class Connection {
 
     let fd: Int32
     var phase = Phase.admitting
+    /// This side's challenge, sent in its hello.
+    var challenge = ""
     var decoder = RemoteFrameDecoder()
     /// Takes over from `decoder` once a terminal connection is attached.
     var terminalDecoder = TerminalFrameDecoder()

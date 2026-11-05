@@ -55,6 +55,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     private let serveRemoteSwitch = NSSwitch()
     private let showRemoteSwitch = NSSwitch()
     private let tailscaleStatusLabel = NSTextField(wrappingLabelWithString: "")
+    private let pairingStatusLabel = NSTextField(wrappingLabelWithString: "")
 
     // Sessions section controls.
     private let preserveSwitch = NSSwitch()
@@ -178,6 +179,8 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     /// Answers with Tailscale's current state on main: at once when the
     /// monitor is running, else after a one-off read off the main thread.
     var tailscaleStateProvider: ((@escaping (TailscaleState) -> Void) -> Void)?
+    /// A pairing key was pasted: the other Macs are worth dialling again now.
+    var onPairingKeyChanged: (() -> Void)?
 
     private let accountsTable = NSTableView()
     private var accountRows: [AgentAccount] = []
@@ -380,8 +383,8 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         serveRemoteSwitch.action = #selector(serveRemoteToggled(_:))
         addFullWidth(switchRow("Let other Macs connect", control: serveRemoteSwitch), to: stack)
         stack.addArrangedSubview(caption(
-            "Your other Macs signed in to Tailscale as you can see this Mac's projects and "
-            + "agent status. View-only, and only over Tailscale."
+            "Your other Macs signed in to Tailscale as you, with this Mac's pairing key, can "
+            + "see this Mac's projects and type in its panes. Only over Tailscale."
         ))
         showRemoteSwitch.target = self
         showRemoteSwitch.action = #selector(showRemoteToggled(_:))
@@ -392,6 +395,27 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         tailscaleStatusLabel.font = ZTheme.chromeFont(size: 11)
         tailscaleStatusLabel.textColor = ZTheme.current.fg3Color
         addFullWidth(tailscaleStatusLabel, to: stack)
+
+        let pairingLabel = NSTextField(labelWithString: "Pairing key")
+        pairingLabel.font = ZTheme.chromeFont(size: 13, weight: .medium)
+        pairingLabel.textColor = ZTheme.current.fgColor
+        let copyKey = NSButton(title: "Copy", target: self, action: #selector(copyPairingKey(_:)))
+        copyKey.bezelStyle = .rounded
+        let pasteKey = NSButton(title: "Paste", target: self, action: #selector(pastePairingKey(_:)))
+        pasteKey.bezelStyle = .rounded
+        let pairingRow = NSStackView(views: [pairingLabel, NSView(), copyKey, pasteKey])
+        pairingRow.orientation = .horizontal
+        pairingRow.spacing = 8
+        addFullWidth(pairingRow, to: stack)
+        stack.addArrangedSubview(caption(
+            "Your Macs connect only if they have the same key. Copy it on one Mac, then "
+            + "Paste on each of the others (Universal Clipboard carries it). It's kept in your "
+            + "login Keychain, so other users, VMs and containers on your Macs can't read it."
+        ))
+        pairingStatusLabel.font = ZTheme.chromeFont(size: 11)
+        pairingStatusLabel.textColor = ZTheme.current.fg3Color
+        addFullWidth(pairingStatusLabel, to: stack)
+        showPairingKey()
 
         stack.addArrangedSubview(spacer())
         stack.addArrangedSubview(sectionHeader("Command Line"))
@@ -1327,6 +1351,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         serveRemoteSwitch.state = config.serveRemote ? .on : .off
         showRemoteSwitch.state = config.showRemoteMachines ? .on : .off
         tailscaleStateProvider? { [weak self] state in self?.showTailscaleState(state) }
+        showPairingKey()
 
         if let index = SessionsViewMode.allCases.firstIndex(of: config.sessionsView) {
             sessionsViewPopup.selectItem(at: index)
@@ -1412,6 +1437,96 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
 
     @objc private func showRemoteToggled(_ sender: NSSwitch) {
         updateConfig { $0.showRemoteMachines = sender.state == .on }
+    }
+
+    /// The app's copy of the key. Settings never reads the Keychain itself:
+    /// a read from here could raise a prompt on main.
+    var pairingKeys: RemotePairingKeyHolder?
+
+    /// "This Mac's key: 3fa9c1": the same six characters on every Mac that
+    /// will connect. Called again when the launch read lands.
+    func showPairingKey(_ note: String? = nil) {
+        var text: String
+        switch pairingKeys?.state {
+        case .key(let key)?: text = "This Mac's key: \(key.fingerprint). It must match on your other Macs."
+        case .unusable?: text = "Zetty couldn't read its pairing key from your login Keychain. Paste one to replace it."
+        case .missing?: text = "No pairing key yet. Turn on either switch above, or Paste one from another Mac."
+        case nil: text = "This Mac's key loads when either switch above is on."
+        }
+        if let note { text = note + " " + text }
+        pairingStatusLabel.stringValue = text
+    }
+
+    @objc private func copyPairingKey(_ sender: Any?) {
+        guard let key = pairingKeys?.key else {
+            showPairingKey("Nothing to copy.")
+            return
+        }
+        let board = NSPasteboard.general
+        board.clearContents()
+        // Concealed: clipboard managers that honour the marker keep no copy.
+        board.declareTypes([.string, NSPasteboard.PasteboardType("org.nspasteboard.ConcealedType")], owner: nil)
+        board.setString(key.text, forType: .string)
+        board.setString("", forType: NSPasteboard.PasteboardType("org.nspasteboard.ConcealedType"))
+        // VMs that share the clipboard would see it there too, so it doesn't
+        // stay: cleared in a minute unless something else was copied since.
+        let copied = board.changeCount
+        DispatchQueue.main.asyncAfter(deadline: .now() + 60) {
+            if NSPasteboard.general.changeCount == copied { NSPasteboard.general.clearContents() }
+        }
+        showPairingKey("Copied. It leaves the clipboard in a minute.")
+    }
+
+    /// The fingerprint a first Paste click offered to replace this Mac's key
+    /// with; a second click with that key on the clipboard confirms it.
+    private var pendingPaste: String?
+
+    @objc private func pastePairingKey(_ sender: Any?) {
+        guard let holder = pairingKeys else { return }
+        guard let text = NSPasteboard.general.string(forType: .string), let key = RemotePairingKey(text: text) else {
+            pendingPaste = nil
+            showPairingKey("The clipboard doesn't hold a Zetty pairing key.")
+            return
+        }
+        if holder.key == key {
+            pendingPaste = nil
+            showPairingKey("That's already this Mac's key.")
+            return
+        }
+        // Replacing a key decides who can reach this Mac's panes, so it takes
+        // a second click, with both keys named: text on a screen (a pane, a
+        // message) is never enough to swap it in.
+        // Unknown (the remote switches are off, or the launch read hasn't
+        // landed) counts as replacing: a key may well be stored.
+        let replacing: String? = switch holder.state {
+        case .key(let current)?: current.fingerprint
+        case .unusable?: "the one it can't read"
+        case nil: "if it has one"
+        case .missing?: nil
+        }
+        if let replacing, pendingPaste != key.fingerprint {
+            pendingPaste = key.fingerprint
+            pairingStatusLabel.stringValue = "Paste replaces this Mac's key \(replacing) with "
+                + "\(key.fingerprint). Click Paste again to confirm."
+            return
+        }
+        pendingPaste = nil
+        pairingStatusLabel.stringValue = "Saving…"
+        // Off main: replacing an item another build made may ask first.
+        let store = RemotePairingKeyStore(home: NSHomeDirectory())
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            let saved = (try? store.save(key)) != nil
+            if saved { holder.set(.key(key)) }
+            DispatchQueue.main.async {
+                guard let self else { return }
+                guard saved else {
+                    self.showPairingKey("Couldn't save the key to your login Keychain.")
+                    return
+                }
+                self.onPairingKeyChanged?()
+                self.showPairingKey("Pasted.")
+            }
+        }
     }
 
     /// The status line under the Other Macs switches.

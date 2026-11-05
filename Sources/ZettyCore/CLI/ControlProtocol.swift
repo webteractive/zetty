@@ -234,6 +234,13 @@ public enum ControlRequest: Equatable, Sendable {
     case remoteOpen(machine: String, project: String)
     /// Back to this Mac's project, as it was left. Response `.ok`.
     case remoteClose
+    /// For the `zetty attach` relay, which never holds the pairing key: the
+    /// app proves it as the client of the connection the relay has open.
+    /// Response `.text(proof)`. Not a CLI verb.
+    case remoteSign(server: String, client: String, serverChallenge: String, clientChallenge: String)
+    /// The relay's check of the server's proof, by the app. Response `.ok`
+    /// when it is right, `.error` otherwise. Not a CLI verb.
+    case remoteCheck(proof: String, server: String, client: String, serverChallenge: String, clientChallenge: String)
 }
 
 extension ControlRequest {
@@ -263,7 +270,7 @@ extension ControlRequest {
 
 extension ControlRequest: Codable {
     private enum CodingKeys: String, CodingKey {
-        case command, target, text, enter, keys, project, wholeTab, killSessions, simulateRestart, vertical, lines, path, name, gitInit, focus, fetch, discard, line, column, space, newName, color, icon, account, probe, surface, on, profile, slot, collapse, view, force, handoff, wake, asker, asking, cancel, machine
+        case command, target, text, enter, keys, project, wholeTab, killSessions, simulateRestart, vertical, lines, path, name, gitInit, focus, fetch, discard, line, column, space, newName, color, icon, account, probe, surface, on, profile, slot, collapse, view, force, handoff, wake, asker, asking, cancel, machine, server, client, serverChallenge, clientChallenge, proof
     }
 
     public init(from decoder: Decoder) throws {
@@ -296,6 +303,17 @@ extension ControlRequest: Codable {
             self = .remoteOpen(machine: try container.decode(String.self, forKey: .machine),
                                project: try container.decode(String.self, forKey: .project))
         case "remote-close": self = .remoteClose
+        case "remote-sign":
+            self = .remoteSign(server: try container.decode(String.self, forKey: .server),
+                               client: try container.decode(String.self, forKey: .client),
+                               serverChallenge: try container.decode(String.self, forKey: .serverChallenge),
+                               clientChallenge: try container.decode(String.self, forKey: .clientChallenge))
+        case "remote-check":
+            self = .remoteCheck(proof: try container.decode(String.self, forKey: .proof),
+                                server: try container.decode(String.self, forKey: .server),
+                                client: try container.decode(String.self, forKey: .client),
+                                serverChallenge: try container.decode(String.self, forKey: .serverChallenge),
+                                clientChallenge: try container.decode(String.self, forKey: .clientChallenge))
         // decodeIfPresent for the same reason `hibernated` and `live` use it:
         // an older standalone binary must not throw on a newer app's payload.
         case "tiles":
@@ -482,6 +500,19 @@ extension ControlRequest: Codable {
             try container.encode(project, forKey: .project)
         case .remoteClose:
             try container.encode("remote-close", forKey: .command)
+        case .remoteSign(let server, let client, let serverChallenge, let clientChallenge):
+            try container.encode("remote-sign", forKey: .command)
+            try container.encode(server, forKey: .server)
+            try container.encode(client, forKey: .client)
+            try container.encode(serverChallenge, forKey: .serverChallenge)
+            try container.encode(clientChallenge, forKey: .clientChallenge)
+        case .remoteCheck(let proof, let server, let client, let serverChallenge, let clientChallenge):
+            try container.encode("remote-check", forKey: .command)
+            try container.encode(proof, forKey: .proof)
+            try container.encode(server, forKey: .server)
+            try container.encode(client, forKey: .client)
+            try container.encode(serverChallenge, forKey: .serverChallenge)
+            try container.encode(clientChallenge, forKey: .clientChallenge)
         case .tiles(let on, let profile):
             try container.encode("tiles", forKey: .command)
             try container.encodeIfPresent(on, forKey: .on)

@@ -6,12 +6,19 @@ public enum PeerAdmission: Equatable, Sendable {
     case admit
     case refuse(Refusal)
 
-    public enum Refusal: Equatable, Sendable { case tagged, otherUser, notMac, unknownNode }
+    public enum Refusal: Equatable, Sendable { case tagged, otherUser, notMac, unknownNode, thisMac }
 
-    /// Checked in this order. Tags come before the user because a tagged node
+    /// Checked in this order. This Mac itself comes first: any local macOS
+    /// user can reach its tailnet address, so admitting it would let another
+    /// user here open this user's panes. It used to be refused only because
+    /// `whois` of this Mac's own address reports no OS, which no Tailscale
+    /// release promises. Tags come before the user because a tagged node
     /// belongs to the tag, not to a person, so "another user" would mislead.
     public static func decide(me: TailscaleNode, peer: TailscaleNode?) -> PeerAdmission {
         guard let peer else { return .refuse(.unknownNode) }
+        if peer.stableID == me.stableID || !Set(peer.addresses).isDisjoint(with: me.addresses) {
+            return .refuse(.thisMac)
+        }
         if !peer.tags.isEmpty { return .refuse(.tagged) }
         if peer.userID != me.userID { return .refuse(.otherUser) }
         if peer.os != "macOS" { return .refuse(.notMac) }
@@ -57,6 +64,7 @@ extension PeerAdmission.Refusal {
         case .otherUser: "\(machine) isn't signed in to Tailscale as you"
         case .notMac: "\(machine) isn't a Mac"
         case .unknownNode: "Tailscale doesn't know \(machine)"
+        case .thisMac: "\(machine) is this Mac, which doesn't connect to itself"
         }
     }
 }

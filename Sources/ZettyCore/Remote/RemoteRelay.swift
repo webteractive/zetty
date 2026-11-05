@@ -215,26 +215,73 @@ public enum RemoteRelay {
         var decoder = RemoteFrameDecoder()
 
         // The server speaks first: its hello, or a refusal of this Mac.
+        let serverChallenge: String
         switch readMessage(fd, &decoder, until: deadline) {
         case .hello(let theirs)?:
             guard theirs.protocolVersion == RemoteProtocol.version else {
                 Darwin.close(fd)
                 return .failed(.versionMismatch)
             }
+            guard let challenge = theirs.challenge, !challenge.isEmpty else {
+                Darwin.close(fd)
+                return .failed(.refused("\(target.host) didn't start the pairing check"))
+            }
+            serverChallenge = challenge
         case .refused(let reason)?:
             Darwin.close(fd)
-            return .failed(.refused(reason))
+            return .failed(.refused(RemoteText.displayable(reason)))
         default:
             Darwin.close(fd)
             return .failed(.connectFailed)
         }
 
+        // Both ends prove the pairing key (`RemoteAuth`) before a keystroke
+        // goes anywhere: Tailscale only vouches for the machine. The relay
+        // never holds the key; this Mac's Zetty signs and checks for it over
+        // the control socket, which nothing outside this user can reach.
+        guard let ends = SocketEnds.of(fd) else {
+            Darwin.close(fd)
+            return .failed(.dropped)
+        }
+        let challenge = RemoteAuth.challenge()
+        let proof: String
+        switch ControlCLI.roundTrip(.remoteSign(server: ends.peer, client: ends.local,
+                                                serverChallenge: serverChallenge, clientChallenge: challenge)) {
+        case .text(let signed):
+            proof = signed
+        case .error(let message) where message.hasPrefix("cannot reach zetty"):
+            Darwin.close(fd)
+            return .failed(.refused("Zetty isn't running on this Mac, and only it can prove the pairing key"))
+        case .error(let message):
+            Darwin.close(fd)
+            return .failed(.refused(message))
+        default:
+            Darwin.close(fd)
+            return .failed(.dropped)
+        }
         let size = windowSize()
         let request = RemoteAttachRequest(pane: target.pane, rows: size.rows, cols: size.cols, scrollback: scrollback)
         let hello = RemoteHello(machine: Host.current().localizedName ?? ProcessInfo.processInfo.hostName,
                                 zettyVersion: ControlCLI.versionInfo?.version ?? "dev",
-                                protocolVersion: RemoteProtocol.version, attach: request)
+                                protocolVersion: RemoteProtocol.version, attach: request,
+                                challenge: challenge, proof: proof)
         guard let frame = try? RemoteFrame.encode(.hello(hello)), writeAll(fd, frame) else {
+            Darwin.close(fd)
+            return .failed(.dropped)
+        }
+
+        switch readMessage(fd, &decoder, until: deadline) {
+        case .proof(let theirs)?:
+            guard ControlCLI.roundTrip(.remoteCheck(proof: theirs, server: ends.peer, client: ends.local,
+                                                    serverChallenge: serverChallenge,
+                                                    clientChallenge: challenge)) == .ok else {
+                Darwin.close(fd)
+                return .failed(.refused("couldn't confirm this is the Zetty on \(target.host): the pairing keys don't match"))
+            }
+        case .refused(let reason)?:
+            Darwin.close(fd)
+            return .failed(.refused(RemoteText.displayable(reason)))
+        default:
             Darwin.close(fd)
             return .failed(.dropped)
         }
@@ -244,7 +291,7 @@ public enum RemoteRelay {
             return .attached(fd: fd, decoder: TerminalFrameDecoder(seed: decoder.takeRemainder()))
         case .refused(let reason)?:
             Darwin.close(fd)
-            return .failed(.refused(reason))
+            return .failed(.refused(RemoteText.displayable(reason)))
         default:
             Darwin.close(fd)
             return .failed(.dropped)

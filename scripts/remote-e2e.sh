@@ -82,6 +82,7 @@ fail() { printf 'FAIL  %s\n' "$*"; FAILS=$((FAILS + 1)); }
 #   machine-state <id>          the state that Mac has, or "absent"
 #   has-pane <id> <pane>        "yes" when that Mac's workspace has the pane
 #   lists <id>                  "yes" when that Mac is listed at all
+#   has-project <id> <name>     "yes" when that Mac's workspace has the project
 #   shown-panes                 the shown tab's pane ids, space-separated
 #   shown-placeholder           what the remote view says instead, if anything
 report() {
@@ -101,6 +102,9 @@ elif q[0] == "has-pane":
     ws = (ms.get(q[1]) or {}).get("workspace") or {}
     ids = [p["id"] for pr in ws.get("projects", []) for t in pr.get("tabs", []) for p in t.get("panes", [])]
     print("yes" if q[2] in ids else "no")
+elif q[0] == "has-project":
+    ws = (ms.get(q[1]) or {}).get("workspace") or {}
+    print("yes" if any(p.get("name") == q[2] for p in ws.get("projects", [])) else "no")
 elif q[0] == "shown-panes":
     print(" ".join((r.get("shown") or {}).get("panes", [])))
 elif q[0] == "shown-placeholder":
@@ -141,6 +145,7 @@ TAILSCALE_DOWN=0
 teardown() {
     local status=$?
     trap - EXIT INT TERM
+    [ -n "${FAKE:-}" ] && kill "$FAKE" 2>/dev/null
     if [ "$TAILSCALE_DOWN" = 1 ]; then
         log "bringing Tailscale back up here"
         ts up >/dev/null 2>&1
@@ -209,22 +214,31 @@ rm -rf "$ROOT"
 mkdir -p "$ROOT/.config/zetty" "$ROOT/zmx" "$ROOT/work"
 ditto "$APP" "$TEST_APP"
 printf 'preserve-sessions = true\nzetty-serve = true\nzetty-remote-machines = true\n' > "$ROOT/.config/zetty/config"
+# One pairing key for the pair, never the user's own: the test proves the
+# check, it doesn't borrow the real key. A file (ZETTY_REMOTE_KEY_FILE), not
+# the Keychain: the peer's copy starts over SSH, where the login Keychain is
+# locked.
+new_key() { python3 -I -c 'import base64,os; print("zetty-pair-" + base64.urlsafe_b64encode(os.urandom(32)).decode().rstrip("="))'; }
+KEY=$(new_key)
+mkdir -p "$ROOT/.zetty" && (umask 077; printf '%s\n' "$KEY" > "$ROOT/.zetty/remote-key")
 
 # The peer's copy: same bytes, its own home. It serves too, so each side
 # also checks that it never lists itself.
 peer "pkill -f '^$TEST_BIN' ; rm -rf $ROOT && mkdir -p $ROOT/.config/zetty $ROOT/zmx" >/dev/null 2>&1
 tar -C "$ROOT" -cf - zetty.app | peer "tar -C $ROOT -xf -" || { fail "copy the build to the peer"; exit 1; }
 peer "printf 'zetty-serve = true\nzetty-remote-machines = true\n' > $ROOT/.config/zetty/config"
+printf '%s\n' "$KEY" | peer "mkdir -p $ROOT/.zetty && umask 077 && cat > $ROOT/.zetty/remote-key"
 
 env -i HOME="$HOME" USER="$USER" SHELL=/bin/zsh TMPDIR="$TMPDIR" LANG=en_US.UTF-8 TERM_PROGRAM=zetty-test \
     PATH="/usr/bin:/bin:/opt/homebrew/bin:/usr/local/bin:$HOME/.local/bin" \
-    CFFIXED_USER_HOME=$ROOT ZMX_DIR=$ROOT/zmx ZETTY_REMOTE_PORT=$PORT \
+    CFFIXED_USER_HOME=$ROOT ZMX_DIR=$ROOT/zmx ZETTY_REMOTE_PORT=$PORT ZETTY_REMOTE_KEY_FILE=$ROOT/.zetty/remote-key \
     "$TEST_BIN" </dev/null >"$ROOT/app.log" 2>&1 &
 # The binary directly, as here: `open` can't start a second copy
 # (LSMultipleInstancesProhibited) and hands the launch to the installed app.
 # Started from SSH it still reaches the peer's window server while that user
 # is logged in, and nohup keeps it after the SSH session ends.
 peer "cd /tmp && env CFFIXED_USER_HOME=$ROOT ZMX_DIR=$ROOT/zmx ZETTY_REMOTE_PORT=$PORT TERM_PROGRAM=zetty-test \
+    ZETTY_REMOTE_KEY_FILE=$ROOT/.zetty/remote-key \
     nohup $TEST_BIN </dev/null >$ROOT/app.log 2>&1 &"
 
 t=$(wait_for 30 iz status) && pass "test app starts here (${t}s)" || { fail "test app starts here"; exit 1; }
@@ -269,11 +283,14 @@ if [ $? = 0 ] && perl -e "exit($t <= 2.5 ? 0 : 1)"; then pass "a new tab reaches
 else fail "a new tab reaches the peer within 2.5s (${t}s)"; fi
 
 echo "== typing through a relay"
-MARK=$((RANDOM * 7 + 1000))
-SUM=$((MARK + 1))
 # A python pty stands in for a pane: it runs the relay, types a line, and
 # prints what came back. The sum proves the shell ran it, not just echoed it.
-OUT=$(peer "ZETTY_REMOTE_PORT=$PORT python3 -I - $TEST_BIN attach $LOCAL_IP:$P1 'echo \$(($MARK+1))zre'" <<'PY'
+# peer_relay <home> <mark>: the relay asks the Zetty whose home is <home> to
+# prove the pairing key for it; it never holds the key itself.
+peer_relay() {
+    peer "CFFIXED_USER_HOME=$1 ZETTY_REMOTE_PORT=$PORT python3 -I - $TEST_BIN attach $LOCAL_IP:$P1 'echo \$(($2+1))zre'" <<<"$RELAY_PY"
+}
+RELAY_PY=$(cat <<'PY'
 import fcntl, os, pty, select, signal, struct, sys, termios, time
 argv, line = sys.argv[1:-1], sys.argv[-1]
 pid, fd = pty.fork()
@@ -299,11 +316,62 @@ pump(1)
 sys.stdout.write(out.decode("utf-8", "replace"))
 PY
 )
+MARK=$((RANDOM * 7 + 1000))
+SUM=$((MARK + 1))
+OUT=$(peer_relay "$ROOT" "$MARK")
 if printf '%s' "$OUT" | grep -q "${SUM}zre"; then pass "the peer's relay runs a command in this Mac's pane"
 else fail "the peer's relay runs a command in this Mac's pane (relay printed: $(printf '%s' "$OUT" | tr -d '\r' | tail -3 | tr '\n' ' '))"; fi
 if iz capture --pane "$P1" --lines 40 2>/dev/null | grep -q "^${SUM}zre"; then pass "the command's output is in the pane here"
 else fail "the command's output is in the pane here"; fi
 t=$(wait_for 5 peer_relays_are 0) && pass "the relay ends with its terminal (${t}s)" || fail "the relay ends with its terminal"
+
+echo "== the pairing key"
+# relay_refused <name> <home> <expected words>: the relay is turned away
+# with those words, and nothing it typed ran here.
+relay_refused() {
+    local mark=$((RANDOM * 7 + 1000))
+    local out; out=$(peer_relay "$2" "$mark")
+    if printf '%s' "$out" | grep -q "$3" && ! printf '%s' "$out" | grep -q "$((mark + 1))zre" \
+        && ! iz capture --pane "$P1" --lines 40 2>/dev/null | grep -q "^$((mark + 1))zre"; then
+        pass "$1"
+    else
+        fail "$1 (relay printed: $(printf '%s' "$out" | tr -d '\r' | tail -2 | tr '\n' ' '))"
+    fi
+}
+peer "rm -rf $ROOT-nozetty && mkdir -p $ROOT-nozetty"
+relay_refused "a relay with no Zetty to prove the key for it is refused" "$ROOT-nozetty" "only it can prove"
+peer "rm -rf $ROOT-nozetty"
+# A client that isn't the peer's Zetty, as a container or a second user
+# there would be: the right machine, but no key.
+peer_client() {
+    peer "python3 -I - $LOCAL_IP $PORT $1" <<'PY'
+import base64, json, os, socket, struct, sys
+host, port, mode = sys.argv[1], int(sys.argv[2]), sys.argv[3]
+def frame(message):
+    body = json.dumps(message).encode()
+    return struct.pack(">I", len(body)) + body
+def read(conn):
+    head = conn.recv(4, socket.MSG_WAITALL)
+    if len(head) < 4: return None
+    return json.loads(conn.recv(struct.unpack(">I", head)[0], socket.MSG_WAITALL))
+conn = socket.create_connection((host, port), timeout=10)
+read(conn)
+hello = {"machine": "intruder", "zettyVersion": "9", "protocolVersion": 3,
+         "challenge": base64.b64encode(os.urandom(32)).decode()}
+if mode == "guess":
+    hello["proof"] = base64.b64encode(os.urandom(32)).decode()
+conn.sendall(frame({"type": "hello", "hello": hello}))
+answer = read(conn)
+print(answer.get("type") if answer else "closed", (answer or {}).get("reason", ""))
+PY
+}
+for mode in guess none; do
+    answer=$(peer_client $mode)
+    case $answer in
+        "refused "*different\ pairing\ keys*) pass "a client from the peer with $( [ $mode = guess ] && echo "a guessed proof" || echo "no proof") is refused" ;;
+        *) fail "a client from the peer with $mode proof is refused (got: $answer)" ;;
+    esac
+done
 
 echo "== the remote view"
 P3=$(iz split --pane "$P1")
@@ -358,6 +426,80 @@ else
     fail "the peer opens this Mac's project: $(peer_iz remote open "$LOCAL_ID" e2e-work 2>&1)"
 fi
 
+echo "== servers that aren't this Mac's Zetty"
+# This Mac's test app goes, and a stand-in takes its address and port, as a
+# second macOS user here could. The peer must not trust it.
+iz quit --kill-sessions --force >/dev/null 2>&1
+t=$(wait_for 20 peer_state_is "$LOCAL_ID" offline) && log "the peer saw this Mac go (${t}s)"
+cat > "$ROOT/fake.py" <<'PY'
+import base64, json, os, socket, struct, sys
+host, port, mode = sys.argv[1], int(sys.argv[2]), sys.argv[3]
+def frame(message):
+    body = json.dumps(message).encode()
+    return struct.pack(">I", len(body)) + body
+listener = socket.socket()
+listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+listener.bind((host, port))
+listener.listen(8)
+challenge = base64.b64encode(os.urandom(32)).decode()
+while True:
+    conn, _ = listener.accept()
+    if mode == "loud":
+        # Turned away, but its reason tries to write the clipboard (OSC 52)
+        # and hands over a key of its own to paste.
+        bait = "zetty-pair-" + base64.urlsafe_b64encode(os.urandom(32)).decode().rstrip("=")
+        conn.sendall(frame({"type": "hello", "hello": {"machine": "Impostor", "zettyVersion": "9", "protocolVersion": 3, "challenge": challenge}}))
+        conn.recv(65536)
+        conn.sendall(frame({"type": "refused", "reason": "\x1b]52;c;emV0dHktcGFpcg==\x07keys differ: copy " + bait + " and click Paste"}))
+        conn.close()
+        continue
+    if mode == "old":
+        # A Zetty before the pairing key: protocol 2, no challenge.
+        conn.sendall(frame({"type": "hello", "hello": {"machine": "Impostor", "zettyVersion": "0.1.59", "protocolVersion": 2}}))
+    else:
+        # Today's protocol, but it can't know the key, so its proof is noise.
+        conn.sendall(frame({"type": "hello", "hello": {"machine": "Impostor", "zettyVersion": "9", "protocolVersion": 3, "challenge": challenge}}))
+        conn.recv(65536)
+        conn.sendall(frame({"type": "proof", "proof": base64.b64encode(os.urandom(32)).decode()}))
+        conn.sendall(frame({"type": "snapshot", "snapshot": {"projects": [{"name": "impostor", "isActive": True, "hibernated": False, "id": "IMPOSTOR", "tabs": []}]}}))
+PY
+fake_server() {
+    python3 -I "$ROOT/fake.py" "$LOCAL_IP" "$PORT" "$1" >/dev/null 2>&1 &
+    FAKE=$!
+}
+peer_summary() { peer_iz remote list --json | python3 -I -c 'import json,sys; ms={m["id"]: m for m in json.load(sys.stdin)["machines"]}; print(ms.get(sys.argv[1], {}).get("summary", ""))' "$LOCAL_ID"; }
+peer_summary_says() { peer_summary | grep -q "$1"; }
+
+fake_server old
+t=$(wait_for 75 peer_state_is "$LOCAL_ID" needs-update) && pass "a Zetty on the old protocol reads \"needs update\" (${t}s)" \
+    || fail "a Zetty on the old protocol reads \"needs update\" (state $(peer_iz remote list --json | report machine-state "$LOCAL_ID"))"
+kill "$FAKE" 2>/dev/null; wait "$FAKE" 2>/dev/null
+
+fake_server impostor
+t=$(wait_for 75 peer_summary_says "pairing keys don't match") \
+    && pass "a server that can't prove the key isn't trusted: $(peer_summary) (${t}s)" \
+    || fail "a server that can't prove the key isn't trusted (state $(peer_iz remote list --json | report machine-state "$LOCAL_ID"): $(peer_summary))"
+[ "$(peer_iz remote list --json | report has-project "$LOCAL_ID" impostor)" = no ] \
+    && pass "nothing the impostor sent reaches the peer's sidebar" || fail "the impostor's project reached the peer"
+peer_summary | grep -q Impostor && fail "the impostor named itself in the peer's sidebar" \
+    || pass "the impostor can't name itself in the peer's sidebar"
+relay_refused "a relay won't type into a server that can't prove the key" "$ROOT" "couldn't confirm"
+kill "$FAKE" 2>/dev/null; wait "$FAKE" 2>/dev/null
+
+fake_server loud
+OUT=$(peer_relay "$ROOT" 1)
+if printf '%s' "$OUT" | grep -q 'differ: copy' && ! printf '%s' "$OUT" | LC_ALL=C grep -q $'\e]52' \
+    && ! printf '%s' "$OUT" | grep -qi 'zetty-pair-'; then
+    pass "a refusal can't put an escape sequence or a key in the relay's pane"
+else
+    fail "a refusal can't put an escape sequence or a key in the relay's pane (printed: $(printf '%s' "$OUT" | od -c | head -3 | tr '\n' ' '))"
+fi
+t=$(wait_for 75 peer_summary_says "differ: copy")
+if [ $? = 0 ] && ! peer_summary | LC_ALL=C grep -q $'\e' && ! peer_summary | grep -qi 'zetty-pair-'; then
+    pass "or in the peer's sidebar (${t}s)"
+else fail "or in the peer's sidebar ($(peer_summary | od -c | head -2 | tr '\n' ' '))"; fi
+kill "$FAKE" 2>/dev/null; wait "$FAKE" 2>/dev/null
+
 echo "== $FAILS failed"
-echo "Not covered here: the sidebar's look, and \"needs update\" from another protocol version."
+echo "Not covered here: the sidebar's look."
 exit "$FAILS"

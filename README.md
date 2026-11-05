@@ -326,7 +326,10 @@ under **This Mac**: every awake project with its agent dots, and a header like
 with its last known projects. Turn on **Let other Macs connect** on the Mac to
 watch and **Show other Macs in the sidebar** on the one you sit at, in Settings
 → General → Other Macs (`zetty-serve`, `zetty-remote-machines`). Both Macs need
-Tailscale signed in as you; Zetty only listens on Tailscale.
+Tailscale signed in as you; Zetty only listens on Tailscale. They also need the
+same **pairing key**: click **Copy** next to it on one Mac and **Paste** on each
+of the others. It's kept in your login Keychain, so other users, containers and
+VMs on your Macs can't read it or connect.
 
 Click one of another Mac's projects to open it in this window: its tabs and
 splits take the place of yours, and you type in its panes as if you sat at

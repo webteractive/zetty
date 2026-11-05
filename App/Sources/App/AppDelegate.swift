@@ -1581,6 +1581,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         controller.onCheckAccounts = { [weak self] done in self?.refreshAccountIdentities(then: done) }
         controller.onHooksChanged = { [weak self] in self?.installHooksForAccounts() }
         controller.tailscaleStateProvider = { [weak self] reply in self?.readTailscaleState(reply) }
+        controller.pairingKeys = pairingKeys
+        controller.onPairingKeyChanged = { [weak self] in self?.remoteMachinesClient?.retryNow() }
         controller.onConfigSaved = { [weak self] in
             self?.reloadConfiguration(nil)
             self?.configWatcher?.markSaved()   // already applied; skip the poll's repeat
@@ -1920,12 +1922,36 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     /// repeatedly: launch, every config reload, every Settings toggle.
     func applyRemoteConfig() {
         if appConfig.serveRemote || appConfig.showRemoteMachines {
+            loadPairingKeyIfNeeded()
             tailscaleMonitor.start()
         } else {
             tailscaleMonitor.stop()
         }
         syncRemoteServer()
         syncRemoteMachinesClient()
+    }
+
+    /// The pairing key both remote features prove, read once per launch.
+    let pairingKeys = RemotePairingKeyHolder()
+    private var loadingPairingKey = false
+
+    /// Reads the key off main, making one if there is none. The read may
+    /// ask: a self-signed rebuild is a different signature from the build
+    /// that made the item. That is the only Keychain prompt Zetty raises,
+    /// and only with a remote key on.
+    private func loadPairingKeyIfNeeded() {
+        guard pairingKeys.state == nil, !loadingPairingKey else { return }
+        loadingPairingKey = true
+        let store = RemotePairingKeyStore(home: NSHomeDirectory())
+        let holder = pairingKeys
+        DispatchQueue.global(qos: .userInitiated).async {
+            holder.setIfUnknown(store.loadOrCreate(allowingUI: true).map { .key($0) } ?? store.read())
+            DispatchQueue.main.async { [weak self] in
+                self?.loadingPairingKey = false
+                self?.settingsWindowController?.showPairingKey()
+                self?.remoteMachinesClient?.retryNow()
+            }
+        }
     }
 
     /// Tailscale's state for Settings: the monitor's when it runs, else one
@@ -1953,6 +1979,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             .appendingPathComponent("remote-machines.json")
         let client = RemoteMachinesClient(cache: RemoteMachineCache(url: cacheURL),
                                           machineName: thisMachineName, zettyVersion: zettyVersion,
+                                          pairingKey: { [pairingKeys] in pairingKeys.key },
                                           onChange: { [weak self] in self?.terminalViewController?.setRemoteMachines($0) })
         remoteMachinesClient = client
         if let state = tailscaleMonitor.latest { client.update(state) }
@@ -1970,7 +1997,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         if remoteServer == nil {
             let host = RemoteTerminalHost(viewController: tvc, machineName: thisMachineName)
             let server = RemoteServer(machineName: thisMachineName, zettyVersion: zettyVersion,
-                                      terminalHost: host)
+                                      terminalHost: host, pairingKey: { [pairingKeys] in pairingKeys.key })
             remoteServer = server
             tvc.onSnapshotChanged = { [weak server] in server?.publish($0) }
             server.publish(tvc.statusSnapshot())
@@ -2010,6 +2037,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
                 }
             }
             switch request {
+            // Answered here, off main and without the window: a relay in one
+            // of this app's own panes is waiting on it.
+            case .remoteSign(let server, let client, let serverChallenge, let clientChallenge):
+                return self.pairingKeys.sign(server: server, client: client,
+                                             serverChallenge: serverChallenge, clientChallenge: clientChallenge)
+            case .remoteCheck(let proof, let server, let client, let serverChallenge, let clientChallenge):
+                return self.pairingKeys.check(proof: proof, server: server, client: client,
+                                              serverChallenge: serverChallenge, clientChallenge: clientChallenge)
             case .handoffAgent(let target, let to, let asking, let force, let cancel):
                 // Started on main; the request is then typed HERE, off it, so a
                 // draft in the box is the caller's error rather than a dialog
@@ -2282,6 +2317,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         case .remoteClose:
             tvc.leaveRemoteProject()
             return .ok
+        case .remoteSign, .remoteCheck:
+            return .error("answered off the main thread")
         case .tiles(let on, let profile):
             // A fast verb: plain view-state mutation through handleOnMain,
             // never the slow-verb path clone/capture/quit use.

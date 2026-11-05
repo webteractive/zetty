@@ -2,10 +2,13 @@ import Foundation
 import Testing
 @testable import ZettyCore
 
+/// Each id gets its own address, so only `addresses:` makes two nodes share one.
 private func node(_ id: String, user: Int64, os: String = "macOS", tags: [String] = [],
-                  online: Bool = true) -> TailscaleNode {
-    TailscaleNode(stableID: id, hostName: id, dnsName: "\(id).tail.ts.net", os: os, userID: user,
-                  tags: tags, addresses: ["100.64.0.1"], online: online, lastSeen: nil)
+                  online: Bool = true, addresses: [String]? = nil) -> TailscaleNode {
+    let octets = id.utf8.reduce(UInt32(2_166_136_261)) { ($0 ^ UInt32($1)) &* 16_777_619 }
+    let own = "100.64.\(octets >> 8 & 0xFF).\(octets & 0xFF)"
+    return TailscaleNode(stableID: id, hostName: id, dnsName: "\(id).tail.ts.net", os: os, userID: user,
+                         tags: tags, addresses: addresses ?? [own], online: online, lastSeen: nil)
 }
 
 @Test func admitsOnlySameUserUntaggedMacs() {
@@ -56,11 +59,14 @@ private func node(_ id: String, user: Int64, os: String = "macOS", tags: [String
 }
 
 @Test func thisMacsOwnAddressIsNeverAdmitted() {
-    // `tailscale whois` on this Mac's own address carries no Hostinfo, so a
-    // connection from it reads as OS "" and is refused. That is wanted: any
-    // local user can reach the tailnet address, while only this user can
-    // reach the control socket. A self-admit would let another macOS user on
-    // this Mac open this user's panes.
+    // Any local user can reach the tailnet address, while only this user can
+    // reach the control socket, so a self-admit would let another macOS user
+    // on this Mac open this user's panes. It is refused by identity, not by
+    // `whois` of this Mac happening to report no OS (Tailscale 1.104 does).
     let me = node("self", user: 1)
-    #expect(PeerAdmission.decide(me: me, peer: node("self", user: 1, os: "")) == .refuse(.notMac))
+    #expect(PeerAdmission.decide(me: me, peer: node("self", user: 1, os: "")) == .refuse(.thisMac))
+    #expect(PeerAdmission.decide(me: me, peer: node("self", user: 1)) == .refuse(.thisMac))
+    // Another node id on one of this Mac's addresses is still this Mac.
+    let shared = node("other-id", user: 1, addresses: me.addresses)
+    #expect(PeerAdmission.decide(me: me, peer: shared) == .refuse(.thisMac))
 }
