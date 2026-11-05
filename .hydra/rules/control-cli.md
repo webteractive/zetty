@@ -240,6 +240,13 @@ Two halves fix it, both regression-tested:
   `decodeIfPresent`) exists for that feed. Keep every new field optional on
   decode: a Mac on an older build must still read a newer one's snapshot, and
   anything incompatible needs a `RemoteProtocol.version` bump.
+- **`zetty attach <machine>:<pane>` is the one verb that opens a network
+  connection.** It never talks to the local socket: it dials the other Mac's
+  Zetty on port 47391 (`remote-machines.md`, "Terminal connections") and
+  relays this terminal to that pane. It is what a remote pane runs, built by
+  `RemoteAttachTarget.relayCommand`, which accepts only a hex pane id and a
+  numeric tailnet address because the command goes through `bash -c`. Its
+  `--help` text is in `ControlCLI.swift` with the rest.
 - **`ensurePaneIsLive(at:)` is the only place that knows the rule.** It wakes the
   project if needed, transiently selects that project AND the pane's tab (the tab
   half is load-bearing — waking alone leaves a background tab just as dead), then

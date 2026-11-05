@@ -326,8 +326,15 @@ under **This Mac**: every awake project with its agent dots, and a header like
 with its last known projects. Turn on **Let other Macs connect** on the Mac to
 watch and **Show other Macs in the sidebar** on the one you sit at, in Settings
 → General → Other Macs (`zetty-serve`, `zetty-remote-machines`). Both Macs need
-Tailscale signed in as you; Zetty only listens on Tailscale. For now it is
-view-only: you can see another Mac's projects, not open them.
+Tailscale signed in as you; Zetty only listens on Tailscale.
+
+Click one of another Mac's projects to open it in this window: its tabs and
+splits take the place of yours, and you type in its panes as if you sat at
+that Mac. The tab and pane you pick are yours alone, so that Mac's own screen
+doesn't move. That Mac needs **Preserve sessions** on (`preserve-sessions`).
+For now you can't add, close or rearrange tabs and panes from here; those
+keys beep. A pane takes this window's size at your first keystroke, and goes
+back to the other Mac's size when you leave it.
 
 ### Updates and links
 
@@ -438,6 +445,7 @@ zetty tiles                              # toggle the tile grid
 zetty tiles --profile morning            # open a saved tile view
 zetty accounts                           # list agent accounts
 zetty run personal                       # run that account's agent here
+zetty attach mini:1a2b3c4d               # another Mac's pane in this terminal
 zetty reload                             # same as ⇧⌘,
 zetty quit --kill-sessions               # quit and end preserved sessions
 ```

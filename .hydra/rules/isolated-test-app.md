@@ -43,7 +43,9 @@ CFFIXED_USER_HOME=/tmp/zti zetty status  # "cannot reach zetty at /tmp/zti/.zett
 
 # 3. Launch it as a BACKGROUND TASK of the tool (run_in_background), not
 #    with `&` or nohup: a detached job dies when the tool call returns.
-env -i HOME="$HOME" USER="$USER" SHELL=/bin/zsh TMPDIR="$TMPDIR" LANG=en_US.UTF-8 \
+#    TERM_PROGRAM keeps Tailscale's CLI working, or Other Macs sees no
+#    tailnet (remote-machines.md).
+env -i HOME="$HOME" USER="$USER" SHELL=/bin/zsh TMPDIR="$TMPDIR" LANG=en_US.UTF-8 TERM_PROGRAM=zetty-test \
   PATH="/usr/bin:/bin:/opt/homebrew/bin:$HOME/.local/bin" \
   CFFIXED_USER_HOME=/tmp/zti ZMX_DIR=/tmp/zti/zmx \
   /tmp/zti/zetty.app/Contents/MacOS/zetty </dev/null > /tmp/zti/app.log 2>&1
