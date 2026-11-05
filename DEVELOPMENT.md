@@ -95,8 +95,7 @@ printf 'preserve-sessions = true\n' > /tmp/zti/.config/zetty/config
 ZMX_DIR=/tmp/zti/zmx zmx list                          # "no sessions found in /tmp/zti/zmx"
 CFFIXED_USER_HOME=/tmp/zti zetty status                # "cannot reach zetty at /tmp/zti/.zetty/zetty.sock"
 
-# TERM_PROGRAM: without it Tailscale's CLI fails and Other Macs sees no tailnet.
-env -i HOME="$HOME" USER="$USER" SHELL=/bin/zsh TMPDIR="$TMPDIR" LANG=en_US.UTF-8 TERM_PROGRAM=zetty-test \
+env -i HOME="$HOME" USER="$USER" SHELL=/bin/zsh TMPDIR="$TMPDIR" LANG=en_US.UTF-8 \
   PATH="/usr/bin:/bin:/opt/homebrew/bin:$HOME/.local/bin" \
   CFFIXED_USER_HOME=/tmp/zti ZMX_DIR=/tmp/zti/zmx \
   <DerivedData>/Build/Products/Debug/zetty.app/Contents/MacOS/zetty </dev/null &

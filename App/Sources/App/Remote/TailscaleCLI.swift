@@ -36,7 +36,7 @@ enum TailscaleCLI {
         process.arguments = args
         var environment = ProcessInfo.processInfo.environment
         environment.removeValue(forKey: "ZMX_SESSION")
-        process.environment = environment
+        process.environment = TailscaleCLIEnvironment.prepare(environment)
         let stdout = Pipe()
         process.standardOutput = stdout
         process.standardError = FileHandle.nullDevice

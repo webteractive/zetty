@@ -145,3 +145,19 @@ private func parseLastSeen(_ text: String) -> Date? {
     formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
     return formatter.date(from: text)
 }
+
+/// The environment Zetty runs the `tailscale` CLI with.
+public enum TailscaleCLIEnvironment {
+    /// `environment` with `TERM` set when it has neither `TERM` nor
+    /// `TERM_PROGRAM`. The binary inside Tailscale.app runs as the CLI only
+    /// when it sees one of them; without both it tries to start the GUI and
+    /// fails ("The Tailscale GUI failed to start", CLIError error 3). A Zetty
+    /// opened from the Dock or Finder has neither, so every status check
+    /// failed: it never served and never dialled another Mac.
+    public static func prepare(_ environment: [String: String]) -> [String: String] {
+        guard environment["TERM"] == nil, environment["TERM_PROGRAM"] == nil else { return environment }
+        var environment = environment
+        environment["TERM"] = "dumb"
+        return environment
+    }
+}

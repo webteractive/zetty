@@ -68,3 +68,18 @@ func tailscaleFixture(_ name: String) throws -> Data {
     #expect(TailscaleStatus.parse(Data("nope".utf8)) == nil)
     #expect(TailscaleWhois.parse(Data("{}".utf8)) == nil)
 }
+
+@Test func tailscaleCLIGetsTERMWhenLaunchedWithoutATerminal() {
+    // A Zetty opened from the Dock has neither, and Tailscale.app's binary
+    // then tries to start its GUI instead of answering.
+    let prepared = TailscaleCLIEnvironment.prepare(["HOME": "/Users/me"])
+    #expect(prepared["TERM"] == "dumb")
+    #expect(prepared["HOME"] == "/Users/me")
+}
+
+@Test func tailscaleCLIKeepsATerminalEnvironmentAsIs() {
+    let term = ["TERM": "xterm-ghostty"]
+    #expect(TailscaleCLIEnvironment.prepare(term) == term)
+    let program = ["TERM_PROGRAM": "zetty"]
+    #expect(TailscaleCLIEnvironment.prepare(program) == program)
+}

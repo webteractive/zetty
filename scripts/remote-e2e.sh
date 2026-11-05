@@ -229,7 +229,10 @@ tar -C "$ROOT" -cf - zetty.app | peer "tar -C $ROOT -xf -" || { fail "copy the b
 peer "printf 'zetty-serve = true\nzetty-remote-machines = true\n' > $ROOT/.config/zetty/config"
 printf '%s\n' "$KEY" | peer "mkdir -p $ROOT/.zetty && umask 077 && cat > $ROOT/.zetty/remote-key"
 
-env -i HOME="$HOME" USER="$USER" SHELL=/bin/zsh TMPDIR="$TMPDIR" LANG=en_US.UTF-8 TERM_PROGRAM=zetty-test \
+# No TERM or TERM_PROGRAM on either copy, as when the Dock opens Zetty:
+# Tailscale.app's binary then refuses to act as the CLI unless Zetty sets
+# TERM itself, and neither copy would serve or list anything.
+env -i HOME="$HOME" USER="$USER" SHELL=/bin/zsh TMPDIR="$TMPDIR" LANG=en_US.UTF-8 \
     PATH="/usr/bin:/bin:/opt/homebrew/bin:/usr/local/bin:$HOME/.local/bin" \
     CFFIXED_USER_HOME=$ROOT ZMX_DIR=$ROOT/zmx ZETTY_REMOTE_PORT=$PORT ZETTY_REMOTE_KEY_FILE=$ROOT/.zetty/remote-key \
     "$TEST_BIN" </dev/null >"$ROOT/app.log" 2>&1 &
@@ -237,7 +240,7 @@ env -i HOME="$HOME" USER="$USER" SHELL=/bin/zsh TMPDIR="$TMPDIR" LANG=en_US.UTF-
 # (LSMultipleInstancesProhibited) and hands the launch to the installed app.
 # Started from SSH it still reaches the peer's window server while that user
 # is logged in, and nohup keeps it after the SSH session ends.
-peer "cd /tmp && env CFFIXED_USER_HOME=$ROOT ZMX_DIR=$ROOT/zmx ZETTY_REMOTE_PORT=$PORT TERM_PROGRAM=zetty-test \
+peer "cd /tmp && env -u TERM -u TERM_PROGRAM CFFIXED_USER_HOME=$ROOT ZMX_DIR=$ROOT/zmx ZETTY_REMOTE_PORT=$PORT \
     ZETTY_REMOTE_KEY_FILE=$ROOT/.zetty/remote-key \
     nohup $TEST_BIN </dev/null >$ROOT/app.log 2>&1 &"
 

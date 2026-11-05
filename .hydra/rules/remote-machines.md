@@ -342,10 +342,14 @@ through `setNeedsChromeRefresh`, since a feed can tick as fast as a title.
 - **The isolated test app and the installed app share the tailnet address.**
   Only one can serve, because the second bind fails and is retried only on
   the next Tailscale change. Turn serving off in one of them.
-- **Launch the isolated app with `TERM_PROGRAM` set** (`TERM_PROGRAM=zetty-test`
-  in the `env -i` line). Without it, Tailscale's GUI CLI fails ("The Tailscale
-  GUI failed to start", CLIError error 3), so the test app never sees the
-  tailnet and never serves or lists anything.
+- **Tailscale.app's binary is the CLI only with `TERM` or `TERM_PROGRAM` set.**
+  Without both it tries to start the GUI and fails ("The Tailscale GUI failed
+  to start", CLIError error 3). A Zetty opened from the Dock or Finder has
+  neither, so `TailscaleCLI` runs it with `TERM=dumb`
+  (`TailscaleCLIEnvironment.prepare`). v0.1.60 shipped without it and, launched
+  from the Dock, never served or dialled: every Mac read offline. It only
+  worked when started from a terminal, which is how every test had launched
+  it. So test copies are launched with no `TERM` at all.
 - **A Mac never admits its own tailnet address**
   (`thisMacsOwnAddressIsNeverAdmitted`). Any local macOS user can reach it,
   so admitting it would let another user on this Mac open this user's
