@@ -95,7 +95,11 @@ Other people's Macs are only counted, in the Settings status line.
   one is sent, and only if it differs from the last.
 - The client dials a node's first IPv4 with a 3s connect timeout and TCP
   keepalive (10s idle, 3s × 2 probes), so a Mac that sleeps without a FIN
-  goes offline in about 16s. It retries a drop after 5, 10, 30, then 60s, and
+  goes offline in about 16s. Every remote-machines socket gets these options
+  from `RemoteProtocol.configureLink`, the server's accepted ones too:
+  without it a viewer that lost power or Tailscale held its connection, pty
+  and `zmx attach` on the serving Mac until the 64-connection cap refused
+  every Mac. It retries a drop after 5, 10, 30, then 60s, and
   the backoff resets on the next snapshot.
 - `TailscaleMonitor` polls every 10s, and only while one of the two keys is on.
 
@@ -112,7 +116,11 @@ Other people's Macs are only counted, in the Settings status line.
 - **It never creates a session.** A preserved pane that isn't running yet
   (a background tab never shown) is started offscreen on the serving Mac,
   and the host waits up to 3s for its session. The serving Mac's view
-  doesn't change.
+  doesn't change. `zmx attach` creates a missing session, so the pty runs
+  `RemoteServedAttach`, which checks `zmx list` again right before the
+  attach and just ends if the session is gone: a pane closed or hibernated
+  here while a long replay drains would otherwise come back as a bare
+  shell (`servedAttachNeverCreatesAMissingSession`).
 - **Frames.** One kind byte (0 data, 1 resize as two big-endian `UInt16`
   rows then cols, 2 ended with a plain-words reason), a 4-byte big-endian
   length, then the payload. A frame over **1 MiB**

@@ -123,3 +123,21 @@ private let attachRequest = RemoteAttachRequest(pane: "ab12cd34", rows: 30, cols
         #expect(!valid(bad), "\(bad) should be refused")
     }
 }
+
+@Test func linkOptionsNoticeAPeerThatVanishes() {
+    let fd = socket(AF_INET, SOCK_STREAM, 0)
+    #expect(fd >= 0)
+    defer { close(fd) }
+    RemoteProtocol.configureLink(fd)
+    func option(_ level: Int32, _ name: Int32) -> Int32 {
+        var value: Int32 = 0
+        var length = socklen_t(MemoryLayout<Int32>.size)
+        getsockopt(fd, level, name, &value, &length)
+        return value
+    }
+    #expect(option(SOL_SOCKET, SO_KEEPALIVE) != 0)
+    #expect(option(SOL_SOCKET, SO_NOSIGPIPE) != 0)
+    #expect(option(IPPROTO_TCP, TCP_KEEPALIVE) == 10)
+    #expect(option(IPPROTO_TCP, TCP_KEEPINTVL) == 3)
+    #expect(option(IPPROTO_TCP, TCP_KEEPCNT) == 2)
+}

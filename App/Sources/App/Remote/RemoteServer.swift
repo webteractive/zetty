@@ -321,8 +321,9 @@ private final class Listener {
             while true {
                 let client = accept(fd, nil, nil)
                 guard client >= 0 else { return }
-                var on: Int32 = 1
-                setsockopt(client, SOL_SOCKET, SO_NOSIGPIPE, &on, socklen_t(MemoryLayout<Int32>.size))
+                // Keepalive here too: a viewer that vanishes without a FIN
+                // must not keep its connection, pty and zmx client forever.
+                RemoteProtocol.configureLink(client)
                 guard Socket.setNonBlocking(client) else { Darwin.close(client); continue }
                 onAccept(client)
             }

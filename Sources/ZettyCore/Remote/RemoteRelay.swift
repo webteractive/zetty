@@ -310,14 +310,9 @@ public enum RemoteRelay {
     }
 
     private static func configure(_ fd: Int32) {
-        var on: Int32 = 1, idle: Int32 = 10, interval: Int32 = 3, count: Int32 = 2
-        let size = socklen_t(MemoryLayout<Int32>.size)
-        setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &on, size)
-        setsockopt(fd, SOL_SOCKET, SO_KEEPALIVE, &on, size)
-        setsockopt(fd, IPPROTO_TCP, TCP_KEEPALIVE, &idle, size)
-        setsockopt(fd, IPPROTO_TCP, TCP_KEEPINTVL, &interval, size)
-        setsockopt(fd, IPPROTO_TCP, TCP_KEEPCNT, &count, size)
-        setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &on, size)
+        RemoteProtocol.configureLink(fd)
+        var on: Int32 = 1
+        setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &on, socklen_t(MemoryLayout<Int32>.size))
     }
 
     // MARK: - Piping
@@ -415,5 +410,25 @@ public enum RemoteRelay {
             }
             return true
         }
+    }
+}
+
+/// What the serving Mac runs under a viewer's pty: the scrollback replay on a
+/// first attach, then `zmx attach`, which CREATES a missing session. The
+/// session is checked again right before the attach, because the pane can be
+/// closed or hibernated here while a long replay drains to a slow viewer; a
+/// remote attach must never start a fresh shell in its place. When it's gone
+/// the script just ends, and the viewer is told the pane closed.
+public enum RemoteServedAttach {
+    static let script = """
+    unset ZMX_SESSION
+    [ "$3" = 1 ] && "$1" history "$2" --vt 2>/dev/null
+    "$1" list 2>/dev/null | grep -Fq "name=$2\t" || exit 0
+    exec "$1" attach "$2"
+    """
+
+    /// Arguments for `/bin/sh`.
+    public static func arguments(zmx: String, session: String, scrollback: Bool) -> [String] {
+        ["-c", script, "zetty-attach", zmx, session, scrollback ? "1" : "0"]
     }
 }

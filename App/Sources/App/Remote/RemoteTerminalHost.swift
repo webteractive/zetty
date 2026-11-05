@@ -63,23 +63,19 @@ final class RemoteTerminalHost: RemoteTerminalHosting {
             }
             Thread.sleep(forTimeInterval: 0.2)
         }
-        completion(.success(Self.plan(session: session, zmx: zmx, scrollback: request.scrollback,
-                                      restoreScript: request.scrollback ? ScrollbackRestore.ensureScript() : nil)))
+        completion(.success(Self.plan(session: session, zmx: zmx, scrollback: request.scrollback)))
     }
 
-    /// Scrollback first through the restore script (`zmx history --vt`, then
-    /// `exec zmx attach`), or a plain attach on a reconnect or when the script
-    /// can't be written. `ZMX_SESSION` is stripped: inherited, `zmx attach`
-    /// would end that session instead.
-    static func plan(session: String, zmx: String, scrollback: Bool, restoreScript: String?) -> RemoteAttachPlan {
+    /// Scrollback first on a first attach, then the attach, through
+    /// `RemoteServedAttach`, which never creates a session that has gone.
+    /// `ZMX_SESSION` is stripped: inherited, `zmx attach` would end that
+    /// session instead.
+    static func plan(session: String, zmx: String, scrollback: Bool) -> RemoteAttachPlan {
         var environment = ProcessInfo.processInfo.environment
         environment["ZMX_SESSION"] = nil
         environment["TERM"] = "xterm-256color"
-        if scrollback, let restoreScript {
-            return RemoteAttachPlan(executable: "/bin/sh", arguments: [restoreScript, zmx, session],
-                                    environment: environment, session: session)
-        }
-        return RemoteAttachPlan(executable: zmx, arguments: ["attach", session],
+        return RemoteAttachPlan(executable: "/bin/sh",
+                                arguments: RemoteServedAttach.arguments(zmx: zmx, session: session, scrollback: scrollback),
                                 environment: environment, session: session)
     }
 

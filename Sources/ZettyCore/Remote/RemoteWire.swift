@@ -14,6 +14,22 @@ public enum RemoteProtocol {
     public static let maxTerminalChunk = 1_048_576
     /// How long a relay waits for `attached` or `refused` after its hello.
     public static let attachTimeout: TimeInterval = 10
+
+    /// Socket options every remote-machines connection uses, on both ends: no
+    /// SIGPIPE, and keepalive so a peer that vanishes without a FIN (sleep,
+    /// power loss, `tailscale down`) is noticed in ~16s instead of the
+    /// system's two hours. The serving side needs it most: a dead viewer
+    /// otherwise holds its connection, pty and `zmx attach` until the
+    /// connection cap refuses everyone.
+    public static func configureLink(_ fd: Int32) {
+        var on: Int32 = 1, idle: Int32 = 10, interval: Int32 = 3, count: Int32 = 2
+        let size = socklen_t(MemoryLayout<Int32>.size)
+        setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &on, size)
+        setsockopt(fd, SOL_SOCKET, SO_KEEPALIVE, &on, size)
+        setsockopt(fd, IPPROTO_TCP, TCP_KEEPALIVE, &idle, size)
+        setsockopt(fd, IPPROTO_TCP, TCP_KEEPINTVL, &interval, size)
+        setsockopt(fd, IPPROTO_TCP, TCP_KEEPCNT, &count, size)
+    }
 }
 
 /// What a relay asks for in its hello: one pane, at its own window size.

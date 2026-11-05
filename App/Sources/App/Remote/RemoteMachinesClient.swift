@@ -253,16 +253,7 @@ private final class Link {
         guard inet_pton(AF_INET, address, &addr.sin_addr) == 1 else { return nil }
         let fd = socket(AF_INET, SOCK_STREAM, 0)
         guard fd >= 0 else { return nil }
-        var on: Int32 = 1
-        let size = socklen_t(MemoryLayout<Int32>.size)
-        setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &on, size)
-        // A Mac that vanishes without a FIN (sleep, `tailscale down`) is
-        // noticed in ~16s instead of the system's two hours.
-        setsockopt(fd, SOL_SOCKET, SO_KEEPALIVE, &on, size)
-        var idle: Int32 = 10, interval: Int32 = 3, count: Int32 = 2
-        setsockopt(fd, IPPROTO_TCP, TCP_KEEPALIVE, &idle, size)
-        setsockopt(fd, IPPROTO_TCP, TCP_KEEPINTVL, &interval, size)
-        setsockopt(fd, IPPROTO_TCP, TCP_KEEPCNT, &count, size)
+        RemoteProtocol.configureLink(fd)
         let flags = fcntl(fd, F_GETFL)
         guard flags >= 0, fcntl(fd, F_SETFL, flags | O_NONBLOCK) == 0 else { Darwin.close(fd); return nil }
         let result = withUnsafePointer(to: &addr) {

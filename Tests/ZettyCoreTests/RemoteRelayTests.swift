@@ -86,3 +86,36 @@ import Testing
     #expect(RemoteAttachTarget.paneCommand(executable: zetty, address: "100.64.0.5", pane: "x;id") == "/usr/bin/false")
     #expect(RemoteAttachTarget.paneCommand(executable: zetty, address: "8.8.8.8", pane: "ab12cd34") == "/usr/bin/false")
 }
+
+/// Runs the serving side's attach script against a fake zmx that logs each
+/// call, with `list` reporting the session only while `alive` is true.
+private func runServedAttach(scrollback: Bool, alive: Bool) throws -> [String] {
+    let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: dir) }
+    let log = dir.appendingPathComponent("calls").path
+    let zmx = dir.appendingPathComponent("zmx").path
+    let listed = alive ? "printf 'name=zetty-ab12cd34\\tpid=1\\tclients=1\\n'" : ":"
+    try """
+    #!/bin/sh
+    echo "$1" >> \(log)
+    [ "$1" = list ] && { printf 'name=zetty-ab12cd3\\tpid=2\\n'; \(listed); }
+    exit 0
+    """.write(toFile: zmx, atomically: true, encoding: .utf8)
+    chmod(zmx, 0o755)
+    let process = Process()
+    process.executableURL = URL(fileURLWithPath: "/bin/sh")
+    process.arguments = RemoteServedAttach.arguments(zmx: zmx, session: "zetty-ab12cd34", scrollback: scrollback)
+    process.standardOutput = FileHandle.nullDevice
+    try process.run()
+    process.waitUntilExit()
+    return ((try? String(contentsOfFile: log, encoding: .utf8)) ?? "").split(separator: "\n").map(String.init)
+}
+
+@Test func servedAttachNeverCreatesAMissingSession() throws {
+    #expect(try runServedAttach(scrollback: true, alive: true) == ["history", "list", "attach"])
+    #expect(try runServedAttach(scrollback: false, alive: true) == ["list", "attach"])
+    // Closed on this Mac during the replay: attach would start a new shell.
+    #expect(try runServedAttach(scrollback: true, alive: false) == ["history", "list"])
+    #expect(try runServedAttach(scrollback: false, alive: false) == ["list"])
+}
