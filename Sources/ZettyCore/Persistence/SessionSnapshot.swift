@@ -77,6 +77,7 @@ public enum SessionSnapshot {
                     focusedSurfaceID: tree.focusedSurfaceID)
             }
             return Project(
+                id: runtime.id,
                 name: runtime.name,
                 rootPath: runtime.rootPath,
                 isPinned: runtime.isPinned,
@@ -116,7 +117,10 @@ public enum SessionSnapshot {
             let tabList = TabList(restoring: trees, activeIndex: session?.activeTabIndex ?? 0,
                                   defaultWorkingDir: project.rootPath)
                 ?? TabList(defaultWorkingDir: project.rootPath)
+            // The id is the project's identity for another Mac's viewer, so it
+            // must survive a relaunch.
             let runtime = ProjectRuntime(
+                id: project.id,
                 name: project.name,
                 rootPath: project.rootPath,
                 isPinned: project.isPinned,

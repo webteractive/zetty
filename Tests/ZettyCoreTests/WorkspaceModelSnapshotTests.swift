@@ -112,3 +112,16 @@ private func tempDir() throws -> URL {
     #expect(loaded.sidebarCollapsed == true)
     #expect(loaded.sidebarWidth == 320)
 }
+
+@Test func projectIDsSurviveARelaunch() throws {
+    // Another Mac's viewer opens a project by this id; a fresh one per launch
+    // made every open remote project read "isn't open … any more" after this
+    // Mac relaunched, and reshuffled its sidebar colors.
+    let model = WorkspaceModel()
+    let web = model.addProject(name: "web", rootPath: "/tmp/web")
+    let store = WorkspaceStore(directory: try tempDir())
+    try store.save(SessionSnapshot.workspace(from: model))
+
+    let restored = SessionSnapshot.projectRuntimes(from: try store.load())
+    #expect(restored.map(\.id) == [model.projects[0].id, web.id])
+}
