@@ -2129,6 +2129,34 @@ final class TerminalViewController: NSViewController {
         }
     }
 
+    /// What `zetty remote list` reports. The two keys' state comes from the
+    /// app delegate, which owns the server and the client.
+    func remoteReport(listing: Bool, serving: Bool) -> RemoteMachinesReport {
+        let now = Date()
+        return RemoteMachinesReport(listing: listing, serving: serving, port: Int(RemoteProtocol.port),
+                                    machines: remoteMachines.map { .init($0, now: now) },
+                                    shown: shownRemoteProject?.report)
+    }
+
+    /// `zetty remote open`: what a click on the project's sidebar row does.
+    /// Returns why not, or nil once it shows.
+    func openRemoteProject(machine machineQuery: String, project projectQuery: String) -> String? {
+        let report = remoteReport(listing: true, serving: false)
+        guard let machine = report.machine(matching: machineQuery) else {
+            let known = report.machines.map(\.name).joined(separator: ", ")
+            return "no other Mac named '\(machineQuery)'" + (known.isEmpty ? "" : " — known: \(known)")
+        }
+        guard machine.state == "online" else {
+            return "\(machine.name) isn't online (\(machine.summary))"
+        }
+        guard let project = machine.project(matching: projectQuery) else {
+            return "no open project '\(projectQuery)' on \(machine.name)"
+        }
+        leaveTileModeForSidebarClick()
+        showRemoteProject(machineID: machine.id, projectID: project.id ?? project.name)
+        return nil
+    }
+
     /// Ends the remote view without refreshing, for callers that rebuild
     /// anyway (selecting a local project or tab, entering tile mode).
     private func dropRemoteProject() {

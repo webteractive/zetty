@@ -143,6 +143,25 @@ event, and a working Claude is not known to be mid-turn, so the interrupt is
 only exercised by Codex there. Type a few words into a pane's prompt box
 before hibernating to see the failure banner.
 
+## Testing Other Macs across two Macs
+
+`scripts/remote-e2e.sh` runs the Other Macs checklist with nobody at either Mac.
+This Mac serves and the other one views. Both run a throwaway copy of the build
+under `/tmp/zre` on port 47392 (`ZETTY_REMOTE_PORT`), so the installed apps
+keep their own connection and sessions. It prints PASS or FAIL for each check
+and cleans up both Macs.
+
+```sh
+scripts/remote-e2e.sh --peer <user>@<lan-address>            # builds first
+scripts/remote-e2e.sh --peer <user>@<lan-address> --network  # also takes this Mac off Tailscale for a minute
+```
+
+It needs SSH to the other Mac without a password (a key such as
+`~/.ssh/zetty-e2e`, picked up by default), both Macs on Tailscale as you, zmx
+here, and the other Mac awake and logged in. Use its LAN address: `--network`
+runs `tailscale down` here. `.hydra/rules/remote-machines.md` → "Testing" has
+what each check covers and what still needs a person.
+
 ## Layout
 
 - `Sources/ZettyCore/**` — the pure, unit-tested model layer (no AppKit): pane

@@ -70,7 +70,11 @@ final class RemoteProjectController {
         // Never nil: a surface with no command gets this Mac's login shell.
         registry.surfaceCommand = { [weak self] surface in self?.command(for: surface) ?? "/usr/bin/false" }
         registry.surfaceEnvironment = { [weak self] _ in
-            self?.machine.map { ["ZETTY_REMOTE_MACHINE": $0.name] }
+            // The relay dials this app's port, moved or not, even if the
+            // pane's login shell would not pass the variable on.
+            self?.machine.map {
+                ["ZETTY_REMOTE_MACHINE": $0.name, RemoteProtocol.portVariable: String(RemoteProtocol.port)]
+            }
         }
         // `onSurfacesRemoved` stays nil: freeing a remote surface ends only
         // its relay, never a session.
@@ -86,6 +90,16 @@ final class RemoteProjectController {
 
     var focusedPane: StatusSnapshot.Pane? {
         focusedSurfaceID.flatMap { paneBySurface[$0] }
+    }
+
+    /// What `zetty remote list` says about this view, nil when nothing shows.
+    var report: RemoteMachinesReport.Shown? {
+        guard let machine, let projectID else { return nil }
+        let project = machine.workspace?.projects.first { ($0.id ?? $0.name) == projectID }
+        let message = placeholder?.subviews.compactMap { $0 as? NSTextField }.first?.stringValue
+        return .init(machineID: machine.stableID, machine: machine.name, projectID: projectID,
+                     project: project?.name ?? projectName, tab: selectedTabIndex,
+                     panes: message == nil ? shown?.panes ?? [] : [], placeholder: message)
     }
 
     // MARK: - Showing

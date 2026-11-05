@@ -225,6 +225,15 @@ public enum ControlRequest: Equatable, Sendable {
     /// advisory: the exec happens whether or not this is delivered, so the app
     /// being closed costs only the chip's accuracy. Response `.ok`.
     case accountRunning(surface: String, account: String)
+    /// The other Macs as this app mirrors them, and the one shown. Response
+    /// `.remote`.
+    case remoteList
+    /// Show another Mac's project in the window, as clicking it in the
+    /// sidebar does. `machine` and `project` match a name (case-insensitive)
+    /// or an id. Changes nothing on that Mac. Response `.ok`.
+    case remoteOpen(machine: String, project: String)
+    /// Back to this Mac's project, as it was left. Response `.ok`.
+    case remoteClose
 }
 
 extension ControlRequest {
@@ -254,7 +263,7 @@ extension ControlRequest {
 
 extension ControlRequest: Codable {
     private enum CodingKeys: String, CodingKey {
-        case command, target, text, enter, keys, project, wholeTab, killSessions, simulateRestart, vertical, lines, path, name, gitInit, focus, fetch, discard, line, column, space, newName, color, icon, account, probe, surface, on, profile, slot, collapse, view, force, handoff, wake, asker, asking, cancel
+        case command, target, text, enter, keys, project, wholeTab, killSessions, simulateRestart, vertical, lines, path, name, gitInit, focus, fetch, discard, line, column, space, newName, color, icon, account, probe, surface, on, profile, slot, collapse, view, force, handoff, wake, asker, asking, cancel, machine
     }
 
     public init(from decoder: Decoder) throws {
@@ -282,6 +291,11 @@ extension ControlRequest: Codable {
                 surface: try container.decode(String.self, forKey: .surface),
                 account: try container.decode(String.self, forKey: .account))
         case "reload": self = .reload
+        case "remote-list": self = .remoteList
+        case "remote-open":
+            self = .remoteOpen(machine: try container.decode(String.self, forKey: .machine),
+                               project: try container.decode(String.self, forKey: .project))
+        case "remote-close": self = .remoteClose
         // decodeIfPresent for the same reason `hibernated` and `live` use it:
         // an older standalone binary must not throw on a newer app's payload.
         case "tiles":
@@ -460,6 +474,14 @@ extension ControlRequest: Codable {
             try container.encode(account, forKey: .account)
         case .reload:
             try container.encode("reload", forKey: .command)
+        case .remoteList:
+            try container.encode("remote-list", forKey: .command)
+        case .remoteOpen(let machine, let project):
+            try container.encode("remote-open", forKey: .command)
+            try container.encode(machine, forKey: .machine)
+            try container.encode(project, forKey: .project)
+        case .remoteClose:
+            try container.encode("remote-close", forKey: .command)
         case .tiles(let on, let profile):
             try container.encode("tiles", forKey: .command)
             try container.encodeIfPresent(on, forKey: .on)
@@ -638,6 +660,8 @@ public enum ControlResponse: Equatable, Sendable {
     case text(String)
     /// The configured agent accounts.
     case accounts(AccountsSnapshot)
+    /// What `zetty remote list` shows.
+    case remote(RemoteMachinesReport)
     case error(String)
 }
 
@@ -703,7 +727,7 @@ public struct AccountsSnapshot: Codable, Equatable, Sendable {
 
 extension ControlResponse: Codable {
     private enum CodingKeys: String, CodingKey {
-        case ok, status, pane, text, error, accounts
+        case ok, status, pane, text, error, accounts, remote
     }
 
     public init(from decoder: Decoder) throws {
@@ -718,6 +742,8 @@ extension ControlResponse: Codable {
             self = .text(text)
         } else if let accounts = try container.decodeIfPresent(AccountsSnapshot.self, forKey: .accounts) {
             self = .accounts(accounts)
+        } else if let report = try container.decodeIfPresent(RemoteMachinesReport.self, forKey: .remote) {
+            self = .remote(report)
         } else {
             self = .ok
         }
@@ -740,6 +766,9 @@ extension ControlResponse: Codable {
         case .accounts(let snapshot):
             try container.encode(true, forKey: .ok)
             try container.encode(snapshot, forKey: .accounts)
+        case .remote(let report):
+            try container.encode(true, forKey: .ok)
+            try container.encode(report, forKey: .remote)
         case .error(let message):
             try container.encode(false, forKey: .ok)
             try container.encode(message, forKey: .error)

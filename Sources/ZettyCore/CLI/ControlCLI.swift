@@ -181,6 +181,11 @@ public enum ControlCLI {
       zetty attach <machine>:<pane>          show another Mac's pane in this terminal
                                               (Zetty runs it in each pane of another
                                               Mac's project)
+      zetty remote list [--json]             the other Macs this Zetty lists, their
+                                              state, projects and the one shown
+      zetty remote open <machine> <project>  show that Mac's project in the window,
+                                              as clicking it in the sidebar does
+      zetty remote close                     back to this Mac's project
 
       zetty --version | -v | version        print the version and build commit
 
@@ -238,7 +243,7 @@ public enum ControlCLI {
         "restart-agent", "handoff", "edit", "reload", "tiles",
         "scratch", "scratch-clear", "quit", "accounts", "run",
         "new-space", "rename-space", "remove-space", "move-to-space",
-        "attach",
+        "attach", "remote",
     ]
 
     /// True when `arguments` look like a CLI invocation (used by the app
@@ -292,6 +297,8 @@ public enum ControlCLI {
             return runRunAccount(arguments)
         case "attach":
             return runAttach(arguments)
+        case "remote":
+            return runRemote(arguments)
         case "send":
             return runSend(arguments)
         case "capture":
@@ -831,6 +838,27 @@ public enum ControlCLI {
 
         Changes nothing on either Mac: closing the pane only lets go of it.
         """,
+        "remote": """
+        usage: zetty remote list [--json]
+               zetty remote open <machine> <project>
+               zetty remote close
+
+        Other Macs (zetty-remote-machines), from the command line.
+
+        list    each other Mac this Zetty lists: its state (online, offline,
+                connecting, needs-update, refused), the sidebar's summary, its
+                address and when it was last seen, then the other Mac's project
+                the window shows, if any. --json adds every Mac's projects,
+                tabs and pane ids.
+        open    show that Mac's project in the window, as clicking it in the
+                sidebar does. <machine> is its name or Tailscale node id,
+                <project> a project's name or id there (`remote list --json`).
+                Each pane of the shown tab runs its own `zetty attach` relay.
+        close   leave it and show this Mac's project as it was.
+
+        Changes nothing on either Mac's workspace: open and close only change
+        what this window shows.
+        """,
         "run": """
         usage: zetty run <account> [args …]
 
@@ -1013,6 +1041,70 @@ public enum ControlCLI {
         }
         let name = ProcessInfo.processInfo.environment["ZETTY_REMOTE_MACHINE"].flatMap { $0.isEmpty ? nil : $0 }
         return RemoteRelay.run(target: target, machineName: name ?? target.host)
+    }
+
+    /// `zetty remote list|open|close`.
+    private static func runRemote(_ arguments: [String]) -> Int32 {
+        func usage() -> Int32 {
+            FileHandle.standardError.write(Data("""
+                usage: zetty remote list [--json]
+                       zetty remote open <machine> <project>
+                       zetty remote close
+
+                """.utf8))
+            return 2
+        }
+        switch arguments.first {
+        case "list":
+            let flags = Array(arguments.dropFirst())
+            guard flags.allSatisfy({ $0 == "--json" }) else { return usage() }
+            switch roundTrip(.remoteList) {
+            case .remote(let report):
+                if flags.isEmpty {
+                    for line in remoteLines(report) { print(line) }
+                } else {
+                    let encoder = JSONEncoder()
+                    encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+                    if let data = try? encoder.encode(report) {
+                        print(String(decoding: data, as: UTF8.self))
+                    }
+                }
+                return 0
+            case .error(let message): return failure(message)
+            default: return failure("unexpected response")
+            }
+        case "open":
+            guard arguments.count == 3 else { return usage() }
+            return expectOK(.remoteOpen(machine: arguments[1], project: arguments[2]), success: nil)
+        case "close":
+            guard arguments.count == 1 else { return usage() }
+            return expectOK(.remoteClose, success: nil)
+        default:
+            return usage()
+        }
+    }
+
+    /// Plain-text rendering for `zetty remote list`, kept pure so it is testable.
+    public static func remoteLines(_ report: RemoteMachinesReport) -> [String] {
+        guard report.listing else {
+            return ["Other Macs is off: turn on zetty-remote-machines (Settings → General → Other Macs)"]
+        }
+        var lines = report.machines.isEmpty ? ["no other Macs yet"] : []
+        let width = report.machines.map(\.name.count).max() ?? 0
+        for machine in report.machines {
+            let mark = machine.state == "online" ? "●" : "○"
+            var fields = [mark + " " + machine.name.padding(toLength: width, withPad: " ", startingAt: 0),
+                          machine.summary]
+            if let address = machine.address { fields.append(address) }
+            lines.append(fields.joined(separator: "  "))
+        }
+        if let shown = report.shown {
+            let what = shown.placeholder
+                ?? (shown.panes.isEmpty ? "no panes" : shown.panes.joined(separator: " "))
+            lines.append("showing \(shown.machine) › \(shown.project ?? shown.projectID), tab \(shown.tab + 1): " + what)
+        }
+        lines.append("serving: " + (report.serving ? "on, port \(report.port)" : "off"))
+        return lines
     }
 
     private static func runRunAccount(_ arguments: [String]) -> Int32 {

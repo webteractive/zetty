@@ -87,6 +87,14 @@ Commands (see `zetty --help` for full grammar and agent notes):
 - `edit [--pane|--cwd]` — open the pane's project root (a scratch pane's cwd)
   in the configured `editor`, Finder without one; `.text` says what it did.
   No menu: the per-pane Open button's picker is GUI-only.
+- `remote list [--json]` · `remote open <machine> <project>` · `remote
+  close` — Other Macs from the command line (`remote-machines.md`). `list`
+  answers `.remote(RemoteMachinesReport)`: each Mac's state as one word, the
+  sidebar summary, address, last seen, workspace, and the shown project with
+  its tab's pane ids or its placeholder. `open` is a sidebar click (it leaves
+  the tile grid) and refuses a Mac that isn't online or a hibernated
+  project. Neither changes a workspace on either Mac, so no busy gate.
+  `scripts/remote-e2e.sh` is built on them.
 - `focus (--pane|--cwd)` · `close (--pane|--cwd) [--tab]` · `reload` ·
   `quit [--kill-sessions]` (no dialog; the flag kills every preserved
   session first — full shutdown).
@@ -242,7 +250,8 @@ Two halves fix it, both regression-tested:
   anything incompatible needs a `RemoteProtocol.version` bump.
 - **`zetty attach <machine>:<pane>` is the one verb that opens a network
   connection.** It never talks to the local socket: it dials the other Mac's
-  Zetty on port 47391 (`remote-machines.md`, "Terminal connections") and
+  Zetty on port 47391, or `ZETTY_REMOTE_PORT` (`remote-machines.md`,
+  "Terminal connections") and
   relays this terminal to that pane. It is what a remote pane runs, built by
   `RemoteAttachTarget.relayCommand`, which accepts only a hex pane id and a
   numeric tailnet address because the command goes through `bash -c`. Its

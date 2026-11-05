@@ -141,3 +141,12 @@ private let attachRequest = RemoteAttachRequest(pane: "ab12cd34", rows: 30, cols
     #expect(option(IPPROTO_TCP, TCP_KEEPINTVL) == 3)
     #expect(option(IPPROTO_TCP, TCP_KEEPCNT) == 2)
 }
+
+@Test func portMovesOnlyForAWholeUnprivilegedNumber() {
+    #expect(RemoteProtocol.port(in: [:]) == RemoteProtocol.defaultPort)
+    #expect(RemoteProtocol.port(in: ["ZETTY_REMOTE_PORT": "47392"]) == 47_392)
+    #expect(RemoteProtocol.port(in: ["ZETTY_REMOTE_PORT": "65535"]) == 65_535)
+    for bad in ["", "22", "1023", "65536", "-1", "47392 ", "0x1000", "abc"] {
+        #expect(RemoteProtocol.port(in: ["ZETTY_REMOTE_PORT": bad]) == RemoteProtocol.defaultPort, "\(bad)")
+    }
+}

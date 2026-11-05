@@ -46,6 +46,7 @@ private let actingArguments: [String: [String]] = [
     "remove-space": ["Foo"],
     "move-to-space": ["Foo", "Work"],
     "attach": ["100.64.0.1:ab12cd34"],
+    "remote": ["open", "Mac mini", "zetty"],
 ]
 
 @Test func everyVerbHasRealisticArguments() {

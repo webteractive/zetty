@@ -5,7 +5,24 @@ public enum RemoteProtocol {
     /// Bump when a message changes incompatibly. A peer on another version is
     /// shown as "needs update" rather than dropped.
     public static let version = 2
-    public static let port: UInt16 = 47_391
+    public static let defaultPort: UInt16 = 47_391
+    /// `ZETTY_REMOTE_PORT` names the environment variable that moves serving,
+    /// dialling and relays to another port, read once at launch. It exists
+    /// so a test pair (`scripts/remote-e2e.sh`) can run beside the real
+    /// pair, which keeps the default port. Only the port moves: binding
+    /// still takes this Mac's Tailscale addresses and nothing else.
+    public static let portVariable = "ZETTY_REMOTE_PORT"
+    public static let port: UInt16 = port(in: ProcessInfo.processInfo.environment)
+
+    /// The port `environment` asks for. Anything but a whole number from
+    /// 1024 to 65535 is ignored, so a typo falls back to the default
+    /// instead of serving on a privileged or random port.
+    public static func port(in environment: [String: String]) -> UInt16 {
+        guard let raw = environment[portVariable], let value = UInt16(raw), value >= 1_024 else {
+            return defaultPort
+        }
+        return value
+    }
     /// A frame larger than this ends the connection before its body is read,
     /// so a broken or hostile peer can't make Zetty buffer without bound.
     public static let maxFrameBytes = 8 * 1_048_576

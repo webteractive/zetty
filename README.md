@@ -446,6 +446,8 @@ zetty tiles --profile morning            # open a saved tile view
 zetty accounts                           # list agent accounts
 zetty run personal                       # run that account's agent here
 zetty attach mini:1a2b3c4d               # another Mac's pane in this terminal
+zetty remote list                        # your other Macs, their state and projects
+zetty remote open mini api               # show another Mac's project here (remote close: back)
 zetty reload                             # same as ⇧⌘,
 zetty quit --kill-sessions               # quit and end preserved sessions
 ```

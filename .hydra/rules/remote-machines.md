@@ -79,6 +79,13 @@ Other people's Macs are only counted, in the Settings status line.
 - Port **47391** (`RemoteProtocol.port`). A frame is a 4-byte big-endian
   length, then JSON (`RemoteMessage`: `hello`, `snapshot`, `refused`,
   `attached`).
+- **`ZETTY_REMOTE_PORT` moves the port** (1024–65535, anything else is
+  ignored), read once at launch, for serving, dialling and relays alike. The
+  controller also passes it to each remote pane, so a relay dials the same
+  port as its app. It exists for the test pair in `scripts/remote-e2e.sh`,
+  which must not collide with the installed apps on 47391. It is not a config
+  key on purpose: a real pair on different ports would never find each
+  other.
 - A frame over **8 MiB** closes the connection before its body is read.
 - Each side sends `hello` first. The server waits 5s for the client's, then
   closes. Another `protocolVersion` keeps the connection open with no
@@ -198,6 +205,25 @@ through `setNeedsChromeRefresh`, since a feed can tick as fast as a title.
 
 ## Testing
 
+- **`scripts/remote-e2e.sh --peer <user>@<lan-address>` runs the checklist
+  below with nobody at either Mac** (`DEVELOPMENT.md` has the setup). This
+  Mac serves and the peer views. Both run a copy of the build under
+  `/tmp/zre` on port 47392, so the installed apps and their sessions are
+  never touched. The script reads state through `zetty remote list --json`
+  and drives the view with `remote open|close`. It types through a relay
+  from a Python pty on the peer, then reads the result back with `capture`.
+  `--network` adds the offline check (`tailscale down --accept-risk=lose-ssh`
+  here: without the flag the CLI refuses and changes nothing). First full
+  run, 2026-11-05: 25 checks pass, offline seen in 13s, back in 15s.
+- **The peer's copy is started as a bare binary over SSH, with nohup.**
+  `open -n` can't start it: `LSMultipleInstancesProhibited` makes Launch
+  Services hand the launch to the installed app (and drop `--env`). Started
+  from SSH, the binary still reaches the window server while that user is
+  logged in, so its panes get real surfaces.
+- **A relay is `-<zetty> attach <ip>:<pane>`** (a login shell's `exec -l`),
+  under `/usr/bin/login -flp … -c exec -l <zetty> attach …`, so a bare
+  `pgrep -f "zetty attach"` counts two per pane. Count with
+  `pgrep -f '^-?<zetty> attach'`.
 - **Loopback, no Tailscale needed.** A scratch SwiftPM package that depends on
   this repo (`.package(path:)`) and links `ZettyCore`, with copies of
   `App/Sources/App/Remote/*.swift`, can run a real `RemoteServer` on
@@ -217,10 +243,12 @@ through `setNeedsChromeRefresh`, since a feed can tick as fast as a title.
   so admitting it would let another user on this Mac open this user's
   panes. An end-to-end check of `attach` therefore needs two Macs, or a
   throwaway build that drops the check and is never committed.
-- **Watch relays with `pgrep -fl "zetty attach"`.** One per open remote pane,
-  gone within about a second of the pane closing on either Mac.
+- **Watch relays with `pgrep -fl "zetty attach"`.** Two lines per open
+  remote pane (the relay and its login parent, above), gone within about a
+  second of the pane closing on either Mac.
 - **Two Macs, both signed in to Tailscale as Glen.** Serve on the mini, show on
-  the laptop. Check: the mini's projects and dots appear and update within
+  the laptop. `remote-e2e.sh` covers all of this but the version mismatch.
+  Check: the mini's projects and dots appear and update within
   ~1s; `tailscale down` or sleeping the mini gives offline within ~16s and
   online again after; `printf '\xff\xff\xff\xff' | nc <ip> 47391` from the
   mini closes only that connection; a build with another `RemoteProtocol.version`

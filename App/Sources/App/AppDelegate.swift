@@ -2268,6 +2268,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         case .reload:
             self.reloadConfiguration(nil)
             return .ok
+        case .remoteList:
+            return .remote(tvc.remoteReport(listing: remoteMachinesClient != nil,
+                                            serving: appConfig.serveRemote && remoteServer != nil))
+        case .remoteOpen(let machine, let project):
+            guard remoteMachinesClient != nil else {
+                return .error("Other Macs is off: turn on zetty-remote-machines (Settings → General → Other Macs)")
+            }
+            if let message = tvc.openRemoteProject(machine: machine, project: project) {
+                return .error(message)
+            }
+            return .ok
+        case .remoteClose:
+            tvc.leaveRemoteProject()
+            return .ok
         case .tiles(let on, let profile):
             // A fast verb: plain view-state mutation through handleOnMain,
             // never the slow-verb path clone/capture/quit use.
