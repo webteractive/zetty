@@ -879,6 +879,7 @@ final class TerminalViewController: NSViewController {
         // GhosttyTerminal, so KVO on `NSWindow.firstResponder` is the only
         // cross-module way to detect the transition.
         startObservingFirstResponder()
+        if let window = view.window { remoteSizeHandoff.install(in: window) }
     }
 
     override func viewWillDisappear() {
@@ -2082,8 +2083,30 @@ final class TerminalViewController: NSViewController {
     // MARK: - Another Mac's project
 
     /// Built on first use; it keeps the viewer's remembered tabs and focus
-    /// for the app's life.
+    /// for the app's life, and recently left projects' panes connected.
     private var remoteProject: RemoteProjectController?
+
+    /// Moves a pane shown on two Macs to the size of this screen when the
+    /// user comes to it here (`RemoteSizeHandoff`).
+    lazy var remoteSizeHandoff: RemoteSizeHandoffController = {
+        let handoff = RemoteSizeHandoffController()
+        handoff.viewController = self
+        return handoff
+    }()
+
+    /// Another Mac's project controller, once built.
+    var remoteProjectController: RemoteProjectController? { remoteProject }
+
+    /// This Mac's pane holding `responder`, when it has a live terminal.
+    func localSurface(containing responder: NSView) -> Surface? {
+        guard let id = registry.surfaceID(containing: responder) else { return nil }
+        return surface(with: id)
+    }
+
+    /// Writes `text` into `surface`'s pty as typed input.
+    func typeRaw(_ text: String, into surface: Surface) {
+        registry.sendText(text, to: surface)
+    }
 
     /// The controller while one of another Mac's projects is in the window
     /// (never in tile mode, which spans this Mac's projects only).
@@ -2107,6 +2130,7 @@ final class TerminalViewController: NSViewController {
             remoteProject = made
             return made
         }()
+        remote.noteMachines(remoteMachines)
         remote.show(machine, projectID: projectID)
         lastGitProbeDirectory = nil
         refreshTabBar()
@@ -7289,6 +7313,8 @@ final class TerminalViewController: NSViewController {
                 leaveRemoteProject()
             }
         }
+        // After leaving, so a project whose Mac just went is freed too.
+        remoteProject?.noteMachines(machines)
         setNeedsChromeRefresh(sidebar: true)
     }
 
@@ -8854,6 +8880,7 @@ final class TerminalViewController: NSViewController {
 
     private func handleFirstResponderChange() {
         guard let responder = view.window?.firstResponder as? NSView else { return }
+        remoteSizeHandoff.engage(responder, typing: false)
         if let remoteProject, remoteProject.noteFirstResponder(responder) { return }
         // Walk the superview chain of the new first responder to find which
         // registry view it belongs to (the terminal view itself, or a child of it).

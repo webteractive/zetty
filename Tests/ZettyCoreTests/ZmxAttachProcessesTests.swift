@@ -16,3 +16,17 @@ import Testing
     #expect(ZmxAttachProcesses.pids(attaching: "zetty-ab12cd34", psOutput: ps) == [10])
     #expect(ZmxAttachProcesses.pids(attaching: "zetty-ab12", psOutput: ps) == [13])
 }
+
+@Test func onlyTheWrappersOwnAttachMayBeRepainted() {
+    let ps = """
+       20     1    20 Ss   ??    0:00.01  1200 /opt/homebrew/bin/zmx attach zetty-ab12cd34
+       21   500    21 S    ??    0:00.01  1200 /bin/sh /Users/me/.zetty/scrollback-restore.sh /opt/homebrew/bin/zmx zetty-ab12cd34
+       22    21    21 S    ??    0:00.01  1200 /opt/homebrew/bin/zmx attach zetty-ab12cd34
+       23    22    23 Ss   ??    0:00.01  1200 /opt/homebrew/bin/zmx attach zetty-ab12cd34
+       24   700    24 S    ??    0:00.01  1200 /opt/homebrew/bin/zmx attach zetty-ab12cd34
+    """
+    // 22 runs under the wrapper. 23 is the session's daemon while its first
+    // attach is alive (signalling it ends the session); 24 is a served
+    // relay's attach, whose parent is Zetty itself.
+    #expect(ZmxAttachProcesses.repaintablePIDs(attaching: "zetty-ab12cd34", psOutput: ps) == [22])
+}

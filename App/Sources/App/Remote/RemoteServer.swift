@@ -8,8 +8,11 @@ struct RemoteAttachPlan {
     let executable: String
     let arguments: [String]
     let environment: [String: String]
-    /// `zetty-<id>`, handed back in `detached(session:)`.
+    /// `zetty-<id>`, handed back in `detached(session:wasDriving:)`.
     let session: String
+    /// The same run with the full scrollback first, for a repaint
+    /// (`RemoteSizeHandoff`).
+    let repaintArguments: [String]
 }
 
 /// Why a pane can't be opened, in plain words for the other Mac's pane.
@@ -24,8 +27,12 @@ protocol RemoteTerminalHosting: AnyObject {
     /// run. Never creates a zmx session.
     func plan(for request: RemoteAttachRequest,
               completion: @escaping (Result<RemoteAttachPlan, RemoteAttachRefusal>) -> Void)
-    /// A remote client let go of `session`.
-    func detached(session: String)
+    /// A remote client typed into `session` (or resized it) while this Mac
+    /// drove its size, so this Mac's own view of it is drawn for the wrong
+    /// size until it takes the size back.
+    func remoteTookSize(session: String)
+    /// A remote client let go of `session`. `wasDriving`: it had the size.
+    func detached(session: String, wasDriving: Bool)
 }
 
 /// Serves this Mac's workspace to the user's other Macs on the tailnet.
@@ -57,6 +64,9 @@ final class RemoteServer {
     private var listeners: [String: Listener] = [:]
     private var connections: [ObjectIdentifier: Connection] = [:]
     private var latestFrame: Data?
+    /// The relay connection whose screen drives each session's size. A
+    /// session missing here is driven by this Mac.
+    private var drivers: [String: ObjectIdentifier] = [:]
 
     /// More pending snapshots than this means the peer isn't reading. Drop it
     /// rather than buffer without bound.
@@ -145,8 +155,10 @@ final class RemoteServer {
             // tell the host, which may need to restore this Mac's own size.
             if let stream = connection.stream {
                 connection.stream = nil
+                let wasDriving = self.drivers[stream.session] == ObjectIdentifier(connection)
+                if wasDriving { self.drivers[stream.session] = nil }
                 let host = self.terminalHost
-                stream.stop { host?.detached(session: stream.session) }
+                stream.stop { host?.detached(session: stream.session, wasDriving: wasDriving) }
             }
         }
         whoisQueue.async { [weak self] in
@@ -187,9 +199,19 @@ final class RemoteServer {
             guard let frames = try? connection.terminalDecoder.push(bytes) else { connection.close(); return }
             for frame in frames {
                 switch frame {
-                case .data(let input): connection.stream?.write(input)
-                case .resize(let rows, let cols): connection.stream?.pty.resize(rows: rows, cols: cols)
-                case .ended: break // only the server ends a pane
+                case .data(let input):
+                    connection.stream?.write(input)
+                    tookSize(connection)
+                case .resize(let rows, let cols):
+                    connection.size = (rows, cols)
+                    connection.stream?.pty.resize(rows: rows, cols: cols)
+                    // zmx applies it when no client has typed since the
+                    // last typist left, so this screen may now drive.
+                    tookSize(connection)
+                case .repaint:
+                    repaint(connection)
+                case .ended, .sizeMoved:
+                    break // only the server sends these
                 }
             }
         case .attaching:
@@ -281,12 +303,17 @@ final class RemoteServer {
             refuse(connection, "couldn't start that pane on \(machineName)")
             return
         }
-        let stream = PaneStream(pty: pty, session: plan.session, queue: queue)
-        connection.stream = stream
+        connection.plan = plan
+        connection.size = (max(request.rows, 1), max(request.cols, 1))
         connection.enqueue(attached)
         connection.terminalDecoder = TerminalFrameDecoder(seed: connection.decoder.takeRemainder())
         connection.phase = .terminal
+        start(PaneStream(pty: pty, session: plan.session, queue: queue), on: connection)
+    }
 
+    /// Pipes `stream` to the relay on `connection`.
+    private func start(_ stream: PaneStream, on connection: Connection) {
+        connection.stream = stream
         stream.onOutput = { [weak connection, weak stream] output in
             guard let connection, let stream else { return }
             connection.enqueue(TerminalFrame.data(output).encode())
@@ -302,6 +329,62 @@ final class RemoteServer {
             connection.stream?.resumeOutput()
         }
         stream.start()
+    }
+
+    // MARK: - Who drives the size
+
+    /// The relay on `connection` typed or resized: its screen may drive the
+    /// session's size now. Every other screen showing it is told.
+    private func tookSize(_ connection: Connection) {
+        guard let session = connection.stream?.session else { return }
+        let id = ObjectIdentifier(connection)
+        let previous = drivers[session]
+        guard previous != id else { return }
+        drivers[session] = id
+        tellRelays(of: session, except: connection)
+        if previous == nil { terminalHost?.remoteTookSize(session: session) }
+    }
+
+    /// This Mac's own pane took `session`'s size back
+    /// (`RemoteSizeHandoffController`). Called from main.
+    func localTookSize(session: String) {
+        queue.async { [self] in
+            guard drivers.removeValue(forKey: session) != nil else { return }
+            tellRelays(of: session, except: nil)
+        }
+    }
+
+    private func tellRelays(of session: String, except: Connection?) {
+        let frame = TerminalFrame.sizeMoved.encode()
+        for other in connections.values where other !== except && other.phase == .terminal
+            && other.stream?.session == session {
+            other.enqueue(frame)
+        }
+    }
+
+    /// The relay took the size and its program has redrawn: restart its
+    /// attach with the scrollback replay, after clearing its screen, so it
+    /// shows zmx's own copy at its size instead of what was drawn for
+    /// another. The old attach goes without `detached`, which would hand
+    /// the size back to this Mac. At most one a second per connection.
+    private func repaint(_ connection: Connection) {
+        guard connection.phase == .terminal, let old = connection.stream, let plan = connection.plan else { return }
+        let now = Date()
+        if let last = connection.lastRepaint, now.timeIntervalSince(last) < 1 { return }
+        connection.lastRepaint = now
+        old.onOutput = nil
+        old.onEnded = nil
+        connection.stream = nil
+        old.stop {}
+        guard let pty = try? PTYProcess.spawn(executable: plan.executable, arguments: plan.repaintArguments,
+                                              environment: plan.environment,
+                                              rows: connection.size.rows, cols: connection.size.cols) else {
+            connection.closeAfterFlush = true
+            connection.enqueue(TerminalFrame.ended("couldn't repaint that pane on \(machineName)").encode())
+            return
+        }
+        connection.enqueue(TerminalFrame.data(Data(RemoteSizeHandoff.clearScreen.utf8)).encode())
+        start(PaneStream(pty: pty, session: plan.session, queue: queue), on: connection)
     }
 
     /// Sends a plain-words refusal, then closes once it is written.
@@ -393,6 +476,11 @@ private final class Connection {
     var terminalDecoder = TerminalFrameDecoder()
     /// The pane's pty, on a terminal connection.
     var stream: PaneStream?
+    /// What runs on the pty, kept for a repaint.
+    var plan: RemoteAttachPlan?
+    /// The relay's window, as last sent.
+    var size: (rows: UInt16, cols: UInt16) = (24, 80)
+    var lastRepaint: Date?
     /// After each write, so a paused pane can resume.
     var onFlushed: (() -> Void)?
     /// Close once everything queued has been written (a refusal).

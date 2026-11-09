@@ -1992,6 +1992,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             remoteServer?.stop()
             remoteServer = nil
             terminalViewController?.onSnapshotChanged = nil
+            terminalViewController?.remoteSizeHandoff.onLocalTakeover = nil
             return
         }
         if remoteServer == nil {
@@ -2000,6 +2001,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
                                       terminalHost: host, pairingKey: { [pairingKeys] in pairingKeys.key })
             remoteServer = server
             tvc.onSnapshotChanged = { [weak server] in server?.publish($0) }
+            tvc.remoteSizeHandoff.onLocalTakeover = { [weak server] in server?.localTookSize(session: $0) }
             server.publish(tvc.statusSnapshot())
         }
         remoteServer?.listen(on: me.addresses, me: me)

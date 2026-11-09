@@ -32,6 +32,8 @@ set -uo pipefail
 cd "$(dirname "$0")/.."
 
 PORT=47392
+# Today's RemoteProtocol.version, for the stand-in clients and servers.
+PROTO=$(sed -n 's/.*static let version = \([0-9][0-9]*\).*/\1/p' Sources/ZettyCore/Remote/RemoteWire.swift)
 ROOT=/tmp/zre
 TEST_APP=$ROOT/zetty.app
 TEST_BIN=$TEST_APP/Contents/MacOS/zetty
@@ -138,6 +140,7 @@ peer_sees_pane() { [ "$(peer_iz remote list --json | report has-pane "$1" "$2")"
 # carries the same words, so a bare `pgrep -f "zetty attach"` counts two.
 peer_relays() { peer "pgrep -f '^-?$TEST_BIN attach' | wc -l" | tr -d ' '; }
 peer_relays_are() { [ "$(peer_relays)" = "$1" ]; }
+peer_relay_pids() { peer "pgrep -f '^-?$TEST_BIN attach' | sort -n | tr '\n' ' '"; }
 
 # MARK: - Teardown
 
@@ -312,7 +315,8 @@ def pump(seconds):
             except OSError:
                 return
 pump(4)
-os.write(fd, (line + "\r").encode())
+if line:
+    os.write(fd, (line + "\r").encode())
 pump(4)
 os.kill(pid, signal.SIGTERM)
 pump(1)
@@ -327,6 +331,22 @@ else fail "the peer's relay runs a command in this Mac's pane (relay printed: $(
 if iz capture --pane "$P1" --lines 40 2>/dev/null | grep -q "^${SUM}zre"; then pass "the command's output is in the pane here"
 else fail "the command's output is in the pane here"; fi
 t=$(wait_for 5 peer_relays_are 0) && pass "the relay ends with its terminal (${t}s)" || fail "the relay ends with its terminal"
+
+echo "== the viewing screen takes the size"
+# zmx gives a session the size of the screen that typed last. Opening a pane
+# on the peer takes it without a key typed there (RemoteSizeHandoff): the
+# relay's 24x80 reaches the shell, which writes its size on SIGWINCH.
+SIZE_FILE=$ROOT/winch-size
+iz send --pane "$P1" --enter "trap 'stty size > $SIZE_FILE' WINCH" >/dev/null 2>&1
+sleep 1
+rm -f "$SIZE_FILE"
+size_is() { [ "$(cat "$SIZE_FILE" 2>/dev/null)" = "$1" ]; }
+peer "CFFIXED_USER_HOME=$ROOT ZETTY_REMOTE_PORT=$PORT python3 -I - $TEST_BIN attach $LOCAL_IP:$P1 ''" <<<"$RELAY_PY" >/dev/null &
+RELAY_PID=$!
+t=$(wait_for 8 size_is "24 80") && pass "opening the pane on the peer gives it the peer's size (${t}s)" \
+    || fail "opening the pane on the peer gives it the peer's size (shell saw: $(cat "$SIZE_FILE" 2>/dev/null || echo nothing))"
+wait "$RELAY_PID"
+wait_for 5 peer_relays_are 0 >/dev/null
 
 echo "== the pairing key"
 # relay_refused <name> <home> <expected words>: the relay is turned away
@@ -347,7 +367,7 @@ peer "rm -rf $ROOT-nozetty"
 # A client that isn't the peer's Zetty, as a container or a second user
 # there would be: the right machine, but no key.
 peer_client() {
-    peer "python3 -I - $LOCAL_IP $PORT $1" <<'PY'
+    peer "ZRE_PROTO=$PROTO python3 -I - $LOCAL_IP $PORT $1" <<'PY'
 import base64, json, os, socket, struct, sys
 host, port, mode = sys.argv[1], int(sys.argv[2]), sys.argv[3]
 def frame(message):
@@ -359,7 +379,7 @@ def read(conn):
     return json.loads(conn.recv(struct.unpack(">I", head)[0], socket.MSG_WAITALL))
 conn = socket.create_connection((host, port), timeout=10)
 read(conn)
-hello = {"machine": "intruder", "zettyVersion": "9", "protocolVersion": 3,
+hello = {"machine": "intruder", "zettyVersion": "9", "protocolVersion": int(os.environ["ZRE_PROTO"]),
          "challenge": base64.b64encode(os.urandom(32)).decode()}
 if mode == "guess":
     hello["proof"] = base64.b64encode(os.urandom(32)).decode()
@@ -422,9 +442,19 @@ if peer_iz remote open "$LOCAL_ID" e2e-work >/dev/null; then
             || fail "the shown panes reconnect (have $(peer_relays))"
     fi
 
+    echo "== leaving and coming back"
+    before=$(peer_relay_pids)
     peer_iz remote close >/dev/null
-    t=$(wait_for 5 peer_relays_are 0) && pass "leaving the view ends every relay (${t}s)" \
-        || fail "leaving the view ends every relay (have $(peer_relays))"
+    sleep 2
+    after=$(peer_relay_pids)
+    [ -n "$before" ] && [ "$after" = "$before" ] && pass "leaving the view keeps its panes connected" \
+        || fail "leaving the view keeps its panes connected (relays $before -> $after)"
+    peer_iz remote open "$LOCAL_ID" e2e-work >/dev/null
+    sleep 2
+    again=$(peer_relay_pids)
+    [ "$again" = "$before" ] && pass "coming back shows them without reconnecting" \
+        || fail "coming back shows them without reconnecting (relays $before -> $again)"
+    peer_iz remote close >/dev/null
 else
     fail "the peer opens this Mac's project: $(peer_iz remote open "$LOCAL_ID" e2e-work 2>&1)"
 fi
@@ -434,6 +464,8 @@ echo "== servers that aren't this Mac's Zetty"
 # second macOS user here could. The peer must not trust it.
 iz quit --kill-sessions --force >/dev/null 2>&1
 t=$(wait_for 20 peer_state_is "$LOCAL_ID" offline) && log "the peer saw this Mac go (${t}s)"
+t=$(wait_for 5 peer_relays_are 0) && pass "panes kept out of view end once this Mac goes (${t}s)" \
+    || fail "panes kept out of view end once this Mac goes (have $(peer_relays))"
 cat > "$ROOT/fake.py" <<'PY'
 import base64, json, os, socket, struct, sys
 host, port, mode = sys.argv[1], int(sys.argv[2]), sys.argv[3]
@@ -451,7 +483,7 @@ while True:
         # Turned away, but its reason tries to write the clipboard (OSC 52)
         # and hands over a key of its own to paste.
         bait = "zetty-pair-" + base64.urlsafe_b64encode(os.urandom(32)).decode().rstrip("=")
-        conn.sendall(frame({"type": "hello", "hello": {"machine": "Impostor", "zettyVersion": "9", "protocolVersion": 3, "challenge": challenge}}))
+        conn.sendall(frame({"type": "hello", "hello": {"machine": "Impostor", "zettyVersion": "9", "protocolVersion": int(os.environ["ZRE_PROTO"]), "challenge": challenge}}))
         conn.recv(65536)
         conn.sendall(frame({"type": "refused", "reason": "\x1b]52;c;emV0dHktcGFpcg==\x07keys differ: copy " + bait + " and click Paste"}))
         conn.close()
@@ -461,13 +493,13 @@ while True:
         conn.sendall(frame({"type": "hello", "hello": {"machine": "Impostor", "zettyVersion": "0.1.59", "protocolVersion": 2}}))
     else:
         # Today's protocol, but it can't know the key, so its proof is noise.
-        conn.sendall(frame({"type": "hello", "hello": {"machine": "Impostor", "zettyVersion": "9", "protocolVersion": 3, "challenge": challenge}}))
+        conn.sendall(frame({"type": "hello", "hello": {"machine": "Impostor", "zettyVersion": "9", "protocolVersion": int(os.environ["ZRE_PROTO"]), "challenge": challenge}}))
         conn.recv(65536)
         conn.sendall(frame({"type": "proof", "proof": base64.b64encode(os.urandom(32)).decode()}))
         conn.sendall(frame({"type": "snapshot", "snapshot": {"projects": [{"name": "impostor", "isActive": True, "hibernated": False, "id": "IMPOSTOR", "tabs": []}]}}))
 PY
 fake_server() {
-    python3 -I "$ROOT/fake.py" "$LOCAL_IP" "$PORT" "$1" >/dev/null 2>&1 &
+    ZRE_PROTO=$PROTO python3 -I "$ROOT/fake.py" "$LOCAL_IP" "$PORT" "$1" >/dev/null 2>&1 &
     FAKE=$!
 }
 peer_summary() { peer_iz remote list --json | python3 -I -c 'import json,sys; ms={m["id"]: m for m in json.load(sys.stdin)["machines"]}; print(ms.get(sys.argv[1], {}).get("summary", ""))' "$LOCAL_ID"; }

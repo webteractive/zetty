@@ -2,9 +2,10 @@ import Foundation
 
 /// What crosses a terminal connection once the server has sent `attached`.
 ///
-/// One kind byte (0 data, 1 resize, 2 ended), a 4-byte big-endian length,
-/// then the payload. Resize is rows then cols, each a big-endian `UInt16`;
-/// ended is a plain-words UTF-8 reason.
+/// One kind byte (0 data, 1 resize, 2 ended, 3 repaint, 4 size moved), a
+/// 4-byte big-endian length, then the payload. Resize is rows then cols, each
+/// a big-endian `UInt16`; ended is a plain-words UTF-8 reason; repaint and
+/// size moved carry nothing.
 public enum TerminalFrame: Equatable, Sendable {
     /// Bytes for the pty: keystrokes one way, output the other.
     case data(Data)
@@ -12,6 +13,12 @@ public enum TerminalFrame: Equatable, Sendable {
     case resize(rows: UInt16, cols: UInt16)
     /// The pane went away on the serving Mac; the connection closes after.
     case ended(String)
+    /// From the relay: it has just taken the session's size, so restart its
+    /// attach from a clean screen (`RemoteSizeHandoff`).
+    case repaint
+    /// From the server: another screen drives the session's size now, so the
+    /// relay must take it back before its view is right again.
+    case sizeMoved
 
     public func encode() -> Data {
         let kind: UInt8
@@ -26,6 +33,12 @@ public enum TerminalFrame: Equatable, Sendable {
         case .ended(let reason):
             kind = 2
             payload = Data(reason.utf8)
+        case .repaint:
+            kind = 3
+            payload = Data()
+        case .sizeMoved:
+            kind = 4
+            payload = Data()
         }
         var length = UInt32(payload.count).bigEndian
         return Data([kind]) + Data(bytes: &length, count: 4) + payload
@@ -53,7 +66,7 @@ public struct TerminalFrameDecoder {
             let start = buffer.startIndex
             let kind = buffer[start]
             let length = buffer[start + 1 ..< start + 5].reduce(0) { $0 << 8 | Int($1) }
-            guard kind <= 2 else { throw Failure.malformed }
+            guard kind <= 4 else { throw Failure.malformed }
             guard length <= RemoteProtocol.maxTerminalChunk else { throw Failure.tooLarge(length) }
             guard buffer.count >= Self.headerSize + length else { break }
             let payload = buffer.subdata(in: start + 5 ..< start + 5 + length)
@@ -66,6 +79,12 @@ public struct TerminalFrameDecoder {
                 let p = [UInt8](payload)
                 frames.append(.resize(rows: UInt16(p[0]) << 8 | UInt16(p[1]),
                                       cols: UInt16(p[2]) << 8 | UInt16(p[3])))
+            case 3:
+                guard payload.isEmpty else { throw Failure.malformed }
+                frames.append(.repaint)
+            case 4:
+                guard payload.isEmpty else { throw Failure.malformed }
+                frames.append(.sizeMoved)
             default:
                 guard let reason = String(data: payload, encoding: .utf8) else { throw Failure.malformed }
                 frames.append(.ended(reason))

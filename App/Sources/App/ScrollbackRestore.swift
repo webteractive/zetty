@@ -9,7 +9,7 @@ enum ScrollbackRestore {
 
     static var scriptURL: URL {
         FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent(".zetty/scrollback-restore.sh")
+            .appendingPathComponent(".zetty/\(SessionPersistence.restoreScriptName)")
     }
 
     /// Ensures the script exists with the current contents (rewrites on

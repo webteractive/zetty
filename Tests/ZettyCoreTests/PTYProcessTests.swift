@@ -64,6 +64,20 @@ private func read(_ process: PTYProcess, until needle: String? = nil, timeout: T
     #expect(read(p, until: "hi").contains("hi"))
 }
 
+/// The relay's claim (space, Backspace) can arrive before `zmx attach` has set
+/// raw mode. A cooked pty would echo it and let Backspace erase the space, so
+/// zmx never saw a key and the size never moved.
+@Test func keysWrittenBeforeTheChildReadsArriveUnedited() throws {
+    let p = try PTYProcess.spawn(executable: "/bin/sh",
+                                 arguments: ["-c", "sleep 0.3; head -c 2 | od -An -tx1"],
+                                 environment: [:], rows: 24, cols: 80)
+    defer { p.terminate() }
+    _ = RemoteSizeHandoff.claim.withCString { Darwin.write(p.masterFD, $0, 2) }
+    let out = read(p, until: "7f")
+    #expect(out.split(whereSeparator: \.isWhitespace) == ["20", "7f"])
+    #expect(!out.contains("\u{8}"))
+}
+
 @Test func missingExecutableThrows() {
     #expect(throws: (any Error).self) {
         try PTYProcess.spawn(executable: "/nonexistent/zmx", arguments: [], environment: [:], rows: 24, cols: 80)

@@ -52,8 +52,15 @@ triggers:
     through a generated wrapper (`~/.zetty/scrollback-restore.sh`, contents in
     `SessionPersistence.restoreScriptContents`, written idempotently by
     `ScrollbackRestore.ensureScript()`) that replays `zmx history <session>
-    --vt` into the surface before exec'ing the attach — full scrollback with
-    attributes survives quit/relaunch. Plain-token invocation (`/bin/sh
+    --vt` into the surface before attaching — full scrollback with
+    attributes survives quit/relaunch. The wrapper stays as the attach's
+    parent (it no longer `exec`s): an attach ended by
+    `SessionPersistence.repaintSignal` (SIGUSR1) is restarted after a clear
+    and a fresh replay, which is how a pane another Mac drew is repainted
+    (`remote-machines.md` → Taking the size back). Any other exit ends the
+    wrapper with the attach's status. Only signal the wrapper's own attach
+    (`ZmxAttachProcesses.repaintablePIDs`): the session's daemon can match
+    `zmx attach <session>` while its first attach lives, and SIGUSR1 ends it. Plain-token invocation (`/bin/sh
     <script> <zmx> <session>`) because ghostty's `command` parser can't be
     relied on for quote grouping; the script's `unset ZMX_SESSION` covers the
     strip for both zmx calls. Script write failure falls back to the bare

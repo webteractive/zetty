@@ -12,6 +12,10 @@ import ZettyGhostty
 ///
 /// What the viewer looks at — tab and focused pane — is remembered per
 /// project, in memory, and never sent: the other Mac's window doesn't move.
+///
+/// A project left behind keeps its panes connected for a while
+/// (`RemotePaneRetention`), so coming back shows them as they are instead of
+/// dialling every pane again and replaying its scrollback.
 @MainActor
 final class RemoteProjectController {
     let view = NSView()
@@ -53,9 +57,22 @@ final class RemoteProjectController {
     private var paneBySurface: [UUID: StatusSnapshot.Pane] = [:]
     /// What each surface's relay was started with; teardown kills by this.
     private var relayTargets = RelayTargets()
+    /// When each surface's relay command was built (`announceFocus`).
+    private var startedAt: [UUID: Date] = [:]
+    /// Until the relay sets raw mode, the pane's tty is cooked and echoes a
+    /// focus marker as `^[_zetty-focus^[\`. A refusal leaves that on screen.
+    /// A new relay's first attach takes the size by itself anyway.
+    private static let focusQuietPeriod: TimeInterval = 2
     private var focusedSurfaceID: UUID?
     /// Surfaces whose relay is being ended; freed after the drain.
     private var awaitingTeardown: Set<UUID> = []
+
+    /// Projects left recently whose panes are still connected, out of view.
+    private var kept: [RemotePaneRetention.Kept] = []
+    private var keptIDs: Set<UUID> { Set(kept.flatMap(\.surfaces.values)) }
+    /// The other Macs as last reported, which decide what stays kept.
+    private var machines: [RemoteMachine] = []
+    private var pruneTimer: Timer?
 
     private(set) var tabTitles: [String] = []
     private(set) var selectedTabIndex = 0
@@ -85,6 +102,7 @@ final class RemoteProjectController {
     private func command(for surface: Surface) -> String? {
         guard let address = machine?.address, let pane = paneBySurface[surface.id] else { return nil }
         relayTargets.record(surface.id, address: address, pane: pane.id)
+        startedAt[surface.id] = Date()
         return RemoteAttachTarget.paneCommand(executable: zettyExecutable, address: address, pane: pane.id)
     }
 
@@ -106,8 +124,14 @@ final class RemoteProjectController {
 
     func show(_ machine: RemoteMachine, projectID: String) {
         if self.machine?.stableID != machine.stableID || self.projectID != projectID {
-            releaseAll()
+            keepShown()
             projectName = nil
+            if let at = kept.firstIndex(where: { $0.machine == machine.stableID && $0.project == projectID }) {
+                let back = kept.remove(at: at)
+                // Its relays can't follow the Mac to a new address.
+                if back.address != machine.address { release(Set(back.surfaces.values)) }
+                schedulePrune()
+            }
         }
         self.machine = machine
         self.projectID = projectID
@@ -120,13 +144,20 @@ final class RemoteProjectController {
         render()
     }
 
-    /// Frees every relay. Remembered tabs and focus stay for the next visit.
+    /// Leaves the view. Its panes stay connected out of view while
+    /// `RemotePaneRetention` allows; remembered tabs and focus stay too.
     func close() {
-        releaseAll()
+        keepShown()
         machine = nil
         projectID = nil
         projectName = nil
         tabTitles = []
+    }
+
+    /// The other Macs changed: drops kept panes they no longer allow.
+    func noteMachines(_ machines: [RemoteMachine]) {
+        self.machines = machines
+        prune()
     }
 
     private var stateKey: String? {
@@ -169,7 +200,7 @@ final class RemoteProjectController {
                 keep.insert(id)
             }
         }
-        release(registry.liveIDs.subtracting(keep))
+        release(registry.liveIDs.subtracting(keep).subtracting(keptIDs))
 
         let next = Shown(machine: machine.stableID, project: projectID, tab: state.tab,
                          layout: tab.layout, panes: tab.panes.map(\.id))
@@ -284,6 +315,16 @@ final class RemoteProjectController {
         registry.surfaceID(containing: responder) != nil
     }
 
+    /// Tells the relay in the pane holding `responder` that the user came to
+    /// it, so it takes the session's size (`RelaySizeDriver`).
+    func announceFocus(_ responder: NSView) {
+        guard let id = registry.surfaceID(containing: responder),
+              let surface = tree?.surfaces.first(where: { $0.id == id }),
+              startedAt[id].map({ Date().timeIntervalSince($0) >= Self.focusQuietPeriod }) ?? true
+        else { return }
+        registry.sendText(RemoteSizeHandoff.focusMarker, to: surface)
+    }
+
     private func setFocus(_ id: UUID, moveResponder: Bool) {
         focusedSurfaceID = id
         nodeView?.updateFocus(id)
@@ -349,10 +390,52 @@ final class RemoteProjectController {
 
     // MARK: - Teardown
 
+    /// Frees the shown project's relays; kept projects stay.
     private func releaseAll() {
         clearContent()
         focusedSurfaceID = nil
-        release(registry.liveIDs)
+        release(registry.liveIDs.subtracting(keptIDs))
+    }
+
+    /// Takes the shown project out of view with its panes still connected.
+    private func keepShown() {
+        let shownIDs = registry.liveIDs.subtracting(keptIDs).subtracting(awaitingTeardown)
+        clearContent()
+        focusedSurfaceID = nil
+        guard let machine, let projectID, let address = machine.address else {
+            release(shownIDs)
+            return
+        }
+        var surfaces: [String: UUID] = [:]
+        for id in shownIDs {
+            if let pane = paneBySurface[id] { surfaces[pane.id] = id }
+        }
+        release(shownIDs.subtracting(surfaces.values))
+        if !surfaces.isEmpty {
+            kept.append(.init(machine: machine.stableID, project: projectID, address: address,
+                              leftAt: Date(), surfaces: surfaces))
+        }
+        prune()
+    }
+
+    private func prune() {
+        let result = RemotePaneRetention.prune(kept, machines: machines, now: Date())
+        kept = result.kept
+        release(result.free)
+        schedulePrune()
+    }
+
+    /// Ages kept projects out while there are any.
+    private func schedulePrune() {
+        guard !kept.isEmpty else {
+            pruneTimer?.invalidate()
+            pruneTimer = nil
+            return
+        }
+        guard pruneTimer == nil else { return }
+        pruneTimer = Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated { self?.prune() }
+        }
     }
 
     /// Ends each surface's relay, drains its mailbox, then frees it — the
@@ -363,6 +446,7 @@ final class RemoteProjectController {
         guard !gone.isEmpty else { return }
         awaitingTeardown.formUnion(gone)
         let targets = relayTargets.take(gone)
+        for id in gone { startedAt[id] = nil }
         let root = getpid()
         DispatchQueue.global(qos: .utility).async { [weak self] in
             for pid in RelayProcesses.pids(relaying: targets, under: root, psOutput: ZmxRunner.psSnapshot(timeout: 2) ?? "") {

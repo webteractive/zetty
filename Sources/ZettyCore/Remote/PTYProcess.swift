@@ -37,6 +37,18 @@ public final class PTYProcess: @unchecked Sendable {
             throw SpawnError(description: "openpty: \(String(cString: strerror(errno)))")
         }
         defer { close(slave) }
+        // Input passes through untouched from the start. The relay's keys can
+        // arrive before `zmx attach` sets raw mode itself, and a cooked pty
+        // echoes them and lets Backspace erase what came before, so the
+        // size-claiming keys never reached zmx (`RemoteSizeHandoff.claim`).
+        // Output keeps its processing, which the `zmx history` replay relies on.
+        var mode = termios()
+        if tcgetattr(slave, &mode) == 0 {
+            let output = mode.c_oflag
+            cfmakeraw(&mode)
+            mode.c_oflag = output
+            tcsetattr(slave, TCSANOW, &mode)
+        }
         guard let name = ttyname(slave) else {
             close(master)
             throw SpawnError(description: "ttyname: \(String(cString: strerror(errno)))")

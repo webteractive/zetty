@@ -88,8 +88,9 @@ public struct RelayPolicy: Sendable {
     static let backoff: [TimeInterval] = [1, 2, 5, 10]
 
     public let machine: String
-    /// Ask for full scrollback: only until the first attach, so a reconnect
-    /// doesn't print it twice.
+    /// The first attach is still to come. The relay takes the pane's size
+    /// then, and that takeover's repaint replays the full scrollback, so no
+    /// attach asks for it in its hello. A reconnect never prints it twice.
     public private(set) var scrollback = true
     private var attempt = 0
     /// A "can't reach" or "disconnected" line is on screen for this outage.
@@ -151,14 +152,16 @@ public enum RemoteRelay {
         defer { restore() }
 
         var policy = RelayPolicy(machine: machineName)
+        var driver = RelaySizeDriver()
         while true {
-            switch attach(target, scrollback: policy.scrollback) {
+            switch attach(target, scrollback: false) {
             case .failed(let event):
                 let step = policy.next(event)
                 guard proceed(step) else { return 0 }
             case .attached(let fd, let decoder):
+                let first = policy.scrollback
                 _ = policy.next(.attached)
-                let end = pipe(fd, decoder: decoder)
+                let end = pipe(fd, decoder: decoder, driver: &driver, first: first)
                 Darwin.close(fd)
                 switch end {
                 case .stdinClosed:
@@ -364,13 +367,21 @@ public enum RemoteRelay {
 
     // MARK: - Piping
 
-    private static func pipe(_ fd: Int32, decoder: TerminalFrameDecoder) -> PipeEnd {
+    /// `driver` decides when this screen takes the session's size
+    /// (`RelaySizeDriver`); `first` is the relay's first attach.
+    private static func pipe(_ fd: Int32, decoder: TerminalFrameDecoder,
+                             driver: inout RelaySizeDriver, first: Bool) -> PipeEnd {
         var decoder = decoder
         var sent = windowSize()
         var buffer = [UInt8](repeating: 0, count: readSize)
 
+        func send(_ frames: [TerminalFrame]) -> Bool {
+            frames.allSatisfy { writeAll(fd, $0.encode()) }
+        }
+
         // Bytes that arrived with the `attached` frame.
-        if let end = deliver(try? decoder.push(Data())) { return end }
+        if let end = deliver(try? decoder.push(Data()), driver: &driver) { return end }
+        guard send(driver.attached(first: first, now: Date())) else { return .dropped }
 
         while true {
             let now = windowSize()
@@ -378,6 +389,7 @@ public enum RemoteRelay {
                 sent = now
                 guard writeAll(fd, TerminalFrame.resize(rows: now.rows, cols: now.cols).encode()) else { return .dropped }
             }
+            guard send(driver.due(now: Date())) else { return .dropped }
             var fds = [pollfd(fd: 0, events: Int16(POLLIN), revents: 0),
                        pollfd(fd: fd, events: Int16(POLLIN), revents: 0)]
             guard poll(&fds, 2, pollMillis) > 0 else { continue }
@@ -385,20 +397,20 @@ public enum RemoteRelay {
             if fds[0].revents != 0 {
                 let n = read(0, &buffer, buffer.count)
                 if n == 0 || (n < 0 && errno != EINTR && errno != EAGAIN) { return .stdinClosed }
-                if n > 0, !writeAll(fd, TerminalFrame.data(Data(buffer[0 ..< n])).encode()) { return .dropped }
+                if n > 0, !send(driver.input(Data(buffer[0 ..< n]), now: Date())) { return .dropped }
             }
             if fds[1].revents != 0 {
                 let n = read(fd, &buffer, buffer.count)
                 if n < 0 && (errno == EAGAIN || errno == EINTR) { continue }
                 guard n > 0 else { return .dropped }
                 guard let frames = try? decoder.push(Data(buffer[0 ..< n])) else { return .dropped }
-                if let end = deliver(frames) { return end }
+                if let end = deliver(frames, driver: &driver) { return end }
             }
         }
     }
 
     /// Writes data frames to the pane. nil means keep going.
-    private static func deliver(_ frames: [TerminalFrame]?) -> PipeEnd? {
+    private static func deliver(_ frames: [TerminalFrame]?, driver: inout RelaySizeDriver) -> PipeEnd? {
         guard let frames else { return .dropped }
         for frame in frames {
             switch frame {
@@ -406,8 +418,10 @@ public enum RemoteRelay {
                 writeAll(1, bytes)
             case .ended(let reason):
                 return .ended(reason)
-            case .resize:
-                break // only the relay sends sizes
+            case .sizeMoved:
+                driver.sizeMoved()
+            case .resize, .repaint:
+                break // only the relay sends these
             }
         }
         return nil

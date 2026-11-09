@@ -76,18 +76,31 @@ final class RemoteTerminalHost: RemoteTerminalHosting {
         environment["TERM"] = "xterm-256color"
         return RemoteAttachPlan(executable: "/bin/sh",
                                 arguments: RemoteServedAttach.arguments(zmx: zmx, session: session, scrollback: scrollback),
-                                environment: environment, session: session)
+                                environment: environment, session: session,
+                                repaintArguments: RemoteServedAttach.arguments(zmx: zmx, session: session, scrollback: true))
+    }
+
+    func remoteTookSize(session: String) {
+        DispatchQueue.main.async { [weak self] in
+            self?.viewController?.remoteSizeHandoff.remoteTookSize(session: session)
+        }
     }
 
     /// The remote client may have typed last, which leaves the session at its
     /// size. SIGWINCH to this Mac's own `zmx attach` clients makes zmx apply
-    /// their size again (checked on zmx 0.6.0, see remote-machines.md).
-    func detached(session: String) {
+    /// their size again (checked on zmx 0.6.0, see remote-machines.md). When
+    /// it had the size, this Mac's view was drawn for the other screen, so it
+    /// is repainted too, once the program has redrawn.
+    func detached(session: String, wasDriving: Bool) {
         work.async {
             guard let ps = ZmxRunner.psSnapshot(timeout: 2) else { return }
             for pid in ZmxAttachProcesses.pids(attaching: session, psOutput: ps) {
                 kill(pid, SIGWINCH)
             }
+        }
+        guard wasDriving else { return }
+        DispatchQueue.main.async { [weak self] in
+            self?.viewController?.remoteSizeHandoff.remoteLetGo(session: session)
         }
     }
 }

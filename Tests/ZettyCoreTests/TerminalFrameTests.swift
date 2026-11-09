@@ -50,3 +50,13 @@ private func header(kind: UInt8, length: UInt32) -> Data {
         try decoder.push(header(kind: 2, length: 2) + Data([0xFF, 0xFE]))
     }
 }
+
+@Test func repaintAndSizeMovedRoundTripEmpty() throws {
+    #expect(TerminalFrame.repaint.encode() == header(kind: 3, length: 0))
+    #expect(TerminalFrame.sizeMoved.encode() == header(kind: 4, length: 0))
+    var decoder = TerminalFrameDecoder()
+    #expect(try decoder.push(TerminalFrame.repaint.encode() + TerminalFrame.sizeMoved.encode()) == [.repaint, .sizeMoved])
+    #expect(throws: TerminalFrameDecoder.Failure.malformed) {
+        try decoder.push(header(kind: 3, length: 1) + Data([0]))
+    }
+}

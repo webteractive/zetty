@@ -29,14 +29,14 @@ private let idB = UUID(uuidString: "11111111-2222-3333-4444-555555555555")!
     #expect(cmd == "/bin/sh /Users/g/.zetty/scrollback-restore.sh /opt/homebrew/bin/zmx zetty-abcdef01")
 }
 
-@Test func restoreScriptReplaysHistoryThenExecsAttach() {
+@Test func restoreScriptReplaysHistoryThenAttaches() {
     let script = SessionPersistence.restoreScriptContents
     #expect(script.hasPrefix("#!/bin/sh"))
     // ZMX_SESSION inherited from a zmx-backed terminal makes `zmx attach`
     // kill that session — the script must strip it for both invocations.
     #expect(script.contains("unset ZMX_SESSION"))
     let history = script.range(of: "\"$1\" history \"$2\" --vt 2>/dev/null")
-    let attach = script.range(of: "exec \"$1\" attach \"$2\"")
+    let attach = script.range(of: "  \"$1\" attach \"$2\"")
     #expect(history != nil)
     #expect(attach != nil)
     if let history, let attach {
@@ -204,4 +204,42 @@ private let idB = UUID(uuidString: "11111111-2222-3333-4444-555555555555")!
     try process.run()
     process.waitUntilExit()
     #expect(try String(contentsOf: logURL, encoding: .utf8) == "history zetty-test1234\nattach zetty-test1234\n")
+}
+
+@Test func restoreScriptRepaintsAfterTheRepaintSignalOnly() throws {
+    // A stub zmx whose first attach ends as if by the repaint signal: the
+    // wrapper clears, checks the session, replays history and attaches
+    // again; the second attach ends normally and so does the wrapper.
+    let dir = FileManager.default.temporaryDirectory
+        .appendingPathComponent("zetty-repaint-test-\(UUID().uuidString)")
+    try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: dir) }
+    let scriptURL = dir.appendingPathComponent("scrollback-restore.sh")
+    try SessionPersistence.restoreScriptContents.write(to: scriptURL, atomically: true, encoding: .utf8)
+    let logURL = dir.appendingPathComponent("calls.log")
+    let flagURL = dir.appendingPathComponent("repainted")
+    let stubURL = dir.appendingPathComponent("zmx")
+    try """
+    #!/bin/sh
+    echo "$1" >> "\(logURL.path)"
+    case "$1" in
+      list) printf 'name=%s\\tpid=1\\n' zetty-test1234 ;;
+      attach) [ -f "\(flagURL.path)" ] && exit 0; touch "\(flagURL.path)"; exit \(128 + SessionPersistence.repaintSignal) ;;
+    esac
+    """.write(to: stubURL, atomically: true, encoding: .utf8)
+    try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: stubURL.path)
+
+    let process = Process()
+    process.executableURL = URL(fileURLWithPath: "/bin/sh")
+    process.arguments = [scriptURL.path, stubURL.path, "zetty-test1234"]
+    let output = Pipe()
+    process.standardOutput = output
+    try process.run()
+    let printed = output.fileHandleForReading.readDataToEndOfFile()
+    process.waitUntilExit()
+
+    let calls = try String(contentsOf: logURL, encoding: .utf8)
+    #expect(calls == "history\nattach\nlist\nhistory\nattach\n")
+    #expect(printed == Data(RemoteSizeHandoff.clearScreen.utf8))
+    #expect(process.terminationStatus == 0)
 }

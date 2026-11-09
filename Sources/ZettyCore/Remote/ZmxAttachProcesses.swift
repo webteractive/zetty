@@ -21,4 +21,20 @@ public enum ZmxAttachProcesses {
             return sample.pid
         }.sorted()
     }
+
+    /// The session's clients that run under Zetty's own attach wrapper
+    /// (`SessionPersistence.restoreScriptContents`), which restarts an attach
+    /// ended by `SessionPersistence.repaintSignal` from a clean screen. Only
+    /// these may get that signal: the session's daemon can look like a client
+    /// while its first attach is alive, and signalling it ends the session; a
+    /// served relay's attach has Zetty itself as its parent.
+    public static func repaintablePIDs(attaching session: String, psOutput: String) -> [Int32] {
+        let table = ProcessTable(psOutput: psOutput)
+        return pids(attaching: session, psOutput: psOutput).filter { pid in
+            guard let parent = table.samples[pid]?.ppid, let wrapper = table.samples[parent] else { return false }
+            return wrapper.command.split(separator: " ").contains {
+                ($0 as NSString).lastPathComponent == SessionPersistence.restoreScriptName
+            }
+        }
+    }
 }

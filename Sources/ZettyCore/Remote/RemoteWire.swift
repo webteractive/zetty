@@ -5,7 +5,8 @@ public enum RemoteProtocol {
     /// Bump when a message changes incompatibly. A peer on another version is
     /// shown as "needs update" rather than dropped.
     /// 3: the pairing-key challenge-response (`RemoteAuth`).
-    public static let version = 3
+    /// 4: the repaint and size-moved terminal frames (`RemoteSizeHandoff`).
+    public static let version = 4
     public static let defaultPort: UInt16 = 47_391
     /// `ZETTY_REMOTE_PORT` names the environment variable that moves serving,
     /// dialling and relays to another port, read once at launch. It exists

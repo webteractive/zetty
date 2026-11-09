@@ -240,10 +240,10 @@ to capture what Glen typed (security review, 2026-11-05, before 0.1.60).
   session didn't start; the Mac is shutting down; couldn't start the pane.
   Another protocol version says to update both Macs.
 - **Reconnects.** A failed connect or a drop retries after 1, 2, 5, then
-  10s, and says so once in the pane. Scrollback is asked for only before
-  the first successful attach, so a reconnect never duplicates it.
-- **Sizes.** zmx gives the session to whichever client typed last (below),
-  so the serving Mac's pane takes the viewer's size at the first keystroke.
+  10s, and says so once in the pane. No hello asks for scrollback: the first
+  attach's takeover repaint replays it, and a reconnect never duplicates it.
+- **Sizes.** zmx gives the session to whichever client typed last (below).
+  The screen in use takes it and is repainted (Taking the size back, below).
   When a relay detaches, `RemoteTerminalHost.detached` sends SIGWINCH to
   that session's own `zmx attach` clients, which puts the local size back.
 - **The viewer's tree is bounded.** `PaneLayout.surfaceTree` drops
@@ -255,8 +255,24 @@ to capture what Glen typed (security review, 2026-11-05, before 0.1.60).
   address, and the controller shows "<Mac> is offline" instead of dialling
   a cached one. The relay doesn't verify the serving Mac's identity itself;
   it relies on dialling only the address the admitted feed is connected to.
-- **Teardown order.** Closing a remote pane, leaving the project or the Mac
-  going away first kills that pane's relay (`RelayProcesses` finds it
+- **A project left behind stays connected for 30 minutes**
+  (`RemotePaneRetention`, `RemoteProjectController.keepShown`). Its surfaces
+  stay in the controller's registry, out of view, so coming back re-parents
+  them: no new relay, no scrollback replay (the replay frame is what showed
+  Home broken until a key, 2026-11-09). Back in view, the focus marker
+  claims the size if the other Mac took it meanwhile (the server's
+  `sizeMoved` cleared `drives`). A kept project is freed whole when its Mac
+  is not online at the address its relays dialled, the project is closed,
+  hibernated or empty there, or it was left 30 minutes ago (a 60s timer
+  checks); a pane closed there goes on its own. Past 32 kept surfaces
+  (~37 MB each) the projects left longest ago go first, whole, and a
+  smaller older one never slips in past a bigger newer one. Tabs never
+  opened stay unconnected. `setRemoteMachines` feeds the controller every
+  machine list (`noteMachines`) after leaving a vanished Mac's view, and
+  `showRemoteProject` seeds it before `show`, since a prune against an
+  empty list frees everything.
+- **Teardown order.** Closing a remote pane, freeing a kept project or the
+  Mac going away first kills that pane's relay (`RelayProcesses` finds it
   among this app's descendants by exact argv), then drains the mailbox,
   then prunes. That is the order in `surfaces-and-memory.md`. The argv to
   look for comes from `RelayTargets`, recorded when the surface's command
@@ -316,13 +332,15 @@ through `setNeedsChromeRefresh`, since a feed can tick as fast as a title.
   it, and clients from the peer with a guessed proof or none, must be
   refused, and two stand-in servers on this Mac's address and port
   (Python, `fake.py`) must read "needs update" (protocol 2) and "Couldn't
-  confirm" (protocol 3 with a made-up proof), with nothing of theirs in the
+  confirm" (today's protocol with a made-up proof), with nothing of theirs in the
   sidebar and no relay typing into them; a third sends an OSC 52 escape in
   its refusal, which must reach neither the relay's pane nor the sidebar.
   The Keychain path itself is not on that run (the peer's Keychain is locked
   to SSH): check it in the isolated test app, where the launch makes the
-  item and a relay to a loopback stand-in carries a proof. Run on
-  2026-11-05: 32 checks pass with `--network`.
+  item and a relay to a loopback stand-in carries a proof. Leaving the view
+  and opening it again must keep the same relay pids, and they must end
+  once this Mac goes. Run on 2026-11-05: 32 checks pass with `--network`;
+  2026-11-09: 30 pass without it.
 - **The peer's copy is started as a bare binary over SSH, with nohup.**
   `open -n` can't start it: `LSMultipleInstancesProhibited` makes Launch
   Services hand the launch to the installed app (and drop `--env`). Started
@@ -381,13 +399,69 @@ client's size.
 - **Detaching keeps the size.** When the client that typed last leaves, the
   session stays at its size until another client resizes or types.
 
-What that means for the relay:
-- A pane opened on the laptop shows at the mini's size until the first
-  keystroke. Only input switches it, and no byte is harmless to every
-  program.
-- After the laptop lets go, the mini's pane stays at the laptop's size until
-  the mini types or its window resizes. The serving side can fix this by
-  re-sending its own size when a remote client detaches.
+What that means for the relay: a pane opened on the laptop stays at the
+mini's size until something claims it, and the screen that doesn't drive the
+size shows output drawn for the other one. Programs position text for one
+size, so the other Mac's window lays it on the wrong rows and columns: the
+overlapping fragments Glen saw on 2026-11-06.
+
+**What zmx forwards from a client that didn't type last** (zmx 0.8.1,
+2026-11-06): only plain keys (letters, space, Backspace, Tab, Enter), and those
+switch the size. Escapes (arrows), control keys, NUL, focus reports
+(`CSI I`) and even non-ASCII (`é`) are dropped: the program never sees them
+and the size stays. So an arrow key typed on the screen that doesn't drive is
+lost, and neither focus nor a harmless control byte can claim the size
+(neurosnap/zmx#299 asks for focus to claim it; don't post there without Glen).
+
+### Taking the size back (`RemoteSizeHandoff`)
+
+- **The claim is space then Backspace** (`RemoteSizeHandoff.claim`). It
+  cancels out in a prompt or text field; Claude Code's permission menu kept
+  its highlight on "1. Yes" (checked 2026-11-07). Pickers in a plain shell
+  (less, fzf) still see the space.
+- **The served pty starts raw** (`PTYProcess.spawn`). A relay sends the claim
+  the moment it attaches, often before `zmx attach` has set raw mode. On a
+  cooked pty the line discipline echoed it (`" \b \b"`) and Backspace erased
+  the space, so zmx saw nothing, the size stayed the other Mac's, and the
+  repaint replayed a screen drawn for it. It failed now and then, depending
+  on timing, and a key typed afterwards always fixed it (found 2026-11-09).
+  zmx doesn't flush input pending at startup, so raw from the start is
+  enough. Output processing stays on for the `zmx history` replay.
+- **Then a repaint**, after `RemoteSizeHandoff.settle` (0.4s) for the program
+  to redraw. Claiming alone redraws Claude Code's visible screen (it clears on
+  a width change), but scrollback above stays mangled, so the screen in use
+  restarts its attach from a clean replay of zmx's own copy, which is always
+  right.
+  - **Remote pane:** the relay sends a `repaint` frame; the server stops that
+    connection's attach WITHOUT `detached` (which would hand the size back to
+    the mini), sends `RemoteSizeHandoff.clearScreen`, and starts
+    `plan.repaintArguments` (history, then attach) at the relay's last size.
+  - **Local pane:** SIGUSR1 to the attach under `scrollback-restore.sh`,
+    which clears, replays and reattaches (`session-preservation.md`). Never
+    free and rebuild the surface for this: freeing a live preserved surface
+    can freeze the app (`surfaces-and-memory.md`).
+- **When.** The relay (`RelaySizeDriver`) claims on its first attach, then on
+  focus or a key while it doesn't drive. The viewing Zetty tells it about
+  focus with `RemoteSizeHandoff.focusMarker`, an APC string typed into the
+  relay's pty on focus, window-key, click, and the pointer moving or
+  scrolling over the pane (no key produces one; the relay strips it). The
+  pointer is held to one marker per 0.5s; it counts because with the window
+  already key and the pane focused, nothing else fires before the first key,
+  and the user saw a mangled pane until they pressed an arrow (2026-11-09).
+  No marker goes to a pane in its first 2s (`focusQuietPeriod`): until the
+  relay sets raw mode the pty is cooked and echoes it as
+  `^[_zetty-focus^[\`, which a refusal then leaves on screen. A new
+  relay's first attach takes the size anyway.
+  The serving Zetty (`RemoteSizeHandoffController`) claims for a
+  local pane on the same events plus any key, but only for a session another
+  Mac drives: the server tracks the driving relay per session (`drivers`),
+  from its input and resize frames, and sends `sizeMoved` to relays when this
+  Mac or another relay takes over. When the driving relay detaches, the mini
+  repaints its own pane after the SIGWINCH below.
+- **Known gaps.** `zetty send` into a pane another Mac drives claims the size
+  through zmx without the server knowing, so that Mac's view goes stale until
+  it takes the size back. A reconnect doesn't claim: the user may be at the
+  other Mac.
 
 **SIGWINCH puts it back** (checked 2026-11-04): after the last typist
 detaches, `kill -WINCH` on another client's `zmx attach` pid makes zmx apply

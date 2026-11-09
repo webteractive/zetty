@@ -26,10 +26,23 @@ public enum SessionPersistence {
     /// not mistaken for a live process (dim, one line).
     public static let restoreDivider = "── restored after restart ──"
 
+    /// The wrapper's file name, in `~/.zetty/`.
+    public static let restoreScriptName = "scrollback-restore.sh"
+
+    /// Ends a wrapper's `zmx attach` so the wrapper repaints the pane: it
+    /// clears the screen and scrollback, replays `zmx history --vt` and
+    /// attaches again (`RemoteSizeHandoff`). Only the wrapper's own attach
+    /// may get it (`ZmxAttachProcesses.repaintablePIDs`).
+    public static let repaintSignal = SIGUSR1
+
     /// Contents of the generated scrollback-restore wrapper
     /// (`~/.zetty/scrollback-restore.sh`; the app layer writes it). Replays
     /// the session's full scrollback (attributes intact) into the surface as
-    /// ordinary output, then execs the attach so no extra shell lingers.
+    /// ordinary output, then attaches. It stays as the attach's parent, so an
+    /// attach ended by `repaintSignal` can be restarted from a clean screen;
+    /// any other exit ends the wrapper with the attach's status, as the old
+    /// `exec` did. A repaint re-checks the session first, because `zmx attach`
+    /// would create a missing one.
     ///
     /// Two sources, chosen by the optional third argument: a restart-recovery
     /// snapshot file (the session is known dead — the file is printed, deleted,
@@ -50,8 +63,19 @@ public enum SessionPersistence {
     else
       "$1" history "$2" --vt 2>/dev/null
     fi
-    exec "$1" attach "$2"
+    while :; do
+      "$1" attach "$2"
+      status=$?
+      [ "$status" = \(128 + repaintSignal) ] || exit "$status"
+      stty sane 2>/dev/null
+      printf '\(clearScreenEscaped)'
+      "$1" list 2>/dev/null | grep -Fq "name=$2\t" || exit 0
+      "$1" history "$2" --vt 2>/dev/null
+    done
     """
+
+    /// `RemoteSizeHandoff.clearScreen` for a `printf` format.
+    private static let clearScreenEscaped = "\\033[H\\033[2J\\033[3J"
 
     /// The ghostty `command` value that runs the pane inside its zmx session.
     /// zmx attach creates the session (running the user's shell) if missing.

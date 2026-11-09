@@ -336,8 +336,11 @@ splits take the place of yours, and you type in its panes as if you sat at
 that Mac. The tab and pane you pick are yours alone, so that Mac's own screen
 doesn't move. That Mac needs **Preserve sessions** on (`preserve-sessions`).
 For now you can't add, close or rearrange tabs and panes from here; those
-keys beep. A pane takes this window's size at your first keystroke, and goes
-back to the other Mac's size when you leave it.
+keys beep. A project you leave stays connected for 30 minutes, so coming back
+shows it at once, as it is now. A pane fits whichever Mac you're using: opening it here gives it
+this window's size, and moving the pointer over it, clicking into it or typing
+on the other Mac takes the size back there. Each time, the pane redraws cleanly, so it never shows text
+drawn for the other screen.
 
 ### Updates and links
 
