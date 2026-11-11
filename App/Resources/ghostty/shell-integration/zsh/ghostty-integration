@@ -238,8 +238,14 @@ _ghostty_deferred_init() {
     # upstream kitty-shell-cwd:// form) AND mirror $PWD to the per-pane file
     # Zetty injects as $ZETTY_CWD_FILE — the status bar reads that file, which
     # works even if libghostty drops the OSC 7. See PaneCwdStore.
+    #
+    # Ported from upstream Ghostty ebd449995d: the directory name is untrusted
+    # text. `print -r` keeps a backslash in it a backslash (plain `print` let a
+    # directory named 'x\a\e]52;c;SGVsbG8=\a' end the OSC 7 early and write
+    # the clipboard), the framing ESC and BEL are written with $'...' quoting,
+    # and ${PWD//[[:cntrl:]]} drops raw control bytes in the name.
     _ghostty_report_pwd() {
-        builtin print -nu $_ghostty_fd '\e]7;file://'"$PWD"'\a'
+        builtin print -rnu $_ghostty_fd -- $'\e]7;file://'"${PWD//[[:cntrl:]]}"$'\a'
         [[ -n "$ZETTY_CWD_FILE" ]] && builtin print -rn -- "$PWD" >| "$ZETTY_CWD_FILE" 2>/dev/null
     }
     chpwd_functions=(${chpwd_functions[@]} "_ghostty_report_pwd")

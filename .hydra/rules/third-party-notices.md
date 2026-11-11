@@ -33,3 +33,13 @@ supported"). The build now copies Ghostty's scripts over the package's
 inside the app (`Project.swift`, "Use Ghostty's shell integration"), and
 fails if the package moves them. A libghostty bump must keep that step
 green; check a new pane with `whence -w ssh` (a function, not a command).
+
+**Never re-sync those scripts from upstream wholesale.** Ghostty after v1.4.0
+(by `042b16b6146a`, bundled in libghostty-spm `2.2.2026110702`) moved the
+`ssh` wrapper into its CLI: the scripts now call `"$GHOSTTY_BIN_DIR/ghostty"
++ssh`, and Zetty ships no `ghostty` binary, so a straight copy would break
+`ssh` in every pane. Port upstream fixes into Zetty's copies one at a time
+instead, keeping Zetty's own patches (zsh's `_ghostty_report_pwd` sends a
+`file://` OSC 7 and writes `$ZETTY_CWD_FILE`). Ported so far: `ebd449995d`
+(directory names can't inject escape sequences: zsh `print -r` with `$'...'`
+framing, control bytes stripped in zsh and bash), on 2026-11-11.
