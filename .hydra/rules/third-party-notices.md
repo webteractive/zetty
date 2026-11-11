@@ -43,3 +43,12 @@ instead, keeping Zetty's own patches (zsh's `_ghostty_report_pwd` sends a
 `file://` OSC 7 and writes `$ZETTY_CWD_FILE`). Ported so far: `ebd449995d`
 (directory names can't inject escape sequences: zsh `print -r` with `$'...'`
 framing, control bytes stripped in zsh and bash), on 2026-11-11.
+
+**The Tailscale bridge (`Bridge/tailnet`) links Go code into the app**: the Go
+standard library and every module `go list -deps` reaches. Their license texts
+are in `licenses/tailscale-go-modules.txt` and the table under "Linked into the
+app: Tailscale". Any change to `Bridge/tailnet/go.mod` (a `tailscale.com` bump
+pulls new modules) regenerates both: list the linked modules with
+`GOOS=darwin go list -deps -f '{{if .Module}}{{if not .Module.Main}}{{.Module.Path}} {{.Module.Version}}{{end}}{{end}}' . | sort -u`
+in `Bridge/tailnet`, and copy each module's LICENSE/NOTICE/PATENTS files from
+the module cache (`go list -m -f '{{.Dir}}' <module>`).

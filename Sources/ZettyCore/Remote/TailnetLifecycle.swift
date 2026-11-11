@@ -1,0 +1,50 @@
+/// When Zetty's node may start, and what Sign Out does. Kept apart from the
+/// bridge so it can be tested.
+///
+/// A Keychain read that failed (a denied prompt, a locked Keychain) is not
+/// tried again on every config reload, which would ask again each time:
+/// only when the user turns Other Macs off and on, or signs out.
+public struct TailnetLifecycle: Equatable, Sendable {
+    public enum SignOut: Equatable, Sendable {
+        /// Sign the running node out (its machine key stays).
+        case logOut
+        /// The node couldn't start: forget the saved sign-in and start again
+        /// fresh, as a new device that needs a sign-in.
+        case forgetAndRestart(hostname: String)
+        /// Other Macs is off.
+        case nothing
+    }
+
+    /// The device name while either remote switch wants the node.
+    public private(set) var wanted: String?
+    public private(set) var running = false
+    public private(set) var keychainRefused = false
+
+    public init() {}
+
+    /// True when the node should start now (and read the Keychain).
+    public mutating func requestStart(hostname: String) -> Bool {
+        wanted = hostname
+        return !running && !keychainRefused
+    }
+
+    public mutating func started() { running = true }
+
+    public mutating func startFailed(keychain: Bool) {
+        running = false
+        if keychain { keychainRefused = true }
+    }
+
+    /// True when a running node must be stopped.
+    public mutating func requestStop() -> Bool {
+        defer { wanted = nil; running = false; keychainRefused = false }
+        return running
+    }
+
+    public mutating func signOut() -> SignOut {
+        if running { return .logOut }
+        guard let wanted else { return .nothing }
+        keychainRefused = false
+        return .forgetAndRestart(hostname: wanted)
+    }
+}

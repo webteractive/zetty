@@ -48,6 +48,10 @@ enum ZettyLog {
     /// never scrollback contents.
     static let lifecycle = ZettyLogger(category: "lifecycle")
 
+    /// Other Macs: Zetty's own Tailscale node (its sign-in and state, and the
+    /// lines Tailscale writes for people), connections refused.
+    static let remote = ZettyLogger(category: "remote")
+
     /// Recent lines, newest last, under a header identifying the build — the
     /// text "Copy diagnostics" puts on the clipboard.
     @MainActor

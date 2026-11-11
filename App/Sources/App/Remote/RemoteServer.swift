@@ -37,9 +37,9 @@ protocol RemoteTerminalHosting: AnyObject {
 
 /// Serves this Mac's workspace to the user's other Macs on the tailnet.
 ///
-/// Binds only to this Mac's own Tailscale addresses, never `INADDR_ANY`. Every
-/// connection is checked with `tailscale whois` and `PeerAdmission` before
-/// anything is read from it. A connection's hello decides what it is: a
+/// Listens only through Zetty's own Tailscale node (`Tailnet`): nothing binds
+/// this Mac's interfaces. Every connection is checked with the node's whois
+/// and `PeerAdmission` before anything is read from it. A connection's hello decides what it is: a
 /// workspace feed (hellos and snapshots; anything the client sends after its
 /// hello is ignored), or, with `attach`, one pane's terminal, piped through a
 /// pty the server runs (`PaneStream`).
@@ -49,19 +49,21 @@ protocol RemoteTerminalHosting: AnyObject {
 final class RemoteServer {
     private let machineName: String
     private let zettyVersion: String
+    private let machineID: String
+    /// Who "ip:port" is, from the node. Blocks, so it never runs on `queue`.
     private let whois: (String) -> TailscaleNode?
-    /// The app's copy (`RemotePairingKeyHolder`), asked for each connection,
-    /// so a key pasted in Settings counts at once.
-    private let pairingKey: () -> RemotePairingKey?
     private let terminalHost: RemoteTerminalHosting?
     private let queue = DispatchQueue(label: "co.webteractive.zetty.remote-server")
-    /// `whois` shells out and can take a while, so it never runs on `queue`.
+    /// `whois` asks the node and can take a while, so it never runs on `queue`.
     private let whoisQueue = DispatchQueue(label: "co.webteractive.zetty.remote-server.whois",
                                            qos: .utility, attributes: .concurrent)
 
     // Everything below is confined to `queue`.
     private var me: TailscaleNode?
-    private var listeners: [String: Listener] = [:]
+    private var listener: TailnetListener?
+    /// Set by `stop`: a connection the accept thread hands over afterwards is
+    /// closed, never kept (its sources would never be resumed).
+    private var stopped = false
     private var connections: [ObjectIdentifier: Connection] = [:]
     private var latestFrame: Data?
     /// The relay connection whose screen drives each session's size. A
@@ -80,33 +82,32 @@ final class RemoteServer {
     private static let resumeBelow = 128 * 1024
 
     /// With no `terminalHost`, every attach is refused.
-    init(machineName: String, zettyVersion: String, terminalHost: RemoteTerminalHosting? = nil,
-         whois: @escaping (String) -> TailscaleNode? = { TailscaleCLI.whois($0) },
-         pairingKey: @escaping () -> RemotePairingKey?) {
+    init(machineName: String, zettyVersion: String, machineID: String, terminalHost: RemoteTerminalHosting? = nil,
+         whois: @escaping (String) -> TailscaleNode?) {
         self.machineName = machineName
         self.zettyVersion = zettyVersion
+        self.machineID = machineID
         self.terminalHost = terminalHost
         self.whois = whois
-        self.pairingKey = pairingKey
     }
 
-    /// Binds one listener per address on `RemoteProtocol.port`, closes the
-    /// listeners whose address went away, and retries any that failed to bind
-    /// before. An empty list stops listening and drops every connection.
-    func listen(on addresses: [String], me: TailscaleNode) {
+    /// Listens on `RemoteProtocol.port` through `tailnet` while its node is
+    /// `me`; nil stops listening and drops every connection. Called again
+    /// with a new `me` (the node signed in again), it keeps the listener.
+    func listen(on tailnet: Tailnet?, me: TailscaleNode?) {
         queue.async { [self] in
             self.me = me
-            let wanted = Set(addresses)
-            for (address, listener) in listeners where !wanted.contains(address) {
-                listener.close()
-                listeners[address] = nil
+            guard let tailnet, me != nil else {
+                listener?.close()
+                listener = nil
+                closeAllConnections()
+                return
             }
-            for address in wanted where listeners[address] == nil {
-                listeners[address] = Listener.bind(address, queue: queue) { [weak self] fd in
-                    self?.accepted(fd)
-                }
+            guard listener == nil else { return }
+            listener = tailnet.listen(port: RemoteProtocol.port) { [weak self] fd, remote in
+                guard let self else { Darwin.close(fd); return }
+                self.queue.async { self.accepted(fd, remote: remote) }
             }
-            if wanted.isEmpty { closeAllConnections() }
         }
     }
 
@@ -121,27 +122,30 @@ final class RemoteServer {
         }
     }
 
-    /// Returns once the listening sockets are closed, so a server started
-    /// right after (serving switched off and on) can bind the same addresses.
+    /// Returns once the listener is closed, so a server started right after
+    /// (serving switched off and on) can listen on the same port.
     func stop() {
-        let closing: [DispatchGroup] = queue.sync { [self] in
-            let groups = listeners.values.map { $0.close() }
-            listeners.removeAll()
+        queue.sync { [self] in
+            stopped = true
+            listener?.close()
+            listener = nil
             closeAllConnections()
             latestFrame = nil
-            return groups
         }
-        // The cancel handlers that close the fds run on `queue`, after the sync.
-        for group in closing { _ = group.wait(timeout: .now() + 1) }
     }
 
     // MARK: - Connections
 
-    private func accepted(_ fd: Int32) {
-        // Each connection costs a `whois` process, so a peer that opens
-        // connections in a loop can't fork without bound.
-        guard connections.count < Self.maxConnections,
-              let ip = Socket.peerAddress(fd) else { Darwin.close(fd); return }
+    /// `remote` is the peer's "ip:port" as the node saw it.
+    private func accepted(_ fd: Int32, remote: String) {
+        // Each connection costs a whois, so a peer that opens connections in
+        // a loop can't make this Mac do unbounded work.
+        guard !stopped, connections.count < Self.maxConnections, Socket.setNonBlocking(fd) else {
+            Darwin.close(fd)
+            return
+        }
+        RemoteProtocol.configureLink(fd)
+        let ip = Socket.host(of: remote)
         let connection = Connection(fd: fd, queue: queue)
         connections[ObjectIdentifier(connection)] = connection
         connection.onReadable = { [weak self, weak connection] in
@@ -163,14 +167,19 @@ final class RemoteServer {
         }
         whoisQueue.async { [weak self] in
             guard let self else { return }
-            let peer = self.whois(ip)
+            let peer = self.whois(remote)
             self.queue.async { self.admit(connection, peer: peer, ip: ip) }
         }
     }
 
     private func admit(_ connection: Connection, peer: TailscaleNode?, ip: String) {
-        guard connection.phase == .admitting, let me else { connection.close(); return }
+        guard connection.phase == .admitting, let me else {
+            ZettyLog.remote.log("server: dropped \(ip) before admission (\(connection.phase))")
+            connection.close()
+            return
+        }
         if case .refuse(let reason) = PeerAdmission.decide(me: me, peer: peer) {
+            ZettyLog.remote.log("server: refused \(ip): \(reason.message(machine: peer?.hostName ?? ip))")
             if let frame = try? RemoteFrame.encode(.refused(reason.message(machine: peer?.hostName ?? ip))) {
                 connection.closeAfterFlush = true
                 send(frame, on: connection)
@@ -179,9 +188,8 @@ final class RemoteServer {
             }
             return
         }
-        connection.challenge = RemoteAuth.challenge()
         let hello = RemoteHello(machine: machineName, zettyVersion: zettyVersion,
-                                protocolVersion: RemoteProtocol.version, challenge: connection.challenge)
+                                protocolVersion: RemoteProtocol.version, machineID: machineID)
         guard let frame = try? RemoteFrame.encode(.hello(hello)) else { connection.close(); return }
         connection.phase = .awaitingHello
         send(frame, on: connection)
@@ -193,7 +201,11 @@ final class RemoteServer {
     }
 
     private func readAvailable(on connection: Connection) {
-        guard let bytes = connection.readChunk() else { connection.close(); return }
+        guard let bytes = connection.readChunk() else {
+            if connection.phase == .awaitingHello { ZettyLog.remote.log("server: a peer left before its hello") }
+            connection.close()
+            return
+        }
         switch connection.phase {
         case .terminal:
             guard let frames = try? connection.terminalDecoder.push(bytes) else { connection.close(); return }
@@ -230,11 +242,8 @@ final class RemoteServer {
                 connection.phase = .mismatched
                 return
             }
-            // Admission vouched for the machine; the pairing key vouches for
-            // the Zetty on it. Nothing else is sent, and no pane is touched,
-            // until the client has proved it.
-            guard let proof = proveBack(theirs, on: connection) else { return }
-            connection.enqueue(proof)
+            // Admission already vouched for the peer: another of this user's
+            // Zettys, through its own node (`PeerAdmission`).
             if let request = theirs.attach {
                 beginAttach(request, on: connection)
                 return
@@ -246,28 +255,6 @@ final class RemoteServer {
         default:
             do { _ = try connection.decoder.push(bytes) } catch { connection.close() }
         }
-    }
-
-    /// Checks the client's proof in `theirs`, and answers with this side's
-    /// proof frame, or refuses and returns nil.
-    private func proveBack(_ theirs: RemoteHello, on connection: Connection) -> Data? {
-        guard let key = pairingKey() else {
-            refuse(connection, "\(machineName) has no pairing key yet: open Zetty's Settings → General → Other Macs there")
-            return nil
-        }
-        guard let ends = SocketEnds.of(connection.fd), let clientChallenge = theirs.challenge,
-              let clientProof = theirs.proof,
-              RemoteAuth.isValid(clientProof, key: key, role: .client, server: ends.local, client: ends.peer,
-                                 serverChallenge: connection.challenge, clientChallenge: clientChallenge),
-              let frame = try? RemoteFrame.encode(.proof(RemoteAuth.proof(
-                  key: key, role: .server, server: ends.local, client: ends.peer,
-                  serverChallenge: connection.challenge, clientChallenge: clientChallenge)))
-        else {
-            refuse(connection, "\(theirs.machine) and \(machineName) have different pairing keys. "
-                + "Copy it from one to the other in Settings → General → Other Macs")
-            return nil
-        }
-        return frame
     }
 
     // MARK: - Terminal connections
@@ -405,63 +392,6 @@ final class RemoteServer {
     }
 }
 
-// MARK: - Listener
-
-private final class Listener {
-    private let source: DispatchSourceRead
-    private let closed: DispatchGroup
-
-    private init(source: DispatchSourceRead, closed: DispatchGroup) {
-        self.source = source
-        self.closed = closed
-    }
-
-    /// A listening socket on exactly `address`, or nil if it can't be bound
-    /// (Tailscale down, address gone). Accepted sockets go to `onAccept`.
-    static func bind(_ address: String, queue: DispatchQueue,
-                     onAccept: @escaping (Int32) -> Void) -> Listener? {
-        let isV6 = address.contains(":")
-        let fd = socket(isV6 ? AF_INET6 : AF_INET, SOCK_STREAM, 0)
-        guard fd >= 0 else { return nil }
-        var on: Int32 = 1
-        setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &on, socklen_t(MemoryLayout<Int32>.size))
-        if isV6 { setsockopt(fd, IPPROTO_IPV6, IPV6_V6ONLY, &on, socklen_t(MemoryLayout<Int32>.size)) }
-        guard Socket.bind(fd, address: address, port: RemoteProtocol.port, isV6: isV6),
-              Darwin.listen(fd, 16) == 0,
-              Socket.setNonBlocking(fd) else {
-            Darwin.close(fd)
-            return nil
-        }
-        let source = DispatchSource.makeReadSource(fileDescriptor: fd, queue: queue)
-        source.setEventHandler {
-            while true {
-                let client = accept(fd, nil, nil)
-                guard client >= 0 else { return }
-                // Keepalive here too: a viewer that vanishes without a FIN
-                // must not keep its connection, pty and zmx client forever.
-                RemoteProtocol.configureLink(client)
-                guard Socket.setNonBlocking(client) else { Darwin.close(client); continue }
-                onAccept(client)
-            }
-        }
-        let closed = DispatchGroup()
-        closed.enter()
-        source.setCancelHandler {
-            Darwin.close(fd)
-            closed.leave()
-        }
-        source.resume()
-        return Listener(source: source, closed: closed)
-    }
-
-    /// Cancels the listener. The returned group finishes once its fd is closed.
-    @discardableResult
-    func close() -> DispatchGroup {
-        source.cancel()
-        return closed
-    }
-}
-
 // MARK: - Connection
 
 private final class Connection {
@@ -469,8 +399,6 @@ private final class Connection {
 
     let fd: Int32
     var phase = Phase.admitting
-    /// This side's challenge, sent in its hello.
-    var challenge = ""
     var decoder = RemoteFrameDecoder()
     /// Takes over from `decoder` once a terminal connection is attached.
     var terminalDecoder = TerminalFrameDecoder()
@@ -691,54 +619,9 @@ private enum Socket {
         return flags >= 0 && fcntl(fd, F_SETFL, flags | O_NONBLOCK) == 0
     }
 
-    static func bind(_ fd: Int32, address: String, port: UInt16, isV6: Bool) -> Bool {
-        if isV6 {
-            var addr = sockaddr_in6()
-            addr.sin6_len = UInt8(MemoryLayout<sockaddr_in6>.size)
-            addr.sin6_family = sa_family_t(AF_INET6)
-            addr.sin6_port = port.bigEndian
-            guard inet_pton(AF_INET6, address, &addr.sin6_addr) == 1 else { return false }
-            return withUnsafePointer(to: &addr) {
-                $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
-                    Darwin.bind(fd, $0, socklen_t(MemoryLayout<sockaddr_in6>.size)) == 0
-                }
-            }
-        }
-        var addr = sockaddr_in()
-        addr.sin_len = UInt8(MemoryLayout<sockaddr_in>.size)
-        addr.sin_family = sa_family_t(AF_INET)
-        addr.sin_port = port.bigEndian
-        guard inet_pton(AF_INET, address, &addr.sin_addr) == 1 else { return false }
-        return withUnsafePointer(to: &addr) {
-            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
-                Darwin.bind(fd, $0, socklen_t(MemoryLayout<sockaddr_in>.size)) == 0
-            }
-        }
-    }
-
-    /// The connected peer's address as text, the form `tailscale whois` takes.
-    static func peerAddress(_ fd: Int32) -> String? {
-        var storage = sockaddr_storage()
-        var length = socklen_t(MemoryLayout<sockaddr_storage>.size)
-        let got = withUnsafeMutablePointer(to: &storage) {
-            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { getpeername(fd, $0, &length) }
-        }
-        guard got == 0 else { return nil }
-        var text = [CChar](repeating: 0, count: Int(INET6_ADDRSTRLEN))
-        switch Int32(storage.ss_family) {
-        case AF_INET:
-            var addr = withUnsafePointer(to: &storage) {
-                $0.withMemoryRebound(to: sockaddr_in.self, capacity: 1) { $0.pointee.sin_addr }
-            }
-            guard inet_ntop(AF_INET, &addr, &text, socklen_t(text.count)) != nil else { return nil }
-        case AF_INET6:
-            var addr = withUnsafePointer(to: &storage) {
-                $0.withMemoryRebound(to: sockaddr_in6.self, capacity: 1) { $0.pointee.sin6_addr }
-            }
-            guard inet_ntop(AF_INET6, &addr, &text, socklen_t(text.count)) != nil else { return nil }
-        default:
-            return nil
-        }
-        return String(cString: text)
+    /// The host part of "ip:port" ("[v6]:port" too).
+    static func host(of remote: String) -> String {
+        guard let colon = remote.lastIndex(of: ":") else { return remote }
+        return String(remote[..<colon]).trimmingCharacters(in: CharacterSet(charactersIn: "[]"))
     }
 }

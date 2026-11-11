@@ -65,7 +65,7 @@ private func mini(_ state: RemoteMachine.State = .online) -> RemoteMachine {
 
 @Test func remoteLinesSayWhatEachMacIsAndWhatShows() {
     #expect(ControlCLI.remoteLines(.init(listing: false, serving: true, port: 47_391, machines: []))
-        == ["Other Macs is off: turn on zetty-remote-machines (Settings → General → Other Macs)"])
+        == ["Other Macs is off: turn on zetty-remote-machines (Settings → Other Macs)"])
     #expect(ControlCLI.remoteLines(.init(listing: true, serving: false, port: 47_391, machines: []))
         == ["no other Macs yet", "serving: off"])
 

@@ -43,7 +43,9 @@ CFFIXED_USER_HOME=/tmp/zti zetty status  # "cannot reach zetty at /tmp/zti/.zett
 
 # 3. Launch it as a BACKGROUND TASK of the tool (run_in_background), not
 #    with `&` or nohup: a detached job dies when the tool call returns.
-#    No TERM, as from the Dock: Zetty sets it for Tailscale's CLI itself.
+#    No TERM, as from the Dock. With an Other Macs key on it is its own
+#    Tailscale device: sign it in from its Settings, or add
+#    ZETTY_TAILSCALE_AUTH_KEY_FILE=<0600 file> for an ephemeral one.
 env -i HOME="$HOME" USER="$USER" SHELL=/bin/zsh TMPDIR="$TMPDIR" LANG=en_US.UTF-8 \
   PATH="/usr/bin:/bin:/opt/homebrew/bin:$HOME/.local/bin" \
   CFFIXED_USER_HOME=/tmp/zti ZMX_DIR=/tmp/zti/zmx \
@@ -60,9 +62,10 @@ zmx list | grep -c zetty-                     # note the count first
 iz quit --kill-sessions --force
 zmx list | grep -c zetty-                     # same count
 rm -rf /tmp/zti                               # removes the link, not ~/.claude/projects
-# With either Other Macs key on, the test app made a pairing key in the
-# login Keychain for home /tmp/zti; it outlives the folder:
-security delete-generic-password -s co.webteractive.zetty.remote-key -a /tmp/zti >/dev/null 2>&1
+# Signed in to Tailscale from its Settings, the test app keeps its device's
+# state in the login Keychain for home /tmp/zti on this Mac; it outlives the folder (and
+# the device stays in the admin console until removed or expired):
+security delete-generic-password -s co.webteractive.zetty.tailscale-state -a "/tmp/zti @ $(ioreg -rd1 -c IOPlatformExpertDevice | awk -F'"' '/IOPlatformUUID/{print $4}')" >/dev/null 2>&1
 ```
 
 ## What is NOT isolated, and how to get around it

@@ -20,8 +20,8 @@ Ghostty terminal, with a Swift AppKit app around it.
   broadcast input, alongside native ⌘ shortcuts.
 - **Sessions that survive** — with `preserve-sessions`, panes keep running
   across quits and come back with their scrollback, even after a restart.
-- **Other Macs** — over Tailscale, see the projects and agents on your other
-  Macs in the same sidebar.
+- **Other Macs** — over Tailscale, built in, see the projects and agents on
+  your other Macs in the same sidebar and type in their panes.
 - **Scriptable** — a `zetty` CLI to inspect, drive and reshape the workspace,
   usable by the agents running inside it.
 
@@ -325,11 +325,20 @@ under **This Mac**: every awake project with its agent dots, and a header like
 `Mac mini · 2 · 1 needs you`. A Mac that is off or away stays listed, dimmed,
 with its last known projects. Turn on **Let other Macs connect** on the Mac to
 watch and **Show other Macs in the sidebar** on the one you sit at, in Settings
-→ General → Other Macs (`zetty-serve`, `zetty-remote-machines`). Both Macs need
-Tailscale signed in as you; Zetty only listens on Tailscale. They also need the
-same **pairing key**: click **Copy** next to it on one Mac and **Paste** on each
-of the others. It's kept in your login Keychain, so other users, containers and
-VMs on your Macs can't read it or connect.
+→ Other Macs (`zetty-serve`, `zetty-remote-machines`). Then click
+**Sign In…** there and sign in to Tailscale in the browser, with the same
+account on each Mac. Zetty joins your tailnet as its own device, named
+`zetty-` and this Mac's name (edit it beside **Sign In…**), so you don't need
+the Tailscale app. Only Zetty devices on your own account can connect, never
+your Macs' own Tailscale devices or anyone else's. So your Tailscale account
+is what guards your panes: protect it with two-factor sign-in at your identity
+provider. To sign in a Mac you reach over screen sharing, click **Show QR
+Code…** beside **Sign In…** and approve it on your phone; over SSH,
+`zetty remote sign-in` prints the page and its QR code. Zetty tells you when
+Tailscale needs you to sign in again, and which account a sign-in used. If Other
+Macs stops because Zetty can't read its saved sign-in, **Sign Out** starts over
+with a fresh one. A Mac set up from another with Migration Assistant signs in
+as its own device.
 
 Click one of another Mac's projects to open it in this window: its tabs and
 splits take the place of yours, and you type in its panes as if you sat at
@@ -371,7 +380,7 @@ with a documented starter file on first launch. Lines are `key = value`;
 comments are full-line `#`. Reload with **⇧⌘,**.
 
 Every key below can also be set from **Settings (⌘,)**: General (Home
-directory, update checks, other Macs), Appearance, Sessions, **Files** (file tree and
+directory, update checks), **Other Macs**, Appearance, Sessions, **Files** (file tree and
 viewer), **Keys** (prefix key, tmux passthrough, `bind`/`copy-bind` lines) and
 **Terminal** (pasted ghostty lines). The Keys and Terminal editors apply with
 their **Apply** button and name any line they couldn't use.
@@ -454,6 +463,7 @@ zetty run personal                       # run that account's agent here
 zetty attach mini:1a2b3c4d               # another Mac's pane in this terminal
 zetty remote list                        # your other Macs, their state and projects
 zetty remote open mini api               # show another Mac's project here (remote close: back)
+zetty remote sign-in                     # sign this Mac in to Tailscale from a phone (QR code)
 zetty reload                             # same as ⇧⌘,
 zetty quit --kill-sessions               # quit and end preserved sessions
 ```

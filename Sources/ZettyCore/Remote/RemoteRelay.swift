@@ -131,7 +131,6 @@ public struct RelayPolicy: Sendable {
 /// sizes both ways until the pane is closed here.
 public enum RemoteRelay {
     private static let pollMillis: Int32 = 250
-    private static let connectTimeout: TimeInterval = 3
     private static let readSize = 64 * 1024
 
     private enum Attempt {
@@ -207,29 +206,31 @@ public enum RemoteRelay {
     // MARK: - Connecting
 
     private static func attach(_ target: RemoteAttachTarget, scrollback: Bool) -> Attempt {
-        let fd: Int32
-        switch connect(host: target.host) {
-        case .connected(let socket): fd = socket
-        case .unreachable: return .failed(.connectFailed)
-        case .outsideTailnet:
+        guard TailnetAddress.isAllowed(target.host) else {
             return .failed(.refused("\(target.host) isn't on your tailnet, so Zetty won't connect to it"))
+        }
+        // This process can't reach Zetty's own Tailscale node, so this Mac's
+        // Zetty dials for it and hands over the connection.
+        let fd: Int32
+        switch ControlCLI.remoteConnect(address: target.host) {
+        case .connected(let socket):
+            fd = socket
+            configure(fd)
+        case .failure(let message) where message.hasPrefix(RemoteConnectReply.unreachablePrefix):
+            return .failed(.connectFailed)
+        case .failure(let message):
+            return .failed(.refused(message))
         }
         let deadline = Date().addingTimeInterval(RemoteProtocol.attachTimeout)
         var decoder = RemoteFrameDecoder()
 
         // The server speaks first: its hello, or a refusal of this Mac.
-        let serverChallenge: String
         switch readMessage(fd, &decoder, until: deadline) {
         case .hello(let theirs)?:
             guard theirs.protocolVersion == RemoteProtocol.version else {
                 Darwin.close(fd)
                 return .failed(.versionMismatch)
             }
-            guard let challenge = theirs.challenge, !challenge.isEmpty else {
-                Darwin.close(fd)
-                return .failed(.refused("\(target.host) didn't start the pairing check"))
-            }
-            serverChallenge = challenge
         case .refused(let reason)?:
             Darwin.close(fd)
             return .failed(.refused(RemoteText.displayable(reason)))
@@ -238,53 +239,15 @@ public enum RemoteRelay {
             return .failed(.connectFailed)
         }
 
-        // Both ends prove the pairing key (`RemoteAuth`) before a keystroke
-        // goes anywhere: Tailscale only vouches for the machine. The relay
-        // never holds the key; this Mac's Zetty signs and checks for it over
-        // the control socket, which nothing outside this user can reach.
-        guard let ends = SocketEnds.of(fd) else {
-            Darwin.close(fd)
-            return .failed(.dropped)
-        }
-        let challenge = RemoteAuth.challenge()
-        let proof: String
-        switch ControlCLI.roundTrip(.remoteSign(server: ends.peer, client: ends.local,
-                                                serverChallenge: serverChallenge, clientChallenge: challenge)) {
-        case .text(let signed):
-            proof = signed
-        case .error(let message) where message.hasPrefix("cannot reach zetty"):
-            Darwin.close(fd)
-            return .failed(.refused("Zetty isn't running on this Mac, and only it can prove the pairing key"))
-        case .error(let message):
-            Darwin.close(fd)
-            return .failed(.refused(message))
-        default:
-            Darwin.close(fd)
-            return .failed(.dropped)
-        }
+        // This Mac's Zetty dialled through its own Tailscale node and
+        // checked the server's identity there (`PeerAdmission`), so nothing
+        // more is proved here.
         let size = windowSize()
         let request = RemoteAttachRequest(pane: target.pane, rows: size.rows, cols: size.cols, scrollback: scrollback)
         let hello = RemoteHello(machine: Host.current().localizedName ?? ProcessInfo.processInfo.hostName,
                                 zettyVersion: ControlCLI.versionInfo?.version ?? "dev",
-                                protocolVersion: RemoteProtocol.version, attach: request,
-                                challenge: challenge, proof: proof)
+                                protocolVersion: RemoteProtocol.version, attach: request)
         guard let frame = try? RemoteFrame.encode(.hello(hello)), writeAll(fd, frame) else {
-            Darwin.close(fd)
-            return .failed(.dropped)
-        }
-
-        switch readMessage(fd, &decoder, until: deadline) {
-        case .proof(let theirs)?:
-            guard ControlCLI.roundTrip(.remoteCheck(proof: theirs, server: ends.peer, client: ends.local,
-                                                    serverChallenge: serverChallenge,
-                                                    clientChallenge: challenge)) == .ok else {
-                Darwin.close(fd)
-                return .failed(.refused("couldn't confirm this is the Zetty on \(target.host): the pairing keys don't match"))
-            }
-        case .refused(let reason)?:
-            Darwin.close(fd)
-            return .failed(.refused(RemoteText.displayable(reason)))
-        default:
             Darwin.close(fd)
             return .failed(.dropped)
         }
@@ -320,49 +283,8 @@ public enum RemoteRelay {
         return nil
     }
 
-    /// Resolves `host` (a MagicDNS name works) and connects to the first
-    /// address that answers within 3s, with the feed's keepalive so a sleeping
-    /// Mac is noticed in about 16s.
-    private enum Dial { case connected(Int32), unreachable, outsideTailnet }
-
-    private static func connect(host: String) -> Dial {
-        var hints = addrinfo()
-        hints.ai_family = AF_UNSPEC
-        hints.ai_socktype = SOCK_STREAM
-        var list: UnsafeMutablePointer<addrinfo>?
-        guard getaddrinfo(host, String(RemoteProtocol.port), &hints, &list) == 0, let first = list else { return .unreachable }
-        defer { freeaddrinfo(list) }
-
-        var sawTailnet = false
-        var entry: UnsafeMutablePointer<addrinfo>? = first
-        while let info = entry {
-            entry = info.pointee.ai_next
-            guard let address = info.pointee.ai_addr, let ip = TailnetAddress.text(of: address),
-                  TailnetAddress.isAllowed(ip) else { continue }
-            sawTailnet = true
-            let fd = socket(info.pointee.ai_family, info.pointee.ai_socktype, info.pointee.ai_protocol)
-            guard fd >= 0 else { continue }
-            configure(fd)
-            let flags = fcntl(fd, F_GETFL)
-            _ = fcntl(fd, F_SETFL, flags | O_NONBLOCK)
-            if Darwin.connect(fd, address, info.pointee.ai_addrlen) == 0 { return .connected(fd) }
-            guard errno == EINPROGRESS else { Darwin.close(fd); continue }
-            var fds = pollfd(fd: fd, events: Int16(POLLOUT), revents: 0)
-            var error: Int32 = 0
-            var length = socklen_t(MemoryLayout<Int32>.size)
-            if poll(&fds, 1, Int32(connectTimeout * 1000)) > 0,
-               getsockopt(fd, SOL_SOCKET, SO_ERROR, &error, &length) == 0, error == 0 {
-                return .connected(fd)
-            }
-            Darwin.close(fd)
-        }
-        return sawTailnet ? .unreachable : .outsideTailnet
-    }
-
     private static func configure(_ fd: Int32) {
         RemoteProtocol.configureLink(fd)
-        var on: Int32 = 1
-        setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &on, socklen_t(MemoryLayout<Int32>.size))
     }
 
     // MARK: - Piping
@@ -492,4 +414,11 @@ public enum RemoteServedAttach {
     public static func arguments(zmx: String, session: String, scrollback: Bool) -> [String] {
         ["-c", script, "zetty-attach", zmx, session, scrollback ? "1" : "0"]
     }
+}
+
+/// How the app answers a relay's `remote-connect` when it can't dial: a
+/// message with this prefix is a failed connection, retried like a drop;
+/// any other message is a refusal, shown and not retried.
+public enum RemoteConnectReply {
+    public static let unreachablePrefix = "couldn't reach "
 }

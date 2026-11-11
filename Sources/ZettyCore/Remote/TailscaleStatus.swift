@@ -1,7 +1,7 @@
 import Foundation
 
-/// One machine on the tailnet, as `tailscale status --json` or
-/// `tailscale whois --json` describes it.
+/// One machine on the tailnet, as Tailscale's status and whois describe it
+/// (the same JSON the `tailscale` CLI prints, read from Zetty's own node).
 public struct TailscaleNode: Equatable, Sendable {
     /// The node's stable ID (`ID` in status, `Node.StableID` in whois).
     public let stableID: String
@@ -32,7 +32,7 @@ public struct TailscaleNode: Equatable, Sendable {
     }
 }
 
-/// `tailscale status --json`, reduced to what Zetty needs.
+/// Tailscale's status (`ipnstate.Status`), reduced to what Zetty needs.
 public struct TailscaleStatus: Equatable, Sendable {
     public enum Backend: Equatable, Sendable { case running, stopped, needsLogin, other(String) }
 
@@ -42,11 +42,14 @@ public struct TailscaleStatus: Equatable, Sendable {
     public let me: TailscaleNode?
     /// Every other node, sorted by host name.
     public let peers: [TailscaleNode]
+    /// The Tailscale account this node is signed in to (`name@example.com`).
+    public let loginName: String?
 
-    public init(backend: Backend, me: TailscaleNode?, peers: [TailscaleNode]) {
+    public init(backend: Backend, me: TailscaleNode?, peers: [TailscaleNode], loginName: String? = nil) {
         self.backend = backend
         self.me = me
         self.peers = peers
+        self.loginName = loginName
     }
 
     public static func parse(_ data: Data) -> TailscaleStatus? {
@@ -59,11 +62,12 @@ public struct TailscaleStatus: Equatable, Sendable {
         }
         let peers = (raw.Peer ?? [:]).values.compactMap { $0.node }
             .sorted { $0.hostName.localizedStandardCompare($1.hostName) == .orderedAscending }
-        return TailscaleStatus(backend: backend, me: raw.Self?.node, peers: peers)
+        let login = raw.Self?.UserID.flatMap { raw.User?[String($0)]?.LoginName }
+        return TailscaleStatus(backend: backend, me: raw.Self?.node, peers: peers, loginName: login)
     }
 }
 
-/// `tailscale whois --json <ip>`.
+/// Tailscale's whois answer (`apitype.WhoIsResponse`).
 public enum TailscaleWhois {
     public static func parse(_ data: Data) -> TailscaleNode? {
         guard let raw = try? JSONDecoder().decode(RawWhois.self, from: data),
@@ -85,9 +89,11 @@ public enum TailscaleWhois {
 // MARK: - Wire shapes (Tailscale's field names)
 
 private struct RawStatus: Decodable {
+    struct Profile: Decodable { let LoginName: String? }
     let BackendState: String?
     let `Self`: RawPeer?
     let Peer: [String: RawPeer]?
+    let User: [String: Profile]?
 }
 
 private struct RawPeer: Decodable {
@@ -144,20 +150,4 @@ private func parseLastSeen(_ text: String) -> Date? {
     if let date = formatter.date(from: text) { return date }
     formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
     return formatter.date(from: text)
-}
-
-/// The environment Zetty runs the `tailscale` CLI with.
-public enum TailscaleCLIEnvironment {
-    /// `environment` with `TERM` set when it has neither `TERM` nor
-    /// `TERM_PROGRAM`. The binary inside Tailscale.app runs as the CLI only
-    /// when it sees one of them; without both it tries to start the GUI and
-    /// fails ("The Tailscale GUI failed to start", CLIError error 3). A Zetty
-    /// opened from the Dock or Finder has neither, so every status check
-    /// failed: it never served and never dialled another Mac.
-    public static func prepare(_ environment: [String: String]) -> [String: String] {
-        guard environment["TERM"] == nil, environment["TERM_PROGRAM"] == nil else { return environment }
-        var environment = environment
-        environment["TERM"] = "dumb"
-        return environment
-    }
 }

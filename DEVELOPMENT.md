@@ -66,8 +66,23 @@ open /Applications/zetty.app
 The generated project lists source files explicitly, so **run `tuist generate`
 again after adding or removing a file**. A build you compile yourself is ad-hoc
 signed, so macOS asks for folder access again after each build, and, with Other
-Macs on, once for the pairing key in the login Keychain (each build is a new
-signature to macOS).
+Macs on, once for Zetty's Tailscale sign-in in the login Keychain (each build is
+a new signature to macOS).
+
+Building needs **Go** (`brew install go`): Other Macs embeds a Tailscale node
+written in Go (`Bridge/tailnet`), which the "Build the Tailscale bridge" build
+phase compiles into `Derived/tailnet/libzettytailnet.a` for each architecture
+(`scripts/build-tailnet-bridge.sh`, skipped when nothing changed). A bump of
+`tailscale.com` in `Bridge/tailnet/go.mod` regenerates
+`licenses/tailscale-go-modules.txt` (`third-party-notices.md`).
+
+The bridge's own test signs a throwaway device in and out of your tailnet with
+the e2e auth key (see "Testing Other Macs across two Macs" below) and skips
+without it:
+
+```sh
+cd Bridge/tailnet && go test -tags ts_omit_peerapiserver,ts_omit_logtail .
+```
 
 ## Tests
 
@@ -148,19 +163,22 @@ before hibernating to see the failure banner.
 
 `scripts/remote-e2e.sh` runs the Other Macs checklist with nobody at either Mac.
 This Mac serves and the other one views. Both run a throwaway copy of the build
-under `/tmp/zre` on port 47392 (`ZETTY_REMOTE_PORT`), so the installed apps
-keep their own connection and sessions. It prints PASS or FAIL for each check
-and cleans up both Macs.
+under `/tmp/zre`, each its own temporary Tailscale device, so the installed apps
+keep their own devices and sessions. It prints PASS or FAIL for each check and
+cleans up both Macs.
 
 ```sh
 scripts/remote-e2e.sh --peer <user>@<lan-address>            # builds first
-scripts/remote-e2e.sh --peer <user>@<lan-address> --network  # also takes this Mac off Tailscale for a minute
 ```
 
-The pair gets a pairing key of its own, never yours. It needs SSH to the other Mac without a password (a key such as
-`~/.ssh/zetty-e2e`, picked up by default), both Macs on Tailscale as you, zmx
-here, and the other Mac awake and logged in. Use its LAN address: `--network`
-runs `tailscale down` here. `.hydra/rules/remote-machines.md` → "Testing" has
+The test copies sign in with a Tailscale **auth key** you make once in the admin
+console (Settings → Keys → Generate auth key: **reusable**, **ephemeral**,
+**pre-approved**, no tags, a short expiry), kept with `warden --global set
+ZETTY_E2E_TAILSCALE_AUTH_KEY`. The script hands it to each copy in a 0600 file
+(`ZETTY_TAILSCALE_AUTH_KEY_FILE`) and deletes it after; the copies' devices
+leave your tailnet when they quit. It also needs SSH to the other Mac without a
+password (a key such as `~/.ssh/zetty-e2e`, picked up by default), zmx here, and
+the other Mac awake and logged in. `.hydra/rules/remote-machines.md` → "Testing" has
 what each check covers and what still needs a person.
 
 ## Layout

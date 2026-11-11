@@ -20,7 +20,17 @@ final class ControlSocketServer {
 
     private let socketURL: URL
     private let handler: (ControlRequest) -> ControlResponse
+    /// Dials another Mac for a `zetty attach` relay (`remote-connect`): the
+    /// connected descriptor, or the words to send back instead. Runs on
+    /// `remoteQueue`, since a dial can take seconds and the accept queue is
+    /// serial.
+    var remoteConnector: ((String) -> Result<Int32, RemoteConnectFailure>)?
+    /// Answers `remote-sign-in` on `remoteQueue`: it waits seconds for
+    /// Tailscale's page, which must not hold the serial accept queue.
+    var signInResponder: (() -> ControlResponse)?
     private let queue = DispatchQueue(label: "co.webteractive.zetty.control-socket")
+    private let remoteQueue = DispatchQueue(label: "co.webteractive.zetty.control-socket.remote",
+                                            qos: .userInitiated, attributes: .concurrent)
     private var listenerFD: Int32 = -1
     private var acceptSource: DispatchSourceRead?
     /// Seconds a client gets to send its request line, and to take the reply.
@@ -141,6 +151,14 @@ final class ControlSocketServer {
         let response: ControlResponse
         if let line = ControlSocketIO.readLine(from: clientFD, timeout: Self.exchangeTimeout),
            let request = try? ControlWire.decodeRequest(line) {
+            if case .remoteConnect(let address) = request {
+                handOverConnection(to: address, client: clientFD)
+                return
+            }
+            if case .remoteSignIn = request {
+                answerSignIn(client: clientFD)
+                return
+            }
             response = handler(request)
         } else {
             response = .error("malformed request")
@@ -148,5 +166,56 @@ final class ControlSocketServer {
 
         guard let out = try? ControlWire.encodeLine(response) else { return }
         ControlSocketIO.writeAll(Array(out.utf8), to: clientFD, timeout: Self.exchangeTimeout)
+    }
+
+    /// Answers a relay's `remote-connect` off the accept queue: `.ok` with
+    /// the connected descriptor riding on it, or `.error`. Our copy of the
+    /// connection stays open until the relay has taken it (`handOver`).
+    private func handOverConnection(to address: String, client clientFD: Int32) {
+        let client = dup(clientFD)
+        guard client >= 0 else { return }
+        let connector = remoteConnector
+        remoteQueue.async {
+            defer { close(client) }
+            let result = connector?(address) ?? .failure(.refused("This Zetty doesn't show other Macs"))
+            switch result {
+            case .success(let connection):
+                guard let line = try? ControlWire.encodeLine(ControlResponse.ok) else { close(connection); return }
+                FDPassing.handOver(fd: connection, over: client, line: Data(line.utf8), waitUpTo: Self.exchangeTimeout)
+            case .failure(let failure):
+                guard let line = try? ControlWire.encodeLine(ControlResponse.error(failure.message)) else { return }
+                ControlSocketIO.writeAll(Array(line.utf8), to: client, timeout: Self.exchangeTimeout)
+            }
+        }
+    }
+}
+
+extension ControlSocketServer {
+    /// `remote-sign-in`, answered off the accept queue.
+    private func answerSignIn(client clientFD: Int32) {
+        let client = dup(clientFD)
+        guard client >= 0 else { return }
+        let responder = signInResponder
+        remoteQueue.async {
+            defer { close(client) }
+            let response = responder?() ?? .error("This Zetty can't sign in to Tailscale")
+            guard let line = try? ControlWire.encodeLine(response) else { return }
+            ControlSocketIO.writeAll(Array(line.utf8), to: client, timeout: Self.exchangeTimeout)
+        }
+    }
+}
+
+/// Why the app won't hand a relay a connection.
+enum RemoteConnectFailure: Error {
+    /// Tried and failed: the relay retries.
+    case unreachable(String)
+    /// Won't try: the relay shows it and stops.
+    case refused(String)
+
+    var message: String {
+        switch self {
+        case .unreachable(let address): RemoteConnectReply.unreachablePrefix + address
+        case .refused(let reason): reason
+        }
     }
 }

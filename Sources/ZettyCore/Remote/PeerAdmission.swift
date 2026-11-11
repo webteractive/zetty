@@ -1,26 +1,26 @@
 import Foundation
 
 /// Who may connect to this Zetty, and which tailnet machines are worth listing
-/// or dialling. Only Macs signed in to Tailscale as the same user, untagged.
+/// or dialling: only other Zettys' own devices (`zetty-…`), signed in to
+/// Tailscale as the same user, untagged, on macOS.
 public enum PeerAdmission: Equatable, Sendable {
     case admit
     case refuse(Refusal)
 
-    public enum Refusal: Equatable, Sendable { case tagged, otherUser, notMac, unknownNode, thisMac }
+    public enum Refusal: Equatable, Sendable { case tagged, otherUser, notMac, unknownNode, thisNode, notZetty }
 
-    /// Checked in this order. This Mac itself comes first: any local macOS
-    /// user can reach its tailnet address, so admitting it would let another
-    /// user here open this user's panes. It used to be refused only because
-    /// `whois` of this Mac's own address reports no OS, which no Tailscale
-    /// release promises. Tags come before the user because a tagged node
-    /// belongs to the tag, not to a person, so "another user" would mislead.
+    /// Checked in this order. This node itself first. Tags come before the
+    /// user because a tagged node belongs to the tag, not to a person, so
+    /// "another user" would mislead. Then the name: a same-user device that
+    /// isn't `zetty-…` is usually a Mac's own Tailscale device, and every
+    /// macOS account, container and VM on that Mac connects through it, so
+    /// admitting it would let any of them open this user's panes.
     public static func decide(me: TailscaleNode, peer: TailscaleNode?) -> PeerAdmission {
         guard let peer else { return .refuse(.unknownNode) }
-        if peer.stableID == me.stableID || !Set(peer.addresses).isDisjoint(with: me.addresses) {
-            return .refuse(.thisMac)
-        }
+        if peer.stableID == me.stableID { return .refuse(.thisNode) }
         if !peer.tags.isEmpty { return .refuse(.tagged) }
         if peer.userID != me.userID { return .refuse(.otherUser) }
+        if !ZettyDeviceName.isZetty(peer.hostName) { return .refuse(.notZetty) }
         if peer.os != "macOS" { return .refuse(.notMac) }
         return .admit
     }
@@ -31,13 +31,13 @@ public enum PeerAdmission: Equatable, Sendable {
         return others(of: me, in: status).filter { $0.online && decide(me: me, peer: $0) == .admit }
     }
 
-    /// Macs worth a sidebar group, online or not: admitted ones, plus tagged
-    /// ones so the sidebar can say why they can't join. Other people's Macs
-    /// are left out and only counted (`otherUsersMacs`).
+    /// Zettys worth a sidebar group, online or not: admitted ones, plus
+    /// tagged ones so the sidebar can say why they can't join. Other people's
+    /// Macs are left out and only counted (`otherUsersMacs`).
     public static func listable(in status: TailscaleStatus) -> [TailscaleNode] {
         guard let me = status.me else { return [] }
         return others(of: me, in: status).filter {
-            guard $0.os == "macOS" else { return false }
+            guard $0.os == "macOS", ZettyDeviceName.isZetty($0.hostName) else { return false }
             let verdict = decide(me: me, peer: $0)
             return verdict == .admit || verdict == .refuse(.tagged)
         }
@@ -64,7 +64,8 @@ extension PeerAdmission.Refusal {
         case .otherUser: "\(machine) isn't signed in to Tailscale as you"
         case .notMac: "\(machine) isn't a Mac"
         case .unknownNode: "Tailscale doesn't know \(machine)"
-        case .thisMac: "\(machine) is this Mac, which doesn't connect to itself"
+        case .thisNode: "\(machine) is this Zetty"
+        case .notZetty: "\(machine) isn't a Zetty"
         }
     }
 }

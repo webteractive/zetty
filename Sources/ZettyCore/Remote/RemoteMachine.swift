@@ -13,8 +13,12 @@ public struct RemoteMachine: Codable, Equatable, Sendable {
         case refused(String)
     }
 
-    /// Tailscale's stable node ID: survives renames and address changes.
+    /// Its machine ID (`RemoteMachineID`, from its hello), which survives
+    /// signing in again. A tagged Zetty that never said hello is keyed by its
+    /// node ID instead, until it does.
     public let stableID: String
+    /// Its Zetty node's stable ID now. Changes when it signs in again.
+    public var node: String?
     /// The hello's machine name once known, else Tailscale's host name.
     public var name: String
     public var state: State
@@ -26,8 +30,9 @@ public struct RemoteMachine: Codable, Equatable, Sendable {
     public var address: String?
 
     public init(stableID: String, name: String, state: State, lastSeen: Date?, workspace: StatusSnapshot?,
-                address: String? = nil) {
+                address: String? = nil, node: String? = nil) {
         self.stableID = stableID
+        self.node = node
         self.name = name
         self.state = state
         self.lastSeen = lastSeen

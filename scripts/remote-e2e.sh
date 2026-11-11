@@ -3,36 +3,35 @@
 # Testing) across two Macs with nobody at either one.
 #
 #   scripts/remote-e2e.sh --peer <user>@<lan-address> [--key <file>]
-#                         [--app <zetty.app>] [--no-build] [--network] [--keep]
+#                         [--app <zetty.app>] [--no-build] [--keep]
 #
 # This Mac serves and the peer views. Both run a throwaway copy of the build
-# under /tmp/zre (own home, own zmx socket directory) on port 47392
-# (ZETTY_REMOTE_PORT), so the installed apps on both Macs keep serving and
-# viewing on 47391 and none of their sessions is touched. Each check prints
-# PASS or FAIL; the exit status is the number of failures.
+# under /tmp/zre (own home, own zmx socket directory), each its own
+# ephemeral Tailscale device enrolled with a test auth key, so the installed
+# apps on both Macs keep their own devices and none of their sessions is
+# touched. Each check prints PASS or FAIL; the exit status is the number of
+# failures.
 #
-# --peer     SSH target for the other Mac. Use its LAN address: --network
-#            takes this Mac off the tailnet, and SSH must survive that.
-#            Also read from ZETTY_E2E_PEER.
+# --peer     SSH target for the other Mac (its LAN address). Also read from
+#            ZETTY_E2E_PEER.
 # --key      SSH key (default ~/.ssh/zetty-e2e when it exists).
 # --app      the build to test (default: the Debug product in DerivedData).
 # --no-build skip the xcodebuild step.
-# --network  also run `tailscale down` here, expect the peer to show this Mac
-#            offline, then `tailscale up` and expect it back. Opt-in: the
-#            installed apps lose the tailnet for that minute too.
 # --keep     leave both test apps running for a look (tear down by running
 #            again, or quit them with their own CLI).
 #
-# Needs: SSH to the peer without a password, both Macs signed in to
-# Tailscale as the same user, zmx here, python3 on the peer.
+# Needs: ZETTY_E2E_TAILSCALE_AUTH_KEY in the environment (a reusable,
+# ephemeral, pre-approved, untagged auth key: DEVELOPMENT.md), SSH to the
+# peer without a password, zmx here, python3 on the peer, and the peer's own
+# Tailscale app running (the non-Zetty refusal check goes through it).
 # The peer must be awake and logged in (its screen may be locked); a test
 # window opens on each screen.
 set -uo pipefail
 
 cd "$(dirname "$0")/.."
 
-PORT=47392
-# Today's RemoteProtocol.version, for the stand-in clients and servers.
+PORT=47391
+# Today's RemoteProtocol.version, for the stand-in client.
 PROTO=$(sed -n 's/.*static let version = \([0-9][0-9]*\).*/\1/p' Sources/ZettyCore/Remote/RemoteWire.swift)
 ROOT=/tmp/zre
 TEST_APP=$ROOT/zetty.app
@@ -41,7 +40,6 @@ PEER=${ZETTY_E2E_PEER:-}
 KEY=
 APP=
 BUILD=1
-NETWORK=0
 KEEP=0
 
 while [ $# -gt 0 ]; do
@@ -50,14 +48,17 @@ while [ $# -gt 0 ]; do
         --key) KEY=$2; shift 2 ;;
         --app) APP=$2; shift 2 ;;
         --no-build) BUILD=0; shift ;;
-        --network) NETWORK=1; shift ;;
         --keep) KEEP=1; shift ;;
-        -h|--help) sed -n '2,30p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+        -h|--help) sed -n '2,28p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
         *) echo "remote-e2e: unknown argument $1 (see --help)" >&2; exit 64 ;;
     esac
 done
 [ -n "$PEER" ] || { echo "remote-e2e: name the other Mac with --peer <user>@<lan-address>" >&2; exit 64; }
 [ -z "$KEY" ] && [ -f "$HOME/.ssh/zetty-e2e" ] && KEY=$HOME/.ssh/zetty-e2e
+[ -n "${ZETTY_E2E_TAILSCALE_AUTH_KEY:-}" ] || {
+    echo "remote-e2e: set ZETTY_E2E_TAILSCALE_AUTH_KEY (a reusable, ephemeral, pre-approved auth key; DEVELOPMENT.md)" >&2
+    exit 64
+}
 
 # MARK: - Helpers
 
@@ -65,10 +66,6 @@ SSH_OPTS=(-o BatchMode=yes -o ConnectTimeout=5 -o ServerAliveInterval=5
           -o ControlMaster=auto -o "ControlPath=/tmp/zre-ssh-%C" -o ControlPersist=120)
 [ -n "$KEY" ] && SSH_OPTS+=(-i "$KEY" -o IdentitiesOnly=yes)
 peer() { ssh "${SSH_OPTS[@]}" "$PEER" "$@"; }
-
-TS_LOCAL=$(command -v tailscale || echo /Applications/Tailscale.app/Contents/MacOS/Tailscale)
-ts() { TERM_PROGRAM=zetty-test "$TS_LOCAL" "$@"; }
-peer_ts() { peer "TERM_PROGRAM=zetty-test; export TERM_PROGRAM; T=/usr/local/bin/tailscale; [ -x \$T ] || T=/Applications/Tailscale.app/Contents/MacOS/Tailscale; \$T $*"; }
 
 iz() { CFFIXED_USER_HOME=$ROOT ZMX_DIR=$ROOT/zmx "$TEST_BIN" "$@"; }
 peer_iz() { peer "CFFIXED_USER_HOME=$ROOT ZMX_DIR=$ROOT/zmx $TEST_BIN $(printf '%q ' "$@")"; }
@@ -144,15 +141,12 @@ peer_relay_pids() { peer "pgrep -f '^-?$TEST_BIN attach' | sort -n | tr '\n' ' '
 
 # MARK: - Teardown
 
-TAILSCALE_DOWN=0
 teardown() {
     local status=$?
     trap - EXIT INT TERM
-    [ -n "${FAKE:-}" ] && kill "$FAKE" 2>/dev/null
-    if [ "$TAILSCALE_DOWN" = 1 ]; then
-        log "bringing Tailscale back up here"
-        ts up >/dev/null 2>&1
-    fi
+    # The auth key never outlives the run, on either Mac.
+    rm -f "$ROOT/.ts-authkey"
+    peer "rm -f $ROOT/.ts-authkey" >/dev/null 2>&1
     if [ "$KEEP" = 1 ]; then
         log "--keep: both test apps are still running (iz/peer_iz as in this script)"
     else
@@ -180,20 +174,10 @@ peer true || { echo "remote-e2e: can't reach $PEER over SSH without a password" 
 command -v zmx >/dev/null || { echo "remote-e2e: zmx isn't installed here; serving needs it" >&2; exit 2; }
 peer 'command -v python3 >/dev/null' || { echo "remote-e2e: the peer has no python3" >&2; exit 2; }
 
-LOCAL_ID=$(ts status --json | python3 -I -c 'import json,sys; print(json.load(sys.stdin)["Self"]["ID"])') \
-    || { echo "remote-e2e: Tailscale isn't running here" >&2; exit 2; }
-PEER_ID=$(peer_ts status --json | python3 -I -c 'import json,sys; print(json.load(sys.stdin)["Self"]["ID"])') \
-    || { echo "remote-e2e: Tailscale isn't running on the peer" >&2; exit 2; }
-LOCAL_IP=$(ts ip -4 | head -1)
-log "this Mac $LOCAL_ID ($LOCAL_IP), peer $PEER_ID"
-
 # A test app left by an earlier --keep run goes first.
 iz quit --kill-sessions --force >/dev/null 2>&1
 peer_iz quit --kill-sessions --force >/dev/null 2>&1
 sleep 1
-if lsof -nP -iTCP:$PORT -sTCP:LISTEN >/dev/null 2>&1 || peer "lsof -nP -iTCP:$PORT -sTCP:LISTEN" >/dev/null 2>&1; then
-    echo "remote-e2e: something already listens on port $PORT on one of the Macs" >&2; exit 2
-fi
 
 if [ -z "$APP" ]; then
     products=$(xcodebuild -project zetty.xcodeproj -scheme zetty -showBuildSettings 2>/dev/null \
@@ -217,60 +201,65 @@ rm -rf "$ROOT"
 mkdir -p "$ROOT/.config/zetty" "$ROOT/zmx" "$ROOT/work"
 ditto "$APP" "$TEST_APP"
 printf 'preserve-sessions = true\nzetty-serve = true\nzetty-remote-machines = true\n' > "$ROOT/.config/zetty/config"
-# One pairing key for the pair, never the user's own: the test proves the
-# check, it doesn't borrow the real key. A file (ZETTY_REMOTE_KEY_FILE), not
-# the Keychain: the peer's copy starts over SSH, where the login Keychain is
-# locked.
-new_key() { python3 -I -c 'import base64,os; print("zetty-pair-" + base64.urlsafe_b64encode(os.urandom(32)).decode().rstrip("="))'; }
-KEY=$(new_key)
-mkdir -p "$ROOT/.zetty" && (umask 077; printf '%s\n' "$KEY" > "$ROOT/.zetty/remote-key")
+# Each copy enrolls its own ephemeral device with the test auth key, from a
+# 0600 file that teardown deletes. In memory only: no Keychain (the peer's is
+# locked to SSH) and no file holds the device's state.
+(umask 077; printf '%s\n' "$ZETTY_E2E_TAILSCALE_AUTH_KEY" > "$ROOT/.ts-authkey")
 
 # The peer's copy: same bytes, its own home. It serves too, so each side
 # also checks that it never lists itself.
 peer "pkill -f '^$TEST_BIN' ; rm -rf $ROOT && mkdir -p $ROOT/.config/zetty $ROOT/zmx" >/dev/null 2>&1
-tar -C "$ROOT" -cf - zetty.app | peer "tar -C $ROOT -xf -" || { fail "copy the build to the peer"; exit 1; }
+copied=0
+for attempt in 1 2 3; do   # a relayed link drops the odd large copy
+    tar -C "$ROOT" -czf - zetty.app | peer "rm -rf $ROOT/zetty.app && tar -C $ROOT -xzf -" && { copied=1; break; }
+    sleep 3
+done
+[ "$copied" = 1 ] || { fail "copy the build to the peer"; exit 1; }
 peer "printf 'zetty-serve = true\nzetty-remote-machines = true\n' > $ROOT/.config/zetty/config"
-printf '%s\n' "$KEY" | peer "mkdir -p $ROOT/.zetty && umask 077 && cat > $ROOT/.zetty/remote-key"
+printf '%s\n' "$ZETTY_E2E_TAILSCALE_AUTH_KEY" | peer "umask 077 && cat > $ROOT/.ts-authkey"
 
-# No TERM or TERM_PROGRAM on either copy, as when the Dock opens Zetty:
-# Tailscale.app's binary then refuses to act as the CLI unless Zetty sets
-# TERM itself, and neither copy would serve or list anything.
+# No TERM or TERM_PROGRAM on either copy, as when the Dock opens Zetty.
 env -i HOME="$HOME" USER="$USER" SHELL=/bin/zsh TMPDIR="$TMPDIR" LANG=en_US.UTF-8 \
     PATH="/usr/bin:/bin:/opt/homebrew/bin:/usr/local/bin:$HOME/.local/bin" \
-    CFFIXED_USER_HOME=$ROOT ZMX_DIR=$ROOT/zmx ZETTY_REMOTE_PORT=$PORT ZETTY_REMOTE_KEY_FILE=$ROOT/.zetty/remote-key \
+    CFFIXED_USER_HOME=$ROOT ZMX_DIR=$ROOT/zmx ZETTY_TAILSCALE_AUTH_KEY_FILE=$ROOT/.ts-authkey \
     "$TEST_BIN" </dev/null >"$ROOT/app.log" 2>&1 &
 # The binary directly, as here: `open` can't start a second copy
 # (LSMultipleInstancesProhibited) and hands the launch to the installed app.
 # Started from SSH it still reaches the peer's window server while that user
 # is logged in, and nohup keeps it after the SSH session ends.
-peer "cd /tmp && env -u TERM -u TERM_PROGRAM CFFIXED_USER_HOME=$ROOT ZMX_DIR=$ROOT/zmx ZETTY_REMOTE_PORT=$PORT \
-    ZETTY_REMOTE_KEY_FILE=$ROOT/.zetty/remote-key \
+peer "cd /tmp && env -u TERM -u TERM_PROGRAM CFFIXED_USER_HOME=$ROOT ZMX_DIR=$ROOT/zmx \
+    ZETTY_TAILSCALE_AUTH_KEY_FILE=$ROOT/.ts-authkey \
     nohup $TEST_BIN </dev/null >$ROOT/app.log 2>&1 &"
 
 t=$(wait_for 30 iz status) && pass "test app starts here (${t}s)" || { fail "test app starts here"; exit 1; }
 # Its socket under /tmp/zre also proves the environment reached it.
 t=$(wait_for 30 peer_iz status) && pass "test app starts on the peer, in its own home (${t}s)" \
     || { fail "test app starts on the peer, in its own home"; exit 1; }
+# Each copy's machine ID, made at launch: what the other lists it by.
+LOCAL_ID=$(head -n 1 "$ROOT/.zetty/machine-id" 2>/dev/null)
+PEER_ID=$(peer "head -n 1 $ROOT/.zetty/machine-id" 2>/dev/null)
+log "this copy $LOCAL_ID, the peer's $PEER_ID"
 
 # MARK: - Checks
 
 echo "== serving"
+# The node is userspace: nothing of the test app's binds this Mac's own
+# interfaces, Tailscale's or any other.
 check_bind() {
     local where=$1 listing=$2
-    if [ -z "$listing" ]; then fail "$where listens on port $PORT"; return; fi
-    if printf '%s\n' "$listing" | grep -q '\*:'"$PORT"; then
-        fail "$where listens on every interface: $(printf '%s' "$listing" | tr '\n' ' ')"
-    else
-        pass "$where listens only on its Tailscale addresses"
-    fi
+    if [ -z "$listing" ]; then pass "$where's test app listens on none of the Mac's interfaces"
+    else fail "$where's test app listens on the Mac's own interfaces: $(printf '%s' "$listing" | tr '\n' ' ')"; fi
 }
-sleep 3   # the first Tailscale poll
-check_bind "this Mac" "$(lsof -nP -iTCP:$PORT -sTCP:LISTEN 2>/dev/null | awk 'NR>1{print $9}')"
-check_bind "the peer" "$(peer "lsof -nP -iTCP:$PORT -sTCP:LISTEN" 2>/dev/null | awk 'NR>1{print $9}')"
+sleep 3
+check_bind "this Mac" "$(lsof -nP -a -p "$(pgrep -f "^$TEST_BIN" | head -1)" -iTCP -sTCP:LISTEN 2>/dev/null | awk 'NR>1{print $9}')"
+check_bind "the peer" "$(peer "lsof -nP -a -p \$(pgrep -f '^$TEST_BIN' | head -1) -iTCP -sTCP:LISTEN" 2>/dev/null | awk 'NR>1{print $9}')"
 
 echo "== listing"
-t=$(wait_for 40 peer_state_is "$LOCAL_ID" online) && pass "the peer lists this Mac online (${t}s)" \
+t=$(wait_for 60 peer_state_is "$LOCAL_ID" online) && pass "the peer lists this Mac online (${t}s)" \
     || fail "the peer lists this Mac online (still $(peer_iz remote list --json | report machine-state "$LOCAL_ID") after ${t}s)"
+# Where the peer reaches this copy: its own device's tailnet address.
+LOCAL_IP=$(peer_iz remote list --json | python3 -I -c 'import json,sys; ms={m["id"]: m for m in json.load(sys.stdin)["machines"]}; print(ms.get(sys.argv[1], {}).get("address") or "")' "$LOCAL_ID")
+log "this copy's device is at $LOCAL_IP"
 t=$(wait_for 40 local_state_is "$PEER_ID" online) && pass "this Mac lists the peer online (${t}s)" \
     || fail "this Mac lists the peer online (still $(iz remote list --json | report machine-state "$PEER_ID") after ${t}s)"
 [ "$(iz remote list --json | report lists "$LOCAL_ID")" = no ] && pass "this Mac doesn't list itself" \
@@ -292,9 +281,9 @@ echo "== typing through a relay"
 # A python pty stands in for a pane: it runs the relay, types a line, and
 # prints what came back. The sum proves the shell ran it, not just echoed it.
 # peer_relay <home> <mark>: the relay asks the Zetty whose home is <home> to
-# prove the pairing key for it; it never holds the key itself.
+# dial for it through that Zetty's own Tailscale device.
 peer_relay() {
-    peer "CFFIXED_USER_HOME=$1 ZETTY_REMOTE_PORT=$PORT python3 -I - $TEST_BIN attach $LOCAL_IP:$P1 'echo \$(($2+1))zre'" <<<"$RELAY_PY"
+    peer "CFFIXED_USER_HOME=$1 python3 -I - $TEST_BIN attach $LOCAL_IP:$P1 'echo \$(($2+1))zre'" <<<"$RELAY_PY"
 }
 RELAY_PY=$(cat <<'PY'
 import fcntl, os, pty, select, signal, struct, sys, termios, time
@@ -341,14 +330,14 @@ iz send --pane "$P1" --enter "trap 'stty size > $SIZE_FILE' WINCH" >/dev/null 2>
 sleep 1
 rm -f "$SIZE_FILE"
 size_is() { [ "$(cat "$SIZE_FILE" 2>/dev/null)" = "$1" ]; }
-peer "CFFIXED_USER_HOME=$ROOT ZETTY_REMOTE_PORT=$PORT python3 -I - $TEST_BIN attach $LOCAL_IP:$P1 ''" <<<"$RELAY_PY" >/dev/null &
+peer "CFFIXED_USER_HOME=$ROOT python3 -I - $TEST_BIN attach $LOCAL_IP:$P1 ''" <<<"$RELAY_PY" >/dev/null &
 RELAY_PID=$!
 t=$(wait_for 8 size_is "24 80") && pass "opening the pane on the peer gives it the peer's size (${t}s)" \
     || fail "opening the pane on the peer gives it the peer's size (shell saw: $(cat "$SIZE_FILE" 2>/dev/null || echo nothing))"
 wait "$RELAY_PID"
 wait_for 5 peer_relays_are 0 >/dev/null
 
-echo "== the pairing key"
+echo "== who may connect"
 # relay_refused <name> <home> <expected words>: the relay is turned away
 # with those words, and nothing it typed ran here.
 relay_refused() {
@@ -362,39 +351,31 @@ relay_refused() {
     fi
 }
 peer "rm -rf $ROOT-nozetty && mkdir -p $ROOT-nozetty"
-relay_refused "a relay with no Zetty to prove the key for it is refused" "$ROOT-nozetty" "only it can prove"
+relay_refused "a relay with no Zetty to dial for it says so" "$ROOT-nozetty" "isn't running on this Mac"
 peer "rm -rf $ROOT-nozetty"
-# A client that isn't the peer's Zetty, as a container or a second user
-# there would be: the right machine, but no key.
+# A client through the peer Mac's own Tailscale device, as a container, a VM
+# or a second macOS user there would connect: Glen's machine, not a Zetty.
 peer_client() {
-    peer "ZRE_PROTO=$PROTO python3 -I - $LOCAL_IP $PORT $1" <<'PY'
-import base64, json, os, socket, struct, sys
-host, port, mode = sys.argv[1], int(sys.argv[2]), sys.argv[3]
-def frame(message):
-    body = json.dumps(message).encode()
-    return struct.pack(">I", len(body)) + body
+    peer "ZRE_PROTO=$PROTO python3 -I - $LOCAL_IP $PORT" <<'PY'
+import json, os, socket, struct, sys
+host, port = sys.argv[1], int(sys.argv[2])
 def read(conn):
     head = conn.recv(4, socket.MSG_WAITALL)
     if len(head) < 4: return None
     return json.loads(conn.recv(struct.unpack(">I", head)[0], socket.MSG_WAITALL))
-conn = socket.create_connection((host, port), timeout=10)
-read(conn)
-hello = {"machine": "intruder", "zettyVersion": "9", "protocolVersion": int(os.environ["ZRE_PROTO"]),
-         "challenge": base64.b64encode(os.urandom(32)).decode()}
-if mode == "guess":
-    hello["proof"] = base64.b64encode(os.urandom(32)).decode()
-conn.sendall(frame({"type": "hello", "hello": hello}))
-answer = read(conn)
-print(answer.get("type") if answer else "closed", (answer or {}).get("reason", ""))
+try:
+    conn = socket.create_connection((host, port), timeout=10)
+    answer = read(conn)
+    print(answer.get("type") if answer else "closed", (answer or {}).get("reason", ""))
+except Exception as error:
+    print("unreachable", error)
 PY
 }
-for mode in guess none; do
-    answer=$(peer_client $mode)
-    case $answer in
-        "refused "*different\ pairing\ keys*) pass "a client from the peer with $( [ $mode = guess ] && echo "a guessed proof" || echo "no proof") is refused" ;;
-        *) fail "a client from the peer with $mode proof is refused (got: $answer)" ;;
-    esac
-done
+answer=$(peer_client)
+case $answer in
+    "refused "*"isn't a Zetty"*) pass "a client through the peer Mac's own Tailscale device is refused: ${answer#refused }" ;;
+    *) fail "a client through the peer Mac's own Tailscale device is refused (got: $answer)" ;;
+esac
 
 echo "== the remote view"
 P3=$(iz split --pane "$P1")
@@ -409,38 +390,6 @@ if peer_iz remote open "$LOCAL_ID" e2e-work >/dev/null; then
     iz close --pane "$P3" --force >/dev/null
     t=$(wait_for 5 peer_relays_are $((count - 1))) && pass "closing a pane here ends its relay there (${t}s)" \
         || fail "closing a pane here ends its relay there (have $(peer_relays))"
-
-    echo "== a broken frame"
-    peer "printf '\xff\xff\xff\xff' | nc -w 2 $LOCAL_IP $PORT" >/dev/null 2>&1
-    sleep 2
-    if peer_state_is "$LOCAL_ID" online && peer_relays_are $((count - 1)); then
-        pass "a garbage frame closes only its own connection"
-    else
-        fail "a garbage frame closes only its own connection (state $(peer_iz remote list --json | report machine-state "$LOCAL_ID"), relays $(peer_relays))"
-    fi
-
-    if [ "$NETWORK" = 1 ]; then
-        echo "== offline and back"
-        TAILSCALE_DOWN=1
-        # Without --accept-risk the CLI refuses whenever it thinks a session
-        # rides on the tailnet, and changes nothing. SSH to the peer uses
-        # its LAN address, so nothing here does.
-        if ! down=$(ts down --accept-risk=lose-ssh 2>&1); then
-            fail "tailscale down here: $down"
-        fi
-        t=$(wait_for 30 peer_state_is "$LOCAL_ID" offline) && pass "the peer shows this Mac offline (${t}s)" \
-            || fail "the peer shows this Mac offline within 30s"
-        t=$(wait_for 5 peer_relays_are 0) && pass "its relays end while it's offline (${t}s)" \
-            || fail "its relays end while it's offline (have $(peer_relays))"
-        placeholder=$(peer_iz remote list --json | report shown-placeholder)
-        [ -n "$placeholder" ] && pass "the view says so: $placeholder" || fail "the view says nothing while offline"
-        ts up >/dev/null 2>&1
-        TAILSCALE_DOWN=0
-        t=$(wait_for 60 peer_state_is "$LOCAL_ID" online) && pass "the peer shows this Mac online again (${t}s)" \
-            || fail "the peer shows this Mac online again within 60s"
-        t=$(wait_for 15 peer_relays_are $((count - 1))) && pass "the shown panes reconnect (${t}s)" \
-            || fail "the shown panes reconnect (have $(peer_relays))"
-    fi
 
     echo "== leaving and coming back"
     before=$(peer_relay_pids)
@@ -459,81 +408,16 @@ else
     fail "the peer opens this Mac's project: $(peer_iz remote open "$LOCAL_ID" e2e-work 2>&1)"
 fi
 
-echo "== servers that aren't this Mac's Zetty"
-# This Mac's test app goes, and a stand-in takes its address and port, as a
-# second macOS user here could. The peer must not trust it.
+echo "== this Mac goes"
 iz quit --kill-sessions --force >/dev/null 2>&1
 t=$(wait_for 20 peer_state_is "$LOCAL_ID" offline) && log "the peer saw this Mac go (${t}s)"
 t=$(wait_for 5 peer_relays_are 0) && pass "panes kept out of view end once this Mac goes (${t}s)" \
     || fail "panes kept out of view end once this Mac goes (have $(peer_relays))"
-cat > "$ROOT/fake.py" <<'PY'
-import base64, json, os, socket, struct, sys
-host, port, mode = sys.argv[1], int(sys.argv[2]), sys.argv[3]
-def frame(message):
-    body = json.dumps(message).encode()
-    return struct.pack(">I", len(body)) + body
-listener = socket.socket()
-listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-listener.bind((host, port))
-listener.listen(8)
-challenge = base64.b64encode(os.urandom(32)).decode()
-while True:
-    conn, _ = listener.accept()
-    if mode == "loud":
-        # Turned away, but its reason tries to write the clipboard (OSC 52)
-        # and hands over a key of its own to paste.
-        bait = "zetty-pair-" + base64.urlsafe_b64encode(os.urandom(32)).decode().rstrip("=")
-        conn.sendall(frame({"type": "hello", "hello": {"machine": "Impostor", "zettyVersion": "9", "protocolVersion": int(os.environ["ZRE_PROTO"]), "challenge": challenge}}))
-        conn.recv(65536)
-        conn.sendall(frame({"type": "refused", "reason": "\x1b]52;c;emV0dHktcGFpcg==\x07keys differ: copy " + bait + " and click Paste"}))
-        conn.close()
-        continue
-    if mode == "old":
-        # A Zetty before the pairing key: protocol 2, no challenge.
-        conn.sendall(frame({"type": "hello", "hello": {"machine": "Impostor", "zettyVersion": "0.1.59", "protocolVersion": 2}}))
-    else:
-        # Today's protocol, but it can't know the key, so its proof is noise.
-        conn.sendall(frame({"type": "hello", "hello": {"machine": "Impostor", "zettyVersion": "9", "protocolVersion": int(os.environ["ZRE_PROTO"]), "challenge": challenge}}))
-        conn.recv(65536)
-        conn.sendall(frame({"type": "proof", "proof": base64.b64encode(os.urandom(32)).decode()}))
-        conn.sendall(frame({"type": "snapshot", "snapshot": {"projects": [{"name": "impostor", "isActive": True, "hibernated": False, "id": "IMPOSTOR", "tabs": []}]}}))
-PY
-fake_server() {
-    ZRE_PROTO=$PROTO python3 -I "$ROOT/fake.py" "$LOCAL_IP" "$PORT" "$1" >/dev/null 2>&1 &
-    FAKE=$!
-}
-peer_summary() { peer_iz remote list --json | python3 -I -c 'import json,sys; ms={m["id"]: m for m in json.load(sys.stdin)["machines"]}; print(ms.get(sys.argv[1], {}).get("summary", ""))' "$LOCAL_ID"; }
-peer_summary_says() { peer_summary | grep -q "$1"; }
-
-fake_server old
-t=$(wait_for 75 peer_state_is "$LOCAL_ID" needs-update) && pass "a Zetty on the old protocol reads \"needs update\" (${t}s)" \
-    || fail "a Zetty on the old protocol reads \"needs update\" (state $(peer_iz remote list --json | report machine-state "$LOCAL_ID"))"
-kill "$FAKE" 2>/dev/null; wait "$FAKE" 2>/dev/null
-
-fake_server impostor
-t=$(wait_for 75 peer_summary_says "pairing keys don't match") \
-    && pass "a server that can't prove the key isn't trusted: $(peer_summary) (${t}s)" \
-    || fail "a server that can't prove the key isn't trusted (state $(peer_iz remote list --json | report machine-state "$LOCAL_ID"): $(peer_summary))"
-[ "$(peer_iz remote list --json | report has-project "$LOCAL_ID" impostor)" = no ] \
-    && pass "nothing the impostor sent reaches the peer's sidebar" || fail "the impostor's project reached the peer"
-peer_summary | grep -q Impostor && fail "the impostor named itself in the peer's sidebar" \
-    || pass "the impostor can't name itself in the peer's sidebar"
-relay_refused "a relay won't type into a server that can't prove the key" "$ROOT" "couldn't confirm"
-kill "$FAKE" 2>/dev/null; wait "$FAKE" 2>/dev/null
-
-fake_server loud
-OUT=$(peer_relay "$ROOT" 1)
-if printf '%s' "$OUT" | grep -q 'differ: copy' && ! printf '%s' "$OUT" | LC_ALL=C grep -q $'\e]52' \
-    && ! printf '%s' "$OUT" | grep -qi 'zetty-pair-'; then
-    pass "a refusal can't put an escape sequence or a key in the relay's pane"
-else
-    fail "a refusal can't put an escape sequence or a key in the relay's pane (printed: $(printf '%s' "$OUT" | od -c | head -3 | tr '\n' ' '))"
-fi
-t=$(wait_for 75 peer_summary_says "differ: copy")
-if [ $? = 0 ] && ! peer_summary | LC_ALL=C grep -q $'\e' && ! peer_summary | grep -qi 'zetty-pair-'; then
-    pass "or in the peer's sidebar (${t}s)"
-else fail "or in the peer's sidebar ($(peer_summary | od -c | head -2 | tr '\n' ' '))"; fi
-kill "$FAKE" 2>/dev/null; wait "$FAKE" 2>/dev/null
+# Its ephemeral device signed out as it quit, so it leaves the tailnet and
+# the peer's sidebar.
+peer_gone() { [ "$(peer_iz remote list --json | report lists "$LOCAL_ID")" = no ]; }
+t=$(wait_for 40 peer_gone) && pass "a copy that quit leaves the peer's sidebar (${t}s)" \
+    || fail "a copy that quit leaves the peer's sidebar (still $(peer_iz remote list --json | report machine-state "$LOCAL_ID"))"
 
 echo "== $FAILS failed"
 echo "Not covered here: the sidebar's look."

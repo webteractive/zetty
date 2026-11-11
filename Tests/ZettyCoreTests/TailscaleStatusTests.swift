@@ -69,17 +69,10 @@ func tailscaleFixture(_ name: String) throws -> Data {
     #expect(TailscaleWhois.parse(Data("{}".utf8)) == nil)
 }
 
-@Test func tailscaleCLIGetsTERMWhenLaunchedWithoutATerminal() {
-    // A Zetty opened from the Dock has neither, and Tailscale.app's binary
-    // then tries to start its GUI instead of answering.
-    let prepared = TailscaleCLIEnvironment.prepare(["HOME": "/Users/me"])
-    #expect(prepared["TERM"] == "dumb")
-    #expect(prepared["HOME"] == "/Users/me")
-}
 
-@Test func tailscaleCLIKeepsATerminalEnvironmentAsIs() {
-    let term = ["TERM": "xterm-ghostty"]
-    #expect(TailscaleCLIEnvironment.prepare(term) == term)
-    let program = ["TERM_PROGRAM": "zetty"]
-    #expect(TailscaleCLIEnvironment.prepare(program) == program)
+
+@Test func statusNamesTheAccountItIsSignedInTo() throws {
+    let json = #"{"BackendState":"Running","Self":{"ID":"nME","HostName":"zetty-mini","OS":"macOS","UserID":7},"User":{"7":{"LoginName":"glen@example.com"}}}"#
+    let status = try #require(TailscaleStatus.parse(Data(json.utf8)))
+    #expect(status.loginName == "glen@example.com")
 }

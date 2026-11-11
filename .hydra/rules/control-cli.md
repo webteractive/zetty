@@ -88,7 +88,10 @@ Commands (see `zetty --help` for full grammar and agent notes):
   in the configured `editor`, Finder without one; `.text` says what it did.
   No menu: the per-pane Open button's picker is GUI-only.
 - `remote list [--json]` · `remote open <machine> <project>` · `remote
-  close` — Other Macs from the command line (`remote-machines.md`). `list`
+  close` · `remote sign-in [--json]` — Other Macs from the command line
+  (`remote-machines.md`). `sign-in` answers `.signIn(RemoteSignInReport)`
+  off the accept queue (it waits for Tailscale's page) and prints the page
+  with a QR code when stdout is a terminal. `list`
   answers `.remote(RemoteMachinesReport)`: each Mac's state as one word, the
   sidebar summary, address, last seen, workspace, and the shown project with
   its tab's pane ids or its placeholder. `open` is a sidebar click (it leaves
@@ -249,13 +252,12 @@ Two halves fix it, both regression-tested:
   decode: a Mac on an older build must still read a newer one's snapshot, and
   anything incompatible needs a `RemoteProtocol.version` bump.
 - **`zetty attach <machine>:<pane>` is the one verb that opens a network
-  connection.** It never talks to the local socket: it dials the other Mac's
-  Zetty on port 47391, or `ZETTY_REMOTE_PORT` (`remote-machines.md`,
-  "Terminal connections") and
-  relays this terminal to that pane, after both ends prove the pairing key
-  (`remote-machines.md`). It never holds the key: it sends this Mac's app the
-  internal requests `remote-sign` and `remote-check`, which are not CLI
-  verbs (like `account-running`) and are answered on the socket queue. It is what a remote pane runs, built by
+  connection**, and it can't dial it itself: the connection must go through
+  this Mac's Zetty's own Tailscale device, so it sends the app the internal
+  request `remote-connect` (not a CLI verb, like `account-running`) and gets
+  the connected descriptor back with the reply (`FDPassing`, off the serial
+  accept queue; `remote-machines.md`, "Terminal connections"). It then relays
+  this terminal to that pane. It is what a remote pane runs, built by
   `RemoteAttachTarget.relayCommand`, which accepts only a hex pane id and a
   numeric tailnet address because the command goes through `bash -c`. Its
   `--help` text is in `ControlCLI.swift` with the rest.

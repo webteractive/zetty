@@ -6,13 +6,16 @@ public enum RemoteProtocol {
     /// shown as "needs update" rather than dropped.
     /// 3: the pairing-key challenge-response (`RemoteAuth`).
     /// 4: the repaint and size-moved terminal frames (`RemoteSizeHandoff`).
-    public static let version = 4
+    /// 5: Zetty's own Tailscale node; trust by Tailscale identity, so the
+    /// pairing-key challenge and proof are gone and the hello carries the
+    /// machine ID.
+    public static let version = 5
     public static let defaultPort: UInt16 = 47_391
     /// `ZETTY_REMOTE_PORT` names the environment variable that moves serving,
     /// dialling and relays to another port, read once at launch. It exists
     /// so a test pair (`scripts/remote-e2e.sh`) can run beside the real
-    /// pair, which keeps the default port. Only the port moves: binding
-    /// still takes this Mac's Tailscale addresses and nothing else.
+    /// pair, which keeps the default port. Only the port moves: listening
+    /// still happens only through Zetty's own Tailscale node.
     public static let portVariable = "ZETTY_REMOTE_PORT"
     public static let port: UInt16 = port(in: ProcessInfo.processInfo.environment)
 
@@ -34,20 +37,13 @@ public enum RemoteProtocol {
     /// How long a relay waits for `attached` or `refused` after its hello.
     public static let attachTimeout: TimeInterval = 10
 
-    /// Socket options every remote-machines connection uses, on both ends: no
-    /// SIGPIPE, and keepalive so a peer that vanishes without a FIN (sleep,
-    /// power loss, `tailscale down`) is noticed in ~16s instead of the
-    /// system's two hours. The serving side needs it most: a dead viewer
-    /// otherwise holds its connection, pty and `zmx attach` until the
-    /// connection cap refuses everyone.
+    /// Every remote-machines connection is one end of a socketpair that the
+    /// Tailscale bridge splices to its tailnet connection, so the only option
+    /// left is no SIGPIPE. Keepalive lives in the bridge (the serving side
+    /// drops a vanished viewer in under a minute).
     public static func configureLink(_ fd: Int32) {
-        var on: Int32 = 1, idle: Int32 = 10, interval: Int32 = 3, count: Int32 = 2
-        let size = socklen_t(MemoryLayout<Int32>.size)
-        setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &on, size)
-        setsockopt(fd, SOL_SOCKET, SO_KEEPALIVE, &on, size)
-        setsockopt(fd, IPPROTO_TCP, TCP_KEEPALIVE, &idle, size)
-        setsockopt(fd, IPPROTO_TCP, TCP_KEEPINTVL, &interval, size)
-        setsockopt(fd, IPPROTO_TCP, TCP_KEEPCNT, &count, size)
+        var on: Int32 = 1
+        setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &on, socklen_t(MemoryLayout<Int32>.size))
     }
 }
 
@@ -83,24 +79,20 @@ public struct RemoteHello: Codable, Equatable, Sendable {
     /// Set by a relay: this connection carries one pane's terminal, not the
     /// workspace feed.
     public let attach: RemoteAttachRequest?
-    /// A fresh random challenge for the other end to prove the pairing key
-    /// over (`RemoteAuth`). Both hellos carry one.
-    public let challenge: String?
-    /// The client's proof, over the server's challenge and its own. Only the
-    /// client's hello has one: it is the second hello sent.
-    public let proof: String?
+    /// The sender's machine ID (`RemoteMachineID`): what the sidebar keys a
+    /// Mac by, since its Tailscale node changes when it signs in again.
+    public let machineID: String?
 
     public init(machine: String, zettyVersion: String, protocolVersion: Int, attach: RemoteAttachRequest? = nil,
-                challenge: String? = nil, proof: String? = nil) {
+                machineID: String? = nil) {
         self.machine = machine
         self.zettyVersion = zettyVersion
         self.protocolVersion = protocolVersion
         self.attach = attach
-        self.challenge = challenge
-        self.proof = proof
+        self.machineID = machineID
     }
 
-    private enum CodingKeys: String, CodingKey { case machine, zettyVersion, protocolVersion, attach, challenge, proof }
+    private enum CodingKeys: String, CodingKey { case machine, zettyVersion, protocolVersion, attach, machineID }
 
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -108,8 +100,7 @@ public struct RemoteHello: Codable, Equatable, Sendable {
         zettyVersion = try c.decode(String.self, forKey: .zettyVersion)
         protocolVersion = try c.decode(Int.self, forKey: .protocolVersion)
         attach = try c.decodeIfPresent(RemoteAttachRequest.self, forKey: .attach)
-        challenge = try c.decodeIfPresent(String.self, forKey: .challenge)
-        proof = try c.decodeIfPresent(String.self, forKey: .proof)
+        machineID = try c.decodeIfPresent(String.self, forKey: .machineID)
     }
 }
 
@@ -121,11 +112,8 @@ public enum RemoteMessage: Codable, Equatable, Sendable {
     case refused(String)
     /// The server accepted an attach. Binary `TerminalFrame`s follow.
     case attached
-    /// The server's proof of the pairing key, sent once it has checked the
-    /// client's and before anything else (`RemoteAuth`).
-    case proof(String)
 
-    private enum CodingKeys: String, CodingKey { case type, hello, snapshot, reason, proof }
+    private enum CodingKeys: String, CodingKey { case type, hello, snapshot, reason }
 
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -134,7 +122,6 @@ public enum RemoteMessage: Codable, Equatable, Sendable {
         case "snapshot": self = .snapshot(try c.decode(StatusSnapshot.self, forKey: .snapshot))
         case "refused": self = .refused(try c.decode(String.self, forKey: .reason))
         case "attached": self = .attached
-        case "proof": self = .proof(try c.decode(String.self, forKey: .proof))
         case let other:
             throw DecodingError.dataCorruptedError(forKey: .type, in: c,
                                                    debugDescription: "unknown message type \(other)")
@@ -155,9 +142,6 @@ public enum RemoteMessage: Codable, Equatable, Sendable {
             try c.encode(reason, forKey: .reason)
         case .attached:
             try c.encode("attached", forKey: .type)
-        case .proof(let proof):
-            try c.encode("proof", forKey: .type)
-            try c.encode(proof, forKey: .proof)
         }
     }
 }

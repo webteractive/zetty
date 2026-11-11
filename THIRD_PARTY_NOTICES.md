@@ -32,6 +32,53 @@ The Zig and LLVM runtime support compiled into libghostty (compiler-rt and a
 libc++ shim) are under the MIT License and Apache-2.0 with the LLVM exception,
 which require no notice in binary form.
 
+## Linked into the app: Tailscale
+
+Zetty joins your tailnet as its own device through Tailscale's embeddable
+node ([tsnet](https://tailscale.com/kb/1244/tsnet)), compiled from Go into a
+static library (`Bridge/tailnet`). The Go standard library and these modules
+ship as part of Zetty's binary. Every license text, with copyright lines, is in
+[`tailscale-go-modules.txt`](licenses/tailscale-go-modules.txt).
+
+| Module | License |
+|---|---|
+| The Go standard library and runtime — © The Go Authors | BSD-3-Clause |
+| `filippo.io/edwards25519` v1.2.0 | BSD-3-Clause |
+| `github.com/coder/websocket` v1.8.15 | ISC |
+| `github.com/creachadair/msync` v0.10.1 | BSD-2-Clause |
+| `github.com/fxamacker/cbor/v2` v2.9.3 | MIT |
+| `github.com/gaissmai/bart` v0.29.0 | MIT |
+| `github.com/go-json-experiment/json` v0.0.0-… | BSD-3-Clause |
+| `github.com/golang/groupcache` v0.0.0-… | Apache-2.0 |
+| `github.com/google/btree` v1.1.3 | Apache-2.0 |
+| `github.com/hdevalence/ed25519consensus` v0.2.0 | BSD-3-Clause |
+| `github.com/huin/goupnp` v1.3.0 | BSD-2-Clause |
+| `github.com/klauspost/compress` v1.20.0 | Apache-2.0 |
+| `github.com/mitchellh/go-ps` v1.0.0 | MIT |
+| `github.com/pires/go-proxyproto` v0.15.0 | Apache-2.0 |
+| `github.com/tailscale/certstore` v0.1.1-… | MIT |
+| `github.com/tailscale/hujson` v0.0.0-… | BSD-3-Clause |
+| `github.com/tailscale/peercred` v0.0.0-… | BSD-3-Clause |
+| `github.com/tailscale/web-client-prebuilt` v0.0.0-… | BSD-3-Clause |
+| `github.com/tailscale/wireguard-go` v0.0.0-… | MIT |
+| `github.com/x448/float16` v0.8.4 | MIT |
+| `go4.org/mem` v0.0.0-… | Apache-2.0 |
+| `go4.org/netipx` v0.0.0-… | BSD-3-Clause |
+| `golang.org/x/crypto` v0.57.0 | BSD-3-Clause |
+| `golang.org/x/exp` v0.0.0-… | BSD-3-Clause |
+| `golang.org/x/net` v0.59.0 | BSD-3-Clause |
+| `golang.org/x/oauth2` v0.37.0 | BSD-3-Clause |
+| `golang.org/x/sync` v0.23.0 | BSD-3-Clause |
+| `golang.org/x/sys` v0.48.0 | BSD-3-Clause |
+| `golang.org/x/term` v0.46.0 | BSD-3-Clause |
+| `golang.org/x/text` v0.42.0 | BSD-3-Clause |
+| `golang.org/x/time` v0.16.0 | BSD-3-Clause |
+| `gvisor.dev/gvisor` v0.0.0-… | Apache-2.0 |
+| `tailscale.com` v1.104.1 | BSD-3-Clause |
+
+Tailscale's code is © Tailscale Inc & contributors. "Tailscale" is a trademark
+of Tailscale Inc.; Zetty is not affiliated with or endorsed by Tailscale.
+
 ## Bundled files
 
 | Component | Where in the app | License | Text |

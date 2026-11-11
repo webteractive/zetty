@@ -124,10 +124,12 @@ private let attachRequest = RemoteAttachRequest(pane: "ab12cd34", rows: 30, cols
     }
 }
 
-@Test func linkOptionsNoticeAPeerThatVanishes() {
-    let fd = socket(AF_INET, SOCK_STREAM, 0)
-    #expect(fd >= 0)
-    defer { close(fd) }
+@Test func linkOptionsNeverRaiseSIGPIPE() {
+    // Links are socketpair ends now; keepalive lives in the Tailscale bridge.
+    var pair: [Int32] = [0, 0]
+    #expect(socketpair(AF_UNIX, SOCK_STREAM, 0, &pair) == 0)
+    let fd = pair[0]
+    defer { close(pair[0]); close(pair[1]) }
     RemoteProtocol.configureLink(fd)
     func option(_ level: Int32, _ name: Int32) -> Int32 {
         var value: Int32 = 0
@@ -135,11 +137,7 @@ private let attachRequest = RemoteAttachRequest(pane: "ab12cd34", rows: 30, cols
         getsockopt(fd, level, name, &value, &length)
         return value
     }
-    #expect(option(SOL_SOCKET, SO_KEEPALIVE) != 0)
     #expect(option(SOL_SOCKET, SO_NOSIGPIPE) != 0)
-    #expect(option(IPPROTO_TCP, TCP_KEEPALIVE) == 10)
-    #expect(option(IPPROTO_TCP, TCP_KEEPINTVL) == 3)
-    #expect(option(IPPROTO_TCP, TCP_KEEPCNT) == 2)
 }
 
 @Test func portMovesOnlyForAWholeUnprivilegedNumber() {
@@ -148,5 +146,33 @@ private let attachRequest = RemoteAttachRequest(pane: "ab12cd34", rows: 30, cols
     #expect(RemoteProtocol.port(in: ["ZETTY_REMOTE_PORT": "65535"]) == 65_535)
     for bad in ["", "22", "1023", "65536", "-1", "47392 ", "0x1000", "abc"] {
         #expect(RemoteProtocol.port(in: ["ZETTY_REMOTE_PORT": bad]) == RemoteProtocol.defaultPort, "\(bad)")
+    }
+}
+
+// MARK: - Protocol 5: the machine ID, no pairing key
+
+@Test func helloCarriesTheMachineID() throws {
+    let hello = RemoteMessage.hello(.init(machine: "Mac mini", zettyVersion: "0.1.62",
+                                          protocolVersion: RemoteProtocol.version, machineID: "M-1"))
+    var decoder = RemoteFrameDecoder()
+    let got = try decoder.push(RemoteFrame.encode(hello))
+    guard case .hello(let back) = got.first else { Issue.record("not a hello"); return }
+    #expect(back.machineID == "M-1")
+    #expect(RemoteProtocol.version == 5)
+}
+
+@Test func aVersionFourHelloStillDecodesSoItCanReadNeedsUpdate() throws {
+    let json = #"{"machine":"m","zettyVersion":"0.1.61","protocolVersion":4,"challenge":"abc"}"#
+    let hello = try JSONDecoder().decode(RemoteHello.self, from: Data(json.utf8))
+    #expect(hello.protocolVersion == 4)
+    #expect(hello.machineID == nil)
+}
+
+@Test func theOldProofMessageIsNotUnderstood() {
+    var decoder = RemoteFrameDecoder()
+    let body = Data(#"{"type":"proof","proof":"x"}"#.utf8)
+    var length = UInt32(body.count).bigEndian
+    #expect(throws: RemoteFrameDecoder.Failure.malformed) {
+        try decoder.push(Data(bytes: &length, count: 4) + body)
     }
 }

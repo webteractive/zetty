@@ -1580,9 +1580,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         controller.onSignInAccount = { [weak self] account in self?.signInToAccount(account) }
         controller.onCheckAccounts = { [weak self] done in self?.refreshAccountIdentities(then: done) }
         controller.onHooksChanged = { [weak self] in self?.installHooksForAccounts() }
-        controller.tailscaleStateProvider = { [weak self] reply in self?.readTailscaleState(reply) }
-        controller.pairingKeys = pairingKeys
-        controller.onPairingKeyChanged = { [weak self] in self?.remoteMachinesClient?.retryNow() }
+        controller.tailnetStateProvider = { [weak self] in self?.tailnetState ?? .off }
+        controller.deviceNameProvider = { [weak self] in self?.tailnetDeviceName ?? ZettyDeviceName.prefix + "mac" }
+        controller.onSignIn = { [weak self] in self?.signInToTailscale() }
+        controller.onSignOut = { [weak self] in self?.tailnet.logout() }
+        controller.onShowSignInCode = { [weak self] in self?.showTailscaleSignInCode() }
+        controller.onRename = { [weak self] input in self?.renameTailnetDevice(input) ?? input }
         controller.onConfigSaved = { [weak self] in
             self?.reloadConfiguration(nil)
             self?.configWatcher?.markSaved()   // already applied; skip the poll's repeat
@@ -1878,6 +1881,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         controlSocketServer?.stop()
         remoteServer?.stop()
         remoteMachinesClient?.stop()
+        if appConfig.serveRemote || appConfig.showRemoteMachines { tailnet.stopBeforeQuit() }
         killScratchSessions()
         saveWorkspace()
     }
@@ -1900,69 +1904,131 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         ZmxRunner.killAndWait(sessions: sessions, zmxPath: zmx)
     }
 
-    // MARK: - Remote machines (Tailscale)
+    // MARK: - Remote machines (Zetty's own Tailscale node)
 
-    /// Polls Tailscale only while serving or showing other Macs is on.
-    private lazy var tailscaleMonitor = TailscaleMonitor { [weak self] state in
-        self?.syncRemoteServer()
-        self?.remoteMachinesClient?.update(state)
-        self?.settingsWindowController?.showTailscaleState(state)
+    /// Zetty's own device on the user's tailnet. Every Other Macs connection
+    /// goes through it; it runs only while serving or showing other Macs.
+    private lazy var tailnet = Tailnet(home: NSHomeDirectory()) { [weak self] state in
+        self?.tailnetChanged(state)
     }
-    /// Exists only while `zetty-serve` is on and Tailscale is running.
+    private let tailnetNotifier = TailnetNotifier()
+    /// The node's latest state, on main (`.off` until it first starts).
+    private var tailnetState: TailnetState = .off
+    /// Exists only while `zetty-serve` is on and the node runs.
     private var remoteServer: RemoteServer?
     /// Exists only while `zetty-remote-machines` is on.
-    private var remoteMachinesClient: RemoteMachinesClient?
+    private var remoteMachinesClient: RemoteMachinesClient? {
+        didSet { relayClient.value = remoteMachinesClient }
+    }
+    /// The same client for the control socket's queue, which must never
+    /// wait on main.
+    private let relayClient = LockedBox<RemoteMachinesClient>()
+    /// This Zetty's identity among the user's Macs, sent in every hello.
+    private lazy var machineID = RemoteMachineID.loadOrCreate(
+        at: URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent(".zetty/machine-id"),
+        hardware: MacHardware.uuid)
 
     private var thisMachineName: String { Host.current().localizedName ?? "Mac" }
     private var zettyVersion: String {
         (Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String) ?? ""
     }
 
+    /// Per Mac (never the config file, which people sync between Macs).
+    private static let tailnetDeviceNameKey = "ZettyTailnetDeviceName"
+
+    /// The device name this Zetty asks Tailscale for (`zetty-…`).
+    var tailnetDeviceName: String {
+        UserDefaults.standard.string(forKey: Self.tailnetDeviceNameKey)
+            .flatMap { ZettyDeviceName.isZetty($0) ? $0 : nil }
+            ?? ZettyDeviceName.defaultName(hostName: thisMachineName)
+    }
+
+    /// Settings' rename: always `zetty-…`; input with nothing usable keeps
+    /// the current name.
+    func renameTailnetDevice(_ input: String) -> String {
+        let name = ZettyDeviceName.normalized(input, keeping: tailnetDeviceName)
+        UserDefaults.standard.set(name, forKey: Self.tailnetDeviceNameKey)
+        tailnet.rename(name)
+        return name
+    }
+
     /// Starts or stops everything the two remote keys control. Safe to call
     /// repeatedly: launch, every config reload, every Settings toggle.
     func applyRemoteConfig() {
         if appConfig.serveRemote || appConfig.showRemoteMachines {
-            loadPairingKeyIfNeeded()
-            tailscaleMonitor.start()
+            tailnet.start(hostname: tailnetDeviceName)
+            deleteOldPairingKeyOnce()
         } else {
-            tailscaleMonitor.stop()
+            tailnet.stop()
         }
         syncRemoteServer()
         syncRemoteMachinesClient()
     }
 
-    /// The pairing key both remote features prove, read once per launch.
-    let pairingKeys = RemotePairingKeyHolder()
-    private var loadingPairingKey = false
+    /// Settings' Sign In… and the sign-in notification: opens the page
+    /// Tailscale sends for this request, never a cached one that may have
+    /// expired.
+    func signInToTailscale() {
+        guard case .needsLogin = tailnetState else { return }
+        tailnet.login { NSWorkspace.shared.open($0) }
+    }
 
-    /// Reads the key off main, making one if there is none. The read may
-    /// ask: a self-signed rebuild is a different signature from the build
-    /// that made the item. That is the only Keychain prompt Zetty raises,
-    /// and only with a remote key on.
-    private func loadPairingKeyIfNeeded() {
-        guard pairingKeys.state == nil, !loadingPairingKey else { return }
-        loadingPairingKey = true
-        let store = RemotePairingKeyStore(home: NSHomeDirectory())
-        let holder = pairingKeys
-        DispatchQueue.global(qos: .userInitiated).async {
-            holder.setIfUnknown(store.loadOrCreate(allowingUI: true).map { .key($0) } ?? store.read())
-            DispatchQueue.main.async { [weak self] in
-                self?.loadingPairingKey = false
-                self?.settingsWindowController?.showPairingKey()
-                self?.remoteMachinesClient?.retryNow()
+    /// Settings' Show QR Code…: the page Tailscale sends back, as a code to
+    /// scan with a phone. The browser instead if no code can be made.
+    func showTailscaleSignInCode() {
+        guard case .needsLogin = tailnetState else { return }
+        tailnet.login { [weak self] url in
+            guard let modules = QRCode.modules(for: url.absoluteString) else {
+                NSWorkspace.shared.open(url)
+                return
             }
+            self?.settingsWindowController?.presentSignInCode(url: url, modules: modules)
         }
     }
 
-    /// Tailscale's state for Settings: the monitor's when it runs, else one
-    /// read off the main thread (both remote keys off).
-    private func readTailscaleState(_ reply: @escaping (TailscaleState) -> Void) {
-        if let state = tailscaleMonitor.latest { reply(state); return }
-        DispatchQueue.global(qos: .userInitiated).async {
-            let installed = TailscaleCLI.locate() != nil
-            let state = TailscaleState(status: installed ? TailscaleCLI.status() : nil, installed: installed)
-            DispatchQueue.main.async { reply(state) }
+    /// `zetty remote sign-in`, off main (it waits for Tailscale's page): a
+    /// fresh page and its QR code, or why there's nothing to sign in.
+    func remoteSignInResponse() -> ControlResponse {
+        let state = DispatchQueue.main.sync { tailnetState }
+        switch state {
+        case .off:
+            return .error("Other Macs is off: turn on zetty-remote-machines or zetty-serve "
+                          + "(Settings → Other Macs)")
+        case .starting: return .error("Zetty is still connecting to Tailscale: try again in a moment")
+        case .failed(let message): return .error(message)
+        case .needsApproval: return .signIn(.init(state: .needsApproval))
+        case .running(let status):
+            return .signIn(.init(state: .signedIn, account: status.loginName, device: status.me?.hostName))
+        case .needsLogin:
+            let page = SignInPage()
+            DispatchQueue.main.sync { tailnet.login { page.deliver($0) } }
+            guard let url = page.wait(seconds: 10) else {
+                return .error("Tailscale didn't send a sign-in page: try again, "
+                              + "or use Sign In… in Settings → Other Macs")
+            }
+            let text = url.absoluteString
+            return .signIn(.init(state: .needsSignIn, url: text, qr: QRCode.modules(for: text).map(QRCode.rows)))
         }
+    }
+
+    private var deletedOldPairingKey = false
+
+    /// The pairing key from before 0.1.62 is no longer used: its Keychain
+    /// item goes, off main and without a prompt.
+    private func deleteOldPairingKeyOnce() {
+        guard !deletedOldPairingKey else { return }
+        deletedOldPairingKey = true
+        let home = NSHomeDirectory()
+        DispatchQueue.global(qos: .utility).async { TailnetStateStore.deleteOldPairingKey(home: home) }
+    }
+
+    private func tailnetChanged(_ state: TailnetState) {
+        tailnetState = state
+        ZettyLog.remote.log("tailnet: \(state.logDescription)")
+        tailnetNotifier.note(state)
+        syncRemoteServer()
+        remoteMachinesClient?.update(state)
+        settingsWindowController?.showTailnetState(state)
     }
 
     /// Mirrors the other Macs while `zetty-remote-machines` is on.
@@ -1974,21 +2040,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             return
         }
         guard remoteMachinesClient == nil else { return }
-        let cacheURL = URL(fileURLWithPath: NSHomeDirectory())
-            .appendingPathComponent(".zetty", isDirectory: true)
-            .appendingPathComponent("remote-machines.json")
-        let client = RemoteMachinesClient(cache: RemoteMachineCache(url: cacheURL),
-                                          machineName: thisMachineName, zettyVersion: zettyVersion,
-                                          pairingKey: { [pairingKeys] in pairingKeys.key },
-                                          onChange: { [weak self] in self?.terminalViewController?.setRemoteMachines($0) })
+        let zettyDir = URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent(".zetty", isDirectory: true)
+        // The cache from before 0.1.62 keys Macs by their old Tailscale
+        // devices, which never come back: start a fresh one.
+        try? FileManager.default.removeItem(at: zettyDir.appendingPathComponent("remote-machines.json"))
+        let client = RemoteMachinesClient(
+            cache: RemoteMachineCache(url: zettyDir.appendingPathComponent("remote-machines-v2.json")),
+            machineName: thisMachineName, zettyVersion: zettyVersion, machineID: machineID, tailnet: tailnet,
+            onChange: { [weak self] in self?.terminalViewController?.setRemoteMachines($0) })
         remoteMachinesClient = client
-        if let state = tailscaleMonitor.latest { client.update(state) }
+        client.update(tailnetState)
     }
 
-    /// Serves on this Mac's current Tailscale addresses, or stops serving.
+    /// Serves through the node while it runs, or stops serving.
     private func syncRemoteServer() {
-        guard appConfig.serveRemote, let tvc = terminalViewController,
-              case .running(let status)? = tailscaleMonitor.latest, let me = status.me else {
+        guard appConfig.serveRemote, let tvc = terminalViewController, let me = tailnetState.status?.me else {
             remoteServer?.stop()
             remoteServer = nil
             terminalViewController?.onSnapshotChanged = nil
@@ -1997,14 +2063,37 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         }
         if remoteServer == nil {
             let host = RemoteTerminalHost(viewController: tvc, machineName: thisMachineName)
-            let server = RemoteServer(machineName: thisMachineName, zettyVersion: zettyVersion,
-                                      terminalHost: host, pairingKey: { [pairingKeys] in pairingKeys.key })
+            let server = RemoteServer(machineName: thisMachineName, zettyVersion: zettyVersion, machineID: machineID,
+                                      terminalHost: host, whois: { [tailnet] in tailnet.whois($0) })
             remoteServer = server
             tvc.onSnapshotChanged = { [weak server] in server?.publish($0) }
             tvc.remoteSizeHandoff.onLocalTakeover = { [weak server] in server?.localTookSize(session: $0) }
             server.publish(tvc.statusSnapshot())
         }
-        remoteServer?.listen(on: me.addresses, me: me)
+        remoteServer?.listen(on: tailnet, me: me)
+    }
+
+    /// A `zetty attach` relay's connection, dialled through the node: only
+    /// to an online Mac's current address. Runs off main, so it reaches the
+    /// node only through `relayClient` (never the main-only `tailnet`).
+    private func connectRelay(to address: String) -> Result<Int32, RemoteConnectFailure> {
+        guard TailnetAddress.isAllowed(address) else {
+            return .failure(.refused("\(address) isn't on your tailnet, so Zetty won't connect to it"))
+        }
+        guard let client = relayClient.value else {
+            return .failure(.refused("Other Macs is off in this Zetty"))
+        }
+        guard client.isOnlineAddress(address) else {
+            ZettyLog.remote.log("relay: \(address) isn't an online Mac's address now")
+            return .failure(.unreachable(address))
+        }
+        switch client.dialForRelay(address) {
+        case .success(let fd):
+            return .success(fd)
+        case .failure(let error):
+            ZettyLog.remote.log("relay: dialling \(address) failed: \(error.message)")
+            return .failure(.unreachable(address))
+        }
     }
 
     // MARK: - Control socket (Zetty CLI)
@@ -2039,14 +2128,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
                 }
             }
             switch request {
-            // Answered here, off main and without the window: a relay in one
-            // of this app's own panes is waiting on it.
-            case .remoteSign(let server, let client, let serverChallenge, let clientChallenge):
-                return self.pairingKeys.sign(server: server, client: client,
-                                             serverChallenge: serverChallenge, clientChallenge: clientChallenge)
-            case .remoteCheck(let proof, let server, let client, let serverChallenge, let clientChallenge):
-                return self.pairingKeys.check(proof: proof, server: server, client: client,
-                                              serverChallenge: serverChallenge, clientChallenge: clientChallenge)
             case .handoffAgent(let target, let to, let asking, let force, let cancel):
                 // Started on main; the request is then typed HERE, off it, so a
                 // draft in the box is the caller's error rather than a dialog
@@ -2276,6 +2357,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
                 }
             }
         }
+        server.remoteConnector = { [weak self] address in
+            self?.connectRelay(to: address) ?? .failure(.refused("Zetty is shutting down"))
+        }
+        server.signInResponder = { [weak self] in
+            self?.remoteSignInResponse() ?? .error("Zetty is shutting down")
+        }
         server.start()
         controlSocketServer = server
     }
@@ -2310,7 +2397,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
                                             serving: appConfig.serveRemote && remoteServer != nil))
         case .remoteOpen(let machine, let project):
             guard remoteMachinesClient != nil else {
-                return .error("Other Macs is off: turn on zetty-remote-machines (Settings → General → Other Macs)")
+                return .error("Other Macs is off: turn on zetty-remote-machines (Settings → Other Macs)")
             }
             if let message = tvc.openRemoteProject(machine: machine, project: project) {
                 return .error(message)
@@ -2319,8 +2406,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         case .remoteClose:
             tvc.leaveRemoteProject()
             return .ok
-        case .remoteSign, .remoteCheck:
-            return .error("answered off the main thread")
+        case .remoteConnect, .remoteSignIn:
+            return .error("answered by the control socket itself")
         case .tiles(let on, let profile):
             // A fast verb: plain view-state mutation through handleOnMain,
             // never the slow-verb path clone/capture/quit use.
@@ -3208,6 +3295,9 @@ extension AppDelegate: UNUserNotificationCenterDelegate {
         didReceive response: UNNotificationResponse,
         withCompletionHandler completionHandler: @escaping () -> Void
     ) {
+        if response.notification.request.content.userInfo[TailnetNotifier.signInKey] != nil {
+            DispatchQueue.main.async { [weak self] in self?.signInToTailscale() }
+        }
         if let pane = response.notification.request.content.userInfo["pane"] as? String {
             DispatchQueue.main.async { [weak self] in
                 self?.showMainWindow()
@@ -3215,5 +3305,23 @@ extension AppDelegate: UNUserNotificationCenterDelegate {
             }
         }
         completionHandler()
+    }
+}
+
+/// The page `zetty remote sign-in` waits for: handed over on main, read on
+/// the socket's queue.
+private final class SignInPage: @unchecked Sendable {
+    private let lock = NSLock()
+    private let arrived = DispatchSemaphore(value: 0)
+    private var url: URL?
+
+    func deliver(_ url: URL) {
+        lock.withLock { self.url = url }
+        arrived.signal()
+    }
+
+    func wait(seconds: Double) -> URL? {
+        guard arrived.wait(timeout: .now() + seconds) == .success else { return nil }
+        return lock.withLock { url }
     }
 }

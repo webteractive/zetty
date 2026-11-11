@@ -186,6 +186,8 @@ public enum ControlCLI {
       zetty remote open <machine> <project>  show that Mac's project in the window,
                                               as clicking it in the sidebar does
       zetty remote close                     back to this Mac's project
+      zetty remote sign-in [--json]          a Tailscale sign-in page for this Mac,
+                                              with a QR code to scan on a phone
 
       zetty --version | -v | version        print the version and build commit
 
@@ -833,11 +835,11 @@ public enum ControlCLI {
         <pane> the pane's 8-hex id there (from `zetty status` on that Mac).
 
         The only verb that opens a network connection, straight to that Mac's
-        Zetty (it must serve, and keep sessions for the pane's project). Both
-        Macs prove the pairing key before anything is typed (Settings →
-        General → Other Macs → Copy / Paste); this Mac's Zetty app proves it
-        for the relay, so the app must be running here. It
-        reconnects by itself when the link drops, and says so in the pane.
+        Zetty (it must serve, and keep sessions for the pane's project). This
+        Mac's Zetty app dials it through its own Tailscale device and hands
+        the connection over, so the app must be running and signed in here
+        (Settings → Other Macs). It reconnects by itself when the link drops,
+        and says so in the pane.
 
         Changes nothing on either Mac: closing the pane only lets go of it.
         """,
@@ -845,6 +847,7 @@ public enum ControlCLI {
         usage: zetty remote list [--json]
                zetty remote open <machine> <project>
                zetty remote close
+               zetty remote sign-in [--json]
 
         Other Macs (zetty-remote-machines), from the command line.
 
@@ -858,6 +861,14 @@ public enum ControlCLI {
                 <project> a project's name or id there (`remote list --json`).
                 Each pane of the shown tab runs its own `zetty attach` relay.
         close   leave it and show this Mac's project as it was.
+        sign-in ask Tailscale for a fresh sign-in page for this Mac and print
+                it with a QR code (in a terminal), so a Mac you reach over SSH
+                or screen sharing can be signed in from your phone or another
+                computer. Zetty carries on by itself once you approve. Says so
+                when it's already signed in; fails while Other Macs is off.
+                Anyone who opens the page can sign this Mac in to their own
+                Tailscale account, so don't share it. --json gives state, url,
+                account and device.
 
         Changes nothing on either Mac's workspace: open and close only change
         what this window shows.
@@ -1046,13 +1057,14 @@ public enum ControlCLI {
         return RemoteRelay.run(target: target, machineName: name ?? target.host)
     }
 
-    /// `zetty remote list|open|close`.
+    /// `zetty remote list|open|close|sign-in`.
     private static func runRemote(_ arguments: [String]) -> Int32 {
         func usage() -> Int32 {
             FileHandle.standardError.write(Data("""
                 usage: zetty remote list [--json]
                        zetty remote open <machine> <project>
                        zetty remote close
+                       zetty remote sign-in [--json]
 
                 """.utf8))
             return 2
@@ -1082,15 +1094,62 @@ public enum ControlCLI {
         case "close":
             guard arguments.count == 1 else { return usage() }
             return expectOK(.remoteClose, success: nil)
+        case "sign-in":
+            let flags = Array(arguments.dropFirst())
+            guard flags.allSatisfy({ $0 == "--json" }) else { return usage() }
+            switch roundTrip(.remoteSignIn) {
+            case .signIn(let report):
+                if flags.isEmpty {
+                    for line in signInLines(report, drawCode: isatty(STDOUT_FILENO) == 1) { print(line) }
+                } else if let json = signInJSON(report) {
+                    print(json)
+                }
+                return 0
+            case .error(let message): return failure(message)
+            default: return failure("unexpected response")
+            }
         default:
             return usage()
         }
     }
 
+    /// Plain-text rendering for `zetty remote sign-in`, kept pure so it is
+    /// testable. The QR code only when printing to a terminal.
+    public static func signInLines(_ report: RemoteSignInReport, drawCode: Bool) -> [String] {
+        switch report.state {
+        case .signedIn:
+            let device = report.device ?? "this Mac"
+            return [report.account.map { "Already signed in to Tailscale as \($0) · \(device)." }
+                    ?? "Already signed in to Tailscale · \(device)."]
+        case .needsApproval:
+            return ["Signed in. Waiting for your tailnet's admin to approve this Mac in Tailscale."]
+        case .needsSignIn:
+            var lines = ["Open this page on any device to sign this Mac in to Tailscale:", report.url ?? "?"]
+            if drawCode, let modules = report.modules {
+                lines.append("")
+                lines += QRText.lines(modules)
+                lines.append("")
+                lines.append("Or scan the code with your phone's camera. Zetty carries on once you approve.")
+            } else {
+                lines.append("Zetty carries on once you approve.")
+            }
+            lines.append("Anyone with this page can sign this Mac in to their Tailscale account, so don't share it.")
+            lines.append("For agents and scripts: zetty remote sign-in --json")
+            return lines
+        }
+    }
+
+    /// `zetty remote sign-in --json`: the report without its code.
+    public static func signInJSON(_ report: RemoteSignInReport) -> String? {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
+        return (try? encoder.encode(report.withoutCode)).map { String(decoding: $0, as: UTF8.self) }
+    }
+
     /// Plain-text rendering for `zetty remote list`, kept pure so it is testable.
     public static func remoteLines(_ report: RemoteMachinesReport) -> [String] {
         guard report.listing else {
-            return ["Other Macs is off: turn on zetty-remote-machines (Settings → General → Other Macs)"]
+            return ["Other Macs is off: turn on zetty-remote-machines (Settings → Other Macs)"]
         }
         var lines = report.machines.isEmpty ? ["no other Macs yet"] : []
         let width = report.machines.map(\.name.count).max() ?? 0

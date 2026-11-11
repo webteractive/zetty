@@ -43,6 +43,13 @@ fi
 ditto "${SRCROOT}/App/Resources/ghostty/shell-integration" "${DEST}"
 """
 
+// Zetty's embedded Tailscale node (Bridge/tailnet) is Go, built into a static
+// library before Swift compiles (remote-machines.md). The script skips the
+// build when nothing changed; it needs Go (DEVELOPMENT.md).
+let buildTailnetBridge = """
+"${SRCROOT}/scripts/build-tailnet-bridge.sh" ${ARCHS}
+"""
+
 let project = Project(
     name: "zetty",
     packages: [
@@ -117,6 +124,10 @@ let project = Project(
                 .folderReference(path: "licenses"),
             ],
             scripts: [
+                .pre(script: buildTailnetBridge,
+                     name: "Build the Tailscale bridge",
+                     outputPaths: ["$(SRCROOT)/Derived/tailnet/libzettytailnet.a"],
+                     basedOnDependencyAnalysis: false),
                 .post(script: stampBuildCommit,
                       name: "Stamp build commit",
                       inputPaths: ["$(TARGET_BUILD_DIR)/$(INFOPLIST_PATH)"],
@@ -131,7 +142,17 @@ let project = Project(
                 // when they define no intents. Declaring the system framework
                 // keeps that no-op pass valid instead of emitting a warning.
                 .sdk(name: "AppIntents", type: .framework),
-            ]
+                // What the Go runtime and Tailscale need from the system.
+                .sdk(name: "Security", type: .framework),
+                .sdk(name: "CoreFoundation", type: .framework),
+                .sdk(name: "SystemConfiguration", type: .framework),
+                .sdk(name: "resolv", type: .library),
+            ],
+            settings: .settings(base: [
+                "SWIFT_INCLUDE_PATHS": "$(inherited) $(SRCROOT)/Derived/tailnet/include",
+                "LIBRARY_SEARCH_PATHS": "$(inherited) $(SRCROOT)/Derived/tailnet",
+                "ENABLE_USER_SCRIPT_SANDBOXING": "NO",
+            ])
         ),
 
         // ── ZettyGhostty framework ────────────────────────────────

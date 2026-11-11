@@ -3,28 +3,52 @@ import Foundation
 /// Which machines the sidebar lists, given what Tailscale says now.
 public enum RemoteRoster {
     /// A Mac becomes a group only once it has answered a hello (the client
-    /// adds it then), so `known` grows elsewhere. This only keeps the known
-    /// ones honest against Tailscale, and lists tagged Macs with the reason
-    /// they can't join: a refusal explains itself rather than going missing.
-    /// Connection state (online, connecting) is the client's and is left alone.
+    /// adopts it then), so `known` grows elsewhere. This keeps the known ones
+    /// honest against Tailscale: a machine whose node has left the tailnet
+    /// (an ended test copy, a device removed in the admin console) goes, and
+    /// tagged Zettys are listed with the reason they can't join, keyed by
+    /// node until a hello names them. Connection state (online, connecting)
+    /// is the client's and is left alone.
     public static func reconcile(_ known: [String: RemoteMachine],
                                  with status: TailscaleStatus) -> [String: RemoteMachine] {
         guard let me = status.me else { return known }
-        var roster = known
+        let present = Set(status.peers.map(\.stableID))
+        var roster = known.filter { _, machine in machine.node.map(present.contains) ?? false }
         for node in PeerAdmission.listable(in: status) {
+            let key = roster.first(where: { $0.value.node == node.stableID })?.key
             if case .refuse(let reason) = PeerAdmission.decide(me: me, peer: node) {
-                var machine = roster[node.stableID]
-                    ?? RemoteMachine(stableID: node.stableID, name: node.hostName, state: .offline,
-                                     lastSeen: node.lastSeen, workspace: nil)
+                let id = key ?? node.stableID
+                var machine = roster[id]
+                    ?? RemoteMachine(stableID: id, name: node.hostName, state: .offline,
+                                     lastSeen: node.lastSeen, workspace: nil, node: node.stableID)
                 machine.state = .refused(reason.message(machine: node.hostName))
-                roster[node.stableID] = machine
-            } else if var machine = roster[node.stableID] {
+                roster[id] = machine
+            } else if let key, var machine = roster[key] {
                 if case .refused = machine.state { machine.state = .offline }
                 if machine.lastSeen == nil { machine.lastSeen = node.lastSeen }
-                roster[node.stableID] = machine
+                roster[key] = machine
             }
         }
         return roster
+    }
+
+    /// A hello arrived from `node` naming `machineID`: that Mac is listed
+    /// once, under its machine ID, whatever it was keyed by before (its node,
+    /// while tagged) and whichever node it used last time.
+    public static func adopt(_ known: inout [String: RemoteMachine], machineID: String, node: String, name: String) {
+        let placeholders = known.filter { $0.key != machineID && $0.value.node == node }.map(\.key)
+        var machine = known[machineID] ?? placeholders.first.flatMap { known[$0] }
+        for key in placeholders { known[key] = nil }
+        if let existing = machine, existing.stableID != machineID {
+            machine = RemoteMachine(stableID: machineID, name: existing.name, state: existing.state,
+                                    lastSeen: existing.lastSeen, workspace: existing.workspace,
+                                    address: existing.address, node: node)
+        }
+        var adopted = machine ?? RemoteMachine(stableID: machineID, name: name, state: .connecting,
+                                               lastSeen: nil, workspace: nil, node: node)
+        adopted.node = node
+        adopted.name = name
+        known[machineID] = adopted
     }
 }
 

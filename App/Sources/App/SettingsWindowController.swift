@@ -14,6 +14,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     /// `selectTab` would have silently done nothing.
     enum Tab: String, CaseIterable {
         case general = "General"
+        case otherMacs = "Other Macs"
         case appearance = "Appearance"
         case sessions = "Sessions"
         case files = "Files"
@@ -51,11 +52,15 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     private let homeDefaultButton = NSButton(title: "Default", target: nil, action: nil)
     private let checkUpdatesSwitch = NSSwitch()
 
-    // General: Other Macs (zetty-serve / zetty-remote-machines).
+    // Other Macs (zetty-serve / zetty-remote-machines).
     private let serveRemoteSwitch = NSSwitch()
     private let showRemoteSwitch = NSSwitch()
     private let tailscaleStatusLabel = NSTextField(wrappingLabelWithString: "")
-    private let pairingStatusLabel = NSTextField(wrappingLabelWithString: "")
+    private let deviceNameField = NSTextField(string: "")
+    private lazy var signInButton = NSButton(title: "Sign In…", target: self, action: #selector(signInToTailscale(_:)))
+    private lazy var signOutButton = NSButton(title: "Sign Out", target: self, action: #selector(signOutOfTailscale(_:)))
+    private lazy var signInCodeButton = NSButton(title: "Show QR Code…", target: self,
+                                                 action: #selector(showSignInCode(_:)))
 
     // Sessions section controls.
     private let preserveSwitch = NSSwitch()
@@ -176,11 +181,16 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     /// The Claude status-hook toggle changed; mirror it into every account.
     var onHooksChanged: (() -> Void)?
 
-    /// Answers with Tailscale's current state on main: at once when the
-    /// monitor is running, else after a one-off read off the main thread.
-    var tailscaleStateProvider: ((@escaping (TailscaleState) -> Void) -> Void)?
-    /// A pairing key was pasted: the other Macs are worth dialling again now.
-    var onPairingKeyChanged: (() -> Void)?
+    /// Zetty's own Tailscale node, read on main.
+    var tailnetStateProvider: (() -> TailnetState)?
+    /// The device name now (`zetty-…`).
+    var deviceNameProvider: (() -> String)?
+    var onSignIn: (() -> Void)?
+    var onSignOut: (() -> Void)?
+    /// Show QR Code…: asks Tailscale for a page and shows it as a QR code.
+    var onShowSignInCode: (() -> Void)?
+    /// A new device name typed in Settings; answers the name it became.
+    var onRename: ((String) -> String)?
 
     private let accountsTable = NSTableView()
     private var accountRows: [AgentAccount] = []
@@ -269,6 +279,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     private func content(for tab: Tab) -> NSView {
         switch tab {
         case .general: return buildGeneralTab()
+        case .otherMacs: return buildOtherMacsTab()
         case .appearance: return buildAppearanceTab()
         case .sessions: return buildSessionsTab()
         case .files: return buildFilesTab()
@@ -378,46 +389,6 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         ))
 
         stack.addArrangedSubview(spacer())
-        stack.addArrangedSubview(sectionHeader("Other Macs"))
-        serveRemoteSwitch.target = self
-        serveRemoteSwitch.action = #selector(serveRemoteToggled(_:))
-        addFullWidth(switchRow("Let other Macs connect", control: serveRemoteSwitch), to: stack)
-        stack.addArrangedSubview(caption(
-            "Your other Macs signed in to Tailscale as you, with this Mac's pairing key, can "
-            + "see this Mac's projects and type in its panes. Only over Tailscale."
-        ))
-        showRemoteSwitch.target = self
-        showRemoteSwitch.action = #selector(showRemoteToggled(_:))
-        addFullWidth(switchRow("Show other Macs in the sidebar", control: showRemoteSwitch), to: stack)
-        stack.addArrangedSubview(caption(
-            "Lists the projects of every Mac that lets you connect, below this Mac's own."
-        ))
-        tailscaleStatusLabel.font = ZTheme.chromeFont(size: 11)
-        tailscaleStatusLabel.textColor = ZTheme.current.fg3Color
-        addFullWidth(tailscaleStatusLabel, to: stack)
-
-        let pairingLabel = NSTextField(labelWithString: "Pairing key")
-        pairingLabel.font = ZTheme.chromeFont(size: 13, weight: .medium)
-        pairingLabel.textColor = ZTheme.current.fgColor
-        let copyKey = NSButton(title: "Copy", target: self, action: #selector(copyPairingKey(_:)))
-        copyKey.bezelStyle = .rounded
-        let pasteKey = NSButton(title: "Paste", target: self, action: #selector(pastePairingKey(_:)))
-        pasteKey.bezelStyle = .rounded
-        let pairingRow = NSStackView(views: [pairingLabel, NSView(), copyKey, pasteKey])
-        pairingRow.orientation = .horizontal
-        pairingRow.spacing = 8
-        addFullWidth(pairingRow, to: stack)
-        stack.addArrangedSubview(caption(
-            "Your Macs connect only if they have the same key. Copy it on one Mac, then "
-            + "Paste on each of the others (Universal Clipboard carries it). It's kept in your "
-            + "login Keychain, so other users, VMs and containers on your Macs can't read it."
-        ))
-        pairingStatusLabel.font = ZTheme.chromeFont(size: 11)
-        pairingStatusLabel.textColor = ZTheme.current.fg3Color
-        addFullWidth(pairingStatusLabel, to: stack)
-        showPairingKey()
-
-        stack.addArrangedSubview(spacer())
         stack.addArrangedSubview(sectionHeader("Command Line"))
         stack.addArrangedSubview(caption(
             "The zetty CLI drives the app from any terminal or agent: status, "
@@ -431,6 +402,59 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         cliInstallButton.target = self
         cliInstallButton.action = #selector(installCLI(_:))
         stack.addArrangedSubview(cliInstallButton)
+
+        return stack
+    }
+
+    /// Other Macs: serving and showing other Macs, and Zetty's own
+    /// Tailscale device (sign-in, QR code, name).
+    private func buildOtherMacsTab() -> NSView {
+        let stack = sectionStack()
+        stack.addArrangedSubview(sectionHeader("Other Macs"))
+        serveRemoteSwitch.target = self
+        serveRemoteSwitch.action = #selector(serveRemoteToggled(_:))
+        addFullWidth(switchRow("Let other Macs connect", control: serveRemoteSwitch), to: stack)
+        stack.addArrangedSubview(caption(
+            "Your other Macs running Zetty, signed in to Tailscale as you, can see this Mac's "
+            + "projects and type in its panes. Only over Tailscale."
+        ))
+        showRemoteSwitch.target = self
+        showRemoteSwitch.action = #selector(showRemoteToggled(_:))
+        addFullWidth(switchRow("Show other Macs in the sidebar", control: showRemoteSwitch), to: stack)
+        stack.addArrangedSubview(caption(
+            "Lists the projects of every Mac that lets you connect, below this Mac's own."
+        ))
+        tailscaleStatusLabel.font = ZTheme.chromeFont(size: 11)
+        tailscaleStatusLabel.textColor = ZTheme.current.fg3Color
+        addFullWidth(tailscaleStatusLabel, to: stack)
+
+        let deviceLabel = NSTextField(labelWithString: "Device name")
+        deviceLabel.font = ZTheme.chromeFont(size: 13, weight: .medium)
+        deviceLabel.textColor = ZTheme.current.fgColor
+        let prefixLabel = NSTextField(labelWithString: ZettyDeviceName.prefix)
+        prefixLabel.font = ZTheme.chromeFont(size: 13)
+        prefixLabel.textColor = ZTheme.current.fg3Color
+        deviceNameField.font = ZTheme.chromeFont(size: 13)
+        deviceNameField.target = self
+        deviceNameField.action = #selector(deviceNameEntered(_:))
+        deviceNameField.widthAnchor.constraint(greaterThanOrEqualToConstant: 140).isActive = true
+        signInButton.bezelStyle = .rounded
+        signOutButton.bezelStyle = .rounded
+        signInCodeButton.bezelStyle = .rounded
+        let deviceRow = NSStackView(views: [deviceLabel, prefixLabel, deviceNameField, NSView(),
+                                            signInButton, signInCodeButton, signOutButton])
+        deviceRow.orientation = .horizontal
+        deviceRow.spacing = 6
+        addFullWidth(deviceRow, to: stack)
+        stack.addArrangedSubview(caption(
+            "Zetty joins your tailnet as its own device, so the Tailscale app isn't needed. "
+            + "Sign in once on each Mac with the same Tailscale account. Only devices named "
+            + "zetty-… on your account can connect, never your Macs' own Tailscale devices. "
+            + "Signing in a Mac over screen sharing? Show QR Code… lets you approve it on your phone, "
+            + "and over SSH, zetty remote sign-in prints the page and its code."
+        ))
+        showDeviceName()
+
 
         return stack
     }
@@ -1350,8 +1374,8 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         checkUpdatesSwitch.state = config.checkUpdates ? .on : .off
         serveRemoteSwitch.state = config.serveRemote ? .on : .off
         showRemoteSwitch.state = config.showRemoteMachines ? .on : .off
-        tailscaleStateProvider? { [weak self] state in self?.showTailscaleState(state) }
-        showPairingKey()
+        if let state = tailnetStateProvider?() { showTailnetState(state) }
+        showDeviceName()
 
         if let index = SessionsViewMode.allCases.firstIndex(of: config.sessionsView) {
             sessionsViewPopup.selectItem(at: index)
@@ -1439,109 +1463,78 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         updateConfig { $0.showRemoteMachines = sender.state == .on }
     }
 
-    /// The app's copy of the key. Settings never reads the Keychain itself:
-    /// a read from here could raise a prompt on main.
-    var pairingKeys: RemotePairingKeyHolder?
-
-    /// "This Mac's key: 3fa9c1": the same six characters on every Mac that
-    /// will connect. Called again when the launch read lands.
-    func showPairingKey(_ note: String? = nil) {
-        var text: String
-        switch pairingKeys?.state {
-        case .key(let key)?: text = "This Mac's key: \(key.fingerprint). It must match on your other Macs."
-        case .unusable?: text = "Zetty couldn't read its pairing key from your login Keychain. Paste one to replace it."
-        case .missing?: text = "No pairing key yet. Turn on either switch above, or Paste one from another Mac."
-        case nil: text = "This Mac's key loads when either switch above is on."
-        }
-        if let note { text = note + " " + text }
-        pairingStatusLabel.stringValue = text
+    private func showDeviceName() {
+        guard let name = deviceNameProvider?() else { return }
+        deviceNameField.stringValue = ZettyDeviceName.suffix(of: name)
     }
 
-    @objc private func copyPairingKey(_ sender: Any?) {
-        guard let key = pairingKeys?.key else {
-            showPairingKey("Nothing to copy.")
-            return
-        }
-        let board = NSPasteboard.general
-        board.clearContents()
-        // Concealed: clipboard managers that honour the marker keep no copy.
-        board.declareTypes([.string, NSPasteboard.PasteboardType("org.nspasteboard.ConcealedType")], owner: nil)
-        board.setString(key.text, forType: .string)
-        board.setString("", forType: NSPasteboard.PasteboardType("org.nspasteboard.ConcealedType"))
-        // VMs that share the clipboard would see it there too, so it doesn't
-        // stay: cleared in a minute unless something else was copied since.
-        let copied = board.changeCount
-        DispatchQueue.main.asyncAfter(deadline: .now() + 60) {
-            if NSPasteboard.general.changeCount == copied { NSPasteboard.general.clearContents() }
-        }
-        showPairingKey("Copied. It leaves the clipboard in a minute.")
+    @objc private func deviceNameEntered(_ sender: NSTextField) {
+        guard let renamed = onRename?(sender.stringValue) else { return }
+        sender.stringValue = ZettyDeviceName.suffix(of: renamed)
     }
 
-    /// The fingerprint a first Paste click offered to replace this Mac's key
-    /// with; a second click with that key on the clipboard confirms it.
-    private var pendingPaste: String?
-
-    @objc private func pastePairingKey(_ sender: Any?) {
-        guard let holder = pairingKeys else { return }
-        guard let text = NSPasteboard.general.string(forType: .string), let key = RemotePairingKey(text: text) else {
-            pendingPaste = nil
-            showPairingKey("The clipboard doesn't hold a Zetty pairing key.")
-            return
-        }
-        if holder.key == key {
-            pendingPaste = nil
-            showPairingKey("That's already this Mac's key.")
-            return
-        }
-        // Replacing a key decides who can reach this Mac's panes, so it takes
-        // a second click, with both keys named: text on a screen (a pane, a
-        // message) is never enough to swap it in.
-        // Unknown (the remote switches are off, or the launch read hasn't
-        // landed) counts as replacing: a key may well be stored.
-        let replacing: String? = switch holder.state {
-        case .key(let current)?: current.fingerprint
-        case .unusable?: "the one it can't read"
-        case nil: "if it has one"
-        case .missing?: nil
-        }
-        if let replacing, pendingPaste != key.fingerprint {
-            pendingPaste = key.fingerprint
-            pairingStatusLabel.stringValue = "Paste replaces this Mac's key \(replacing) with "
-                + "\(key.fingerprint). Click Paste again to confirm."
-            return
-        }
-        pendingPaste = nil
-        pairingStatusLabel.stringValue = "Saving…"
-        // Off main: replacing an item another build made may ask first.
-        let store = RemotePairingKeyStore(home: NSHomeDirectory())
-        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            let saved = (try? store.save(key)) != nil
-            if saved { holder.set(.key(key)) }
-            DispatchQueue.main.async {
-                guard let self else { return }
-                guard saved else {
-                    self.showPairingKey("Couldn't save the key to your login Keychain.")
-                    return
-                }
-                self.onPairingKeyChanged?()
-                self.showPairingKey("Pasted.")
-            }
-        }
+    /// Asks Tailscale for a page and opens the one it sends back, never the
+    /// last one shown, which may have expired.
+    @objc private func signInToTailscale(_ sender: Any?) {
+        onSignIn?()
     }
 
-    /// The status line under the Other Macs switches.
-    func showTailscaleState(_ state: TailscaleState) {
-        tailscaleStatusLabel.stringValue = Self.tailscaleStatusText(state)
+    @objc private func signOutOfTailscale(_ sender: Any?) {
+        onSignOut?()
     }
 
-    static func tailscaleStatusText(_ state: TailscaleState) -> String {
+    @objc private func showSignInCode(_ sender: Any?) {
+        onShowSignInCode?()
+    }
+
+    /// The sign-in page Tailscale just sent, as a QR code over Settings.
+    func presentSignInCode(url: URL, modules: [[Bool]]) {
+        guard let window else { return }
+        TailnetSignInSheet.present(over: window, url: url, modules: modules)
+    }
+
+    /// The status line under the Other Macs switches, and which of Sign In…
+    /// and Sign Out applies.
+    func showTailnetState(_ state: TailnetState) {
+        tailscaleStatusLabel.stringValue = Self.tailnetStatusText(state)
+        if case .needsLogin = state {
+            signInCodeButton.isEnabled = true
+        } else {
+            signInCodeButton.isEnabled = false
+            TailnetSignInSheet.dismiss()
+        }
         switch state {
-        case .notInstalled: return "Tailscale isn't installed."
-        case .stopped:      return "Tailscale isn't running."
-        case .needsLogin:   return "Sign in to Tailscale."
+        case .needsLogin:
+            signInButton.isEnabled = true
+            signOutButton.isEnabled = false
+        case .running, .needsApproval:
+            signInButton.isEnabled = false
+            signOutButton.isEnabled = true
+        case .failed:
+            // Sign Out is the way out of a saved sign-in that can't be read:
+            // it forgets it and starts over.
+            signInButton.isEnabled = false
+            signOutButton.isEnabled = true
+        case .off, .starting:
+            signInButton.isEnabled = false
+            signOutButton.isEnabled = false
+        }
+        if case .running(let status) = state, let name = status.me?.hostName, !name.isEmpty,
+           deviceNameField.currentEditor() == nil {
+            deviceNameField.stringValue = ZettyDeviceName.suffix(of: name)
+        }
+    }
+
+    static func tailnetStatusText(_ state: TailnetState) -> String {
+        switch state {
+        case .off: return "Off. Turn on either switch above to connect to your other Macs."
+        case .starting: return "Connecting to Tailscale…"
+        case .needsLogin: return "Sign in to Tailscale to connect to your other Macs."
+        case .needsApproval: return "Signed in. Waiting for your tailnet's admin to approve this Mac in Tailscale."
+        case .failed(let message): return message
         case .running(let status):
             let name = status.me?.hostName ?? "this Mac"
-            var text = "On Tailscale as \(name); other Macs signed in as you can connect."
+            var text = status.loginName.map { "Connected as \($0) · \(name)." } ?? "Connected · \(name)."
             let others = PeerAdmission.otherUsersMacs(in: status)
             if others == 1 {
                 text += " 1 Mac on your tailnet is signed in as someone else, so it won't show."

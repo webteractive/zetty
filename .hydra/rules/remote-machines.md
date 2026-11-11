@@ -10,7 +10,9 @@ triggers:
 
 > This file is authoritative: edit it here, then run `hydra sync`. The design
 > (all phases) is `docs/superpowers/specs/2026-11-01-remote-machines-design.md`,
-> which is gitignored, so it exists only on Glen's machine.
+> and the built-in Tailscale node is
+> `docs/superpowers/specs/2026-11-10-built-in-tailscale-design.md`; both are
+> gitignored, so they exist only on Glen's machine.
 
 Phase 1 ("See"): a Mac with `zetty-serve` publishes its workspace
 to the user's other Macs, and a Mac with `zetty-remote-machines` lists them in
@@ -26,19 +28,19 @@ closing, renaming, reordering) is not part of phase 2.
 
 ## Anti-goals: break one and the feature is wrong even if it "works"
 
-- **Never block main on the network or the CLI.** `tailscale status/whois`
-  run on the monitor's queue or a concurrent whois queue. Sockets live on
-  `co.webteractive.zetty.remote-server` / `.remote-client`. Main only ever
-  receives `async` hops. No `main.sync`, anywhere. (`RemoteServer.stop` waits
-  up to 1s for its listening fds to close. That is the one bounded wait, and
-  it is what lets serving switched off and on rebind the same address.)
-- **Never listen outside Tailscale.** Bind each of this Mac's own Tailscale
-  addresses exactly. Never `INADDR_ANY`, and IPv6 listeners set `IPV6_V6ONLY`.
-  With Tailscale stopped there is no address, so nothing listens. Check it
-  with `lsof -nP -iTCP:47391 -sTCP:LISTEN`: there must be no `*:47391`.
+- **Never block main on the network or the node.** Every call into the
+  Tailscale bridge (start, status, whois, dial, accept) runs on `Tailnet`'s
+  queues or threads, the server's concurrent whois queue, or the control
+  socket's remote queue. Sockets live on `co.webteractive.zetty.remote-server`
+  / `.remote-client`. Main only ever receives `async` hops. No `main.sync`,
+  anywhere: the control socket reads the client through a `LockedBox`.
+- **Never listen outside Tailscale.** The server listens only through Zetty's
+  own node (`Tailnet.listen`, port 47391 on the node's tailnet address).
+  Nothing binds this Mac's interfaces: `lsof -nP -iTCP:47391 -sTCP:LISTEN`
+  shows nothing at all.
 - **Never a modal.** Every failure has a place to show: a machine header
   ("offline · seen 2h ago", "needs update", a refusal reason), the status
-  line in Settings → General → Other Macs, a remote pane's own `[…]` line, or
+  line in Settings → Other Macs, a remote pane's own `[…]` line, or
   the remote view's placeholder.
 - **Remote surfaces never enter `WorkspaceModel`.** They live in
   `RemoteProjectController`'s own `SurfaceRegistry`, with fresh UUIDs from
@@ -63,156 +65,196 @@ closing, renaming, reordering) is not part of phase 2.
   space-free executable. Remote surfaces start in `/`; the peer's directory
   is only a label.
 
+## The built-in node (`Tailnet`, `Bridge/tailnet`)
+
+Since 0.1.62 every Zetty joins the tailnet as **its own device** through
+Tailscale's embeddable node (tsnet), whether or not the Tailscale app is
+installed or running. The Tailscale app is never touched or needed.
+
+- **The bridge** is our own Go module over `tailscale.com/tsnet`, built as a
+  C archive by `scripts/build-tailnet-bridge.sh` (an Xcode pre-build phase;
+  universal for releases) and imported as `ZettyTailnet`. Connections cross
+  into Swift as **file descriptors**: one end of a socketpair the bridge
+  splices to the tsnet connection, so the server, client and relay keep their
+  fd code. It is built with `ts_omit_peerapiserver`: on macOS, tsnet's peer
+  API otherwise opens a TCP listener on **every interface** (`*:<port>`, found
+  2026-11-10 with `lsof -a -p <pid> -iTCP -sTCP:LISTEN`), and Zetty needs none
+  of it (Taildrop, peer DNS). Its WireGuard UDP socket is the only other
+  socket, as for any Tailscale client. It is also built with
+  `ts_omit_logtail`: `TS_NO_LOGS_NO_SUPPORT` alone only stubs the upload,
+  and the uploader's buffer file under Caches still held the sign-in link
+  while signed out (final review, 2026-11-10). It sets `TS_NO_LOGS_NO_SUPPORT` too, and
+  netstack keepalive 10s/3s (a vanished viewer is dropped in under a minute;
+  gVisor's outgoing conns expose no keepalive, so a viewer notices a sleeping
+  Mac when its peer goes offline in Tailscale, a minute or two).
+- **State lives in the login Keychain** (`TailnetStateStore`: service
+  `co.webteractive.zetty.tailscale-state`, account `<home> @ <hardware UUID>`
+  from `RemoteMachineID.stateAccount`, so the isolated test app has its own
+  and a Keychain migrated to another Mac never hands it this Mac's device),
+  never a file: Lima and Colima mount the home folder into VMs, and whoever
+  holds the node key *is* this Zetty. An ad-hoc build is asked once at
+  launch; releases aren't. An **unreadable** item (locked Keychain over SSH,
+  a denied prompt) stops the node with the reason in Settings: starting
+  empty would enroll a second device. It is **not read again on every config
+  reload** (`TailnetLifecycle`), which would prompt each time: only after
+  Other Macs is turned off and on, or Sign Out. tsnet's non-secret files go
+  in `~/Library/Caches/co.webteractive.zetty/tailscale`.
+- **Sign-in** is Settings → Other Macs → **Sign In…**: Tailscale's
+  login page in the browser. Every click asks Tailscale again and opens the
+  page it sends back (the bridge marks that event `"browse":true`;
+  `TailnetState.pageToOpen`), never the URL cached in the state: it expires
+  after 7 days, and Tailscale itself decides whether the old one is still
+  good. Only an https page on `tailscale.com` is ever opened
+  (`TailnetState.loginURL`). Links in Tailscale's log lines are blanked
+  before Zetty's log, since "Copy diagnostics" carries it and a sign-in link
+  would enroll this Zetty in whoever opens it. **Sign Out** logs a running
+  device out and then sets its `zetty-` name again (`signOut` in
+  `Bridge/tailnet/node.go`): Tailscale's Logout deletes the signed-in
+  profile, and the fresh one has no hostname, so the next sign-in used to
+  join under the Mac's own name (`hadefication-mini`), which every other
+  Zetty refuses ("isn't a Zetty"). The bridge keeps the latest name (start,
+  then each rename) for this. Every node start sets the name too, so a Mac
+  already in that state is fixed by turning Other Macs off and on, or
+  quitting Zetty. On a node that couldn't start (an unreadable item, a corrupt
+  state) it deletes the saved sign-in and starts over as a new device that
+  needs a sign-in, which is the reset from Settings. Notifications
+  (`TailnetNotifier`) fire on entering needs-sign-in (once Tailscale has a
+  page; clicking does what Sign In… does, and the notification never carries
+  the link), needs-approval and failed, never repeated while the state holds,
+  plus "Signed in to Tailscale" naming the account and device once a sign-in
+  finishes (`TailnetSignInWatch`: running after needs-sign-in, a connecting
+  step between allowed; a normal start isn't one). It is how a sign-in
+  approved on a phone that picked the wrong account gets noticed.
+- **Signing in a Mac you aren't at** (the reason both exist: clicking
+  through a browser sign-in over a laggy screen share was painful).
+  Settings' **Show QR Code…** asks Tailscale for a page the same way Sign
+  In… does and shows it as a QR code in an `NSAlert` sheet
+  (`TailnetSignInSheet`, `QRCode`) for a phone to scan; the sheet closes
+  itself when the state leaves needs-sign-in. It's behind a click, never
+  shown by itself: whoever scans it first can sign this Zetty in to their
+  own account. The code is drawn dark on light in the scheme's own tokens
+  (`bg1` on `fg` in a dark scheme, `fg` on `bg1` in a light one; a
+  light-on-dark code scans badly) with the four-module border, whole
+  points per module. `zetty remote sign-in [--json]` is the same over SSH:
+  answered on the socket's `remoteQueue` (`signInResponder`), since it
+  waits up to 10 s for Tailscale's page and the accept queue is serial. The
+  app makes the code (`RemoteSignInReport.qr`, rows of "1"/"0"; ZettyCore
+  has no QR encoder) and the CLI draws it with half blocks in explicit
+  black on bright white (`QRText`), only when stdout is a terminal;
+  `--json` drops it. Off, connecting and failed answer an error; signed in
+  and waiting for approval say so. Checked 2026-11-11 by decoding with
+  Vision: the code over the wire, the code rebuilt from a test pane's
+  screen, and the Settings image in a dark and a light scheme all decoded
+  to the page Tailscale sent.
+- **Bridge errors are per call**: every C call that can fail takes a
+  `char **err` and hands back its own error text, so a dial failing on one
+  thread never logs another call's error.
+- **The device name** is always `zetty-…` (`ZettyDeviceName`): default from
+  this Mac's name, edited after the prefix in Settings, kept per Mac in user
+  defaults (`ZettyTailnetDeviceName`), never the synced config. A reinstalled
+  Mac whose old device still exists gets a suffix in its MagicDNS name
+  (`zetty-mac-mini-1.<tailnet>.ts.net`) until the old one expires or is
+  removed; the host name Zetty reads stays the one it asked for.
+- **Sign Out keeps the machine key**: Tailscale's logout deletes the signed-in
+  profile and saves that through the store, so signing in again is the same
+  machine. Saves reach the Keychain in order (persisted under the store's
+  lock) and are flushed at quit. A failed status read while running keeps the
+  last good status, and a running status wins over a stale error, so neither
+  tears the server and the kept panes down.
+- **The machine ID** (`RemoteMachineID`, `~/.zetty/machine-id`) is in every
+  hello. The sidebar keys Macs by it, so signing in again (a new node) stays
+  one Mac. The file's second line is the hardware UUID (`MacHardware.uuid`)
+  of the Mac it was made on: Migration Assistant or a restore onto another
+  Mac makes a new ID there (and the Keychain account differs too), so two
+  Macs never share one identity. A clean reinstall or restore on the same
+  Mac keeps both. A file without the second line is kept and bound.
+- **Test hook:** `ZETTY_TAILSCALE_AUTH_KEY_FILE` (env, trusted) enrolls with
+  that auth key as an **ephemeral node with an in-memory store** (no Keychain,
+  no file), which leaves the tailnet when it quits. The file must be a regular
+  file owned by the user with no group or other bits, not a symlink.
+- The pairing key (0.1.60–0.1.61) is gone; its Keychain item
+  `co.webteractive.zetty.remote-key` is deleted at launch without a prompt
+  (`LAContext.interactionNotAllowed`); one another build made just stays.
+
 ## Who may connect
 
-`PeerAdmission.decide` checks in this order: no node from `whois` (unknown),
-then **this Mac itself** (its stable ID, or any of its addresses), then
-**tagged**, then **another user**, then **not macOS**. This Mac comes first
-because any local macOS user can reach its tailnet address; it used to be
-refused only because `whois` of this Mac reports no OS (Tailscale 1.104),
-which nothing promises. Tagged comes
-before the user check because a tagged node belongs to the tag, not to a
-person, so "isn't signed in as you" would be the wrong explanation. The server
-runs `whois` on every connection *before reading anything*, and answers a
-refusal with a `refused` frame and a close. The client never dials a node it
-would refuse. Tagged Macs are still listed, with the refusal as their summary.
-Other people's Macs are only counted, in the Settings status line.
+`PeerAdmission.decide` checks in this order: no node from whois (unknown),
+**this node itself**, **tagged**, **another user**, **not a Zetty** (its
+Tailscale host name doesn't start with `zetty-`), then **not macOS**. The
+server asks the node's whois for every connection *before reading anything*
+and answers a refusal with a `refused` frame and a close. The client dials
+only candidates from the node's own status, and WireGuard binds the dialled
+address to that node, so it doesn't whois again.
 
-## The pairing key: who is on that Mac
+**The name rule is what keeps a Mac's own Tailscale device out.** Tailscale's
+tunnel on macOS is machine-wide: another macOS account, a daemon, a Docker
+container or a NAT'd VM on the laptop all reach the tailnet *as the laptop's
+Tailscale device*, owned by Glen. Before the pairing key any of them could
+attach to a pane and type as Glen (security review, 2026-11-05). Peers can't
+see which app made a device (`tailscale whois --json` of the laptop shows only
+`Hostname`, `OS` and `Services`; `Hostinfo.App`/`Package` are stripped,
+checked 2026-11-10), so the name is the marker. It is the host name a device
+reports for itself (`Hostinfo.Hostname`), not its admin-console name. **Known
+gap, accepted by Glen:** a process that can set one of his devices' host name
+to `zetty-…` (`tailscale set --hostname` through that Mac's Tailscale) gets in.
+Otherwise spoofing a Zetty needs enrolling a device with Glen's Tailscale login.
 
-**Admission vouches for the machine, never for who opened the socket.**
-Tailscale's tunnel on macOS is machine-wide, so another macOS account, a
-daemon, a Docker container or a NAT'd VM on the laptop all connect with the
-laptop's address and pass `whois` as Glen's Mac. Before the key, any of them
-could attach to a pane on the mini and type as Glen, and a second account on
-the mini could hold port 47391 while Zetty wasn't serving and pose as the mini
-to capture what Glen typed (security review, 2026-11-05, before 0.1.60).
-
-- **The key** is 32 random bytes, written as `zetty-pair-` and 43 base64url
-  characters (`RemotePairingKey`), in the **login Keychain**: a generic
-  password, service `co.webteractive.zetty.remote-key`, account = the home
-  folder (`RemotePairingKeyStore`), so an isolated test app has its own. It
-  started as a 0600 file in `~/.zetty`, never released: a re-review found
-  that Lima and Colima mount the home folder into their VMs by default (and
-  OrbStack exposes `/Users`), so anything in such a VM could read it and
-  connect as Glen. A VM only ever sees the encrypted Keychain database.
-- **Only the app reads it, once per launch, off main** (`loadPairingKeyIfNeeded`
-  → `RemotePairingKeyHolder`), and the server, the client and Settings use
-  that copy. macOS ties an item to the signature of the app that made it
-  (its partition list): any other reader gets a Keychain prompt, and plain
-  code can't widen that without the login password. Setting an "any app"
-  ACL with `SecAccess` was tried and changed nothing: `security
-  find-generic-password -w` still waited on a prompt (2026-11-05, Glen saw
-  it). So a self-signed dev rebuild prompts once at launch, with a remote
-  key on; Developer ID releases share the team partition and don't. That
-  launch read is the only one allowed to show UI.
-- **The relay never holds the key.** `zetty attach` asks this Mac's app over
-  the control socket: `remote-sign` (a client proof for the connection it has
-  open) and `remote-check` (the server's proof), answered on the socket queue
-  without touching main, since the relay may be in one of the app's own
-  panes. Lima and Colima can't connect to a host Unix socket through their
-  home mount; OrbStack may forward sockets, but anything that reaches the
-  control socket can already `zetty send` into panes, so that adds nothing. With no
-  app to ask, the relay says "Zetty isn't running on this Mac, and only it can
-  prove the pairing key". Over SSH it works whenever the app runs, because
-  the app, not the SSH session, reads the Keychain.
-- **It is made when either remote key is turned on, and only when missing.**
-  An unusable item (a locked Keychain, a key file with a typo, one others can
-  read) is never replaced, since that would unpair this Mac. It is never in
-  the config file, which people share and sync.
-- **`ZETTY_REMOTE_KEY_FILE` swaps the Keychain for a file**, for the test pair
-  only: the peer's copy starts over SSH, where the login Keychain is locked
-  ("User interaction is not allowed"). The file must be a regular file owned
-  by the user with no group or other access; a symlink is refused. Env vars
-  are trusted configuration; a real install never sets it.
-- **Pairing** is Settings → General → Other Macs → Copy on one Mac, Paste on
-  the others (Universal Clipboard carries it; the copy is marked
-  `org.nspasteboard.ConcealedType`). Settings shows a six-digit fingerprint to
-  compare, never the key. Paste calls `RemoteMachinesClient.retryNow`, so the
-  other Macs are dialled at once rather than at the next backoff.
-- **The exchange** (`RemoteAuth`, protocol 3): the server's hello carries a
-  random challenge; the client answers with its own hello carrying its
-  challenge and an HMAC-SHA256 proof; the server checks it before it sends
-  anything else or touches a pane, then sends a `proof` message, which the
-  client checks before it trusts a snapshot or sends a keystroke. A snapshot
-  before the proof is a refusal. Each proof covers its role, both challenges
-  and **both socket addresses as that end reads them** (`SocketEnds`), so a
-  process on one of Glen's Macs can't relay a real Zetty's answers: the real
-  one signs for its own address, not the one the viewer dialled. The
-  comparison is `HMAC.isValidAuthenticationCode` (constant time).
-- **The holder is asked for every connection**, so a pasted key counts at
-  once. Paste saves off main (replacing an item another build made may ask),
-  then updates the holder. A relay in a pane of the isolated test app asks
-  that app (its `CFFIXED_USER_HOME`), so it proves the test app's key. The
-  isolated app's item stays in the login Keychain after teardown; remove it
-  with `security delete-generic-password -s co.webteractive.zetty.remote-key -a /tmp/zti`.
-- **What each refusal says:** no key on the server ("<Mac> has no pairing key
-  yet"); different keys ("<this> and <that> have different pairing keys");
-  a server that can't prove it ("Couldn't confirm this is <Mac>'s Zetty").
-  Until a server has proved the key, the header keeps Tailscale's name for it,
-  so an impostor can't name itself, and the relay names the address it dialled.
-- **Anything a server says before its proof is plain text**
-  (`RemoteText.displayable`: no C0, DEL, C1 or format characters, 300
-  characters at most), in the sidebar and in a relay's pane. Ghostty lets a
-  program write the clipboard with OSC 52, so an impostor's `refused` reason
-  could otherwise have put its own key on the clipboard beside "click Paste".
-  **Key-shaped text is blanked too** (`zetty-pair-`, and any run of 20 or more
-  base64url characters): a third review found a refusal could simply print a
-  key to copy, with zero-width characters to hide it from a naive filter.
-- **Paste over a key takes a second click**, with both fingerprints named in
-  the status line, and an unknown key (the remote switches off, or the launch
-  read not landed) counts as one being replaced. The launch read lands with
-  `setIfUnknown`, so it can't overwrite a key pasted while it waited. Replacing
-  the key decides who reaches this Mac's panes, so text on a screen alone must
-  never be enough.
-- **Copy leaves the clipboard in a minute** unless something else was copied
-  since: VMs that share the clipboard (Parallels, VMware, UTM) would read it.
-- **Not covered:** a process running as Glen's own macOS user can read the
-  key. That one already owns his account on that Mac. Neither is root, or a
-  login password weak enough to crack the Keychain database offline.
+Another Zetty on the same Mac (the isolated test app, a second test copy) is
+its own node with its own sign-in, and is admitted like any other. Tagged
+Zettys are listed with their refusal; other people's Macs are only counted, in
+the Settings status line.
 
 ## Wire and limits
 
-- Port **47391** (`RemoteProtocol.port`). A frame is a 4-byte big-endian
-  length, then JSON (`RemoteMessage`: `hello`, `snapshot`, `refused`,
-  `attached`).
+- Port **47391** (`RemoteProtocol.port`) on each Zetty's own node. A frame is
+  a 4-byte big-endian length, then JSON (`RemoteMessage`: `hello`,
+  `snapshot`, `refused`, `attached`). Protocol **5**: the hello carries
+  `machineID`; there is no challenge or proof.
 - **`ZETTY_REMOTE_PORT` moves the port** (1024–65535, anything else is
-  ignored), read once at launch, for serving, dialling and relays alike. The
-  controller also passes it to each remote pane, so a relay dials the same
-  port as its app. It exists for the test pair in `scripts/remote-e2e.sh`,
-  which must not collide with the installed apps on 47391. It is not a config
-  key on purpose: a real pair on different ports would never find each
-  other.
+  ignored), read once at launch, for serving, dialling and relays alike. Each
+  copy has its own node now, so it is rarely needed; it is not a config key on
+  purpose: a real pair on different ports would never find each other.
 - A frame over **8 MiB** closes the connection before its body is read.
-- Each side sends `hello` first. The server waits 5s for the client's, then
-  closes. The client sends its hello only after the server's, because it
-  answers the server's challenge. Another `protocolVersion` keeps the
-  connection open with no snapshots, and the client shows "needs update". Bump
-  `RemoteProtocol.version` only for an incompatible message change.
+- The server sends `hello` first and waits 5s for the client's, then closes.
+  The client answers only after the server's hello. Another `protocolVersion`
+  keeps the connection open with no snapshots, and the client shows "needs
+  update". Bump `RemoteProtocol.version` only for an incompatible message
+  change.
 - The server drops a feed peer with more than 8 frames queued (a slow or
   dead reader), and accepts at most 64 connections, since each one costs a
-  `whois` process and every open remote pane is its own connection.
+  whois and every open remote pane is its own connection.
 - Snapshots are `StatusSnapshot` (the `zetty status` model), offered from
   the end of `refreshSidebar()` and paced by `SnapshotThrottle` to **one a
   second**, the last one always delivered. The coalesced chrome refresh alone
   is not enough: a running agent retitles its pane ~10 times a second, and
   each snapshot reads a file per pane on main. A snapshot is built only when
   one is sent, and only if it differs from the last.
-- The client dials a node's first IPv4 with a 3s connect timeout and TCP
-  keepalive (10s idle, 3s × 2 probes), so a Mac that sleeps without a FIN
-  goes offline in about 16s. Every remote-machines socket gets these options
-  from `RemoteProtocol.configureLink`, the server's accepted ones too:
-  without it a viewer that lost power or Tailscale held its connection, pty
-  and `zmx attach` on the serving Mac until the 64-connection cap refused
-  every Mac. It retries a drop after 5, 10, 30, then 60s, and
-  the backoff resets on the next snapshot.
-- `TailscaleMonitor` polls every 10s, and only while one of the two keys is on.
+- The client dials a peer node's first IPv4 through the node with a 3s
+  timeout. It retries a drop after 5, 10, 30, then 60s, and the backoff
+  resets on the next snapshot. Links are socketpair ends, so
+  `RemoteProtocol.configureLink` only sets `SO_NOSIGPIPE`; keepalive is the
+  bridge's (above).
+- `Tailnet` refreshes the node's status every 10s and on every state event,
+  only while one of the two keys is on.
 
 ## Terminal connections (phase 2)
 
-- **Handshake.** The relay dials the same port and sends a `hello` carrying
-  `attach` (`RemoteAttachRequest`: pane, rows, cols, scrollback). The server
-  runs `whois` and admission first, as for a feed. Then it checks the pane
+- **The relay can't reach the node** (a separate process), so it asks this
+  Mac's app over the control socket: `remote-connect <ip>`. The app dials
+  only an **online** Mac's current address, through the node, and hands the
+  connected descriptor back with the reply (`FDPassing`, `SCM_RIGHTS`), off
+  the serial accept queue. **The app keeps its copy open until the relay
+  closes the request socket** (`FDPassing.handOver`, up to 10s): closing it
+  right after `sendmsg` ended the connection while the descriptor was in
+  flight, so a relay whose process was still starting got a dead socket on
+  every first attempt over a relayed link ("can't reach", then fine on the
+  retry; found 2026-11-10 with the laptop away from home). A reply starting `couldn't reach ` is retried like
+  a drop; any other is a refusal, shown and not retried. With no app the
+  relay says "Zetty isn't running on this Mac". Anything that reaches the
+  control socket can already `zetty send` into panes, so this widens nothing.
+- **Handshake.** The relay sends a `hello` carrying `attach`
+  (`RemoteAttachRequest`: pane, rows, cols, scrollback). The server runs whois
+  and admission first, as for a feed. Then it checks the pane
   id (1 to 8 lowercase hex) and asks `RemoteTerminalHost` for a plan. The
   plan is a pty running `zmx attach` on the pane's existing session, after
   `zmx history --vt` when scrollback was asked for. It answers `attached`,
@@ -253,8 +295,8 @@ to capture what Glen typed (security review, 2026-11-05, before 0.1.60).
   tab crashed the test run before that.
 - **Relays only while the feed is online.** `markDisconnected` forgets the
   address, and the controller shows "<Mac> is offline" instead of dialling
-  a cached one. The relay doesn't verify the serving Mac's identity itself;
-  it relies on dialling only the address the admitted feed is connected to.
+  a cached one. The app dials a relay only to the address an admitted, online
+  feed is connected to.
 - **A project left behind stays connected for 30 minutes**
   (`RemotePaneRetention`, `RemoteProjectController.keepShown`). Its surfaces
   stay in the controller's registry, out of view, so coming back re-parents
@@ -291,21 +333,26 @@ to capture what Glen typed (security review, 2026-11-05, before 0.1.60).
 
 ## Which Macs are listed
 
-A Mac becomes a sidebar group only once it has answered a hello. Until then,
-a same-user Mac that runs no Zetty, or doesn't serve, is just dialled with
-backoff and never shown. `RemoteRoster.reconcile` keeps the known ones honest
-against Tailscale. It also lists **tagged** Macs with their refusal, because
-the spec says a refusal must explain itself rather than leave a Mac missing.
+A Mac becomes a sidebar group only once it has answered a hello
+(`RemoteRoster.adopt`, keyed by its machine ID). Until then, a Zetty that
+doesn't serve is just dialled with backoff and never shown.
+`RemoteRoster.reconcile` keeps the known ones honest against the node: a
+machine whose node has **left the tailnet** (an ended ephemeral test copy, a
+device removed in the admin console) is dropped, and **tagged** Zettys are
+listed with their refusal, keyed by node until a hello names them, because a
+refusal must explain itself rather than leave a Mac missing.
 "Seen N ago" counts from the drop (`RemoteMachine.markDisconnected`), not
-from the last snapshot. An idle Mac sends none for hours. With Tailscale not
+from the last snapshot. An idle Mac sends none for hours. With the node not
 running, every Mac shows offline, reasons included.
 
 ## Cache
 
-`~/.zetty/remote-machines.json`, mode **0600**, because it holds other Macs'
-pane titles and directories. It is written at most once per 5s and on quit,
-and loaded at launch with every machine offline. A machine that leaves the
-tailnet stays listed offline with its last projects. Nothing removes one yet.
+`~/.zetty/remote-machines-v2.json`, mode **0600**, because it holds other
+Macs' pane titles and directories. It is written at most once per 5s and on
+quit, and loaded at launch with every machine offline. The pre-0.1.62
+`remote-machines.json` (keyed by the Macs' old Tailscale devices) is deleted
+when the client starts. A machine stays listed offline until its node leaves
+the tailnet.
 
 ## Sidebar
 
@@ -322,25 +369,23 @@ through `setNeedsChromeRefresh`, since a feed can tick as fast as a title.
 - **`scripts/remote-e2e.sh --peer <user>@<lan-address>` runs the checklist
   below with nobody at either Mac** (`DEVELOPMENT.md` has the setup). This
   Mac serves and the peer views. Both run a copy of the build under
-  `/tmp/zre` on port 47392, so the installed apps and their sessions are
-  never touched. The script reads state through `zetty remote list --json`
-  and drives the view with `remote open|close`. It types through a relay
-  from a Python pty on the peer, then reads the result back with `capture`.
-  `--network` adds the offline check (`tailscale down --accept-risk=lose-ssh`
-  here: without the flag the CLI refuses and changes nothing). The pair gets
-  a fresh pairing key of its own, in a file. A relay with no Zetty to sign for
-  it, and clients from the peer with a guessed proof or none, must be
-  refused, and two stand-in servers on this Mac's address and port
-  (Python, `fake.py`) must read "needs update" (protocol 2) and "Couldn't
-  confirm" (today's protocol with a made-up proof), with nothing of theirs in the
-  sidebar and no relay typing into them; a third sends an OSC 52 escape in
-  its refusal, which must reach neither the relay's pane nor the sidebar.
-  The Keychain path itself is not on that run (the peer's Keychain is locked
-  to SSH): check it in the isolated test app, where the launch makes the
-  item and a relay to a loopback stand-in carries a proof. Leaving the view
-  and opening it again must keep the same relay pids, and they must end
-  once this Mac goes. Run on 2026-11-05: 32 checks pass with `--network`;
-  2026-11-09: 30 pass without it.
+  `/tmp/zre`, each enrolled as its own **ephemeral** Tailscale device with
+  `ZETTY_E2E_TAILSCALE_AUTH_KEY` (handed over in a 0600 file that teardown
+  deletes), so the installed apps, their devices and their sessions are never
+  touched. The script reads state through `zetty remote list --json` and
+  drives the view with `remote open|close`. It types through a relay from a
+  Python pty on the peer, then reads the result back with `capture`. It
+  checks that neither copy listens on its Mac's own interfaces, that a relay
+  with no Zetty to dial for it says so, and that **a client through the peer
+  Mac's own Tailscale device is refused** ("isn't a Zetty"): the container /
+  VM / second-account case. Leaving the view and opening it again must keep
+  the same relay pids; they must end once this Mac's copy quits, and that copy
+  must leave the peer's sidebar (it signs out as it quits). Wrong-protocol and
+  impostor stand-ins are gone: a stand-in would now have to be a Zetty device
+  on Glen's account. `RemoteText` and admission are unit-tested. Last run
+  2026-11-10, Mac mini → laptop over a DERP relay: 22/22, 0 failed, with the
+  first relay attempt connecting (before `FDPassing.handOver` it failed once
+  over that slow link, so the size check failed).
 - **The peer's copy is started as a bare binary over SSH, with nohup.**
   `open -n` can't start it: `LSMultipleInstancesProhibited` makes Launch
   Services hand the launch to the installed app (and drop `--env`). Started
@@ -357,31 +402,21 @@ through `setNeedsChromeRefresh`, since a feed can tick as fast as a title.
   against it. That is how phase 1 was checked: hello, snapshot, refusal,
   version mismatch, hello timeout, oversized frame, slow reader, drop and
   backoff, cache round trip. `listen` is async, so wait briefly before dialling.
-- **The isolated test app and the installed app share the tailnet address.**
-  Only one can serve, because the second bind fails and is retried only on
-  the next Tailscale change. Turn serving off in one of them.
-- **Tailscale.app's binary is the CLI only with `TERM` or `TERM_PROGRAM` set.**
-  Without both it tries to start the GUI and fails ("The Tailscale GUI failed
-  to start", CLIError error 3). A Zetty opened from the Dock or Finder has
-  neither, so `TailscaleCLI` runs it with `TERM=dumb`
-  (`TailscaleCLIEnvironment.prepare`). v0.1.60 shipped without it and, launched
-  from the Dock, never served or dialled: every Mac read offline. It only
-  worked when started from a terminal, which is how every test had launched
-  it. So test copies are launched with no `TERM` at all.
-- **A Mac never admits its own tailnet address**
-  (`thisMacsOwnAddressIsNeverAdmitted`). Any local macOS user can reach it,
-  so admitting it would let another user on this Mac open this user's
-  panes. An end-to-end check of `attach` therefore needs two Macs, or a
-  throwaway build that drops the check and is never committed.
+- **The isolated test app is its own Zetty device** with its own sign-in
+  (its Keychain item is keyed by its home, `/tmp/zti @ <hardware UUID>`), so it and the
+  installed app can both serve, and each lists the other. Sign it in from its
+  Settings, or launch it with `ZETTY_TAILSCALE_AUTH_KEY_FILE` for an
+  ephemeral device. Remove its item afterwards with
+  `security delete-generic-password -s co.webteractive.zetty.tailscale-state -a "/tmp/zti @ $(ioreg -rd1 -c IOPlatformExpertDevice | awk -F'"' '/IOPlatformUUID/{print $4}')"`.
 - **Watch relays with `pgrep -fl "zetty attach"`.** Two lines per open
   remote pane (the relay and its login parent, above), gone within about a
   second of the pane closing on either Mac.
-- **Two Macs, both signed in to Tailscale as Glen.** Serve on the mini, show on
-  the laptop. `remote-e2e.sh` covers all of this. Check: the mini's projects and dots appear and update within
-  ~1s; `tailscale down` or sleeping the mini gives offline within ~16s and
-  online again after; `printf '\xff\xff\xff\xff' | nc <ip> 47391` from the
-  mini closes only that connection; a build with another `RemoteProtocol.version`
-  reads "needs update"; neither copy on one Mac lists itself.
+- **Two Macs, each Zetty signed in to Tailscale as Glen.** Serve on the mini,
+  show on the laptop. `remote-e2e.sh` covers most of this. By hand: the
+  mini's projects and dots appear and update within ~1s; sleeping the mini
+  reads offline once Tailscale marks its device offline (a minute or two) and
+  online again after; a build with another `RemoteProtocol.version` reads
+  "needs update"; no copy lists itself.
 - Screenshots are TCC-denied in agent sessions, so the sidebar's look needs a
   human.
 

@@ -234,13 +234,16 @@ public enum ControlRequest: Equatable, Sendable {
     case remoteOpen(machine: String, project: String)
     /// Back to this Mac's project, as it was left. Response `.ok`.
     case remoteClose
-    /// For the `zetty attach` relay, which never holds the pairing key: the
-    /// app proves it as the client of the connection the relay has open.
-    /// Response `.text(proof)`. Not a CLI verb.
-    case remoteSign(server: String, client: String, serverChallenge: String, clientChallenge: String)
-    /// The relay's check of the server's proof, by the app. Response `.ok`
-    /// when it is right, `.error` otherwise. Not a CLI verb.
-    case remoteCheck(proof: String, server: String, client: String, serverChallenge: String, clientChallenge: String)
+    /// For the `zetty attach` relay, which can't reach Zetty's own Tailscale
+    /// node from its process: the app dials `address` (an admitted Mac's
+    /// current address) through the node and hands the relay the connected
+    /// descriptor with the reply (`SCM_RIGHTS`). Response `.ok` plus the
+    /// descriptor, or `.error`. Not a CLI verb.
+    case remoteConnect(address: String)
+    /// `zetty remote sign-in`: a fresh Tailscale sign-in page for this Mac
+    /// and its QR code, or why there's nothing to sign in. Response
+    /// `.signIn`, or `.error` while Other Macs is off, connecting or failed.
+    case remoteSignIn
 }
 
 extension ControlRequest {
@@ -270,7 +273,7 @@ extension ControlRequest {
 
 extension ControlRequest: Codable {
     private enum CodingKeys: String, CodingKey {
-        case command, target, text, enter, keys, project, wholeTab, killSessions, simulateRestart, vertical, lines, path, name, gitInit, focus, fetch, discard, line, column, space, newName, color, icon, account, probe, surface, on, profile, slot, collapse, view, force, handoff, wake, asker, asking, cancel, machine, server, client, serverChallenge, clientChallenge, proof
+        case command, target, text, enter, keys, project, wholeTab, killSessions, simulateRestart, vertical, lines, path, name, gitInit, focus, fetch, discard, line, column, space, newName, color, icon, account, probe, surface, on, profile, slot, collapse, view, force, handoff, wake, asker, asking, cancel, machine, address
     }
 
     public init(from decoder: Decoder) throws {
@@ -303,17 +306,9 @@ extension ControlRequest: Codable {
             self = .remoteOpen(machine: try container.decode(String.self, forKey: .machine),
                                project: try container.decode(String.self, forKey: .project))
         case "remote-close": self = .remoteClose
-        case "remote-sign":
-            self = .remoteSign(server: try container.decode(String.self, forKey: .server),
-                               client: try container.decode(String.self, forKey: .client),
-                               serverChallenge: try container.decode(String.self, forKey: .serverChallenge),
-                               clientChallenge: try container.decode(String.self, forKey: .clientChallenge))
-        case "remote-check":
-            self = .remoteCheck(proof: try container.decode(String.self, forKey: .proof),
-                                server: try container.decode(String.self, forKey: .server),
-                                client: try container.decode(String.self, forKey: .client),
-                                serverChallenge: try container.decode(String.self, forKey: .serverChallenge),
-                                clientChallenge: try container.decode(String.self, forKey: .clientChallenge))
+        case "remote-sign-in": self = .remoteSignIn
+        case "remote-connect":
+            self = .remoteConnect(address: try container.decode(String.self, forKey: .address))
         // decodeIfPresent for the same reason `hibernated` and `live` use it:
         // an older standalone binary must not throw on a newer app's payload.
         case "tiles":
@@ -500,19 +495,11 @@ extension ControlRequest: Codable {
             try container.encode(project, forKey: .project)
         case .remoteClose:
             try container.encode("remote-close", forKey: .command)
-        case .remoteSign(let server, let client, let serverChallenge, let clientChallenge):
-            try container.encode("remote-sign", forKey: .command)
-            try container.encode(server, forKey: .server)
-            try container.encode(client, forKey: .client)
-            try container.encode(serverChallenge, forKey: .serverChallenge)
-            try container.encode(clientChallenge, forKey: .clientChallenge)
-        case .remoteCheck(let proof, let server, let client, let serverChallenge, let clientChallenge):
-            try container.encode("remote-check", forKey: .command)
-            try container.encode(proof, forKey: .proof)
-            try container.encode(server, forKey: .server)
-            try container.encode(client, forKey: .client)
-            try container.encode(serverChallenge, forKey: .serverChallenge)
-            try container.encode(clientChallenge, forKey: .clientChallenge)
+        case .remoteSignIn:
+            try container.encode("remote-sign-in", forKey: .command)
+        case .remoteConnect(let address):
+            try container.encode("remote-connect", forKey: .command)
+            try container.encode(address, forKey: .address)
         case .tiles(let on, let profile):
             try container.encode("tiles", forKey: .command)
             try container.encodeIfPresent(on, forKey: .on)
@@ -693,6 +680,8 @@ public enum ControlResponse: Equatable, Sendable {
     case accounts(AccountsSnapshot)
     /// What `zetty remote list` shows.
     case remote(RemoteMachinesReport)
+    /// What `zetty remote sign-in` shows.
+    case signIn(RemoteSignInReport)
     case error(String)
 }
 
@@ -758,7 +747,7 @@ public struct AccountsSnapshot: Codable, Equatable, Sendable {
 
 extension ControlResponse: Codable {
     private enum CodingKeys: String, CodingKey {
-        case ok, status, pane, text, error, accounts, remote
+        case ok, status, pane, text, error, accounts, remote, signIn
     }
 
     public init(from decoder: Decoder) throws {
@@ -775,6 +764,8 @@ extension ControlResponse: Codable {
             self = .accounts(accounts)
         } else if let report = try container.decodeIfPresent(RemoteMachinesReport.self, forKey: .remote) {
             self = .remote(report)
+        } else if let report = try container.decodeIfPresent(RemoteSignInReport.self, forKey: .signIn) {
+            self = .signIn(report)
         } else {
             self = .ok
         }
@@ -800,6 +791,9 @@ extension ControlResponse: Codable {
         case .remote(let report):
             try container.encode(true, forKey: .ok)
             try container.encode(report, forKey: .remote)
+        case .signIn(let report):
+            try container.encode(true, forKey: .ok)
+            try container.encode(report, forKey: .signIn)
         case .error(let message):
             try container.encode(false, forKey: .ok)
             try container.encode(message, forKey: .error)

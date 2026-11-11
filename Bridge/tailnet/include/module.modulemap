@@ -1,0 +1,5 @@
+module ZettyTailnet {
+    header "zetty_tailnet.h"
+    link "zettytailnet"
+    export *
+}
