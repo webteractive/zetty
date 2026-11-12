@@ -72,6 +72,10 @@ public struct AppConfig: Equatable, Sendable {
     /// Show other Macs on the same Tailscale account in the sidebar
     /// (`zetty-remote-machines`, default false). Nothing polls when off.
     public var showRemoteMachines: Bool
+    /// Show the Hibernating section in the sidebar
+    /// (`zetty-sidebar-hibernating`, default false). Hidden, the filter does
+    /// not list hibernated projects either; ⌘K's "Wake Project" still does.
+    public var showHibernatingInSidebar: Bool
     /// Auto-hibernate an idle, quiet project after this many seconds (0 = off).
     public var hibernateAfter: TimeInterval
     /// When true (default), hibernating a project has each Claude or Codex
@@ -181,6 +185,7 @@ public struct AppConfig: Equatable, Sendable {
         checkUpdates: Bool = true,
         serveRemote: Bool = false,
         showRemoteMachines: Bool = false,
+        showHibernatingInSidebar: Bool = false,
         hibernateAfter: TimeInterval = 0,
         hibernateHandoffs: Bool = true,
         freeBackgroundPanesAfter: TimeInterval = 0,
@@ -210,6 +215,7 @@ public struct AppConfig: Equatable, Sendable {
         self.checkUpdates = checkUpdates
         self.serveRemote = serveRemote
         self.showRemoteMachines = showRemoteMachines
+        self.showHibernatingInSidebar = showHibernatingInSidebar
         self.hibernateAfter = hibernateAfter
         self.hibernateHandoffs = hibernateHandoffs
         self.freeBackgroundPanesAfter = freeBackgroundPanesAfter
@@ -335,6 +341,8 @@ public struct AppConfig: Equatable, Sendable {
                 config.serveRemote = ["true", "yes", "on", "1"].contains(value.lowercased())
             case "zetty-remote-machines":
                 config.showRemoteMachines = ["true", "yes", "on", "1"].contains(value.lowercased())
+            case "zetty-sidebar-hibernating":
+                config.showHibernatingInSidebar = ["true", "yes", "on", "1"].contains(value.lowercased())
             case "zetty-hibernate-handoffs":
                 config.hibernateHandoffs = ["true", "yes", "on", "1"].contains(value.lowercased())
             case "zetty-file-tree-show-hidden":
@@ -491,6 +499,9 @@ public struct AppConfig: Equatable, Sendable {
         # Auto-hibernate a project after it's idle and quiet (0/off = disabled,
         # e.g. 60m or 2h). Frees its sessions/processes; waking spawns fresh shells.
         hibernate-after = \(hibernateAfter == 0 ? "off" : String(Int(hibernateAfter)))
+
+        # Show the Hibernating section (hibernated projects) in the sidebar.
+        zetty-sidebar-hibernating = \(showHibernatingInSidebar)
 
         # Hibernating a project has each Claude or Codex pane compact its own
         # conversation into a handoff first (/compact, in its chat), and waking

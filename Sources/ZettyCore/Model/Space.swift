@@ -3,7 +3,7 @@ import Foundation
 /// A user-defined sidebar section holding related projects.
 ///
 /// A project belongs to at most one Space (`Project.spaceID`); when it has one
-/// it renders under that Space's header instead of Pinned/Projects. Array order
+/// it renders under that Space's header instead of Projects. Array order
 /// in `Workspace.spaces` IS sidebar order — there is deliberately no
 /// `sortOrder` field, so there is no second ordering mechanism to disagree with
 /// the array.

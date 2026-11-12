@@ -149,6 +149,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
 
         let tvc = TerminalViewController()
         tvc.sidebarPosition = appConfig.sidebarPosition
+        tvc.showsHibernatingInSidebar = appConfig.showHibernatingInSidebar
+        tvc.onSetHibernatingInSidebar = { [weak self] show in self?.setHibernatingInSidebar(show) }
         // BEFORE the restore: `restoreWorkspace` loads the tile library, and a
         // nil store there silently seeds All Running in memory only — so the
         // library never reaches disk and every launch mints a new one.
@@ -838,9 +840,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             applyHomeRoot(to: tvc)                                            // new Home tabs/panes only
             tvc.publishAttentionCount()                                       // re-apply Dock badge gating
             tvc.sidebarPosition = appConfig.sidebarPosition                   // re-pins only on change
+            tvc.showsHibernatingInSidebar = appConfig.showHibernatingInSidebar
             tvc.applyKeyBindings(appConfig.keybindings)                       // prefix/bind/copy-bind lines
         }
         applyRemoteConfig()                                                   // zetty-serve / zetty-remote-machines
+    }
+
+    /// ⌘K's Show/Hide Hibernating in Sidebar: saves the key, applies it live,
+    /// and updates the Settings switch if Settings is open.
+    func setHibernatingInSidebar(_ show: Bool) {
+        appConfig.showHibernatingInSidebar = show
+        saveConfig()
+        terminalViewController?.showsHibernatingInSidebar = show
+        if settingsWindowController?.window?.isVisible == true { settingsWindowController?.refresh() }
     }
 
     /// Applies a sidebar-position choice live and persists it to the config
@@ -1993,7 +2005,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         switch state {
         case .off:
             return .error("Other Macs is off: turn on zetty-remote-machines or zetty-serve "
-                          + "(Settings → Other Macs)")
+                          + "(Settings → Remote)")
         case .starting: return .error("Zetty is still connecting to Tailscale: try again in a moment")
         case .failed(let message): return .error(message)
         case .needsApproval: return .signIn(.init(state: .needsApproval))
@@ -2004,7 +2016,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             DispatchQueue.main.sync { tailnet.login { page.deliver($0) } }
             guard let url = page.wait(seconds: 10) else {
                 return .error("Tailscale didn't send a sign-in page: try again, "
-                              + "or use Sign In… in Settings → Other Macs")
+                              + "or use Sign In… in Settings → Remote")
             }
             let text = url.absoluteString
             return .signIn(.init(state: .needsSignIn, url: text, qr: QRCode.modules(for: text).map(QRCode.rows)))
@@ -2397,7 +2409,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
                                             serving: appConfig.serveRemote && remoteServer != nil))
         case .remoteOpen(let machine, let project):
             guard remoteMachinesClient != nil else {
-                return .error("Other Macs is off: turn on zetty-remote-machines (Settings → Other Macs)")
+                return .error("Other Macs is off: turn on zetty-remote-machines (Settings → Remote)")
             }
             if let message = tvc.openRemoteProject(machine: machine, project: project) {
                 return .error(message)

@@ -141,7 +141,7 @@ queue brings it up.
 right-click offers `Add to Tile View ▸`. All three call
 `mutateActiveTileProfile { $0.attach(...) }`, so they cannot drift. The drop
 lands on the GRID, outside the outline view, so `SidebarView.validateDrop` —
-the rule protecting the pinned-first invariant — is never consulted.
+the rule protecting section order — is never consulted.
 
 **A slot can also be filled with a pane that does not exist yet.** The picker
 returns a `TileAttachPicker.Action` rather than a `TileSlot`, and its second

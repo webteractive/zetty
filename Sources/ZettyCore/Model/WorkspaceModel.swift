@@ -4,13 +4,12 @@ public final class ProjectRuntime {
     public let id: UUID
     public var name: String
     public var rootPath: String
-    public var isPinned: Bool
     /// When true, the project's sessions/processes/panes are freed; only its
     /// layout remains. Waking re-spawns fresh shells.
     public var isHibernated: Bool
     /// A project-less, ephemeral "scratch" terminal: rooted at home, shown in
     /// the Scratch sidebar section, never persisted, and its panes never use
-    /// zmx. Not pinnable or hibernatable.
+    /// zmx. Not hibernatable.
     public let isScratch: Bool
     /// The permanent, non-removable Home project: seeded by default, lives in
     /// its own top sidebar section, can be hibernated but never removed.
@@ -34,14 +33,13 @@ public final class ProjectRuntime {
     public let tabList: TabList
 
     public init(id: UUID = UUID(), name: String, rootPath: String,
-                isPinned: Bool = false, isHibernated: Bool = false,
+                isHibernated: Bool = false,
                 isScratch: Bool = false, isHome: Bool = false, cloneSource: String? = nil,
                 spaceID: UUID? = nil,
                 tabList: TabList? = nil) {
         self.id = id
         self.name = name
         self.rootPath = rootPath
-        self.isPinned = isPinned
         self.isHibernated = isHibernated
         self.isScratch = isScratch
         self.isHome = isHome
@@ -135,7 +133,7 @@ public final class WorkspaceModel {
     @discardableResult
     /// Adds a project. `makeActive` (default true) switches to it; pass false to
     /// add it in the background, leaving the current active project selected.
-    /// A new (unpinned) project lands at the bottom of its group.
+    /// A new project lands at the bottom of Projects.
     public func addProject(name: String, rootPath: String, makeActive: Bool = true) -> ProjectRuntime {
         let p = ProjectRuntime(name: name, rootPath: rootPath)
         projects.append(p)
@@ -144,8 +142,8 @@ public final class WorkspaceModel {
         return p
     }
 
-    /// Adds a project-less scratch terminal (rooted at home). It is unpinned (so
-    /// it lands in the Scratch section) and ephemeral. `makeActive` (default
+    /// Adds a project-less scratch terminal (rooted at home). It lands in the
+    /// Scratch section and is ephemeral. `makeActive` (default
     /// true) switches to it; pass false to add it in the background.
     @discardableResult
     public func addScratchProject(makeActive: Bool = true) -> ProjectRuntime {
@@ -153,7 +151,7 @@ public final class WorkspaceModel {
         let p = ProjectRuntime(name: nextScratchName(), rootPath: home, isScratch: true)
         projects.append(p)
         if makeActive { activeIndex = projects.count - 1 }
-        regroup()   // keeps it after the pinned group
+        regroup()   // keeps it in Scratch, after the Spaces
         return p
     }
 
@@ -198,7 +196,7 @@ public final class WorkspaceModel {
 
     /// Removes every scratch terminal at once. The active project stays active
     /// when it survives; only when a scratch WAS active does `activeIndex` move
-    /// to the first pinned project (or the first project if none are pinned).
+    /// to the first project.
     /// Jumping regardless used to switch the project behind the tile grid,
     /// where scratch is never made active. No-op if there are no scratch
     /// projects, or if removing them would leave none.
@@ -208,8 +206,7 @@ public final class WorkspaceModel {
         guard !survivors.isEmpty else { return }
         let active = activeProject
         projects = survivors
-        activeIndex = projects.firstIndex { $0 === active }
-            ?? projects.firstIndex(where: \.isPinned) ?? 0
+        activeIndex = projects.firstIndex { $0 === active } ?? 0
     }
 
     public func removeProject(at index: Int) {
@@ -229,28 +226,16 @@ public final class WorkspaceModel {
         activeIndex = index
     }
 
-    public func togglePin(at index: Int) {
-        // Pinning means "lives in the Pinned section", and a Space member lives
-        // in its Space — one project, one section. The sidebar hides the star
-        // for members, so this guard is the model-side half of that rule.
-        guard projects.indices.contains(index), projects[index].spaceID == nil else { return }
-        projects[index].isPinned.toggle()
-        regroup()   // pinning drops the project at the bottom of its new group
-    }
-
     /// Moves a project from one position to another within the same section.
     /// The active project is preserved by identity. Callers must keep the move
-    /// within one pin-group (Pinned ↔ Pinned, unpinned ↔ unpinned) AND one Space;
-    /// a cross-group or cross-Space move is rejected so the pinned-first
-    /// invariant can't be broken and `assign`'s refusals can't be bypassed.
+    /// within one Space (or within Projects); a cross-Space move is rejected so
+    /// `assign`'s refusals can't be bypassed.
     /// Reassignment to a different Space goes through `assign(projectAt:to:)`.
     public func moveProject(from: Int, to: Int) {
-        // Both endpoints must share pin state AND Space: a reorder may never
-        // move a project across a Space boundary, which would bypass `assign`'s
+        // Both endpoints must share a Space: a reorder may never move a project across a Space boundary, which would bypass `assign`'s
         // refusals. Reassignment goes through `assign(projectAt:to:)`.
         guard projects.indices.contains(from), projects.indices.contains(to),
               from != to,
-              projects[from].isPinned == projects[to].isPinned,
               projects[from].spaceID == projects[to].spaceID else { return }
         let activeID = projects[activeIndex].id
         let moved = projects.remove(at: from)
@@ -353,7 +338,7 @@ public final class WorkspaceModel {
     }
 
     /// Deletes a Space. Its members are KEPT — their `spaceID` is cleared and
-    /// they fall back to Pinned/Projects.
+    /// they fall back to Projects.
     public func removeSpace(id: UUID) {
         guard spaces.contains(where: { $0.id == id }) else { return }
         spaces.removeAll { $0.id == id }
@@ -409,8 +394,6 @@ public final class WorkspaceModel {
         guard !project.isHome, !project.isScratch, project.cloneSource == nil else { return false }
         if let spaceID, !spaces.contains(where: { $0.id == spaceID }) { return false }
         project.spaceID = spaceID
-        // Joining a Space leaves the Pinned section, so the pin goes with it.
-        if spaceID != nil { project.isPinned = false }
         // Re-append so the project lands LAST among its destination's members.
         // `regroup()` filters stably, so member order is array order — and since
         // the Spaces block sits after Projects, leaving the project in place
@@ -459,12 +442,10 @@ public final class WorkspaceModel {
     }
 
     /// Enforces the ordering invariants, mirroring the sidebar's sections:
-    /// Home · spaceless pinned · spaceless unpinned · each Space in `spaces`
-    /// order · Scratch terminals last. Inside a Space, awake members come
-    /// before dormant ones, so hibernating a member sinks it to the bottom of
-    /// its own Space instead of scattering it among the live ones. Members are
-    /// never pinned — joining a Space clears the pin, and this normalises any
-    /// that slipped through.
+    /// Home · spaceless projects · each Space in `spaces` order · Scratch
+    /// terminals last. Inside a Space, awake members come before dormant ones,
+    /// so hibernating a member sinks it to the bottom of its own Space instead
+    /// of scattering it among the live ones.
     ///
     /// Within all of that, each clone sits immediately after its source project
     /// (so the sidebar renders it attached). Gluing wins over the awake/dormant
@@ -484,24 +465,15 @@ public final class WorkspaceModel {
         for project in projects where project.spaceID.map({ !known.contains($0) }) == true {
             project.spaceID = nil
         }
-        // A Space member is never pinned — self-healing, so a workspace.json
-        // written before this rule (or hand-edited) converges on load instead
-        // of leaving a starred row inside a Space.
-        for project in projects where project.spaceID != nil && project.isPinned {
-            project.isPinned = false
-        }
         let rest = projects.filter { !$0.isHome }
         // Scratch terminals are held back and appended after the Spaces block so
-        // model order matches the sidebar's (Home · Pinned · Projects · Spaces ·
+        // model order matches the sidebar's (Home · Projects · Spaces ·
         // Scratch · Hibernating) — `zetty status` renders model order, so the two
         // surfaces would otherwise disagree about where a scratch terminal sits.
         let spaceless = rest.filter { $0.spaceID == nil && !$0.isScratch }
-        var base = projects.filter(\.isHome)
-            + spaceless.filter(\.isPinned)
-            + spaceless.filter { !$0.isPinned }
+        var base = projects.filter(\.isHome) + spaceless
         for space in spaces {
-            // Members are never pinned (normalised above), so the only split
-            // inside a Space is awake before dormant. Order within each half is
+            // The only split inside a Space is awake before dormant. Order within each half is
             // assign order — `assign` re-appends, so re-picking the same Space
             // from the menu moves a member to the bottom.
             let members = rest.filter { $0.spaceID == space.id }

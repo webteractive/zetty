@@ -37,14 +37,16 @@ import Foundation
     #expect(!ws.projects.contains { $0.name == "alpha/fork-1" })
 }
 
-@Test func cloneFollowsPinnedSourceThroughRegroup() {
+@Test func cloneFollowsItsSourceThroughAReorder() {
     let ws = WorkspaceModel()
     ws.addProject(name: "alpha", rootPath: "/tmp/alpha")
     ws.addProject(name: "beta", rootPath: "/tmp/beta")
     ws.addCloneProject(name: "alpha/fork-1", rootPath: "/tmp/c/a1", cloneSource: "/tmp/alpha")
-    // Pin beta: pinned group moves ahead, but the clone must stay glued to alpha.
+    // Move beta above alpha: the clone must stay glued to alpha.
     let betaIndex = ws.projects.firstIndex { $0.name == "beta" }!
-    ws.togglePin(at: betaIndex)
+    let alphaIndex = ws.projects.firstIndex { $0.name == "alpha" }!
+    ws.moveProject(from: betaIndex, to: alphaIndex)
+    ws.reapplyOrdering()
     #expect(ws.projects.map(\.name) == ["Home", "beta", "alpha", "alpha/fork-1"])
 }
 

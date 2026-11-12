@@ -40,7 +40,7 @@ closing, renaming, reordering) is not part of phase 2.
   shows nothing at all.
 - **Never a modal.** Every failure has a place to show: a machine header
   ("offline · seen 2h ago", "needs update", a refusal reason), the status
-  line in Settings → Other Macs, a remote pane's own `[…]` line, or
+  line in Settings → Remote, a remote pane's own `[…]` line, or
   the remote view's placeholder.
 - **Remote surfaces never enter `WorkspaceModel`.** They live in
   `RemoteProjectController`'s own `SurfaceRegistry`, with fresh UUIDs from
@@ -99,7 +99,7 @@ installed or running. The Tailscale app is never touched or needed.
   reload** (`TailnetLifecycle`), which would prompt each time: only after
   Other Macs is turned off and on, or Sign Out. tsnet's non-secret files go
   in `~/Library/Caches/co.webteractive.zetty/tailscale`.
-- **Sign-in** is Settings → Other Macs → **Sign In…**: Tailscale's
+- **Sign-in** is Settings → Remote → **Sign In…**: Tailscale's
   login page in the browser. Every click asks Tailscale again and opens the
   page it sends back (the bridge marks that event `"browse":true`;
   `TailnetState.pageToOpen`), never the URL cached in the state: it expires
@@ -359,7 +359,7 @@ the tailnet.
 With no machines the outline is exactly the local one: no **This Mac**
 header. A machine group collapses while its Mac is offline. A user's
 expand/collapse holds until the Mac next goes on- or offline. Remote rows
-reuse `ProjectCellView` with `isRemote` (no pin star). Their colors come from
+reuse `ProjectCellView`. Their colors come from
 a stable hash of the project id into `ZTheme.projectPalette`, because
 snapshots carry no colors. `TerminalViewController.setRemoteMachines` goes
 through `setNeedsChromeRefresh`, since a feed can tick as fast as a title.

@@ -44,7 +44,7 @@ the same token set plus an `isDark` flag — see [Schemes](#schemes).
 | `bg0`   | `#09090c` | Deepest surface — sidebar, tab bar, status bar |
 | `bg1`   | `#0b0b0f` | Base surface — window, main area, terminal, panes |
 | `bg2`   | `#131319` | Elevated — search fields, hover |
-| `bg3`   | `#1a1a22` | Highest — pinned rows, kbd chips, selection fill |
+| `bg3`   | `#1a1a22` | Highest — kbd chips, selection fill |
 | `bord`  | `#1f1f27` | Hairline borders / dividers |
 | `fg`    | `#e6e6ea` | Primary text |
 | `fg2`   | `#a7a7b2` | Secondary text |
@@ -77,6 +77,12 @@ dark/light pair that resolves against the current appearance
 settings; an unknown id degrades to "no color", never an error.
 
 `sky` · `teal` · `moss` · `sand` · `orange` · `pink` · `mauve` · `steel`
+
+The same hues fill the icon squares of the Settings sidebar, which are identity
+markers too, not status. There a square always takes the hue's deep (light)
+value (`projectDeepColor(id:)`), whatever the scheme, under a glyph in
+`ZTheme.iconGlyph` (near-white in every scheme): a white glyph reads poorly on
+the bright dark-scheme pastels.
 
 ---
 
@@ -161,12 +167,19 @@ are authoritative.
 
 - **Window** — `bg1`, 14pt radius, `bord` border; appearance is pinned to the
   effective scheme axis so native chrome (menus, scrollers, titlebar) tracks it.
-- **Sidebar** (`bg0`) — filter field (`bg2`); a **Home** row pinned to the very
-  top with no section header, no pin button, and no tab children; then
-  uppercase section headers with counts — `Pinned`, `Projects`, `Scratch`, and a
-  collapsible `Hibernating` sorted by name. Project rows (12pt radius) carry an
-  accent left-bar + glow when active, a diamond glyph (or a custom SF Symbol /
-  emoji), an accent star when pinned, and a per-project roll-up status dot.
+- **Sidebar** (`bg0`) — filter field (`bg2`); then, while any agent is busy, a
+  fixed **Active** area that does not scroll with the list: a collapsible
+  uppercase `Active` header (chevron, like the outline's) with a count and up
+  to five 26pt rows before it scrolls
+  inside itself, each a 6pt status dot (yellow needs you, green working), the
+  tool's logo and `project · Tool` in `fg2` (another Mac's rows lead with its
+  name), `bg2` on hover. Below it the scrolling list: a **Home** row at the
+  very top with no section header and no tab children; then uppercase section
+  headers with counts — a collapsible `Projects`, each Space (collapsible),
+  `Scratch`, and, when turned on, a collapsible `Hibernating` sorted by name. A
+  collapsed `Projects` still shows the active project, as a collapsed Space does. Project rows (12pt radius) carry
+  an accent left-bar + glow when active, a diamond glyph (or a custom SF Symbol
+  / emoji), and a per-project roll-up status dot.
   Expandable projects reveal tab children with their own status dots. **Clone
   rows** nest directly under their source behind a fork glyph; a clone still
   being copied appears as a non-interactive "Cloning…" spinner row. Footer:
@@ -231,6 +244,15 @@ are authoritative.
   in a plain `NSTextView`/`NSScrollView`, and a footer with `Open in ▾`. The
   referenced line is marked with `bg3`. See `.hydra/rules/file-viewer.md` for why this must **not**
   be rebuilt on a hand-rolled TextKit stack.
+- **Settings window** (820×560, fixed) — a System Settings layout: the pages
+  down a `bg0` sidebar (188pt, `bord` divider on its right), the selected page
+  on `bg1`, scrolling when taller than the window. A row is 30pt: a 22pt square
+  (6pt radius) filled from the project palette holding a white SF Symbol, then
+  the page name in `chromeFont` 13. Selected rows fill `bg3` (7pt radius) with
+  `fg` text, hovered rows `bg2`, the rest `fg2` on clear. The window floats
+  in front of Zetty's windows while Zetty is active, hides when it isn't, and
+  drops to the normal level while another Zetty window shows a sheet. It is
+  never modal.
 - **Sheets** — Project Settings, the agent chooser, the clone sheet, and the
   file copy-back modal are `NSWindow` panels styled from the same tokens.
 

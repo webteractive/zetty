@@ -147,7 +147,7 @@ public enum ControlRequest: Equatable, Sendable {
     /// collision.
     case renameSpace(name: String, newName: String)
     /// Delete a Space. Its projects are KEPT — they fall back to
-    /// Pinned/Projects. `.ok`.
+    /// Projects. `.ok`.
     case removeSpace(name: String)
     /// Move a project into a Space, or out of every Space when `space` is nil
     /// (`--none`). Errors for Home, Scratch, and clones. `.ok`.
@@ -920,7 +920,7 @@ public struct StatusSnapshot: Codable, Equatable, Sendable {
         /// this is diagnostic rather than an obstacle; `zetty wake <name>` makes
         /// it explicit.
         public let hibernated: Bool
-        /// The Space this project renders under, or nil for Pinned/Projects.
+        /// The Space this project renders under, or nil for Projects.
         public let space: String?
         /// For a clone, the directory it was forked from; nil for an ordinary
         /// project. What `update-clone` / `merge-clone` / `push-clone` act on.

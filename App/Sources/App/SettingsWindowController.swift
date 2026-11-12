@@ -8,13 +8,12 @@ import ZettyGhostty
 /// text and applied explicitly.
 final class SettingsWindowController: NSWindowController, NSWindowDelegate {
 
-    /// The Settings panes, in display order. Single source of truth: the tab
-    /// view is built from these and every jump names one, so a renamed pane
+    /// The Settings pages, in sidebar order. Single source of truth: the
+    /// sidebar is built from these and every jump names one, so a renamed page
     /// can't leave a caller pointing at a label that no longer exists —
     /// `selectTab` would have silently done nothing.
     enum Tab: String, CaseIterable {
         case general = "General"
-        case otherMacs = "Other Macs"
         case appearance = "Appearance"
         case sessions = "Sessions"
         case files = "Files"
@@ -22,6 +21,39 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         case terminal = "Terminal"
         case agents = "Agents"
         case accounts = "Accounts"
+        case remote = "Remote"
+
+        /// The SF Symbols tried in turn for the page's sidebar icon: the
+        /// first one this macOS has wins.
+        var symbols: [String] {
+            switch self {
+            case .general: return ["gearshape"]
+            case .appearance: return ["paintpalette"]
+            case .sessions: return ["rectangle.stack"]
+            case .files: return ["folder"]
+            case .keys: return ["keyboard"]
+            case .terminal: return ["terminal"]
+            case .agents: return ["sparkles"]
+            case .accounts: return ["person.2"]
+            case .remote: return ["desktopcomputer.and.macbook", "desktopcomputer"]
+            }
+        }
+
+        /// The project palette hue that fills the icon's square. Sky is used
+        /// twice (nine pages, eight hues), never on neighbouring rows.
+        var hue: String {
+            switch self {
+            case .general: return "steel"
+            case .appearance: return "pink"
+            case .sessions: return "sky"
+            case .files: return "sand"
+            case .keys: return "mauve"
+            case .terminal: return "moss"
+            case .agents: return "orange"
+            case .accounts: return "teal"
+            case .remote: return "sky"
+            }
+        }
     }
 
     private let installer: HookInstaller
@@ -68,6 +100,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     private let restartRecoverySwitch = NSSwitch()
     private let hibernatePopup = NSPopUpButton()
     private let handoffsSwitch = NSSwitch()
+    private let sidebarHibernatingSwitch = NSSwitch()
 
     /// `hibernate-after` choices offered by the dropdown, in seconds (0 = off).
     /// A hand-written value outside the list still shows, as its own item.
@@ -204,7 +237,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         self.installer = installer
         self.liveSurfaceIDs = liveSurfaceIDs
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 620, height: 520),
+            contentRect: NSRect(x: 0, y: 0, width: 820, height: 560),
             styleMask: [.titled, .closable],
             backing: .buffered,
             defer: false
@@ -213,10 +246,16 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         window.isReleasedWhenClosed = false
         window.appearance = ZTheme.current.appearance
         window.backgroundColor = ZTheme.current.bg1Color
+        // In front of Zetty's windows while Zetty is active, never over other
+        // apps', and never modal: panes stay usable underneath.
+        window.level = .floating
+        window.hidesOnDeactivate = true
+        window.collectionBehavior.insert(.fullScreenAuxiliary)
         super.init(window: window)
         window.delegate = self
         window.contentView = buildContent()
         window.center()
+        observeOtherWindowsSheets()
     }
 
     @available(*, unavailable)
@@ -238,8 +277,11 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
 
     // MARK: - Content
 
-    /// The tab view hosting the settings panes (kept for reselect-on-rebuild).
-    private var tabView: NSTabView?
+    /// The page on show; kept across a rebuild.
+    private var selectedTab: Tab = .general
+    /// Each page's scrolling view and sidebar row, built with the content.
+    private var pages: [Tab: NSView] = [:]
+    private var sidebarRows: [Tab: SettingsSidebarRow] = [:]
 
     /// The chrome font this window's content was built with. Font commits skip
     /// the mid-interaction rebuild (it flickers and drops focus), so the window
@@ -252,26 +294,79 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         super.showWindow(sender)
     }
 
+    static let sidebarWidth: CGFloat = 188
+
+    /// A System Settings layout: the pages listed down a `bg0` sidebar, the
+    /// selected one on `bg1` beside it.
     private func buildContent() -> NSView {
+        let theme = ZTheme.current
         let root = NSView()
         root.wantsLayer = true
-        root.layer?.backgroundColor = ZTheme.current.bg1Color.cgColor
-
+        root.layer?.backgroundColor = theme.bg1Color.cgColor
         builtFontStamp = Self.fontStamp
-        let tabs = NSTabView()
-        tabs.translatesAutoresizingMaskIntoConstraints = false
+
+        let sidebar = NSView()
+        sidebar.wantsLayer = true
+        sidebar.layer?.backgroundColor = theme.bg0Color.cgColor
+        sidebar.translatesAutoresizingMaskIntoConstraints = false
+        let divider = NSView()
+        divider.wantsLayer = true
+        divider.layer?.backgroundColor = theme.borderColor.cgColor
+        divider.translatesAutoresizingMaskIntoConstraints = false
+
+        let list = NSStackView()
+        list.orientation = .vertical
+        list.alignment = .leading
+        list.spacing = 2
+        list.translatesAutoresizingMaskIntoConstraints = false
+        sidebar.addSubview(list)
+        sidebar.addSubview(divider)
+
+        let pageArea = NSView()
+        pageArea.translatesAutoresizingMaskIntoConstraints = false
+        root.addSubview(sidebar)
+        root.addSubview(pageArea)
+
+        pages.removeAll()
+        sidebarRows.removeAll()
         for tab in Tab.allCases {
-            tabs.addTabViewItem(tabItem(tab.rawValue, content(for: tab)))
+            let row = SettingsSidebarRow(tab: tab) { [weak self] in self?.selectTab(tab) }
+            list.addArrangedSubview(row)
+            row.widthAnchor.constraint(equalTo: list.widthAnchor).isActive = true
+            sidebarRows[tab] = row
+
+            let page = pageView(content(for: tab))
+            page.translatesAutoresizingMaskIntoConstraints = false
+            page.isHidden = true
+            pageArea.addSubview(page)
+            NSLayoutConstraint.activate([
+                page.topAnchor.constraint(equalTo: pageArea.topAnchor),
+                page.bottomAnchor.constraint(equalTo: pageArea.bottomAnchor),
+                page.leadingAnchor.constraint(equalTo: pageArea.leadingAnchor),
+                page.trailingAnchor.constraint(equalTo: pageArea.trailingAnchor),
+            ])
+            pages[tab] = page
         }
-        root.addSubview(tabs)
+
         NSLayoutConstraint.activate([
-            tabs.topAnchor.constraint(equalTo: root.topAnchor, constant: 12),
-            tabs.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: 12),
-            tabs.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -12),
-            tabs.bottomAnchor.constraint(equalTo: root.bottomAnchor, constant: -12),
+            sidebar.topAnchor.constraint(equalTo: root.topAnchor),
+            sidebar.bottomAnchor.constraint(equalTo: root.bottomAnchor),
+            sidebar.leadingAnchor.constraint(equalTo: root.leadingAnchor),
+            sidebar.widthAnchor.constraint(equalToConstant: Self.sidebarWidth),
+            divider.topAnchor.constraint(equalTo: sidebar.topAnchor),
+            divider.bottomAnchor.constraint(equalTo: sidebar.bottomAnchor),
+            divider.trailingAnchor.constraint(equalTo: sidebar.trailingAnchor),
+            divider.widthAnchor.constraint(equalToConstant: 1),
+            // Room above the list for a search field, should one be added.
+            list.topAnchor.constraint(equalTo: sidebar.topAnchor, constant: 12),
+            list.leadingAnchor.constraint(equalTo: sidebar.leadingAnchor, constant: 10),
+            list.trailingAnchor.constraint(equalTo: divider.leadingAnchor, constant: -10),
+            pageArea.topAnchor.constraint(equalTo: root.topAnchor),
+            pageArea.bottomAnchor.constraint(equalTo: root.bottomAnchor),
+            pageArea.leadingAnchor.constraint(equalTo: sidebar.trailingAnchor),
+            pageArea.trailingAnchor.constraint(equalTo: root.trailingAnchor),
         ])
-        tabs.delegate = self
-        tabView = tabs
+        showPage(selectedTab)
         refresh()
         return root
     }
@@ -279,7 +374,6 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     private func content(for tab: Tab) -> NSView {
         switch tab {
         case .general: return buildGeneralTab()
-        case .otherMacs: return buildOtherMacsTab()
         case .appearance: return buildAppearanceTab()
         case .sessions: return buildSessionsTab()
         case .files: return buildFilesTab()
@@ -287,12 +381,13 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         case .terminal: return buildTerminalTab()
         case .agents: return buildAgentsTab()
         case .accounts: return buildAccountsTab()
+        case .remote: return buildRemoteTab()
         }
     }
 
-    /// Each pane scrolls: the window is a fixed size, and a pane taller than
+    /// Each page scrolls: the window is a fixed size, and a page taller than
     /// it (Agents, Sessions) would otherwise be cut off at the bottom.
-    private func tabItem(_ label: String, _ content: NSView) -> NSTabViewItem {
+    private func pageView(_ content: NSView) -> NSView {
         let document = FlippedView()
         document.translatesAutoresizingMaskIntoConstraints = false
         content.translatesAutoresizingMaskIntoConstraints = false
@@ -308,15 +403,23 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
             document.topAnchor.constraint(equalTo: scroll.contentView.topAnchor),
             document.leadingAnchor.constraint(equalTo: scroll.contentView.leadingAnchor),
             document.widthAnchor.constraint(equalTo: scroll.contentView.widthAnchor),
-            content.topAnchor.constraint(equalTo: document.topAnchor, constant: 14),
-            content.leadingAnchor.constraint(equalTo: document.leadingAnchor, constant: 14),
-            content.trailingAnchor.constraint(equalTo: document.trailingAnchor, constant: -14),
-            content.bottomAnchor.constraint(equalTo: document.bottomAnchor, constant: -14),
+            content.topAnchor.constraint(equalTo: document.topAnchor, constant: 20),
+            content.leadingAnchor.constraint(equalTo: document.leadingAnchor, constant: 24),
+            content.trailingAnchor.constraint(equalTo: document.trailingAnchor, constant: -24),
+            content.bottomAnchor.constraint(equalTo: document.bottomAnchor, constant: -20),
         ])
-        let item = NSTabViewItem()
-        item.label = label
-        item.view = scroll
-        return item
+        return scroll
+    }
+
+    /// Shows one page and marks its row. The Appearance font controls and the
+    /// Terminal page show the same directives, so every switch re-reads the
+    /// file: an edit in one must show in the other.
+    private func showPage(_ tab: Tab) {
+        selectedTab = tab
+        for (each, page) in pages { page.isHidden = each != tab }
+        for (each, row) in sidebarRows { row.isSelected = each == tab }
+        refreshAppearance()
+        refreshConfigControls()
     }
 
     private func sectionStack() -> NSStackView {
@@ -342,7 +445,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         stack.addArrangedSubview(caption(abbreviatedConfigPath()))
         stack.addArrangedSubview(caption(
             "Every setting in this window is saved to this file. Keys Zetty doesn't own are "
-            + "forwarded to the terminal (see the Terminal tab), so an existing ghostty config "
+            + "forwarded to the terminal (see the Terminal page), so an existing ghostty config "
             + "can be pasted straight in. Reload anytime with ⇧⌘,."
         ))
 
@@ -406,9 +509,9 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         return stack
     }
 
-    /// Other Macs: serving and showing other Macs, and Zetty's own
-    /// Tailscale device (sign-in, QR code, name).
-    private func buildOtherMacsTab() -> NSView {
+    /// Remote: serving and showing other Macs, and Zetty's own Tailscale
+    /// device (sign-in, QR code, name).
+    private func buildRemoteTab() -> NSView {
         let stack = sectionStack()
         stack.addArrangedSubview(sectionHeader("Other Macs"))
         serveRemoteSwitch.target = self
@@ -604,6 +707,14 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         addFullWidth(switchRow("Write a handoff when hibernating", control: handoffsSwitch), to: stack)
         stack.addArrangedSubview(caption(
             "Each Claude or Codex pane compacts its conversation into a handoff before its project is hibernated, and waking resumes it instead of opening a bare shell. Needs preserved sessions."
+        ))
+
+        sidebarHibernatingSwitch.target = self
+        sidebarHibernatingSwitch.action = #selector(sidebarHibernatingToggled(_:))
+        addFullWidth(switchRow("Show Hibernating in the sidebar", control: sidebarHibernatingSwitch), to: stack)
+        stack.addArrangedSubview(caption(
+            "Lists hibernated projects at the bottom of the sidebar. Hidden, the filter skips them too; "
+            + "Wake Project in the command palette (⌘K) and zetty wake still reach them."
         ))
 
         // Not a config key: login-item state is owned by the system, so a
@@ -883,9 +994,35 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     /// route into account management) and by the command palette's per-pane
     /// Settings entries.
     func selectTab(_ tab: Tab) {
-        guard let tabView, let index = Tab.allCases.firstIndex(of: tab),
-              index < tabView.numberOfTabViewItems else { return }
-        tabView.selectTabViewItem(at: index)
+        showPage(tab)
+    }
+
+    // MARK: Staying in front
+
+    private var sheetObservers: [NSObjectProtocol] = []
+
+    /// At floating level Settings would cover the sheets of Zetty's other
+    /// windows (Project Settings, the clone sheet, alerts), so it drops to
+    /// the normal level while any of them shows one and floats again after.
+    private func observeOtherWindowsSheets() {
+        let center = NotificationCenter.default
+        for name in [NSWindow.willBeginSheetNotification, NSWindow.didEndSheetNotification] {
+            sheetObservers.append(center.addObserver(forName: name, object: nil, queue: .main) { [weak self] note in
+                guard let self, (note.object as? NSWindow) !== self.window else { return }
+                // didEndSheet arrives while the sheet is still attached.
+                DispatchQueue.main.async { self.updateLevelForOtherSheets() }
+            })
+        }
+    }
+
+    private func updateLevelForOtherSheets() {
+        guard let window else { return }
+        let otherSheet = NSApp.windows.contains { $0 !== window && $0.isVisible && $0.attachedSheet != nil }
+        window.level = otherSheet ? .normal : .floating
+    }
+
+    deinit {
+        sheetObservers.forEach(NotificationCenter.default.removeObserver)
     }
 
     private func refreshAccounts() {
@@ -1149,18 +1286,12 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
 
     /// Re-themes this window after an appearance/scheme change made from it:
     /// token colors are baked into the labels at build time, so the content is
-    /// rebuilt against the new palette (staying on the same tab).
+    /// rebuilt against the new palette (staying on the same page).
     private func rebuildAfterThemeChange() {
-        let selectedIndex = tabView.flatMap { tabs in
-            tabs.selectedTabViewItem.map(tabs.indexOfTabViewItem)
-        }
         switches.removeAll()
         window?.appearance = ZTheme.current.appearance
         window?.backgroundColor = ZTheme.current.bg1Color
-        window?.contentView = buildContent()
-        if let selectedIndex, selectedIndex != NSNotFound {
-            tabView?.selectTabViewItem(at: selectedIndex)
-        }
+        window?.contentView = buildContent()  // reopens `selectedTab`
     }
 
     private func harnessRow(_ harness: Harness) -> (NSView, NSSwitch) {
@@ -1374,6 +1505,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         checkUpdatesSwitch.state = config.checkUpdates ? .on : .off
         serveRemoteSwitch.state = config.serveRemote ? .on : .off
         showRemoteSwitch.state = config.showRemoteMachines ? .on : .off
+        sidebarHibernatingSwitch.state = config.showHibernatingInSidebar ? .on : .off
         if let state = tailnetStateProvider?() { showTailnetState(state) }
         showDeviceName()
 
@@ -1461,6 +1593,10 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
 
     @objc private func showRemoteToggled(_ sender: NSSwitch) {
         updateConfig { $0.showRemoteMachines = sender.state == .on }
+    }
+
+    @objc private func sidebarHibernatingToggled(_ sender: NSSwitch) {
+        updateConfig { $0.showHibernatingInSidebar = sender.state == .on }
     }
 
     private func showDeviceName() {
@@ -1842,22 +1978,96 @@ extension SettingsWindowController: NSTextFieldDelegate {
     }
 }
 
-// MARK: - Tab switches
-
-extension SettingsWindowController: NSTabViewDelegate {
-
-    /// Re-reads the file on every tab switch: the Appearance font controls and
-    /// the Terminal tab show the same directives, so an edit in one must show
-    /// in the other.
-    func tabView(_ tabView: NSTabView, didSelect tabViewItem: NSTabViewItem?) {
-        refreshAppearance()
-        refreshConfigControls()
-    }
-}
-
-/// Top-anchored document view for the scrolling Settings panes.
+/// Top-anchored document view for the scrolling Settings pages.
 private final class FlippedView: NSView {
     override var isFlipped: Bool { true }
+}
+
+// MARK: - Sidebar row
+
+/// One page in the Settings sidebar: a white SF Symbol on a rounded square
+/// filled from the project palette, then the page name. Selected is a `bg3`
+/// fill, hover `bg2`, never a saturated block.
+private final class SettingsSidebarRow: NSView {
+
+    private let onSelect: () -> Void
+    private let label: NSTextField
+    private var hovering = false { didSet { updateColors() } }
+    var isSelected = false { didSet { updateColors() } }
+
+    init(tab: SettingsWindowController.Tab, onSelect: @escaping () -> Void) {
+        self.onSelect = onSelect
+        label = NSTextField(labelWithString: tab.rawValue)
+        super.init(frame: .zero)
+        wantsLayer = true
+        layer?.cornerRadius = 7
+        translatesAutoresizingMaskIntoConstraints = false
+
+        let square = NSView()
+        square.wantsLayer = true
+        square.layer?.cornerRadius = 6
+        square.layer?.backgroundColor = ZTheme.projectDeepColor(id: tab.hue)?.cgColor
+        square.translatesAutoresizingMaskIntoConstraints = false
+
+        let symbol = tab.symbols.lazy
+            .compactMap { NSImage(systemSymbolName: $0, accessibilityDescription: nil) }
+            .first
+        let glyph = NSImageView()
+        glyph.image = symbol?.withSymbolConfiguration(.init(pointSize: 12, weight: .medium))
+        glyph.contentTintColor = ZTheme.iconGlyphColor
+        glyph.imageScaling = .scaleProportionallyDown  // wide symbols stay inside
+        glyph.translatesAutoresizingMaskIntoConstraints = false
+        square.addSubview(glyph)
+
+        label.font = ZTheme.chromeFont(size: 13)
+        label.lineBreakMode = .byTruncatingTail
+        label.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(square)
+        addSubview(label)
+
+        NSLayoutConstraint.activate([
+            heightAnchor.constraint(equalToConstant: 30),
+            square.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 6),
+            square.centerYAnchor.constraint(equalTo: centerYAnchor),
+            square.widthAnchor.constraint(equalToConstant: 22),
+            square.heightAnchor.constraint(equalToConstant: 22),
+            glyph.centerXAnchor.constraint(equalTo: square.centerXAnchor),
+            glyph.centerYAnchor.constraint(equalTo: square.centerYAnchor),
+            glyph.widthAnchor.constraint(lessThanOrEqualToConstant: 15),
+            glyph.heightAnchor.constraint(lessThanOrEqualToConstant: 15),
+            label.leadingAnchor.constraint(equalTo: square.trailingAnchor, constant: 9),
+            label.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -6),
+            label.centerYAnchor.constraint(equalTo: centerYAnchor),
+        ])
+        setAccessibilityElement(true)
+        setAccessibilityRole(.button)
+        setAccessibilityLabel(tab.rawValue)
+        updateColors()
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError("not supported") }
+
+    private func updateColors() {
+        let theme = ZTheme.current
+        layer?.backgroundColor = isSelected ? theme.bg3Color.cgColor
+            : hovering ? theme.bg2Color.cgColor : NSColor.clear.cgColor
+        label.textColor = isSelected ? theme.fgColor : theme.fg2Color
+        setAccessibilityValue(isSelected ? "selected" : nil)
+    }
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        trackingAreas.forEach(removeTrackingArea)
+        addTrackingArea(NSTrackingArea(rect: bounds, options: [.mouseEnteredAndExited, .activeAlways],
+                                       owner: self, userInfo: nil))
+    }
+
+    override func mouseEntered(with event: NSEvent) { hovering = true }
+    override func mouseExited(with event: NSEvent) { hovering = false }
+    override func mouseDown(with event: NSEvent) { onSelect() }
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+    override func accessibilityPerformPress() -> Bool { onSelect(); return true }
 }
 
 // MARK: - Accounts table

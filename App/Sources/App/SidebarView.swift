@@ -13,7 +13,6 @@ import ZettyGhostty
 /// its logos, so an unchanged icon is the same instance.
 struct SidebarProject: Equatable {
     let name: String
-    let isPinned: Bool
     let tabTitles: [String]              // .count >= 2 → expandable
     let tabStatuses: [AgentStatus?]      // parallel to tabTitles (agent status per tab)
     let tabIcons: [NSImage?]             // parallel to tabTitles (tool logo per tab)
@@ -29,7 +28,7 @@ struct SidebarProject: Equatable {
     let isClone: Bool                    // renders attached under its source with a fork glyph
     let cloneSourceIndex: Int?           // index of the source project (nil → orphan)
     let isPendingClone: Bool             // transient "Cloning…" placeholder: spinner glyph, non-interactive
-    let spaceID: UUID?                   // the Space this row renders under, nil for Pinned/Projects
+    let spaceID: UUID?                   // the Space this row renders under, nil for Projects
     let spaceName: String?               // that Space's name — tags a hibernated row with where it will return
     let accountColor: NSColor?           // project's DEFAULT agent account (nil = the default login)
     let accountName: String?             // that account's name, for the row's tooltip
@@ -82,7 +81,6 @@ func agentStatusColor(_ status: AgentStatus?) -> NSColor? {
 /// A top-level section grouping.
 private enum SidebarSection: Hashable {
     case home
-    case pinned
     case projects
     case scratch
     case hibernated
@@ -95,7 +93,6 @@ private enum SidebarSection: Hashable {
     func title(spaces: [SidebarSpace], machines: [SidebarMachine]) -> String {
         switch self {
         case .home:       return "Home"
-        case .pinned:     return "Pinned"
         case .projects:   return "Projects"
         case .scratch:    return "Scratch"
         case .hibernated: return "Hibernating"
@@ -140,7 +137,7 @@ private final class OutlineItem: NSObject {
 
 /// A sectioned sidebar backed by an `NSOutlineView`.
 ///
-/// Top level is a filterable list of section headers (`Pinned` / `Projects`,
+/// Top level is a filterable list of section headers (`Projects`, Spaces,
 /// with counts) and project rows; a project expands to its tab children when it
 /// has 2+ tabs.  The view is dumb — it takes plain display data in and reports
 /// user actions out via closures.  No ZettyCore import.
@@ -163,15 +160,12 @@ final class SidebarView: NSView {
     /// (projectIndex, fromTab, toTab).
     var onMoveTab: ((Int, Int, Int) -> Void)?
 
-    /// Called when a project row is drag-reordered within its section (Pinned or
-    /// Projects): (fromProjectIndex, toProjectIndex), both real `projects` indices.
+    /// Called when a project row is drag-reordered within its section (Projects
+    /// or a Space): (fromProjectIndex, toProjectIndex), both real `projects` indices.
     var onMoveProject: ((Int, Int) -> Void)?
 
     /// Called when the user clicks the "+" Add Project button (opens the picker).
     var onAddProject: (() -> Void)?
-
-    /// Called with the project index when the user clicks the pin button.
-    var onTogglePin: ((Int) -> Void)?
 
     /// Called when a Space header's disclosure is clicked. Collapse state is
     /// persisted, so the controller writes it to the model and refreshes.
@@ -219,7 +213,7 @@ final class SidebarView: NSView {
 
     // MARK: - Private state
 
-    /// The full (unfiltered) project list as last received, pinned-first sorted.
+    /// The full (unfiltered) project list as last received, in model order.
     private var projects: [SidebarProject] = []
     private var spaces: [SidebarSpace] = []
     private var machines: [SidebarMachine] = []
@@ -236,7 +230,6 @@ final class SidebarView: NSView {
     /// The top-level rows currently displayed (headers + visible projects).
     private var topLevel: [OutlineItem.Kind] = []
     private var homeCount = 0
-    private var pinnedCount = 0
     private var projectsCount = 0
     private var scratchCount = 0
     private var hibernatedCount = 0
@@ -245,6 +238,13 @@ final class SidebarView: NSView {
     /// `SidebarSpace` (which carries no counts) or the unfiltered model.
     private var spaceCounts: [UUID: (awake: Int, hibernated: Int)] = [:]
 
+    /// Whether the Hibernating section is shown at all
+    /// (`zetty-sidebar-hibernating`). Hidden means hidden: its rows, header and
+    /// count go, and the filter does not list hibernated projects either.
+    var showsHibernating = false {
+        didSet { if oldValue != showsHibernating { rebuildOutline() } }
+    }
+
     /// Whether the Hibernating section is collapsed (its dormant project rows
     /// hidden). Transient — resets to expanded on relaunch, like zoom.
     private var hibernatedCollapsed = false
@@ -252,6 +252,9 @@ final class SidebarView: NSView {
     /// Whether "This Mac" is collapsed (every local section hidden). View-local
     /// and transient, like `hibernatedCollapsed`.
     private var thisMacCollapsed = false
+    /// Whether Projects is collapsed. Transient, like `hibernatedCollapsed`;
+    /// the active project still shows under it, as under a collapsed Space.
+    private var projectsCollapsed = false
     /// A machine group's collapse state as the user set it, by stable ID.
     /// Without one, a group is collapsed exactly while its Mac is offline, and
     /// the choice is dropped whenever that Mac goes on- or offline, so a Mac
@@ -294,6 +297,14 @@ final class SidebarView: NSView {
     /// Opens the Settings window (⌘, equivalent).
     var onOpenSettings: (() -> Void)?
 
+    /// An Active row was clicked.
+    var onSelectActive: ((ActiveSession.Target) -> Void)?
+
+    /// The Active section, fixed above the scrolling list.
+    private let activeView = SidebarActiveView()
+    /// Every Active row as last received; the filter narrows what shows.
+    private var activeRows: [ActiveRow] = []
+
     // MARK: - Init
 
     override init(frame frameRect: NSRect) {
@@ -303,6 +314,12 @@ final class SidebarView: NSView {
         layer?.backgroundColor = ZTheme.current.bg0Color.cgColor
 
         setupSearchField()
+        activeView.onSelect = { [weak self] target in self?.onSelectActive?(target) }
+        activeView.onToggleCollapsed = { [weak self] in
+            guard let self else { return }
+            self.activeView.isCollapsed.toggle()
+        }
+        addSubview(activeView)
         setupOutlineView()
         setupAddButton()
         setupLayout()
@@ -555,7 +572,13 @@ final class SidebarView: NSView {
             topAddButton.widthAnchor.constraint(equalToConstant: 22),
             topAddButton.heightAnchor.constraint(equalToConstant: 22),
 
-            scrollView.topAnchor.constraint(equalTo: searchField.bottomAnchor, constant: 6),
+            // Active sits between the filter and the list, so it stays put
+            // while the list scrolls; only the boundary moves as rows come
+            // and go.
+            activeView.topAnchor.constraint(equalTo: searchField.bottomAnchor, constant: 6),
+            activeView.leadingAnchor.constraint(equalTo: leadingAnchor),
+            activeView.trailingAnchor.constraint(equalTo: trailingAnchor),
+            scrollView.topAnchor.constraint(equalTo: activeView.bottomAnchor),
             scrollView.leadingAnchor.constraint(equalTo: leadingAnchor),
             scrollView.trailingAnchor.constraint(equalTo: trailingAnchor),
             scrollView.bottomAnchor.constraint(equalTo: addPill.topAnchor, constant: -6),
@@ -587,6 +610,7 @@ final class SidebarView: NSView {
         styleBellButton()
         styleGearButton()
         styleTopAddButton()
+        activeView.applyTheme()
         // Row views take their colors from the theme at build time, and
         // `update(...)` now skips reloads when the data is unchanged — so a
         // scheme switch has to rebuild the rows itself or they keep the old
@@ -661,6 +685,21 @@ final class SidebarView: NSView {
         rebuildOutline()
     }
 
+    /// Replaces the Active rows. Cheap when nothing changed: the view diffs
+    /// by row and re-renders in place.
+    func updateActive(_ rows: [ActiveRow]) {
+        activeRows = rows
+        applyActiveFilter()
+    }
+
+    /// Filtering keeps the Active rows whose label matches, rather than hiding
+    /// the section outright.
+    private func applyActiveFilter() {
+        let query = filterText.trimmingCharacters(in: .whitespaces).lowercased()
+        activeView.update(rows: query.isEmpty ? activeRows
+                          : activeRows.filter { $0.label.lowercased().contains(query) })
+    }
+
     /// Toggles the Hibernating section's collapsed state and rebuilds.
     private func toggleHibernatedCollapsed() {
         hibernatedCollapsed.toggle()
@@ -669,6 +708,11 @@ final class SidebarView: NSView {
 
     private func toggleThisMacCollapsed() {
         thisMacCollapsed.toggle()
+        rebuildOutline()
+    }
+
+    private func toggleProjectsCollapsed() {
+        projectsCollapsed.toggle()
         rebuildOutline()
     }
 
@@ -689,11 +733,11 @@ final class SidebarView: NSView {
         let visible = projects.enumerated().filter { _, p in
             query.isEmpty || p.name.lowercased().contains(query)
         }
-        // Sections: Home · Pinned · Spaces · Projects · Scratch · Hibernating.
+        // Sections: Home · Projects · Spaces · Scratch · Hibernating.
         // Home always sits first in its own section (even when hibernated — it
         // dims in place rather than moving to Hibernating). Scratch terminals
         // (project-less, ephemeral) get their own group; other hibernated
-        // projects sit at the bottom regardless of pin state.
+        // projects sit at the bottom.
         let home = visible.filter { $0.element.isHome }
         let rest = visible.filter { !$0.element.isHome }
         // A member of a Space stays in its Space when hibernated — dimmed in
@@ -701,7 +745,7 @@ final class SidebarView: NSView {
         // Space members included. Membership is kept (`spaceID` is untouched),
         // so waking one returns it to its Space — or to Projects when it has
         // none. Sorted by name: display order only, real indices preserved.
-        let hibernated = rest.filter { $0.element.isHibernated }
+        let hibernated = rest.filter { $0.element.isHibernated && showsHibernating }
             .sorted { $0.element.name.localizedCaseInsensitiveCompare($1.element.name) == .orderedAscending }
         let placed = rest.filter { !$0.element.isHibernated }
         let scratch = placed.filter { $0.element.isScratch }
@@ -716,14 +760,12 @@ final class SidebarView: NSView {
         }
         let attachedOffsets = Set(attachedClones.map(\.offset))
         let standalone = regular.filter { !attachedOffsets.contains($0.offset) }
-        let pinned = standalone.filter { $0.element.isPinned && $0.element.spaceID == nil }
-        let unpinned = standalone.filter { !$0.element.isPinned && $0.element.spaceID == nil }
+        let loose = standalone.filter { $0.element.spaceID == nil }
         func members(of spaceID: UUID) -> [(offset: Int, element: SidebarProject)] {
             standalone.filter { $0.element.spaceID == spaceID }
         }
         homeCount = home.count
-        pinnedCount = pinned.count
-        projectsCount = unpinned.count
+        projectsCount = loose.count
         scratchCount = scratch.count
         hibernatedCount = hibernated.count
 
@@ -739,13 +781,11 @@ final class SidebarView: NSView {
         var rows: [OutlineItem.Kind] = []
         // Home renders as a single row at the very top — no section header.
         rows += home.map { .project($0.offset) }
-        if !pinned.isEmpty {
-            rows.append(.header(.pinned))
-            rows += withClones(pinned)
-        }
-        if !unpinned.isEmpty {
+        if !loose.isEmpty {
             rows.append(.header(.projects))
-            rows += withClones(unpinned)
+            // Collapsed still shows the active project (and only it): an
+            // invisible selection would be worse than an extra row.
+            rows += withClones(loose).filter { !projectsCollapsed || $0 == .project(activeProject) }
         }
         // Spaces sit below Projects, in their own order. A Space
         // header is shown even with no members, so a freshly created Space is
@@ -888,12 +928,6 @@ final class SidebarView: NSView {
     @objc private func addButtonClicked(_: Any?) {
         // Opens the unified Add Project picker directly (no menu).
         onAddProject?()
-    }
-
-    @objc private func pinButtonClicked(_ sender: NSButton) {
-        let projectIndex = sender.tag
-        guard projects.indices.contains(projectIndex) else { return }
-        onTogglePin?(projectIndex)
     }
 
     @objc private func removeProjectMenuClicked(_ sender: NSMenuItem) {
@@ -1152,6 +1186,7 @@ extension SidebarView: NSSearchFieldDelegate {
         guard obj.object as? NSSearchField === searchField else { return }
         filterText = searchField.stringValue
         rebuildOutline()
+        applyActiveFilter()
     }
 }
 
@@ -1262,8 +1297,8 @@ extension SidebarView: NSOutlineViewDataSource {
 
         // Project row: within its own section, OR onto a Space header / into a
         // different section's row range — Space assignment, the only
-        // cross-section drop Zetty allows (the pinned-first invariant depends
-        // on every other cross-section drop staying refused).
+        // cross-section drop Zetty allows (section order depends on every
+        // other cross-section drop staying refused).
         guard let from = draggedProject(from: info), projects.indices.contains(from) else { return [] }
 
         // Drop ONTO a Space header → assign to that Space. Only when the model
@@ -1280,7 +1315,7 @@ extension SidebarView: NSOutlineViewDataSource {
         // Drop into a GAP (item == nil) that belongs to a different, eligible
         // section → assignment/ungroup. Leave the indicator where it is; the
         // gap is already a valid position in the target section. Mirrors
-        // acceptDrop exactly: a .space gap always assigns, but a .pinned/
+        // acceptDrop exactly: a .space gap always assigns, but a
         // .projects gap only ungroups — it does nothing when the dragged row
         // is already spaceless, so the indicator must not claim otherwise.
         if item == nil, isSpaceAssignable(from),
@@ -1288,7 +1323,7 @@ extension SidebarView: NSOutlineViewDataSource {
             switch gapSection {
             case .space:
                 return .move
-            case .pinned, .projects:
+            case .projects:
                 if case .space = current {
                     return .move
                 }
@@ -1353,8 +1388,8 @@ extension SidebarView: NSOutlineViewDataSource {
                 isReordering = false
                 onAssignProjectToSpace?(from, id)
                 return true
-            case .pinned, .projects:
-                // Dropping out of a Space ungroups; pin state is untouched.
+            case .projects:
+                // Dropping out of a Space ungroups.
                 if case .space = current {
                     isReordering = false
                     onAssignProjectToSpace?(from, nil)
@@ -1422,7 +1457,7 @@ extension SidebarView: NSOutlineViewDataSource {
         if let spaceID = p.spaceID { return .space(spaceID) }
         if p.isHibernated { return .hibernated }
         if p.isScratch { return .scratch }
-        return p.isPinned ? .pinned : .projects
+        return .projects
     }
 
     /// The half-open `topLevel` index range of the project rows under `section`'s
@@ -1550,8 +1585,11 @@ extension SidebarView: NSOutlineViewDelegate {
             var hairline = false
             switch section {
             case .home:       count = homeCount
-            case .pinned:     count = pinnedCount
-            case .projects:   count = projectsCount
+            case .projects:
+                count = projectsCount
+                collapsible = true
+                collapsed = projectsCollapsed
+                onToggle = { [weak self] in self?.toggleProjectsCollapsed() }
             case .scratch:    count = scratchCount
             case .hibernated:
                 count = hibernatedCount
@@ -1622,17 +1660,12 @@ extension SidebarView: NSOutlineViewDelegate {
             }
             cellView.configure(
                 name: project.name,
-                isPinned: false,
                 isActive: false,
                 agentStatus: machine.online ? project.status : nil,
                 projectColor: project.projectColor,
                 customGlyph: project.customGlyph,
                 // An offline Mac's rows are its last known state: dimmed.
-                isHibernated: !machine.online,
-                isRemote: true,
-                projectIndex: -1,
-                target: self,
-                action: #selector(pinButtonClicked(_:))
+                isHibernated: !machine.online
             )
             return cellView
 
@@ -1650,7 +1683,6 @@ extension SidebarView: NSOutlineViewDelegate {
             }
             cellView.configure(
                 name: project.name,
-                isPinned: project.isPinned,
                 isActive: p == activeProject,
                 agentStatus: project.status,
                 toolIcon: project.icon,
@@ -1659,17 +1691,12 @@ extension SidebarView: NSOutlineViewDelegate {
                 isHibernated: project.isHibernated,
                 isWritingHandoffs: project.isWritingHandoffs,
                 handoffFailed: project.handoffFailed,
-                isScratch: project.isScratch,
                 isClone: project.isClone,
                 isHome: project.isHome,
-                inSpace: project.spaceID != nil,
                 spaceName: project.spaceName,
                 isPendingClone: project.isPendingClone,
                 accountColor: project.accountColor,
-                accountName: project.accountName,
-                projectIndex: p,
-                target: self,
-                action: #selector(pinButtonClicked(_:))
+                accountName: project.accountName
             )
             return cellView
 
@@ -1740,7 +1767,8 @@ extension SidebarView: NSOutlineViewDelegate {
 // MARK: - HeaderCellView
 
 /// A section header row: uppercase title on the left, count on the right.
-/// A collapsible section (Hibernating) also shows a leading disclosure chevron
+/// A collapsible section (Projects, Spaces, Hibernating, This Mac, each Mac)
+/// also shows a leading disclosure chevron
 /// and captures clicks anywhere in the row via a transparent overlay button.
 private final class HeaderCellView: NSTableCellView {
 
@@ -1755,7 +1783,7 @@ private final class HeaderCellView: NSTableCellView {
     private let hairlineView = NSView()
     /// Full-bleed transparent button that toggles a collapsible section — a
     /// button (not a gesture recognizer) so clicks land reliably inside the
-    /// outline view, mirroring the project row's pin button.
+    /// outline view.
     private let toggleButton = NSButton()
     private var toggleFullWidth: NSLayoutConstraint!
     private var toggleChevronWidth: NSLayoutConstraint!
@@ -1941,7 +1969,7 @@ private final class SidebarRowView: NSTableRowView {
 
 // MARK: - ProjectCellView
 
-/// A single project row: name label on the left, pin toggle button on the right.
+/// A single project row: glyph, optional tool logo, name, and the account dot.
 private final class ProjectCellView: NSTableCellView {
 
     private let glyphView = NSImageView()
@@ -1949,7 +1977,6 @@ private final class ProjectCellView: NSTableCellView {
     private let spinner = NSProgressIndicator()
     private let toolIconView = NSImageView()
     private let nameLabel: NSTextField
-    private let pinButton: NSButton
     /// The project's DEFAULT agent account, trailing. Created unconditionally
     /// with a 0↔6 width toggle so the row's constraints never change shape —
     /// these cells are recycled on every refresh.
@@ -1963,7 +1990,6 @@ private final class ProjectCellView: NSTableCellView {
 
     override init(frame frameRect: NSRect) {
         nameLabel = NSTextField(labelWithString: "")
-        pinButton = NSButton(title: "", target: nil, action: nil)
         accountDotWidth = accountDot.widthAnchor.constraint(equalToConstant: 0)
 
         super.init(frame: frameRect)
@@ -1988,11 +2014,6 @@ private final class ProjectCellView: NSTableCellView {
         nameLabel.translatesAutoresizingMaskIntoConstraints = false
         addSubview(nameLabel)
 
-        pinButton.bezelStyle = .inline
-        pinButton.isBordered = false
-        pinButton.imagePosition = .imageOnly
-        pinButton.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(pinButton)
         accountDot.wantsLayer = true
         accountDot.layer?.cornerRadius = 3
         accountDot.translatesAutoresizingMaskIntoConstraints = false
@@ -2018,35 +2039,26 @@ private final class ProjectCellView: NSTableCellView {
             toolIconGap,
             nameLabel.centerYAnchor.constraint(equalTo: centerYAnchor),
             nameLabel.trailingAnchor.constraint(equalTo: accountDot.leadingAnchor, constant: -4),
-            accountDot.trailingAnchor.constraint(equalTo: pinButton.leadingAnchor, constant: -4),
+            accountDot.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -10),
             accountDot.centerYAnchor.constraint(equalTo: centerYAnchor),
             accountDot.heightAnchor.constraint(equalToConstant: 6),
             accountDotWidth,
-
-            pinButton.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -6),
-            pinButton.centerYAnchor.constraint(equalTo: centerYAnchor),
-            pinButton.widthAnchor.constraint(equalToConstant: 20),
-            pinButton.heightAnchor.constraint(equalToConstant: 20),
         ])
     }
 
     @available(*, unavailable)
     required init?(coder _: NSCoder) { fatalError("not supported") }
 
-    func configure(name: String, isPinned: Bool, isActive: Bool, agentStatus: AgentStatus?,
+    func configure(name: String, isActive: Bool, agentStatus: AgentStatus?,
                    toolIcon: NSImage? = nil, projectColor: NSColor? = nil,
                    customGlyph: String? = nil, isHibernated: Bool = false,
                    isWritingHandoffs: Bool = false, handoffFailed: Bool = false,
-                   isScratch: Bool = false,
                    isClone: Bool = false,
                    isHome: Bool = false,
-                   inSpace: Bool = false,
                    spaceName: String? = nil,
                    isPendingClone: Bool = false,
                    accountColor: NSColor? = nil,
-                   accountName: String? = nil,
-                   isRemote: Bool = false,
-                   projectIndex: Int, target: AnyObject, action: Selector) {
+                   accountName: String? = nil) {
         glyphLeading.constant = isClone ? 18 : 4
 
         // Re-resolved per render (the palette flips with the scheme), and
@@ -2056,7 +2068,7 @@ private final class ProjectCellView: NSTableCellView {
         accountDot.toolTip = accountName.map { "New panes here use the \($0) account" }
 
         // A pending clone is a transient "Cloning…" placeholder: dim label, a
-        // progress spinner in place of the glyph, and no tool logo or pin star.
+        // progress spinner in place of the glyph, and no tool logo.
         if isPendingClone {
             nameLabel.stringValue = "Cloning \(name)\u{2026}"
             nameLabel.textColor = ZTheme.current.fg3Color
@@ -2064,7 +2076,6 @@ private final class ProjectCellView: NSTableCellView {
             toolIconView.image = nil
             toolIconWidth.constant = 0
             toolIconGap.constant = 0
-            pinButton.isHidden = true
             spinner.startAnimation(nil)
             return
         }
@@ -2141,28 +2152,6 @@ private final class ProjectCellView: NSTableCellView {
                     ?? projectColor
                     ?? (isActive ? ZTheme.current.accentColor : ZTheme.current.fg3Color))
         }
-
-        // Scratch terminals and Home can't be pinned — hide the star entirely.
-        // A Space member lives in its Space, not in Pinned, so it has no star —
-        // same reasoning as Scratch and Home, which own their own sections.
-        // Another Mac's row is view-only, so nothing to pin either.
-        pinButton.isHidden = isScratch || isHome || inSpace || isRemote
-
-        // Pinned rows use a filled accent star; unpinned rows show a dim hollow star.
-        let symbolName = isPinned ? "star.fill" : "star"
-        if let image = NSImage(systemSymbolName: symbolName,
-                               accessibilityDescription: isPinned ? "Pinned" : "Pin") {
-            pinButton.image = image
-            pinButton.contentTintColor = isPinned
-                ? ZTheme.current.accentColor
-                : ZTheme.current.fg3Color
-        } else {
-            pinButton.title = isPinned ? "★" : "☆"
-        }
-
-        pinButton.tag = projectIndex
-        pinButton.target = target
-        pinButton.action = action
     }
 }
 

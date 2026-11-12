@@ -2,7 +2,7 @@ import Testing
 import Foundation
 @testable import ZettyCore
 
-/// A model with Home plus the named projects, all unpinned and awake.
+/// A model with Home plus the named projects, all awake.
 private func model(_ names: [String]) -> WorkspaceModel {
     let model = WorkspaceModel(homeRoot: "/Users/test")
     for name in names { model.addProject(name: name, rootPath: "/tmp/\(name)", makeActive: false) }
@@ -25,54 +25,16 @@ private func index(of name: String, in model: WorkspaceModel) -> Int {
     #expect(model.spaces.count == 1)
 }
 
-@Test func spacesRenderBelowPinnedAndUnpinnedProjects() {
-    // `delta` is added BEFORE the Space members so the Space tier has to pull
-    // them past it. Under the old pin-only ordering this reads
-    // ["Home", "alpha", "delta", "beta", "gamma"], so the assertion below
-    // fails if `regroup()` stops consulting `spaceID`.
-    let model = model(["alpha", "delta", "beta", "gamma"])
-    model.togglePin(at: index(of: "alpha", in: model))
+@Test func spacesRenderBelowProjects() {
+    // `delta` is added AFTER the Space members, so the Space tier has to push
+    // them past it: the assertion fails if `regroup()` stops consulting
+    // `spaceID`.
+    let model = model(["alpha", "beta", "gamma", "delta"])
     let space = model.createSpace(name: "Work")!
     model.assign(projectAt: index(of: "beta", in: model), to: space.id)
     model.assign(projectAt: index(of: "gamma", in: model), to: space.id)
     // Spaces sit BELOW Projects, so spaceless `delta` precedes the members.
     #expect(names(model) == ["Home", "alpha", "delta", "beta", "gamma"])
-}
-
-@Test func joiningASpaceClearsThePin() {
-    // Pinning means "lives in the Pinned section"; a Space member lives in its
-    // Space. One project, one section — so the pin is dropped on the way in.
-    let model = model(["solo", "joiner"])
-    model.togglePin(at: index(of: "joiner", in: model))
-    model.togglePin(at: index(of: "solo", in: model))
-    let space = model.createSpace(name: "Work")!
-    model.assign(projectAt: index(of: "joiner", in: model), to: space.id)
-    #expect(model.projects.first { $0.name == "joiner" }?.isPinned == false)
-    #expect(model.projects.first { $0.name == "solo" }?.isPinned == true)
-    #expect(names(model) == ["Home", "solo", "joiner"])
-}
-
-@Test func aSpaceMemberCannotBePinned() {
-    let model = model(["member"])
-    let space = model.createSpace(name: "Work")!
-    model.assign(projectAt: index(of: "member", in: model), to: space.id)
-    model.togglePin(at: index(of: "member", in: model))   // refused
-    #expect(model.projects.first { $0.name == "member" }?.isPinned == false)
-    #expect(model.projects.first { $0.name == "member" }?.spaceID == space.id)
-}
-
-@Test func regroupClearsAPinLeftOnASpaceMember() {
-    // Self-healing for a workspace.json written before this rule: the member
-    // keeps its Space and simply loses the stale star.
-    let stale = Project(name: "legacy", rootPath: "/tmp/legacy", isPinned: true,
-                        spaceID: UUID())
-    let space = Space(id: stale.spaceID!, name: "Work")
-    let restored = WorkspaceModel.restored(
-        from: SessionSnapshot.projectRuntimes(from: Workspace(projects: [stale], spaces: [space])),
-        spaces: [space], homeRoot: "/Users/test")!
-    let member = restored.projects.first { $0.name == "legacy" }
-    #expect(member?.isPinned == false)
-    #expect(member?.spaceID == space.id)
 }
 
 @Test func updateSpaceAndCollapseMutateInPlace() {
@@ -213,9 +175,8 @@ private func index(of name: String, in model: WorkspaceModel) -> Int {
 }
 
 @Test func hibernatedMembersSinkToTheBottomOfTheirSpace() {
-    // Hibernation outranks pinning INSIDE a Space: awake-pinned, awake-unpinned,
-    // hibernated-pinned, hibernated-unpinned. Fails if the tiers are dropped —
-    // plain assign order here would be one, two, three, four.
+    // Inside a Space, awake members come before hibernated ones. Fails if the
+    // tiers are dropped — plain assign order here would be one, two, three, four.
     let model = model(["one", "two", "three", "four"])
     let space = model.createSpace(name: "Work")!
     for name in ["one", "two", "three", "four"] {
@@ -242,16 +203,3 @@ private func index(of name: String, in model: WorkspaceModel) -> Int {
     #expect(names(model) == ["Home", "src", "src/fork", "mate"])
 }
 
-@Test func aPinnedProjectMovesIntoTheSpaceItIsAssignedToAndLosesItsPin() {
-    let model = model(["keep", "moved"])
-    model.togglePin(at: index(of: "moved", in: model))
-    model.togglePin(at: index(of: "keep", in: model))
-    let space = model.createSpace(name: "Work")!
-    #expect(model.assign(projectAt: index(of: "moved", in: model), to: space.id) == true)
-    // `moved` is pinned AND in a Space: it must render under the Space header,
-    // below the still-spaceless pinned `keep`, not stay in the Pinned section.
-    #expect(model.projects.first { $0.name == "moved" }?.spaceID == space.id)
-    #expect(model.projects.first { $0.name == "moved" }?.isPinned == false)
-    #expect(names(model) == ["Home", "keep", "moved"])
-    #expect(model.projects(inSpace: space.id).map(\.name) == ["moved"])
-}

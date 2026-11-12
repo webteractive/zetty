@@ -168,7 +168,7 @@ final class TileGridView: NSView {
         wantsLayer = true
         // The sidebar's own tab-row type — dropping onto the GRID, which is
         // outside the outline view, so `validateDrop`'s refuse-everything rule
-        // (the thing protecting the pinned-first invariant) is not involved.
+        // (the thing protecting section order) is not involved.
         registerForDraggedTypes([SidebarView.tabDragType, TileView.slotDragType])
         build()
     }

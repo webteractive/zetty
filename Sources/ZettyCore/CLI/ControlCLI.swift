@@ -838,7 +838,7 @@ public enum ControlCLI {
         Zetty (it must serve, and keep sessions for the pane's project). This
         Mac's Zetty app dials it through its own Tailscale device and hands
         the connection over, so the app must be running and signed in here
-        (Settings → Other Macs). It reconnects by itself when the link drops,
+        (Settings → Remote). It reconnects by itself when the link drops,
         and says so in the pane.
 
         Changes nothing on either Mac: closing the pane only lets go of it.
@@ -1149,7 +1149,7 @@ public enum ControlCLI {
     /// Plain-text rendering for `zetty remote list`, kept pure so it is testable.
     public static func remoteLines(_ report: RemoteMachinesReport) -> [String] {
         guard report.listing else {
-            return ["Other Macs is off: turn on zetty-remote-machines (Settings → Other Macs)"]
+            return ["Other Macs is off: turn on zetty-remote-machines (Settings → Remote)"]
         }
         var lines = report.machines.isEmpty ? ["no other Macs yet"] : []
         let width = report.machines.map(\.name.count).max() ?? 0

@@ -9,6 +9,8 @@ paths:
     - "Sources/ZettyCore/Support/CommandSearch.swift"
     - "Sources/ZettyCore/Support/FuzzyMatch.swift"
     - "Sources/ZettyCore/Model/SidebarMetrics.swift"
+    - "App/Sources/App/SidebarActiveView.swift"
+    - "Sources/ZettyCore/Agents/ActiveSessions.swift"
 triggers:
     - "changing the tab bar, status bar, sidebar, or command palette"
     - "the window refuses to resize or its minimum size grows"
@@ -346,6 +348,48 @@ shortcut (250 vs 251).
 `probeWindowFloor()` opens the palette and measures with it up, because an
 overlay's floor is invisible to every other measurement — which is exactly how
 this shipped.
+
+## Sidebar: Active, and Hibernating hidden
+
+Pinning was removed on 2026-11-12 in favour of **Active**
+(`docs/superpowers/specs/2026-11-06-sidebar-active-design.md`, git-ignored).
+
+- **Active is its own view, not outline rows** (`SidebarActiveView`, between
+  the filter field and the outline's scroll view). Rows in the outline would
+  shift everything below them each time an agent starts or stops, and would
+  scroll away; a separate fixed area only moves the boundary. It grows to five
+  rows, then scrolls inside itself, and has zero height while empty.
+- **What and in what order is `ActiveSessions` (ZettyCore), fed a clock.**
+  `TerminalViewController.refreshActive` runs inside `refreshSidebar`, so it
+  rides the coalesced chrome refresh: every pane of every awake project here
+  (`displayedStatus`, `agentIdentity` for the tool) plus each **online** Mac's
+  snapshot. Only `running` and `needsAttention` count. Needs-attention first,
+  then working; within each, entry order, and a session that flips keeps its
+  entry time.
+- **No linger: a row is there exactly while its session is busy** (Glen,
+  2026-11-12). The spec's 5s linger was built and removed, because a row that
+  outlives its agent's turn reads as stuck. A session that stops and becomes
+  busy again re-enters at the bottom of its group.
+- **Active and Projects collapse from their headers** (Glen, 2026-11-12),
+  view-local and transient like Hibernating and This Mac
+  (`SidebarActiveView.isCollapsed`, `SidebarView.projectsCollapsed`): no
+  model field and no UserDefaults, since the isolated test app shares the real
+  app's defaults domain. Collapsed Active keeps its header and count;
+  collapsed Projects keeps the active project's row, as a collapsed Space does.
+- **Rows re-render in place**: `SidebarActiveView.update` keeps a view per row
+  id and re-orders the stack only when the order changed.
+- **Clicks**: a local row selects its project and tab, then focuses the pane
+  (`focusAttachedTile` first, as the sidebar's own clicks do); another Mac's
+  row opens that project and selects the tab, since the remote view selects
+  tabs, not panes.
+- **The filter keeps matching Active rows** (by label) instead of hiding the
+  section.
+- **Hibernating is hidden by default** (`zetty-sidebar-hibernating`,
+  `SidebarView.showsHibernating`). Hidden means the filter does not list
+  hibernated projects either, and a Space's dormant count goes with them.
+  ⌘K's Show/Hide Hibernating in Sidebar flips the key through
+  `AppDelegate.setHibernatingInSidebar`. Wake Project in ⌘K and `zetty wake`
+  still reach hibernated projects.
 
 ## Sidebar drawer
 

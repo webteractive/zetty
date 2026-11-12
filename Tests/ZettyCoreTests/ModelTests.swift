@@ -8,9 +8,8 @@ import Foundation
     #expect(s.command == "claude")
 }
 
-@Test func projectStartsUnpinnedWithNoSessions() {
+@Test func projectStartsWithNoSessions() {
     let p = Project(name: "demo", rootPath: "/tmp/proj")
     #expect(p.name == "demo")
-    #expect(p.isPinned == false)
     #expect(p.sessions.isEmpty)
 }

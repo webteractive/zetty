@@ -44,14 +44,13 @@ public struct Project: Codable, Sendable, Equatable, Identifiable {
     public let id: UUID
     public var name: String
     public var rootPath: String
-    public var isPinned: Bool
     public var sortOrder: Int
     public var preserveSessions: Bool
     public var isHibernated: Bool
     public var isHome: Bool
     public var cloneSource: String?
     /// The `Space` this project belongs to, or nil when it renders in
-    /// Pinned/Projects. Never set for Home, Scratch, or clones.
+    /// Projects. Never set for Home, Scratch, or clones.
     public var spaceID: UUID?
     /// See `ProjectRuntime.lastUsedAt` and `keptAwake`.
     public var lastUsedAt: Date?
@@ -62,7 +61,6 @@ public struct Project: Codable, Sendable, Equatable, Identifiable {
         id: UUID = UUID(),
         name: String,
         rootPath: String,
-        isPinned: Bool = false,
         sortOrder: Int = 0,
         preserveSessions: Bool = false,
         isHibernated: Bool = false,
@@ -76,7 +74,6 @@ public struct Project: Codable, Sendable, Equatable, Identifiable {
         self.id = id
         self.name = name
         self.rootPath = rootPath
-        self.isPinned = isPinned
         self.sortOrder = sortOrder
         self.preserveSessions = preserveSessions
         self.isHibernated = isHibernated
@@ -89,17 +86,17 @@ public struct Project: Codable, Sendable, Equatable, Identifiable {
     }
 
     private enum CodingKeys: String, CodingKey {
-        case id, name, rootPath, isPinned, sortOrder, preserveSessions, isHibernated, isHome, cloneSource, spaceID, lastUsedAt, keptAwake, sessions
+        case id, name, rootPath, sortOrder, preserveSessions, isHibernated, isHome, cloneSource, spaceID, lastUsedAt, keptAwake, sessions
     }
 
     /// Tolerant decode so workspace.json files written before a field existed
-    /// still load (missing → default).
+    /// still load (missing → default). Keys no longer known are ignored: an
+    /// older Zetty wrote `isPinned`, gone with pinning (2026-11-12).
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         id = try c.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
         name = try c.decode(String.self, forKey: .name)
         rootPath = try c.decode(String.self, forKey: .rootPath)
-        isPinned = try c.decodeIfPresent(Bool.self, forKey: .isPinned) ?? false
         sortOrder = try c.decodeIfPresent(Int.self, forKey: .sortOrder) ?? 0
         preserveSessions = try c.decodeIfPresent(Bool.self, forKey: .preserveSessions) ?? false
         isHibernated = try c.decodeIfPresent(Bool.self, forKey: .isHibernated) ?? false

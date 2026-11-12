@@ -72,7 +72,7 @@ struct ZTheme {
     let bg0: String       // deepest surface — sidebar, tab bar, status bar
     let bg1: String       // base surface — window, main area, terminal, panes
     let bg2: String       // elevated — search fields, hover
-    let bg3: String       // highest — pinned rows, kbd chips, selection fill
+    let bg3: String       // highest — kbd chips, selection fill
     let bord: String      // hairline borders / dividers
     let fg: String        // primary text
     let fg2: String       // secondary text
@@ -371,6 +371,20 @@ struct ZTheme {
         guard let id, let entry = projectPalette.first(where: { $0.id == id }) else { return nil }
         return color(current.isDark ? entry.dark : entry.light)
     }
+
+    /// A palette hue's deep variant whatever the scheme: Settings' page icons
+    /// are filled with it, since a white glyph reads poorly on the bright
+    /// dark-scheme pastels (and System Settings keeps its squares saturated
+    /// in both modes). nil for unknown ids.
+    static func projectDeepColor(id: String?) -> NSColor? {
+        guard let id, let entry = projectPalette.first(where: { $0.id == id }) else { return nil }
+        return color(entry.light)
+    }
+
+    /// The glyph drawn on a palette-filled icon square (Settings' sidebar):
+    /// near-white, the same in every scheme, because the square under it is.
+    static let iconGlyph = "f7f7fa"
+    static var iconGlyphColor: NSColor { color(iconGlyph) }
 
     // MARK: Hex helper
 

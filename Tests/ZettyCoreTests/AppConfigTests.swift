@@ -266,3 +266,13 @@ import Testing
     #expect(back.serveRemote && back.showRemoteMachines)
     #expect(!AppConfig.parse(empty.rendered()).serveRemote)
 }
+
+@Test func sidebarHibernatingIsOffByDefaultAndRoundTrips() {
+    // Hibernating is hidden from the sidebar unless asked for (2026-11-12).
+    #expect(!AppConfig.parse("").showHibernatingInSidebar)
+    let on = AppConfig.parse("zetty-sidebar-hibernating = true")
+    #expect(on.showHibernatingInSidebar)
+    #expect(on.unsupportedKeys.isEmpty)
+    #expect(AppConfig.parse(on.rendered()).showHibernatingInSidebar)
+    #expect(!AppConfig.parse(AppConfig.parse("").rendered()).showHibernatingInSidebar)
+}

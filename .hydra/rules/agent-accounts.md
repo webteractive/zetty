@@ -27,7 +27,7 @@ selectable per project and per pane. Pure model in `ZettyCore/Accounts/`
 `AuthStatusProbe`); private JSON at
 `~/Library/Application Support/zetty/agent-accounts.json`. App layer:
 `AccountSeeder` (filesystem), `AgentAuthRunner` (process IO), `AddAccountSheet`,
-and the Settings → Accounts tab.
+and the Settings → Accounts page.
 
 **One env var does the whole job**, and which var comes from
 `SpawnableAgent.configDirEnvVar` — nil for agents with no VERIFIED isolation

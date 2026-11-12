@@ -47,30 +47,6 @@ import Foundation
     #expect(ws.projects.map(\.name) == ["Zeta", "alpha", "Beta"])
 }
 
-@Test func restorePartitionsPinnedFirstPreservingRelativeOrder() {
-    // Pinned-first is the only invariant; within each group the given order
-    // (not name order) is preserved.
-    let ws = WorkspaceModel(restoring: [
-        ProjectRuntime(name: "delta", rootPath: "/d"),
-        ProjectRuntime(name: "alpha", rootPath: "/a", isPinned: true),
-        ProjectRuntime(name: "charlie", rootPath: "/c"),
-        ProjectRuntime(name: "bravo", rootPath: "/b", isPinned: true),
-    ], activeIndex: 0)!
-    #expect(ws.projects.map(\.name) == ["alpha", "bravo", "delta", "charlie"])
-    #expect(ws.projects.map(\.isPinned) == [true, true, false, false])
-}
-
-@Test func togglePinMovesProjectAboveUnpinnedAndKeepsActive() {
-    let ws = WorkspaceModel(restoring: [
-        ProjectRuntime(name: "alpha", rootPath: "/a"),
-        ProjectRuntime(name: "zeta", rootPath: "/z"),
-    ], activeIndex: 1)!                             // active = zeta
-    let zetaIdx = ws.projects.firstIndex { $0.name == "zeta" }!
-    ws.togglePin(at: zetaIdx)                        // pin zeta → jumps above alpha
-    #expect(ws.projects.map(\.name) == ["zeta", "alpha"])
-    #expect(ws.activeProject.name == "zeta")         // active preserved by identity
-}
-
 @Test func addProjectAppendsToEndOfGroupAndStaysActive() {
     let ws = WorkspaceModel(restoring: [
         ProjectRuntime(name: "alpha", rootPath: "/a"),
@@ -94,17 +70,6 @@ import Foundation
     #expect(ws.projects.contains { $0.id == m.id })
 }
 
-@Test func addProjectAppendsBelowPinnedGroup() {
-    let ws = WorkspaceModel(restoring: [
-        ProjectRuntime(name: "alpha", rootPath: "/a", isPinned: true),
-        ProjectRuntime(name: "zeta", rootPath: "/z"),
-    ], activeIndex: 0)!
-    _ = ws.addProject(name: "mike", rootPath: "/m", makeActive: false)
-    // New project is unpinned → lands after the pinned group, at the end.
-    #expect(ws.projects.map(\.name) == ["alpha", "zeta", "mike"])
-    #expect(ws.projects.map(\.isPinned) == [true, false, false])
-}
-
 @Test func moveProjectReordersWithinGroupPreservingActive() {
     let ws = WorkspaceModel(restoring: [
         ProjectRuntime(name: "a", rootPath: "/a"),
@@ -116,39 +81,23 @@ import Foundation
     #expect(ws.activeProject.name == "b")            // active preserved by identity
 }
 
-@Test func moveProjectRejectsCrossGroupMove() {
+@Test func moveProjectRejectsCrossSpaceMove() {
     let ws = WorkspaceModel(restoring: [
-        ProjectRuntime(name: "p", rootPath: "/p", isPinned: true),
-        ProjectRuntime(name: "u", rootPath: "/u"),
+        ProjectRuntime(name: "loose", rootPath: "/l"),
+        ProjectRuntime(name: "member", rootPath: "/m"),
     ], activeIndex: 0)!
-    ws.moveProject(from: 1, to: 0)                   // unpinned → into pinned slot: rejected
-    #expect(ws.projects.map(\.name) == ["p", "u"])   // unchanged
-    #expect(ws.projects.map(\.isPinned) == [true, false])
-}
-
-@Test func togglePinAppendsToBottomOfPinnedGroup() {
-    let ws = WorkspaceModel(restoring: [
-        ProjectRuntime(name: "a", rootPath: "/a", isPinned: true),
-        ProjectRuntime(name: "b", rootPath: "/b", isPinned: true),
-        ProjectRuntime(name: "c", rootPath: "/c"),
-    ], activeIndex: 0)!
-    let cIdx = ws.projects.firstIndex { $0.name == "c" }!
-    ws.togglePin(at: cIdx)                            // pin c → bottom of pinned group
-    #expect(ws.projects.map(\.name) == ["a", "b", "c"])
-    #expect(ws.projects.map(\.isPinned) == [true, true, true])
+    let space = ws.createSpace(name: "Work")!
+    ws.assign(projectAt: ws.projects.firstIndex { $0.name == "member" }!, to: space.id)
+    let from = ws.projects.firstIndex { $0.name == "member" }!
+    let to = ws.projects.firstIndex { $0.name == "loose" }!
+    ws.moveProject(from: from, to: to)               // out of its Space: rejected
+    #expect(ws.projects.map(\.name).suffix(2) == ["loose", "member"])
 }
 
 @Test func removingLastRemainingProjectIsNoOp() {
     let ws = WorkspaceModel()
     ws.removeProject(at: 0)
     #expect(ws.projects.count == 1)
-}
-
-@Test func togglePinFlips() {
-    let ws = WorkspaceModel()
-    #expect(ws.projects[0].isPinned == false)
-    ws.togglePin(at: 0)
-    #expect(ws.projects[0].isPinned == true)
 }
 
 @Test func workspaceSelectIgnoresOutOfRange() {
@@ -215,9 +164,9 @@ import Foundation
     #expect(c.name == "scratch 3")
 }
 
-@Test func removeScratchProjectsClearsAllAndFocusesFirstPinned() {
+@Test func removeScratchProjectsClearsAllAndFocusesFirstProject() {
     let ws = WorkspaceModel(restoring: [
-        ProjectRuntime(name: "pin", rootPath: "/p", isPinned: true),
+        ProjectRuntime(name: "pin", rootPath: "/p"),
         ProjectRuntime(name: "web", rootPath: "/w"),
     ], activeIndex: 0)!
     ws.addScratchProject()   // active = scratch
@@ -225,7 +174,7 @@ import Foundation
     #expect(ws.projects.filter(\.isScratch).count == 2)
     ws.removeScratchProjects()
     #expect(ws.projects.map(\.name) == ["pin", "web"])   // both scratch gone
-    #expect(ws.activeProject.name == "pin")               // first pinned focused
+    #expect(ws.activeProject.name == "pin")               // first project focused
 }
 
 @Test func removeScratchProjectsIsNoOpWithoutScratch() {
@@ -298,17 +247,16 @@ import Foundation
 
 @Test func homeSortsFirst() {
     let ws = WorkspaceModel()
-    let pinned = ws.addProject(name: "pinned", rootPath: "/p")
-    ws.togglePin(at: ws.projects.firstIndex { $0.id == pinned.id }!)
-    #expect(ws.projects[0].isHome)                // Home ahead of pinned
+    _ = ws.addProject(name: "api", rootPath: "/p")
+    #expect(ws.projects[0].isHome)                // Home ahead of every project
 }
 
 @Test func removeScratchProjectsKeepsAnActiveProjectThatSurvives() {
     // Clearing scratch from the tile grid, where a scratch is never made
-    // active, used to jump to the first pinned project anyway — and when that
+    // active, used to jump to the first (pinned) project anyway — and when that
     // one was hibernated the rebuild swapped the grid for its placeholder.
     let ws = WorkspaceModel(restoring: [
-        ProjectRuntime(name: "pin", rootPath: "/p", isPinned: true),
+        ProjectRuntime(name: "pin", rootPath: "/p"),
         ProjectRuntime(name: "web", rootPath: "/w"),
     ], activeIndex: 1)!
     ws.addScratchProject(makeActive: false)

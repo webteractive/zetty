@@ -69,8 +69,7 @@ that write, `regroup()` is private, and without the call a member's Space would
 not re-sort until some unrelated change happened to trigger a regroup. Note
 `wakeProject` re-resolves its project index AFTER that call — the index captured
 before it is stale. `moveProject(from:to:)`'s guard — "both endpoints must share
-`isPinned`" — extends to **`isPinned` AND `spaceID`**: a drag-reorder may
-never cross a Space boundary, or it would relocate a project between Spaces
+`spaceID`" — means a drag-reorder may never cross a Space boundary, or it would relocate a project between Spaces
 without going through `assign`'s refusals. Reassignment is the separate
 `assign(projectAt:to:)`, which refuses Home, Scratch, and clones — one rule
 enforced in the model, mirrored by hiding `Move to Space ▸` for those rows in
@@ -81,7 +80,8 @@ can't strand a project.
 `isHibernated`: a hibernated member stays dimmed in its own Space rather than
 dropping to Hibernating, which collects only *spaceless* hibernated
 projects. Collapse state (`isCollapsed`) is persisted in the model — unlike
-`hibernatedCollapsed`, which is view-local because nothing persists it — and
+`hibernatedCollapsed` and `projectsCollapsed`, which are view-local because
+nothing persists them — and
 a collapsed Space still renders its active member, so selecting a project
 never leaves an invisible selection.
 
@@ -100,7 +100,9 @@ don't reintroduce one by reading a count off `SidebarSpace` again.
 
 Dropping a project row onto a Space header (or into a Space's row range) is
 **the only cross-section drop Zetty allows**; `validateDrop` refuses every
-other one so the pinned-first invariant can't be broken by a drag. Dragging a
+other one so section order (Home · Projects · Spaces · Scratch) can't be
+broken by a drag. Pinning, and its Pinned section, are gone (2026-11-12);
+an old `workspace.json`'s `isPinned` key is ignored on decode. Dragging a
 Space header reorders the whole Space (`onMoveSpace`) — and, like the
 project- and tab-move branches, the drop gap must subtract one when moving
 down past the dragged row's own old slot. Omitting that compensation was a

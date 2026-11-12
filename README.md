@@ -9,7 +9,7 @@ view of which agents are working, waiting on you, or failed. It is built on
 [libghostty](https://github.com/ghostty-org/ghostty), so every pane is a full
 Ghostty terminal, with a Swift AppKit app around it.
 
-- **Projects, tabs and splits** — pin, reorder, group into Spaces, hibernate
+- **Projects, tabs and splits** — reorder, group into Spaces, hibernate
   the ones you're not using, or fork one into a disposable copy-on-write clone.
 - **Agent-aware** — status dots for Claude Code, Codex, Hermes and more; launch
   an agent when you open a pane; run several Claude or Codex logins side by
@@ -132,16 +132,22 @@ copy-bind = n copy-cursor-down
 
 ### Projects
 
-- **Organize** — drag project rows to reorder them; pin the ones you use most.
-  Right-click → **Move to Space ▸** files a project into a named, colored,
-  collapsible sidebar section (**New Space…** makes one).
+- **Active** — the top of the sidebar lists every agent that is working
+  (green) or needs you (yellow), on this Mac and your other Macs, needs-you
+  first. Click a row to jump to its pane. A row leaves as soon as its agent
+  stops. Click the **Active** or **Projects** header to fold that section.
+- **Organize** — drag project rows to reorder them. Right-click → **Move to
+  Space ▸** files a project into a named, colored, collapsible sidebar section
+  (**New Space…** makes one).
 - **Customize** — right-click → **Project Settings…** for a name, color, icon
   (SF Symbol or emoji), theme, environment variables, and per-project overrides
   for session preservation and notifications.
 - **Hibernate** — right-click → **Hibernate Project**, or the moon in the
   gutter of any of its panes, frees a project's processes and keeps its
-  layout; it moves to the **Hibernating** section until you wake it.
-  `hibernate-after = 60m` does this automatically for idle
+  layout; it leaves the sidebar until you wake it (⌘K → **Wake Project**, or
+  `zetty wake`). To list hibernated projects in a **Hibernating** section,
+  turn on **Settings → Sessions → Show Hibernating in the sidebar**, or ⌘K →
+  **Show Hibernating in Sidebar**. `hibernate-after = 60m` does this automatically for idle
   projects (never Home), measured from when a project was last on screen,
   typed into, or written to by one of its agents. An agent sitting idle at an
   empty prompt no longer keeps its project awake; a working agent, a command
@@ -325,7 +331,7 @@ under **This Mac**: every awake project with its agent dots, and a header like
 `Mac mini · 2 · 1 needs you`. A Mac that is off or away stays listed, dimmed,
 with its last known projects. Turn on **Let other Macs connect** on the Mac to
 watch and **Show other Macs in the sidebar** on the one you sit at, in Settings
-→ Other Macs (`zetty-serve`, `zetty-remote-machines`). Then click
+→ Remote (`zetty-serve`, `zetty-remote-machines`). Then click
 **Sign In…** there and sign in to Tailscale in the browser, with the same
 account on each Mac. Zetty joins your tailnet as its own device, named
 `zetty-` and this Mac's name (edit it beside **Sign In…**), so you don't need
@@ -379,11 +385,14 @@ Zetty reads `~/.config/zetty/config` (or `$XDG_CONFIG_HOME/zetty/config`), seede
 with a documented starter file on first launch. Lines are `key = value`;
 comments are full-line `#`. Reload with **⇧⌘,**.
 
-Every key below can also be set from **Settings (⌘,)**: General (Home
-directory, update checks), **Other Macs**, Appearance, Sessions, **Files** (file tree and
-viewer), **Keys** (prefix key, tmux passthrough, `bind`/`copy-bind` lines) and
-**Terminal** (pasted ghostty lines). The Keys and Terminal editors apply with
-their **Apply** button and name any line they couldn't use.
+Every key below can also be set from **Settings (⌘,)**, whose pages are listed
+down its left side: General (Home directory, update checks), Appearance,
+Sessions, **Files** (file tree and viewer), **Keys** (prefix key, tmux
+passthrough, `bind`/`copy-bind` lines), **Terminal** (pasted ghostty lines),
+Agents, Accounts and **Remote** (Other Macs). Settings stays in front of
+Zetty's windows while Zetty is the active app, without blocking the panes. The
+Keys and Terminal editors apply with their **Apply** button and name any line
+they couldn't use.
 
 | Key | Default | Meaning |
 |---|---|---|
@@ -398,6 +407,7 @@ their **Apply** button and name any line they couldn't use.
 | `check-updates` | `true` | Notify when a newer release is available |
 | `zetty-serve` | `false` | Let your other Macs on Tailscale see this Mac's projects |
 | `zetty-remote-machines` | `false` | Show your other Macs' projects in the sidebar |
+| `zetty-sidebar-hibernating` | `false` | Show the Hibernating section in the sidebar (also ⌘K → Show/Hide Hibernating in Sidebar) |
 | `notify-sound` / `notify-badge` / `notify-system` | `true` | Agent needs-attention alerts |
 | `zetty-claude-mod` | `true` | Load Zetty's Claude Code mod into new Claude panes |
 | `zetty-claude-tools` | `true` | Let that mod give Claude its pane and file tools |

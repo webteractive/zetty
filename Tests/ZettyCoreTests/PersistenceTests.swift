@@ -23,8 +23,7 @@ private func tempDir() throws -> URL {
     let surface = Surface(workingDir: "/tmp/proj", command: "claude")
     let tab = Tab(title: "main", layout: Layout(root: .leaf(surface)))
     let session = Session(title: "work", tabs: [tab])
-    let project = Project(name: "demo", rootPath: "/tmp/proj",
-                          isPinned: true, sessions: [session])
+    let project = Project(name: "demo", rootPath: "/tmp/proj", sessions: [session])
     let original = Workspace(schemaVersion: 1, projects: [project])
 
     try store.save(original)

@@ -313,6 +313,15 @@ final class TerminalViewController: NSViewController {
 
     /// Which window side the sidebar sits on (config `sidebar-position`).
     /// Settable before the view loads; changing it afterwards re-pins live.
+    /// `zetty-sidebar-hibernating`: whether the sidebar lists hibernated projects.
+    var showsHibernatingInSidebar = false {
+        didSet { sidebarView?.showsHibernating = showsHibernatingInSidebar }
+    }
+
+    /// Flips `zetty-sidebar-hibernating` from ⌘K: the owner saves the key and
+    /// applies it back here.
+    var onSetHibernatingInSidebar: ((Bool) -> Void)?
+
     var sidebarPosition: SidebarPosition = .left {
         didSet {
             guard isViewLoaded, oldValue != sidebarPosition else { return }
@@ -1038,6 +1047,9 @@ final class TerminalViewController: NSViewController {
             self.closeSidebarDrawer()
         }
 
+        sidebar.onSelectActive = { [weak self] target in self?.selectActiveSession(target) }
+        sidebar.showsHibernating = showsHibernatingInSidebar
+
         sidebar.onSelectRemoteProject = { [weak self] machineID, projectID in
             guard let self else { return }
             self.leaveTileModeForSidebarClick()
@@ -1084,13 +1096,6 @@ final class TerminalViewController: NSViewController {
             // A click, not a script: no busy refusal, as before.
             _ = hibernate ? self.hibernateSpaceNamed(space.name, force: true)
                 : self.wakeSpaceNamed(space.name)
-        }
-
-        sidebar.onTogglePin = { [weak self] index in
-            guard let self else { return }
-            self.workspace.togglePin(at: index)
-            self.refreshSidebar()
-            self.onWorkspaceDidChange?()
         }
 
         sidebar.onToggleSpaceCollapsed = { [weak self] id in
@@ -4096,13 +4101,19 @@ final class TerminalViewController: NSViewController {
         // "Current project" would be the hidden local one behind another
         // Mac's project, and a scratch terminal opens over it.
         let current: [PaletteCommand] = isShowingRemoteProject ? [] : [
-            PaletteCommand(glyph: "★", label: "Pin / Unpin Current Project", kbd: "") { [weak self] in self?.togglePinActiveProject() },
             PaletteCommand(glyph: "⧉", label: "New Scratch Terminal", kbd: "⌃⌘N") { [weak self] in self?.newScratchTerminal() },
         ]
         var commands: [PaletteCommand] = [
             PaletteCommand(glyph: "＋", label: "Add Project…", kbd: "⌘O") { [weak self] in self?.addProject(nil) },
         ] + current + [
             PaletteCommand(glyph: "⌦", label: "Close All Scratch Terminals", kbd: "") { [weak self] in self?.closeAllScratchTerminals() },
+            // One entry, worded for what it will do (zetty-sidebar-hibernating).
+            PaletteCommand(glyph: "☾",
+                           label: showsHibernatingInSidebar ? "Hide Hibernating in Sidebar" : "Show Hibernating in Sidebar",
+                           kbd: "") { [weak self] in
+                guard let self else { return }
+                self.onSetHibernatingInSidebar?(!self.showsHibernatingInSidebar)
+            },
         ] + (isShowingRemoteProject ? [] : [
             PaletteCommand(glyph: "−", label: "Remove Current Project…", kbd: "") { [weak self] in self?.removeProject(nil) },
         ])
@@ -5493,12 +5504,6 @@ final class TerminalViewController: NSViewController {
             project.tabList.updateSurface(surfaceID) { $0.lastTitle = title }
             return
         }
-    }
-
-    private func togglePinActiveProject() {
-        workspace.togglePin(at: workspace.activeIndex)
-        refreshSidebar()
-        onWorkspaceDidChange?()
     }
 
     // MARK: - Task manager
@@ -7223,7 +7228,6 @@ final class TerminalViewController: NSViewController {
             }
             return SidebarProject(
                 name: project.name,
-                isPinned: project.isPinned,
                 tabTitles: tabTitles,
                 tabStatuses: tabStatuses,
                 tabIcons: tabIcons,
@@ -7265,7 +7269,7 @@ final class TerminalViewController: NSViewController {
             }
             sidebarProjects.append(SidebarProject(
                 name: pending.displayName,
-                isPinned: false, tabTitles: [], tabStatuses: [], tabIcons: [],
+                tabTitles: [], tabStatuses: [], tabIcons: [],
                 icon: nil, status: nil, projectColor: nil, customGlyph: nil,
                 isHibernated: false, isWritingHandoffs: false, handoffFailed: false,
                 isScratch: false, isHome: false,
@@ -7298,7 +7302,64 @@ final class TerminalViewController: NSViewController {
                 remote.machine.flatMap { machine in remote.projectID.map { (machine.stableID, $0) } }
             }
         )
+        refreshActive()
         publishSnapshotIfChanged()
+    }
+
+    // MARK: - Active section
+
+    /// Picks and orders the sidebar's Active rows.
+    private let activeSessions = ActiveSessions()
+
+    /// Feeds every agent session — each pane of each awake project here, and
+    /// each online Mac's snapshot — to `activeSessions`, and shows its rows.
+    /// Rides `refreshSidebar`, so it is coalesced like the rest of the chrome.
+    private func refreshActive() {
+        guard let sidebarView else { return }
+        var sessions: [ActiveSession] = []
+        for project in workspace.projects where !project.isHibernated {
+            for (tabIndex, tree) in project.tabList.trees.enumerated() {
+                var tabTitle: String?   // only worked out for a tab with an agent
+                for surface in tree.layout.surfaces {
+                    guard let status = displayedStatus(for: surface.id) else { continue }
+                    let title = tabTitle ?? tabDisplayTitle(for: tree, at: tabIndex)
+                    tabTitle = title
+                    sessions.append(ActiveSession(
+                        id: surface.id.uuidString, status: status, machine: nil,
+                        project: project.name, tool: agentIdentity(for: surface), tabTitle: title,
+                        target: .local(projectID: project.id, tabIndex: tabIndex, surfaceID: surface.id)))
+                }
+            }
+        }
+        // An offline Mac's snapshot is stale, and its rows already drop their dots.
+        for machine in remoteMachines where machine.state == .online {
+            guard let snapshot = machine.workspace else { continue }
+            sessions += ActiveSessions.remoteSessions(machineID: machine.stableID,
+                                                      machineName: machine.name, snapshot: snapshot)
+        }
+        sidebarView.updateActive(activeSessions.update(sessions, now: Date()))
+    }
+
+    /// An Active row was clicked: a local one shows its project, tab and pane;
+    /// another Mac's opens that project, on that tab.
+    private func selectActiveSession(_ target: ActiveSession.Target) {
+        switch target {
+        case .local(_, _, let surfaceID):
+            guard let location = location(ofSurface: surfaceID) else { return }
+            if !focusAttachedTile(projectIndex: location.projectIndex, tabIndex: location.tabIndex) {
+                leaveTileModeForSidebarClick()
+                selectProject(at: location.projectIndex, tabIndex: location.tabIndex)
+                focusPane(at: location)
+            }
+        case .remote(let machineID, let projectID, let tabIndex, _):
+            leaveTileModeForSidebarClick()
+            showRemoteProject(machineID: machineID, projectID: projectID)
+            // The remote view selects tabs, not panes, so the pane is left to
+            // the user.
+            remoteProject?.selectTab(at: tabIndex)
+            refreshTabBar()
+        }
+        closeSidebarDrawer()
     }
 
     /// Stores the other Macs and refreshes the sidebar on the coalesced path:
@@ -7325,7 +7386,7 @@ final class TerminalViewController: NSViewController {
             let projects = (machine.workspace?.projects ?? []).filter { !$0.hibernated }.map { project in
                 let statuses = project.tabs.flatMap(\.panes).compactMap { $0.agentStatus.flatMap(AgentStatus.init(rawValue:)) }
                 return SidebarProject(
-                    name: project.name, isPinned: false,
+                    name: project.name,
                     tabTitles: [], tabStatuses: [], tabIcons: [], icon: nil,
                     status: statuses.max { Self.severity($0) < Self.severity($1) },
                     projectColor: Self.remoteProjectColor(id: project.id ?? project.name),
@@ -7567,7 +7628,7 @@ final class TerminalViewController: NSViewController {
     }
 
     /// Closes and clears every scratch terminal at once (palette / CLI), killing
-    /// their shells and returning focus to the first pinned project. No-op when
+    /// their shells and returning focus to the first project. No-op when
     /// there are no scratch terminals.
     @objc func closeAllScratchTerminals(_ sender: Any? = nil) {
         let surfaces = scratchSurfaceIDs
@@ -7688,12 +7749,11 @@ final class TerminalViewController: NSViewController {
         guard workspace.projects.count != countBefore else { return }   // last project — no-op
         if wasScratch { detachDeadScratchTileSlots() }
         // Closing the last scratch terminal while looking at it returns focus to
-        // the first pinned project (or the first project if none are pinned),
-        // rather than whichever neighbour `removeProject` happened to land on.
+        // the first project, rather than whichever neighbour `removeProject` happened to land on.
         // One you were not looking at — any scratch under the tile grid —
         // leaves the active project alone.
         if wasScratch, wasActive, !workspace.projects.contains(where: \.isScratch) {
-            workspace.select(index: workspace.projects.firstIndex(where: \.isPinned) ?? 0)
+            workspace.select(index: 0)
         }
         onActiveProjectChanged?()   // removal can shift which project is active
         // Same reasoning as closeTab: report the closed surfaces explicitly so
@@ -8836,7 +8896,7 @@ final class TerminalViewController: NSViewController {
         alert.alertStyle = .warning
         alert.messageText = "Delete Space \u{201c}\(space.name)\u{201d}?"
         alert.informativeText = "Its projects are kept — only the Space grouping is removed;"
-            + " they fall back to Pinned/Projects."
+            + " they fall back to Projects."
         alert.addButton(withTitle: "Delete").hasDestructiveAction = true
         alert.addButton(withTitle: "Cancel")
         let spaceName = space.name

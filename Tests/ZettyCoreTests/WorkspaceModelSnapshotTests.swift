@@ -11,7 +11,6 @@ private func tempDir() throws -> URL {
 @Test func workspaceModelRoundTripsThroughStore() throws {
     let model = WorkspaceModel()                                   // project 0 = home
     let p = model.addProject(name: "web", rootPath: "/tmp/web")    // project 1
-    p.isPinned = true
     // give project 1 a split in its first tab
     let s2 = Surface(workingDir: "/tmp/web/api")
     _ = p.tabList.activeTree.splitFocused(direction: .vertical, newSurface: s2)
@@ -24,7 +23,6 @@ private func tempDir() throws -> URL {
     #expect(restored.count == 2)
     #expect(restored[1].name == "web")
     #expect(restored[1].rootPath == "/tmp/web")
-    #expect(restored[1].isPinned == true)
     let webDirs = restored[1].tabList.trees[0].layout.surfaces.map(\.workingDir)
     #expect(webDirs.contains("/tmp/web/api"))
 }
