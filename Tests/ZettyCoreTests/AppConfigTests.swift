@@ -276,3 +276,12 @@ import Testing
     #expect(AppConfig.parse(on.rendered()).showHibernatingInSidebar)
     #expect(!AppConfig.parse(AppConfig.parse("").rendered()).showHibernatingInSidebar)
 }
+
+@Test func preserveSessionsDefaultsOn() {
+    #expect(AppConfig.parse("").preserveSessions == true)
+    #expect(AppConfig().preserveSessions == true)
+    // An explicit false is the user's (or an older template's) and stays.
+    #expect(AppConfig.parse("preserve-sessions = false").preserveSessions == false)
+    #expect(AppConfig.defaultFileContents.contains("preserve-sessions = true"))
+    #expect(!AppConfig.defaultFileContents.contains("brew install"))
+}

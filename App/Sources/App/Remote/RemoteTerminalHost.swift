@@ -52,7 +52,7 @@ final class RemoteTerminalHost: RemoteTerminalHosting {
     private func waitForSession(_ session: String, request: RemoteAttachRequest,
                                 completion: @escaping (Result<RemoteAttachPlan, RemoteAttachRefusal>) -> Void) {
         guard let zmx = zmxPath() else {
-            completion(.failure(RemoteAttachRefusal(message: "zmx isn't installed on \(machineName)")))
+            completion(.failure(RemoteAttachRefusal(message: "Zetty's zmx is missing on \(machineName); reinstall Zetty there")))
             return
         }
         let deadline = Date().addingTimeInterval(Self.sessionWait)
@@ -63,7 +63,13 @@ final class RemoteTerminalHost: RemoteTerminalHosting {
             }
             Thread.sleep(forTimeInterval: 0.2)
         }
-        completion(.success(Self.plan(session: session, zmx: zmx, scrollback: request.scrollback)))
+        // The attach runs the zmx the session's daemon runs: another version
+        // would hang against it (ZmxBinaries).
+        guard let binary = ZmxBinaries.binary(for: session) else {
+            completion(.failure(RemoteAttachRefusal(message: "that pane's session runs a zmx that is gone from \(machineName)")))
+            return
+        }
+        completion(.success(Self.plan(session: session, zmx: binary, scrollback: request.scrollback)))
     }
 
     /// Scrollback first on a first attach, then the attach, through

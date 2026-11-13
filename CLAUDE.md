@@ -44,9 +44,9 @@ suite is faster via SwiftPM — `mise exec -- swift test` — and a single test 
   `scripts/check-libghostty.sh`** (once per working session) and state the
   result in the summary: "libghostty is current", or what is newer, plus
   where the bundled Ghostty commit stands against Ghostty's latest release
-  (the script's `ghostty in …` line). Exit 2 means GitHub could not be
-  reached, which is not "up to date". Anything newer: read
-  `libghostty-bump.md` before touching the pin.
+  (the script's `ghostty in …` line), and its `zmx:` and `tailscale:` lines.
+  Exit 2 means a remote could not be reached, which is not "up to date".
+  Anything newer: read `libghostty-bump.md` before touching a pin.
 - **Verify before the commit in the isolated test app**
   (`isolated-test-app.md`), never by quitting or replacing
   `/Applications/zetty.app`.
@@ -139,7 +139,7 @@ Rule files are in `.hydra/rules`.
 | changing per-project settings, color, icon, or theme overrides · layout templates or .zetty/project.json · per-project env vars or startup commands | `Sources/ZettyCore/Settings/**` · `App/Sources/App/ProjectSettingsSheet.swift` · `App/Sources/App/IconPicker.swift` | project-settings.md |
 | cutting a release or writing its notes · changing packaging, signing, notarization or the self-updater | `scripts/release.sh` · `scripts/package.sh` · `Sources/ZettyCore/Update/**` · `App/Sources/App/UpdateChecker.swift` · `App/Sources/App/UpdateInstaller.swift` · `scripts/release.sh` · `scripts/package.sh` | releasing.md |
 | changing remote machines, serving or the Tailscale check | `Sources/ZettyCore/Remote/**` · `App/Sources/App/Remote/**` | remote-machines.md |
-| changing preserve-sessions or zmx session handling · restart recovery or resuming agents after a power-off · a preserved pane reattaches wrong, loses scrollback, or launches a plain shell · changing scratch panes or how sessions are reaped | `Sources/ZettyCore/Session/**` · `Sources/ZettyCore/Recovery/**` · `App/Sources/App/ZmxRunner.swift` · `App/Sources/App/ScrollbackRestore.swift` · `App/Sources/App/RestartRecoveryRunner.swift` · `App/Sources/App/AgentSessionLookup.swift` · `zmx ` · `zetty quit` | session-preservation.md |
+| changing preserve-sessions or zmx session handling · restart recovery or resuming agents after a power-off · a preserved pane reattaches wrong, loses scrollback, or launches a plain shell · changing scratch panes or how sessions are reaped · bumping or changing the bundled zmx | `Sources/ZettyCore/Session/**` · `Sources/ZettyCore/Recovery/**` · `App/Sources/App/ZmxRunner.swift` · `App/Sources/App/ScrollbackRestore.swift` · `App/Sources/App/RestartRecoveryRunner.swift` · `App/Sources/App/AgentSessionLookup.swift` · `App/Sources/App/ZmxBinaries.swift` · `scripts/zmx.pin` · `scripts/fetch-zmx.sh` · `zmx ` · `zetty quit` | session-preservation.md |
 | changing the Sessions view or task manager · killing or interrupting sessions from the UI | `Sources/ZettyCore/Monitor/**` · `App/Sources/App/SessionSampler.swift` · `App/Sources/App/SessionsView.swift` · `App/Sources/App/TaskManagerWindowController.swift` · `App/Sources/App/ProcessFootprint.swift` | session-task-manager.md |
 | changing sidebar sections, Spaces, or project ordering · drag-and-drop in the sidebar | `Sources/ZettyCore/Model/Space.swift` · `App/Sources/App/SpaceSheet.swift` · `App/Sources/App/SidebarView.swift` · `zetty new-space` · `zetty rename-space` · `zetty remove-space` · `zetty move-to-space` | spaces.md |
 | handling ssh:// URLs or other URL schemes · an external open lands in the wrong app copy (Launch Services) | `Sources/ZettyCore/CLI/SSHURLHandler.swift` | ssh-url-handover.md |

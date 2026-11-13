@@ -79,6 +79,23 @@ ship as part of Zetty's binary. Every license text, with copyright lines, is in
 Tailscale's code is © Tailscale Inc & contributors. "Tailscale" is a trademark
 of Tailscale Inc.; Zetty is not affiliated with or endorsed by Tailscale.
 
+## Bundled executable: zmx
+
+Session preservation runs [zmx](https://github.com/neurosnap/zmx), shipped
+unmodified as a separate program at `Contents/Helpers/zmx`: upstream's release
+binaries for arm64 and x86_64, checksummed against [`scripts/zmx.pin`](scripts/zmx.pin)
+and combined into one file. It is not linked into Zetty.
+
+| Component | License | Text |
+|---|---|---|
+| [zmx](https://github.com/neurosnap/zmx) — © Eric Bower | MIT | [`zmx-MIT.txt`](licenses/zmx-MIT.txt) |
+
+zmx compiles in Ghostty's terminal library (ghostty-vt) and with it simdutf
+and Highway, covered by the [`ghostty-MIT.txt`](licenses/ghostty-MIT.txt),
+[`simdutf-MIT.txt`](licenses/simdutf-MIT.txt) and [`highway.txt`](licenses/highway.txt)
+texts above, plus the Zig standard library and compiler-rt (MIT), which
+require no notice in binary form.
+
 ## Bundled files
 
 | Component | Where in the app | License | Text |
@@ -100,6 +117,5 @@ Logo marks remain trademarks of their respective owners.
 ## Used but not shipped
 
 Zetty runs these if you have them, but does not distribute them:
-[zmx](https://zmx.sh) (session persistence — Settings can download the
-official binary for you), [bat](https://github.com/sharkdp/bat) (file viewer
-highlighting), and the agent CLIs themselves.
+[bat](https://github.com/sharkdp/bat) (file viewer highlighting) and the agent
+CLIs themselves.

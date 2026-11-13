@@ -9,34 +9,25 @@ import ZettyGhostty
 /// Settings window can clean up).
 enum ZmxRunner {
 
-    /// Pinned release downloaded by the in-app installer (from zmx.sh).
-    static let version = "0.6.0"
-
-    /// Manual-install guidance shown when the auto-download fails.
-    static let installHint = "Download from https://zmx.sh or: brew install neurosnap/tap/zmx"
-
-    /// Where the in-app installer puts the binary.
-    static var managedBinaryURL: URL {
-        URL(fileURLWithPath: NSHomeDirectory())
-            .appendingPathComponent(".zetty/bin/zmx")
-    }
-
-    /// Resolved zmx binary path, or nil when not installed.
+    /// The zmx for new sessions: the versioned copy of the bundled helper
+    /// (`ZmxBinaries`), or nil when the bundle's helper is missing or broken.
+    /// Calls that name sessions are routed to each session's own binary
+    /// inside `run`, whatever path the caller passes.
     static func locate() -> String? {
-        let candidates = [
-            managedBinaryURL.path,                      // Zetty-managed download
-            "/opt/homebrew/bin/zmx",                    // Homebrew (Apple Silicon)
-            "/usr/local/bin/zmx",                       // Homebrew (Intel) / manual
-            "\(NSHomeDirectory())/.local/bin/zmx",      // manual install
-        ]
-        return candidates.first { FileManager.default.isExecutableFile(atPath: $0) }
+        ZmxBinaries.forNewSessions
     }
 
-    /// `zmx list --short` → Zetty session names, both prefixes (empty on any
-    /// failure).
+    /// Full `zmx list` → Zetty session names, both prefixes (empty on any
+    /// failure), without the unreachable ones.
     static func listZettySessions(zmxPath: String) -> [String] {
-        guard let output = run(zmxPath, ["list", "--short"]) else { return [] }
-        return SessionPersistence.zettySessions(fromList: output)
+        // The full list, not --short: zmx 1.0's --short leaves out sessions
+        // whose daemon runs another version, and they are still ours. Those
+        // whose zmx is gone are left out: every caller (the orphan reap,
+        // Settings' orphan kill, the hibernated-leftover sweep) means to end
+        // them, and no zmx can, so they would only be retried forever.
+        guard let output = run(zmxPath, ["list"]) else { return [] }
+        let unreachable = ZmxBinaries.unreachable
+        return SessionPersistence.sessionNames(fromList: output).filter { !unreachable.contains($0) }
     }
 
     /// `zmx list` → session name to root shell pid (empty on any failure).
@@ -44,7 +35,17 @@ enum ZmxRunner {
     /// helped: a hung zmx otherwise holds the caller for good.
     static func sessionPIDs(zmxPath: String, timeout: TimeInterval? = nil) -> [String: Int32] {
         guard let output = run(zmxPath, ["list"], timeout: timeout) else { return [:] }
-        return SessionPersistence.sessionPIDs(fromList: output)
+        var pids = SessionPersistence.sessionPIDs(fromList: output)
+        // A session of another zmx version lists as unreachable, without a
+        // pid; its shell is its daemon's child in the process table.
+        let unreachable = SessionPersistence.unreachableSessions(fromList: output)
+        if !unreachable.isEmpty, let ps = psSnapshot(timeout: timeout) {
+            let daemons = ZmxDaemons.daemons(psOutput: ps)
+            for session in unreachable {
+                if let shell = daemons[session]?.shellPID { pids[session] = shell }
+            }
+        }
+        return pids
     }
 
     /// One process-table snapshot, feeding BOTH foreground resolution and the
@@ -110,9 +111,15 @@ enum ZmxRunner {
             // nil when `zmx list` itself failed — which proves nothing, unlike
             // `listZettySessions`'s empty answer, which would read as "every
             // session is gone" and let the caller free live surfaces.
+            //
+            // The full list, not --short: zmx 1.0's --short leaves out every
+            // session of another zmx version, which would read as "already
+            // gone" and free live surfaces. An unreachable session is left
+            // out instead: no zmx can end it, so waiting on it only stalls.
             func list() -> Set<String>? {
-                run(zmxPath, ["list", "--short"], timeout: timeout)
-                    .map { Set(SessionPersistence.zettySessions(fromList: $0)) }
+                run(zmxPath, ["list"], timeout: timeout).map {
+                    Set(SessionPersistence.sessionNames(fromList: $0)).subtracting(ZmxBinaries.unreachable)
+                }
             }
             var listed = list()
             let deadline = Date() + HibernationTeardown.gracePeriod
@@ -394,62 +401,6 @@ enum ZmxRunner {
         _ = run(zmxPath, ["kill"] + sessions)
     }
 
-    /// Downloads the pinned zmx release binary from zmx.sh into
-    /// `~/.zetty/bin/zmx` (no Homebrew needed). Runs off-main; completion (on
-    /// main) gets the resolved zmx path on success, or nil on failure.
-    static func install(completion: @escaping (String?) -> Void) {
-        DispatchQueue.global(qos: .userInitiated).async {
-            let path = downloadAndInstall()
-            DispatchQueue.main.async { completion(path) }
-        }
-    }
-
-    private static func downloadAndInstall() -> String? {
-        #if arch(arm64)
-        let arch = "aarch64"
-        #else
-        let arch = "x86_64"
-        #endif
-        let url = "https://zmx.sh/a/zmx-\(version)-macos-\(arch).tar.gz"
-
-        let fm = FileManager.default
-        let workDir = fm.temporaryDirectory.appendingPathComponent("zetty-zmx-\(UUID().uuidString)")
-        defer { try? fm.removeItem(at: workDir) }
-        let tarball = workDir.appendingPathComponent("zmx.tar.gz")
-
-        do {
-            try fm.createDirectory(at: workDir, withIntermediateDirectories: true)
-            // curl keeps this simple and avoids quarantine-xattr surprises.
-            guard run("/usr/bin/curl", ["-fsSL", url, "-o", tarball.path]) != nil else { return nil }
-            guard run("/usr/bin/tar", ["-xzf", tarball.path, "-C", workDir.path]) != nil else { return nil }
-
-            // Find the extracted `zmx` binary (archive layout may nest it).
-            guard let binary = findBinary(named: "zmx", under: workDir) else { return nil }
-
-            let dest = managedBinaryURL
-            try fm.createDirectory(at: dest.deletingLastPathComponent(), withIntermediateDirectories: true)
-            if fm.fileExists(atPath: dest.path) { try fm.removeItem(at: dest) }
-            try fm.moveItem(at: binary, to: dest)
-            try fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: dest.path)
-            return locate()
-        } catch {
-            return nil
-        }
-    }
-
-    private static func findBinary(named name: String, under dir: URL) -> URL? {
-        let fm = FileManager.default
-        guard let enumerator = fm.enumerator(at: dir, includingPropertiesForKeys: [.isRegularFileKey]) else {
-            return nil
-        }
-        for case let url as URL in enumerator
-        where url.lastPathComponent == name
-            && (try? url.resourceValues(forKeys: [.isRegularFileKey]))?.isRegularFile == true {
-            return url
-        }
-        return nil
-    }
-
     /// `zmx send <session> <text>` — raw input into the session's PTY.
     ///
     /// Works whether or not a client is attached, which is what lets a pane be
@@ -477,14 +428,45 @@ enum ZmxRunner {
         runData(path, args, timeout: timeout).flatMap { String(data: $0, encoding: .utf8) }
     }
 
+    /// `run` without routing, for a binary chosen on purpose (`ZmxBinaries`
+    /// reading a binary's version, and non-zmx tools).
+    static func runDirect(_ path: String, _ args: [String], timeout: TimeInterval? = nil) -> String? {
+        runProcess(path, args, timeout: timeout).flatMap { String(data: $0, encoding: .utf8) }
+    }
+
+    /// Routes a zmx call to the binary of the sessions it names
+    /// (`ZmxBinaries`), since a client of another zmx version hangs against a
+    /// daemon instead of failing. A `kill` naming sessions of several versions
+    /// runs once per binary; an unreachable session is left out, and a call
+    /// naming only unreachable sessions doesn't run at all (nil). Anything
+    /// that isn't zmx, or names no session, runs as asked.
+    private static func runData(_ path: String, _ args: [String],
+                                timeout: TimeInterval? = nil) -> Data? {
+        guard (path as NSString).lastPathComponent == "zmx",
+              let runs = ZmxCommand.route(args, binaryFor: ZmxBinaries.binary(for:)) else {
+            return runProcess(path, args, timeout: timeout)
+        }
+        guard !runs.isEmpty else { return nil }
+        var output = Data()
+        var failed = false
+        for run in runs {
+            if let data = runProcess(run.binary, run.arguments, timeout: timeout) {
+                output.append(data)
+            } else {
+                failed = true
+            }
+        }
+        return failed ? nil : output
+    }
+
     /// Raw stdout, so callers that must not lose bytes (VT scrollback) don't
     /// go through a lossy String conversion.
     /// - Parameter timeout: when set, the process is terminated (then killed)
     ///   once it runs that long, and the call answers nil — a failure, never a
     ///   partial result. Only the hibernation teardown sets it: a hung zmx
     ///   there would otherwise hold the project's panes forever.
-    private static func runData(_ path: String, _ args: [String],
-                                timeout: TimeInterval? = nil) -> Data? {
+    private static func runProcess(_ path: String, _ args: [String],
+                                   timeout: TimeInterval? = nil) -> Data? {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: path)
         process.arguments = args

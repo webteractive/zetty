@@ -41,6 +41,8 @@ private let actingArguments: [String: [String]] = [
     // Everything after `run`'s account name belongs to the harness (see
     // `runAccountPassesHelpThrough`), so its acting form is the bare verb.
     "run": [],
+    // Same for `zmx`: everything after the verb is zmx's own (zmx list --help).
+    "zmx": [],
     "new-space": ["Foo"],
     "rename-space": ["Old", "New"],
     "remove-space": ["Foo"],
@@ -96,9 +98,35 @@ func helpNeverReachesTheApp(verb: String) {
     #expect(recorder.requests.isEmpty)
 }
 
+@Test func zmxPassesItsArgumentsThroughUntouched() {
+    // `zetty zmx list --help` is zmx's help, not Zetty's: the arguments reach
+    // the resolver as given, and nothing goes to the app. A resolver with no
+    // zmx to offer fails before any exec.
+    let seen = LockedBox<[String]>([])
+    ControlCLI.zmxResolver = { arguments in
+        seen.value = arguments
+        return (nil, "no zmx in this test")
+    }
+    defer { ControlCLI.zmxResolver = nil }
+    let (exit, recorder) = runIsolated(["zmx", "list", "--help"])
+    #expect(exit == 1)
+    #expect(seen.value == ["list", "--help"])
+    #expect(recorder.requests.isEmpty)
+}
+
 @Test func theTransportSeamDoesCatchARealCommand() {
     // Guards the tests above: if the seam were bypassed they would pass
     // vacuously.
     let (_, recorder) = runIsolated(["scratch-clear"])
     #expect(recorder.requests == [.scratchClear(force: false)])
+}
+
+private final class LockedBox<Value>: @unchecked Sendable {
+    private let lock = NSLock()
+    private var stored: Value
+    init(_ value: Value) { stored = value }
+    var value: Value {
+        get { lock.lock(); defer { lock.unlock() }; return stored }
+        set { lock.lock(); stored = newValue; lock.unlock() }
+    }
 }

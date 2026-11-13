@@ -54,8 +54,9 @@ in `ZettyCore` (`AppConfig` / `ConfigStore`); `AppDelegate` resolves + applies i
   `onConfigSaved` so `AppDelegate` reloads at once: its in-memory `appConfig`
   is otherwise stale until the 1s file poll, and an `AppDelegate` save in that
   window would overwrite the Settings write.
-- **`preserve-sessions = true|false`** (default false) — panes run inside
-  [zmx](https://zmx.sh) sessions so they survive quit/relaunch. The reattach,
+- **`preserve-sessions = true|false`** (default true since 2026-11-13, when
+  zmx started shipping inside the app; an existing `false` line is left
+  alone) — panes run inside zmx sessions so they survive quit/relaunch. The reattach,
   scrollback-restore, scratch-pane deadlock, title persistence and restart-
   recovery rules are in `.hydra/rules/session-preservation.md` — read it before
   touching anything session-related.

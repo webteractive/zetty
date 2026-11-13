@@ -228,9 +228,11 @@ or hibernate a whole project with its moon button.
 
 ### Session persistence
 
-Turn on **Settings (⌘,) → Sessions → Preserve sessions** (Zetty offers to
-download [zmx](https://zmx.sh) if needed), or set `preserve-sessions = true`.
-Every pane then runs in its own zmx session:
+Session persistence is on by default (**Settings (⌘,) → Sessions → Preserve
+sessions**, or `preserve-sessions`). Every pane runs in its own session of
+[zmx](https://github.com/neurosnap/zmx), which ships inside Zetty, so there is
+nothing to install. An older config that says `preserve-sessions = false`
+keeps it off until you turn it on:
 
 - **Quitting keeps them running** — relaunching reattaches every pane with its
   programs and full scrollback intact.
@@ -399,7 +401,7 @@ they couldn't use.
 | `appearance` | `system` | `system` follows macOS; `dark`/`light` pin one |
 | `theme-dark` / `theme-light` | `Twilight` / `Daylight` | Scheme per appearance |
 | `sidebar-position` | `left` | Side of the window for the sidebar |
-| `preserve-sessions` | `false` | Keep panes alive across quit/relaunch (needs zmx) |
+| `preserve-sessions` | `true` | Keep panes alive across quit/relaunch (zmx ships inside Zetty) |
 | `restore-scrollback` | `true` | Replay preserved panes' scrollback on relaunch |
 | `zetty-restart-recovery` | `true` | Recover panes and agent conversations after a macOS restart |
 | `hibernate-after` | `off` | Hibernate a project after it has been idle this long (e.g. `60m`, `2h`) |
@@ -470,6 +472,7 @@ zetty tiles                              # toggle the tile grid
 zetty tiles --profile morning            # open a saved tile view
 zetty accounts                           # list agent accounts
 zetty run personal                       # run that account's agent here
+zetty zmx list                           # Zetty's own zmx: list its sessions
 zetty attach mini:1a2b3c4d               # another Mac's pane in this terminal
 zetty remote list                        # your other Macs, their state and projects
 zetty remote open mini api               # show another Mac's project here (remote close: back)
@@ -511,6 +514,6 @@ and license texts also ship inside the app.
 ## Acknowledgments
 
 - [Ghostty](https://ghostty.org) and [libghostty-spm](https://github.com/Lakr233/libghostty-spm) — the terminal core
-- [zmx](https://zmx.sh) — session persistence
+- [zmx](https://github.com/neurosnap/zmx) — session persistence, bundled
 - [JetBrains Mono](https://www.jetbrains.com/lp/mono/) — the bundled font
 - [simple-icons](https://simpleicons.org) and [lobe-icons](https://github.com/lobehub/lobe-icons) — tool logos

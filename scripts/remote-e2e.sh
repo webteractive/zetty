@@ -22,7 +22,7 @@
 #
 # Needs: ZETTY_E2E_TAILSCALE_AUTH_KEY in the environment (a reusable,
 # ephemeral, pre-approved, untagged auth key: DEVELOPMENT.md), SSH to the
-# peer without a password, zmx here, python3 on the peer, and the peer's own
+# peer without a password, python3 on the peer, and the peer's own
 # Tailscale app running (the non-Zetty refusal check goes through it).
 # The peer must be awake and logged in (its screen may be locked); a test
 # window opens on each screen.
@@ -158,7 +158,7 @@ teardown() {
         pkill -f "^$TEST_BIN" 2>/dev/null
         rm -rf "$ROOT"
         if [ -n "${REAL_SESSIONS:-}" ]; then
-            local after; after=$(zmx list 2>/dev/null | grep -c zetty- || true)
+            local after; after=$(real_sessions)
             [ "$after" = "$REAL_SESSIONS" ] || echo "WARN  this Mac's real zmx sessions went from $REAL_SESSIONS to $after"
         fi
     fi
@@ -171,7 +171,6 @@ teardown() {
 echo "== preflight"
 peer true || { echo "remote-e2e: can't reach $PEER over SSH without a password" >&2; exit 2; }
 [ "$(uname -m)" = "$(peer uname -m)" ] || { echo "remote-e2e: the peer is $(peer uname -m), this Mac $(uname -m)" >&2; exit 2; }
-command -v zmx >/dev/null || { echo "remote-e2e: zmx isn't installed here; serving needs it" >&2; exit 2; }
 peer 'command -v python3 >/dev/null' || { echo "remote-e2e: the peer has no python3" >&2; exit 2; }
 
 # A test app left by an earlier --keep run goes first.
@@ -190,13 +189,20 @@ if [ "$BUILD" = 1 ]; then
         || { echo "remote-e2e: build failed, see /tmp/zre-build.log" >&2; exit 2; }
 fi
 [ -x "$APP/Contents/MacOS/zetty" ] || { echo "remote-e2e: no app at $APP" >&2; exit 2; }
+[ -x "$APP/Contents/Helpers/zmx" ] || { echo "remote-e2e: $APP has no bundled zmx" >&2; exit 2; }
+# This Mac's REAL sessions, through the build's own zmx: a Homebrew zmx can't
+# see sessions of another zmx version (session-preservation.md).
+real_sessions() {
+    env -u ZMX_DIR -u CFFIXED_USER_HOME -u ZMX_SESSION "$APP/Contents/MacOS/zetty" zmx list 2>/dev/null \
+        | grep -c zetty- || true
+}
 
 trap teardown EXIT INT TERM
 
 # MARK: - Launch
 
 echo "== launch"
-REAL_SESSIONS=$(zmx list 2>/dev/null | grep -c zetty- || true)
+REAL_SESSIONS=$(real_sessions)
 rm -rf "$ROOT"
 mkdir -p "$ROOT/.config/zetty" "$ROOT/zmx" "$ROOT/work"
 ditto "$APP" "$TEST_APP"

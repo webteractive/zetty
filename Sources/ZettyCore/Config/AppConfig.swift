@@ -52,11 +52,12 @@ public struct AppConfig: Equatable, Sendable {
     /// App used by "Open in Editor" (an app name like "Zed" or a bundle id like
     /// "dev.zed.Zed"). `nil` → the system default app for the file.
     public var editor: String?
-    /// When true, panes run inside zmx sessions that survive app quit/relaunch.
+    /// When true (default), panes run inside zmx sessions that survive app
+    /// quit/relaunch. An explicit `false` line in an older config is kept.
     public var preserveSessions: Bool
     /// When true (default), relaunch-reattached preserved panes replay their
     /// full zmx scrollback history into the surface before attaching. Only
-    /// meaningful when `preserveSessions` is on and zmx is installed.
+    /// meaningful when `preserveSessions` is on.
     public var restoreScrollback: Bool
     /// When true (default), a restart/shutdown/logout quit snapshots preserved
     /// panes' scrollback and tallies running harness sessions, and the next
@@ -179,7 +180,7 @@ public struct AppConfig: Equatable, Sendable {
         themeDark: String = AppConfig.defaultThemeDark,
         themeLight: String = AppConfig.defaultThemeLight,
         editor: String? = nil,
-        preserveSessions: Bool = false,
+        preserveSessions: Bool = true,
         restoreScrollback: Bool = true,
         restartRecovery: Bool = true,
         checkUpdates: Bool = true,
@@ -475,7 +476,7 @@ public struct AppConfig: Equatable, Sendable {
         theme-dark  = \(themeDark)
         theme-light = \(themeLight)
 
-        # Keep terminal sessions alive across app quit/relaunch (requires zmx).
+        # Keep terminal sessions alive across app quit/relaunch (zmx ships inside Zetty).
         preserve-sessions = \(preserveSessions)
 
         # Replay preserved panes' scrollback history when relaunch reattaches
@@ -615,9 +616,9 @@ public struct AppConfig: Equatable, Sendable {
     # id like dev.zed.Zed). When unset, the system default app for the file opens.
     # editor = Zed
 
-    # Keep terminal sessions alive across app quit/relaunch. Requires zmx
-    # (brew install neurosnap/tap/zmx); also toggleable in Settings (⌘,).
-    preserve-sessions = false
+    # Keep terminal sessions alive across app quit/relaunch, using the zmx
+    # that ships inside Zetty. Also toggleable in Settings (⌘,).
+    preserve-sessions = true
 
     # Replay preserved panes' scrollback history when relaunch reattaches
     # them (only meaningful with preserve-sessions = true).

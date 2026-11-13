@@ -72,7 +72,9 @@ Signing: `scripts/package.sh` signs Release builds with the **Developer ID**
 in the login keychain (hardened runtime, `--timestamp`, no entitlements),
 notarizes and staples the app, THEN builds, signs, notarizes and staples the
 DMG, and checks both with `spctl`. Order matters three ways: nested code
-(`ZettyGhostty.framework`) is signed before the app whose seal covers it; the
+(`ZettyGhostty.framework`, and the bundled `Contents/Helpers/zmx` with
+identifier `co.webteractive.zetty.zmx`) is signed before the app whose seal
+covers it; the
 app is stapled before the DMG is made, so the copy dragged out — and the copy
 the self-updater lifts out — carries its own ticket; and the `.sha256` sidecar
 is written last, because stapling rewrites the DMG. `notarytool` exits 0 on an

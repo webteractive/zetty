@@ -5056,7 +5056,7 @@ final class TerminalViewController: NSViewController {
                     + "so there is no captured output; `zetty wake \"\(project.name)\"` starts fresh shells"))
             }
             guard let zmx = ZmxRunner.locate() else {
-                return .failure(.noSuchPane("zmx is not installed"))
+                return .failure(.noSuchPane("Zetty's zmx is missing; reinstall Zetty"))
             }
             return .success(CaptureSource(
                 session: SessionPersistence.sessionName(for: surface.id),

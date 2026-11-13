@@ -142,6 +142,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         // Before any pane spawns, like ZETTY above: its first call is the only
         // process-environment change it makes (ModInstaller.applyEnvironment).
         modInstaller.applyEnvironment(enabled: appConfig.claudeMod, tools: appConfig.claudeTools)
+        // Before anything lists, attaches or reads a session: maps every live
+        // session to the zmx its daemon runs, and installs the bundled one
+        // for new panes (session-preservation.md, "The bundled zmx").
+        ZmxBinaries.prepare()
         ZTheme.scheme = resolvedScheme()
         applyChromeFontFromConfig()             // chrome font before any view reads monoFont
         NSApp.appearance = appearanceOverride
@@ -1292,8 +1296,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
 
     // MARK: - Session preservation
 
-    /// Threads session preservation into the terminal VC: when enabled and zmx
-    /// is installed, new panes launch `zmx attach zetty-<id>` instead of a
+    /// Threads session preservation into the terminal VC: when enabled and the
+    /// bundled zmx runs, new panes launch `zmx attach zetty-<id>` instead of a
     /// bare shell. When restore-scrollback is on, panes launch through the
     /// scrollback-restore wrapper script instead (replays zmx history, then
     /// attaches). Affects NEW panes only. Explicitly closed panes always get
@@ -1306,7 +1310,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         // global toggle or a per-project override forcing it on. The
         // per-pane decision happens inside the closure at spawn time.
         let anyPreserve = appConfig.preserveSessions || projectSettings.anyPreserveOverrideOn
-        if anyPreserve, let zmx = zmxPath {
+        if anyPreserve, zmxPath != nil {
             // A snapshot needs the wrapper even when history replay is off:
             // the file is the only copy of that pane's screen.
             let wantsScript = appConfig.restoreScrollback || !recoverySnapshotPaths.isEmpty
@@ -1337,8 +1341,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
                 } else {
                     guard self.appConfig.preserveSessions else { return nil }
                 }
+                // Each session attaches with the zmx its daemon runs. One whose
+                // zmx is gone gets a notice instead: `zmx attach` on its name
+                // would start a fresh session over it, or hang against it.
+                let session = SessionPersistence.sessionName(for: id)
+                guard let binary = ZmxBinaries.binary(for: session) else {
+                    return ZmxBinaries.unreachableNoticeCommand(session: session)
+                }
                 return SessionPersistence.attachCommand(
-                    zmxPath: zmx, surfaceID: id, restoreScriptPath: restoreScript,
+                    zmxPath: binary, surfaceID: id, restoreScriptPath: restoreScript,
                     snapshotPath: self.recoverySnapshotPaths[id])
             }
         } else {
@@ -1413,10 +1424,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         }
     }
 
-    /// One-time guidance when `preserve-sessions = true` was set by hand but
-    /// zmx isn't installed (the Settings toggle drives an install instead).
+    /// One-time notice when preservation is on but the zmx inside the app is
+    /// missing or broken, which only a damaged bundle does.
     private func presentZmxMissingAlertOnce() {
-        let key = "Zetty.zmxMissingAlertShown"
+        let key = "Zetty.bundledZmxMissingAlertShown"
         guard !UserDefaults.standard.bool(forKey: key) else { return }
         UserDefaults.standard.set(true, forKey: key)
         DispatchQueue.main.async {
@@ -1424,14 +1435,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             // Leads with the consequence, not the config key, and matches the
             // wording Settings uses for the same condition ("Session
             // preservation requires zmx") so the two don't read as two problems.
-            alert.messageText = "Session preservation needs zmx, which isn't installed"
+            alert.messageText = "Session preservation isn't working: Zetty's zmx is missing"
             alert.informativeText = """
-            Your config sets preserve-sessions = true. Until zmx is installed, panes \
-            run plain shells — whatever is running in them ends when Zetty quits.
+            The zmx that ships inside Zetty is missing or won't run, so panes run \
+            plain shells, and whatever runs in them ends when Zetty quits.
 
-            Settings (⌘,) can install it for you.
-
-            \(ZmxRunner.installHint)
+            Reinstall Zetty to restore it.
             """
             alert.runModal()
         }

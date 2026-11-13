@@ -1,11 +1,14 @@
 #!/usr/bin/env bash
 # Reports whether Lakr233/libghostty-spm has a release newer than the one
-# Project.swift pins. Read-only: it changes nothing.
+# Project.swift pins, then where the other two pinned components stand: zmx
+# (scripts/zmx.pin) and Tailscale (Bridge/tailnet/go.mod). Read-only: it
+# changes nothing.
 #
 #   scripts/check-libghostty.sh
 #
-# Exit 0 when the pin is the newest release, 1 when a newer one exists (same
-# line or a newer line), 2 when the pin or the remote could not be read.
+# Exit 0 when every pin is the newest release, 1 when a newer one exists (for
+# libghostty: same line or a newer line), 2 when a pin or a remote could not be
+# read.
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
@@ -45,6 +48,37 @@ if [ "${overall%.*}" != "$line" ]; then
 fi
 [ "$status" -eq 0 ] && echo "-> up to date."
 
+# zmx and Tailscale: printed last, whichever way the Ghostty comparison ends.
+other_pins() {
+    echo
+    local zmx_pin zmx_latest
+    zmx_pin=$(sed -n 's/^version=//p' scripts/zmx.pin | head -1)
+    zmx_latest=$(curl -fsSL https://api.github.com/repos/neurosnap/zmx/releases/latest 2>/dev/null \
+        | sed -n 's/.*"tag_name": *"v\{0,1\}\([^"]*\)".*/\1/p' | head -1) || zmx_latest=
+    if [ -z "$zmx_pin" ] || [ -z "$zmx_latest" ]; then
+        echo "zmx: could not read the pin or the latest release"; [ "$status" -eq 0 ] && status=2
+    elif [ "$zmx_pin" = "$zmx_latest" ]; then
+        echo "zmx: $zmx_pin pinned, the latest release: current"
+    else
+        echo "zmx: $zmx_pin pinned, $zmx_latest released: read its CHANGELOG for protocol breaks, then bump scripts/zmx.pin (session-preservation.md)"
+        [ "$status" -ne 2 ] && status=1
+    fi
+    local ts_pin ts_latest
+    ts_pin=$(sed -n 's/^require tailscale\.com \(v[^ ]*\).*/\1/p; s/^[[:space:]]*tailscale\.com \(v[^ ]*\).*/\1/p' Bridge/tailnet/go.mod | head -1)
+    ts_latest=$(curl -fsSL https://proxy.golang.org/tailscale.com/@latest 2>/dev/null \
+        | sed -n 's/.*"Version": *"\([^"]*\)".*/\1/p') || ts_latest=
+    if [ -z "$ts_pin" ] || [ -z "$ts_latest" ]; then
+        echo "tailscale: could not read the pin or the latest module version"; [ "$status" -eq 0 ] && status=2
+    elif [ "$ts_pin" = "$ts_latest" ]; then
+        echo "tailscale: $ts_pin pinned, the latest module: current"
+    else
+        echo "tailscale: $ts_pin pinned, $ts_latest released: bump it in Bridge/tailnet/go.mod (go get tailscale.com@$ts_latest) and re-run remote-e2e.sh"
+        [ "$status" -ne 2 ] && status=1
+    fi
+    return 0
+}
+finish() { other_pins; exit "$status"; }
+
 # Which Ghostty each build carries. A libghostty-spm version only names the
 # wrapper; the Ghostty commit inside it is in `Ghostty.ref` at that tag, and
 # several releases can share one. Informational: it never changes the exit code.
@@ -73,7 +107,7 @@ compare() {
 echo
 if ! command -v jq >/dev/null 2>&1; then
     echo "ghostty: jq is not installed, skipping the Ghostty comparison"
-    exit "$status"
+    finish
 fi
 
 # Newest stable release; annotated tags list their commit on the `^{}` line.
@@ -84,10 +118,10 @@ release_sha=$(printf '%s\n' "$release_tags" | grep -F "refs/tags/$release^{}" | 
 [ -n "$release_sha" ] || release_sha=$(printf '%s\n' "$release_tags" \
     | grep -E "refs/tags/$release\$" | cut -f1)
 
-resolved_ref=$(ghostty_ref "$resolved")
+resolved_ref=$(ghostty_ref "$resolved" || true)
 if [ -z "$release" ] || [ -z "$release_sha" ] || [ -z "$resolved_ref" ]; then
     echo "ghostty: could not read the release tags or Ghostty.ref, comparison skipped"
-    exit "$status"
+    finish
 fi
 
 echo "ghostty release: $release (${release_sha:0:12})"
@@ -102,11 +136,11 @@ esac
 echo "ghostty in $resolved (resolved): ${resolved_ref:0:12}${date:+ from $date}, $where"
 
 if [ -n "$same_line" ] && [ "$same_line" != "$resolved" ]; then
-    newest_ref=$(ghostty_ref "$same_line")
+    newest_ref=$(ghostty_ref "$same_line" || true)
     if [ "$newest_ref" = "$resolved_ref" ]; then
         echo "ghostty in $same_line: the same commit, so that release only changes the wrapper"
     else
         echo "ghostty in $same_line: ${newest_ref:0:12}, a different Ghostty: compare before bumping"
     fi
 fi
-exit "$status"
+finish

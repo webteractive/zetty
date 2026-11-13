@@ -182,9 +182,14 @@ it that way:
 - **Don't re-add per-verb `--help` cases** in the parsers. They are unreachable,
   and a copy that drifts is how the bug started. `parseTiles` still returns
   `.help` because it is a pure, separately tested parser.
-- **The one exception is `run`**: only the word right after `run` is checked.
-  Everything after the account name belongs to the harness, so
-  `zetty run work --help` execs the agent with `--help` — its own help.
+- **The exceptions are `run` and `zmx`**: only the word right after the verb
+  is checked. Everything after `run`'s account name belongs to the harness, so
+  `zetty run work --help` execs the agent with `--help` — its own help; and
+  everything after `zmx` is zmx's, so `zetty zmx list --help` is zmx's help.
+- **`zetty zmx <args>`** execs the bundled zmx, or the binary a named
+  session's daemon runs, with the arguments unchanged; the app need not run.
+  The app binary sets `ControlCLI.zmxResolver` (`ZmxBinaries.resolveForCLI`);
+  ZettyCore only execs. See `session-preservation.md`, "The bundled zmx".
 - **A bare `-h` or `--help` token is never data.** `zetty send ls -h --enter`
   prints send's help rather than typing `ls -h`; quote it with other text
   (`zetty send 'ls -h' --enter`) to send it.

@@ -20,6 +20,14 @@ tags and changes nothing. Zetty IS libghostty with chrome around it, so a
 terminal fix that already exists upstream is the cheapest fix available, and
 the pin only moves when somebody looks.
 
+- **The script ends with the other two pins** (2026-11-13): zmx
+  (`scripts/zmx.pin` against neurosnap/zmx's latest release) and Tailscale
+  (`tailscale.com` in `Bridge/tailnet/go.mod` against proxy.golang.org's
+  latest). Either being newer makes the exit code 1; an unreadable one, 2.
+  Report them in the summary too. A zmx bump follows
+  `session-preservation.md` ("Bumping the bundled zmx"); a Tailscale bump is
+  `go get tailscale.com@<v>` in `Bridge/tailnet`, then `scripts/remote-e2e.sh`.
+
 - **A libghostty-spm version names the wrapper, not the Ghostty inside it.**
   The script's second block reads `Ghostty.ref` at the resolved tag (and the
   newest one on the line) and compares that commit with Ghostty's newest

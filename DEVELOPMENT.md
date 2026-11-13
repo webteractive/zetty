@@ -37,8 +37,10 @@ works, so read them before a substantial change whether or not you use one.
 - Xcode 16+ (Swift 6 toolchain) with command-line tools
 - [Tuist](https://tuist.dev) — `brew install tuist`, or through
   [mise](https://mise.jdx.dev): `mise install` in the repo
-- Optional: [zmx](https://zmx.sh) for session persistence —
-  `brew install neurosnap/tap/zmx` (Settings can also download it)
+- Network on the first build: `scripts/fetch-zmx.sh` downloads the zmx
+  release `scripts/zmx.pin` names (both architectures, checksummed) into
+  `Derived/zmx/`, and the build bundles it at `Contents/Helpers/zmx`. Later
+  builds reuse the cache; a checksum mismatch fails the build.
 
 The libghostty terminal core comes as a prebuilt Swift package
 ([libghostty-spm](https://github.com/Lakr233/libghostty-spm)) — no Zig
@@ -107,7 +109,7 @@ mkdir -p /tmp/zti/.config/zetty /tmp/zti/zmx          # short: a socket path is 
 printf 'preserve-sessions = true\n' > /tmp/zti/.config/zetty/config
 
 # Before launching, both of these must come back empty-handed:
-ZMX_DIR=/tmp/zti/zmx zmx list                          # "no sessions found in /tmp/zti/zmx"
+ZMX_DIR=/tmp/zti/zmx <the test app>/Contents/MacOS/zetty zmx list   # "no sessions found in /tmp/zti/zmx"
 CFFIXED_USER_HOME=/tmp/zti zetty status                # "cannot reach zetty at /tmp/zti/.zetty/zetty.sock"
 
 env -i HOME="$HOME" USER="$USER" SHELL=/bin/zsh TMPDIR="$TMPDIR" LANG=en_US.UTF-8 \
@@ -177,7 +179,7 @@ console (Settings → Keys → Generate auth key: **reusable**, **ephemeral**,
 ZETTY_E2E_TAILSCALE_AUTH_KEY`. The script hands it to each copy in a 0600 file
 (`ZETTY_TAILSCALE_AUTH_KEY_FILE`) and deletes it after; the copies' devices
 leave your tailnet when they quit. It also needs SSH to the other Mac without a
-password (a key such as `~/.ssh/zetty-e2e`, picked up by default), zmx here, and
+password (a key such as `~/.ssh/zetty-e2e`, picked up by default), and
 the other Mac awake and logged in. `.hydra/rules/remote-machines.md` → "Testing" has
 what each check covers and what still needs a person.
 

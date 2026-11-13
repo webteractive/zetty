@@ -80,6 +80,15 @@ xcodebuild -project zetty.xcodeproj -scheme zetty -configuration Release \
 
 APP=build/Build/Products/Release/zetty.app
 PLIST="$APP/Contents/Info.plist"
+
+# Every build carries the pinned zmx, and it has to run: a release whose
+# helper is missing or broken would leave preserve-sessions with nothing.
+ZMX_PIN=$(sed -n 's/^version=//p' scripts/zmx.pin | head -1)
+ZMX_GOT=$("$APP/Contents/Helpers/zmx" version 2>/dev/null | awk '$1 == "zmx" { print $2; exit }')
+[ "$ZMX_GOT" = "$ZMX_PIN" ] \
+  || die "Contents/Helpers/zmx reports '${ZMX_GOT:-nothing}', scripts/zmx.pin says $ZMX_PIN"
+lipo "$APP/Contents/Helpers/zmx" -verify_arch arm64 x86_64 \
+  || die "Contents/Helpers/zmx is not universal (arm64 + x86_64)"
 VERSION=$(/usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" "$PLIST")
 COMMIT=$(/usr/libexec/PlistBuddy -c "Print :ZettyBuildCommit" "$PLIST")
 
@@ -87,10 +96,12 @@ if [ "$MODE" = release ]; then
   # Inside out: each nested framework or dylib first, the app last, since the
   # app's seal records the signatures of what it contains. Re-signing without
   # --entitlements also drops Xcode's get-task-allow, which notarization refuses.
-  sign() { codesign --force --timestamp --options runtime --sign "$SIGN_IDENTITY" "$1"; }
+  sign() { codesign --force --timestamp --options runtime --sign "$SIGN_IDENTITY" "$@"; }
   for nested in "$APP"/Contents/Frameworks/*; do
     if [ -e "$nested" ]; then sign "$nested"; fi
   done
+  # The bundled zmx (session preservation), before the app that seals it.
+  sign --identifier co.webteractive.zetty.zmx "$APP/Contents/Helpers/zmx"
   sign "$APP"
   codesign --verify --deep --strict --verbose=2 "$APP"
 

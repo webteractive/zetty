@@ -109,7 +109,7 @@ private let idB = UUID(uuidString: "11111111-2222-3333-4444-555555555555")!
 @Test func configParsesPreserveSessions() {
     #expect(AppConfig.parse("preserve-sessions = true").preserveSessions == true)
     #expect(AppConfig.parse("preserve-sessions = false").preserveSessions == false)
-    #expect(AppConfig.parse("").preserveSessions == false)   // default off
+    #expect(AppConfig.parse("").preserveSessions == true)    // default on since zmx ships inside
     // Reserved: must not leak into the ghostty passthrough.
     #expect(AppConfig.parse("preserve-sessions = true").ghostty.isEmpty)
     // Round-trips through rendered().

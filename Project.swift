@@ -50,6 +50,23 @@ let buildTailnetBridge = """
 "${SRCROOT}/scripts/build-tailnet-bridge.sh" ${ARCHS}
 """
 
+// zmx (session preservation) ships inside the app at Contents/Helpers/zmx,
+// pinned and checksummed in scripts/zmx.pin (session-preservation.md). The
+// fetch runs before compiling; the copy runs after the other phases, and Xcode
+// signs the app (sealing the helper) after every script phase.
+let fetchZmx = """
+"${SRCROOT}/scripts/fetch-zmx.sh"
+"""
+
+let bundleZmx = """
+set -euo pipefail
+SRC="${SRCROOT}/Derived/zmx/zmx"
+DEST="${TARGET_BUILD_DIR}/${CONTENTS_FOLDER_PATH}/Helpers"
+mkdir -p "${DEST}"
+ditto "${SRC}" "${DEST}/zmx"
+codesign --force --options runtime --timestamp=none --identifier co.webteractive.zetty.zmx --sign "${EXPANDED_CODE_SIGN_IDENTITY:--}" "${DEST}/zmx"
+"""
+
 let project = Project(
     name: "zetty",
     packages: [
@@ -124,6 +141,10 @@ let project = Project(
                 .folderReference(path: "licenses"),
             ],
             scripts: [
+                .pre(script: fetchZmx,
+                     name: "Fetch the pinned zmx",
+                     outputPaths: ["$(SRCROOT)/Derived/zmx/zmx"],
+                     basedOnDependencyAnalysis: false),
                 .pre(script: buildTailnetBridge,
                      name: "Build the Tailscale bridge",
                      outputPaths: ["$(SRCROOT)/Derived/tailnet/libzettytailnet.a"],
@@ -134,6 +155,9 @@ let project = Project(
                       basedOnDependencyAnalysis: false),
                 .post(script: overlayShellIntegration,
                       name: "Use Ghostty's shell integration",
+                      basedOnDependencyAnalysis: false),
+                .post(script: bundleZmx,
+                      name: "Bundle zmx",
                       basedOnDependencyAnalysis: false),
             ],
             dependencies: [

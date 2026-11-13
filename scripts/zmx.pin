@@ -1,0 +1,10 @@
+# The zmx release every Zetty build bundles (session preservation). The build
+# downloads both tarballs from github.com/neurosnap/zmx/releases, refuses any
+# whose sha256 differs from these, and lipos them into Contents/Helpers/zmx
+# (scripts/fetch-zmx.sh). To bump: read upstream's CHANGELOG for protocol
+# breaks, copy the new version and both .sha256 values here, re-check them
+# against the downloads, and follow the bump steps in
+# .hydra/rules/session-preservation.md.
+version=1.0.1
+sha256-aarch64=eb062a16f6d2570958622523e9f8965d9dbb238fd417ad7be33d69025ddb661a
+sha256-x86_64=12895201b7c8d2a01cf2f62a447d874943d664f0509753a2b099be59ab56ec0c

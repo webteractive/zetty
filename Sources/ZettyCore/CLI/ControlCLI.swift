@@ -47,6 +47,10 @@ public enum ControlCLI {
                                               --probe additionally asks each account
                                               who it is signed in as — one process
                                               per account, so it is opt-in
+      zetty zmx <args …>                      run the zmx that ships inside Zetty
+                                              (session preservation); a command
+                                              naming a session uses the zmx that
+                                              session runs. `zetty zmx list`
       zetty run <account> [args …]            run that account's agent in THIS
                                               terminal (execs it; the app need
                                               not be running). Everything after
@@ -245,7 +249,7 @@ public enum ControlCLI {
         "restart-agent", "handoff", "edit", "reload", "tiles",
         "scratch", "scratch-clear", "quit", "accounts", "run",
         "new-space", "rename-space", "remove-space", "move-to-space",
-        "attach", "remote",
+        "attach", "remote", "zmx",
     ]
 
     /// True when `arguments` look like a CLI invocation (used by the app
@@ -297,6 +301,8 @@ public enum ControlCLI {
             return runAccounts(arguments)
         case "run":
             return runRunAccount(arguments)
+        case "zmx":
+            return runZmx(arguments)
         case "attach":
             return runAttach(arguments)
         case "remote":
@@ -382,7 +388,7 @@ public enum ControlCLI {
     /// name is the harness's, so `zetty run work --help` asks the HARNESS.
     private static func asksForHelp(_ verb: String, _ arguments: [String]) -> Bool {
         let isHelp: (String) -> Bool = { $0 == "--help" || $0 == "-h" }
-        if verb == "run" { return arguments.first.map(isHelp) ?? false }
+        if verb == "run" || verb == "zmx" { return arguments.first.map(isHelp) ?? false }
         return arguments.contains(where: isHelp)
     }
 
@@ -873,6 +879,19 @@ public enum ControlCLI {
         Changes nothing on either Mac's workspace: open and close only change
         what this window shows.
         """,
+        "zmx": """
+        usage: zetty zmx <args …>
+
+        Run zmx, Zetty's session keeper, with the arguments unchanged (execs it;
+        the app need not be running). Commands that name sessions (history,
+        send, kill, attach, …) use the zmx that each session's daemon runs,
+        since zmx 1.0 refuses, or hangs, across versions; everything else uses
+        the zmx bundled with this Zetty. ZMX_DIR is honored. Your own `zmx`
+        (Homebrew) is never involved.
+
+        `zetty zmx list` and `zetty zmx history <session>` only read; `kill`
+        ends sessions.
+        """,
         "run": """
         usage: zetty run <account> [args …]
 
@@ -1229,6 +1248,30 @@ public enum ControlCLI {
         execvp(plan.command, &cArgs)
         return failure("couldn't launch \"\(plan.command)\": "
             + String(cString: strerror(errno)))
+    }
+
+    /// Picks the zmx for a `zetty zmx` command line, set by the app binary
+    /// (`ZmxBinaries.resolveForCLI`): a path, or why there is none.
+    nonisolated(unsafe) public static var zmxResolver: (([String]) -> (path: String?, problem: String?))?
+
+    /// `zetty zmx <args …>` — exec zmx HERE with the arguments unchanged.
+    private static func runZmx(_ arguments: [String]) -> Int32 {
+        guard !arguments.isEmpty else {
+            print(commandHelp["zmx"] ?? "usage: zetty zmx <args …>")
+            return 2
+        }
+        guard let resolver = zmxResolver else { return failure("zmx isn't available from this binary") }
+        let choice = resolver(arguments)
+        guard let path = choice.path else { return failure(choice.problem ?? "no zmx found") }
+        // Never "inside" a session: an inherited ZMX_SESSION changes what
+        // attach and kill do. This process is about to become zmx, so the
+        // change touches nothing else.
+        unsetenv("ZMX_SESSION")
+        let argv = [path] + arguments
+        var cArgs: [UnsafeMutablePointer<CChar>?] = argv.map { strdup($0) }
+        cArgs.append(nil)
+        execv(path, &cArgs)
+        return failure("couldn't launch \"\(path)\": " + String(cString: strerror(errno)))
     }
 
     private static func runNewTab(_ arguments: [String]) -> Int32 {

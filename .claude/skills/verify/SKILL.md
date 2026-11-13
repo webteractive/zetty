@@ -8,12 +8,13 @@ description: Verify a Zetty change in the running app, in an isolated test copy 
 The recipe is `.hydra/rules/isolated-test-app.md`: build, freeze a copy in
 `/tmp/zti`, launch it as a background task with `CFFIXED_USER_HOME` and
 `ZMX_DIR`, drive it with its own binary (`iz`), tear down with
-`iz quit --kill-sessions --force`, and check the real `zmx list` count is
+`iz quit --kill-sessions --force`, and check the real `zetty zmx list` count is
 unchanged. Never quit or replace `/Applications/zetty.app` to verify.
 
 ## Reading what happened
 
-- Pane screen: `ZMX_DIR=/tmp/zti/zmx env -u ZMX_SESSION zmx history zetty-<id>`;
+- Pane screen: `iz zmx history zetty-<id>` (the test app's own zmx; a bare
+  Homebrew `zmx` can't read sessions of another zmx version);
   add `--vt` for styling (SGR 2 is faint, which is what Claude's
   placeholders are drawn in).
 - App log: `/usr/bin/log show --last 2m --predicate 'subsystem == "co.webteractive.zetty"' --style compact`

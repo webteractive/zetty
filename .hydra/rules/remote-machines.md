@@ -281,8 +281,9 @@ the Settings status line.
   so a `cat` of a huge file arrives whole and slowly.
 - **Refusals**, each shown in the pane as `[…]` and not retried: not a pane
   id; the Mac isn't set up to open panes; that pane is gone; the project is
-  hibernated; its project doesn't keep sessions; zmx isn't installed; the
-  session didn't start; the Mac is shutting down; couldn't start the pane.
+  hibernated; its project doesn't keep sessions; Zetty's zmx is missing (a
+  damaged bundle); the session runs a zmx that is gone; the session didn't
+  start; the Mac is shutting down; couldn't start the pane.
   Another protocol version says to update both Macs.
 - **Reconnects.** A failed connect or a drop retries after 1, 2, 5, then
   10s, and says so once in the pane. No hello asks for scrollback: the first

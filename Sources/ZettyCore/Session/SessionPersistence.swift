@@ -132,6 +132,32 @@ public enum SessionPersistence {
         return pids
     }
 
+    /// Every one of our sessions full `zmx list` output names, reachable or
+    /// not. zmx 1.0's `list --short` leaves out sessions whose daemon runs
+    /// another version (measured 2026-11-13), so a caller that must see every
+    /// session (the orphan reap, Settings) lists from the full output.
+    public static func sessionNames(fromList output: String) -> [String] {
+        output.split(separator: "\n").compactMap { line -> String? in
+            let tokens = line.split(whereSeparator: { $0 == "\t" || $0 == " " })
+            guard let name = tokens.first(where: { $0.hasPrefix("name=") })?.dropFirst(5),
+                  name.hasPrefix(namePrefix) else { return nil }
+            return String(name)
+        }
+    }
+
+    /// Our sessions that `zmx list` could not talk to (`err=…`): since zmx 1.0
+    /// that is a session whose daemon runs a different zmx version. Its pid
+    /// then comes from the process table (`ZmxDaemons`), never from this list.
+    public static func unreachableSessions(fromList output: String) -> [String] {
+        output.split(separator: "\n").compactMap { line -> String? in
+            let tokens = line.split(whereSeparator: { $0 == "\t" || $0 == " " })
+            guard tokens.contains(where: { $0.hasPrefix("err=") }),
+                  let name = tokens.first(where: { $0.hasPrefix("name=") })?.dropFirst(5),
+                  name.hasPrefix(namePrefix) else { return nil }
+            return String(name)
+        }
+    }
+
     /// Parses `zmx list --short` output into session names, keeping only ours.
     /// Tolerates blank lines and ignores foreign sessions.
     public static func zettySessions(fromList output: String) -> [String] {

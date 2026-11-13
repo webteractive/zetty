@@ -30,6 +30,12 @@ ControlCLI.versionInfo = {
         commit: bundle.object(forInfoDictionaryKey: "ZettyBuildCommit") as? String
     )
 }()
+// `zetty zmx …` runs the zmx inside this bundle, or the one a named session's
+// daemon runs (ZmxBinaries).
+ControlCLI.zmxResolver = { arguments in
+    ZmxBinaries.resolveForCLI(arguments: arguments,
+                              executable: Bundle.main.executableURL ?? URL(fileURLWithPath: CommandLine.arguments[0]))
+}
 if ControlCLI.recognizes(cliArguments) {
     exit(ControlCLI.run(cliArguments))
 }

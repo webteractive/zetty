@@ -38,7 +38,7 @@ ln -s "$HOME/.claude/projects" /tmp/zti/.claude/projects   # handoffs need it
 ditto <DerivedData>/Build/Products/Debug/zetty.app /tmp/zti/zetty.app
 
 # 2. Both must come back empty-handed before launching:
-ZMX_DIR=/tmp/zti/zmx zmx list            # "no sessions found in /tmp/zti/zmx"
+ZMX_DIR=/tmp/zti/zmx /tmp/zti/zetty.app/Contents/MacOS/zetty zmx list   # "no sessions found in /tmp/zti/zmx"
 CFFIXED_USER_HOME=/tmp/zti zetty status  # "cannot reach zetty at /tmp/zti/.zetty/zetty.sock"
 
 # 3. Launch it as a BACKGROUND TASK of the tool (run_in_background), not
@@ -58,9 +58,9 @@ iz send --pane "$P" --enter 'sleep 900'   # without --enter the text just sits
                                           # at the prompt, and nothing is busy
 
 # 5. Tear down, and prove the real sessions were never touched:
-zmx list | grep -c zetty-                     # note the count first
+zetty zmx list | grep -c zetty-               # note the count first
 iz quit --kill-sessions --force
-zmx list | grep -c zetty-                     # same count
+zetty zmx list | grep -c zetty-               # same count
 rm -rf /tmp/zti                               # removes the link, not ~/.claude/projects
 # Signed in to Tailscale from its Settings, the test app keeps its device's
 # state in the login Keychain for home /tmp/zti on this Mac; it outlives the folder (and

@@ -1383,12 +1383,12 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         claudeToolsSwitch.state = config.claudeTools ? .on : .off
         loginItemSwitch.state = SMAppService.mainApp.status == .enabled ? .on : .off
 
-        // Which zmx binary backs the feature is an implementation detail; the
-        // status line only appears when zmx is missing, to explain the toggle.
+        // zmx ships inside Zetty, so the status line only appears when that
+        // copy is missing or broken (a damaged bundle), to explain the toggle.
         let zmxPath = ZmxRunner.locate()
         sessionStatusLabel.isHidden = zmxPath != nil
         if zmxPath == nil {
-            sessionStatusLabel.stringValue = "zmx not installed — enabling offers to install it"
+            sessionStatusLabel.stringValue = "Zetty's zmx is missing. Reinstall Zetty to turn this on."
         }
 
         orphanButton.isHidden = true
@@ -1442,34 +1442,14 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
             return
         }
 
-        // zmx missing: offer to download the release binary into ~/.zetty/bin.
-        let alert = NSAlert()
-        alert.messageText = "Session preservation requires zmx"
-        alert.informativeText = "Download zmx \(ZmxRunner.version) from zmx.sh now? It installs into ~/.zetty/bin — nothing else is touched."
-        alert.addButton(withTitle: "Install")
-        alert.addButton(withTitle: "Cancel")
-        guard alert.runModal() == .alertFirstButtonReturn else {
-            sender.state = .off
-            return
-        }
-
-        sender.isEnabled = false
-        sessionStatusLabel.stringValue = "Installing zmx…"
-        ZmxRunner.install { [weak self] zmxPath in
-            guard let self else { return }
-            self.preserveSwitch.isEnabled = true
-            if zmxPath != nil {
-                self.savePreserveSessions(true)
-            } else {
-                self.preserveSwitch.state = .off
-                self.presentAlert(
-                    title: "zmx install failed",
-                    message: "Install it manually, then re-enable:\n\n\(ZmxRunner.installHint)",
-                    warning: true
-                )
-            }
-            self.refreshSessions()
-        }
+        // The zmx inside the app is missing or broken: only a reinstall helps.
+        sender.state = .off
+        presentAlert(
+            title: "Zetty's zmx is missing",
+            message: "Session preservation uses the zmx that ships inside Zetty, and this copy of Zetty doesn't have a working one. Reinstall Zetty, then turn this on.",
+            warning: true
+        )
+        refreshSessions()
     }
 
     /// Persists the toggle to the config file; the app's config watcher picks
