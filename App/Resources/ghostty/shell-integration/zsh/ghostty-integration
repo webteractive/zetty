@@ -233,19 +233,32 @@ _ghostty_deferred_init() {
         (( _ghostty_state = 1 ))
     }
 
-    # Enable reporting current working dir. Zetty patch: emit an empty-host
-    # file:// URL (the embedded libghostty 1.2.x only parses file://, not the
-    # upstream kitty-shell-cwd:// form) AND mirror $PWD to the per-pane file
-    # Zetty injects as $ZETTY_CWD_FILE — the status bar reads that file, which
-    # works even if libghostty drops the OSC 7. See PaneCwdStore.
+    # Enable reporting current working dir. Zetty patch: mirror $PWD to the
+    # per-pane file Zetty injects as $ZETTY_CWD_FILE (the status bar and
+    # handoffs read it; see PaneCwdStore).
     #
-    # Ported from upstream Ghostty ebd449995d: the directory name is untrusted
-    # text. `print -r` keeps a backslash in it a backslash (plain `print` let a
-    # directory named 'x\a\e]52;c;SGVsbG8=\a' end the OSC 7 early and write
-    # the clipboard), the framing ESC and BEL are written with $'...' quoting,
-    # and ${PWD//[[:cntrl:]]} drops raw control bytes in the name.
+    # The OSC 7 itself is the bundled Ghostty's own form (its zsh integration
+    # at 042b16b): file://$HOST plus the percent-encoded path. Zetty used to
+    # send file:// with NO host, which this Ghostty rejects ("OSC 7 uri must
+    # contain a hostname"; its osc7Host test parses file:///tmp to an error),
+    # so a zsh pane's live directory never reached libghostty and "Open"
+    # used the pane's starting folder (bug hunt, 2026-11-13). Encoding every
+    # byte outside [A-Za-z0-9/_.~-] also keeps the untrusted directory name
+    # from carrying escape sequences (what upstream ebd449995d guarded with
+    # print -r and [[:cntrl:]] stripping).
+    _ghostty_encoded_pwd() {
+        builtin setopt localoptions nomultibyte
+        local out= byte
+        for byte in ${(s::)PWD}; do
+            case "$byte" in
+                [A-Za-z0-9/_.~-]) out+="$byte" ;;
+                *) out+="$(builtin printf '%%%02X' "'$byte")" ;;
+            esac
+        done
+        builtin print -rn -- "$out"
+    }
     _ghostty_report_pwd() {
-        builtin print -rnu $_ghostty_fd -- $'\e]7;file://'"${PWD//[[:cntrl:]]}"$'\a'
+        builtin print -rnu $_ghostty_fd -- $'\e]7;file://'"${HOST//[^A-Za-z0-9.-]}$(_ghostty_encoded_pwd)"$'\a'
         [[ -n "$ZETTY_CWD_FILE" ]] && builtin print -rn -- "$PWD" >| "$ZETTY_CWD_FILE" 2>/dev/null
     }
     chpwd_functions=(${chpwd_functions[@]} "_ghostty_report_pwd")

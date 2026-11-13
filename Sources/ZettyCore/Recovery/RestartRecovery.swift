@@ -195,7 +195,7 @@ public enum RestartRecovery {
         default:      return nil
         }
         let login = loginPrefix(environment: environment, unsetting: unsetting)
-        return "cd \(ShellQuote.singleQuoted(cwd)) && \(login)\(resume)"
+        return ShellQuote.changeDirectoryPrefix(cwd) + "\(login)\(resume)"
     }
 
     /// What goes in front of a harness command so it runs under a login the

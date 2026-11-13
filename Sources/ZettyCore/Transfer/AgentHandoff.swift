@@ -117,10 +117,11 @@ public enum AgentHandoff {
     /// nil for a harness that cannot be handed to.
     public static func launchLine(agent: AgentKind, login: ResumeLogin, cwd: String,
                                   briefPath: String) -> String? {
-        guard agents.contains(agent) else { return nil }
+        guard agents.contains(agent), ShellQuote.isTypeable(briefPath) else { return nil }
         let prefix = RestartRecovery.loginPrefix(environment: login.environment, unsetting: login.unsetting)
         let prompt = ShellQuote.singleQuoted(readPrompt(briefPath: briefPath))
-        return "cd \(ShellQuote.singleQuoted(cwd)) && \(prefix)\(RestartRecovery.harnessCommand(for: agent)) \(prompt)"
+        return ShellQuote.changeDirectoryPrefix(cwd)
+            + "\(prefix)\(RestartRecovery.harnessCommand(for: agent)) \(prompt)"
     }
 
     /// The word on the launch line that the new harness's input box is

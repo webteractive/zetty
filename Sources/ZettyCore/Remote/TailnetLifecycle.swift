@@ -30,6 +30,13 @@ public struct TailnetLifecycle: Equatable, Sendable {
 
     public mutating func started() { running = true }
 
+    /// A new device name chosen while the node isn't running: the next start
+    /// (including Sign Out's restart) uses it. A running node is renamed
+    /// through the bridge instead.
+    public mutating func rename(to hostname: String) {
+        if wanted != nil { wanted = hostname }
+    }
+
     public mutating func startFailed(keychain: Bool) {
         running = false
         if keychain { keychainRefused = true }

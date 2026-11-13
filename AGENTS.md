@@ -65,8 +65,10 @@ suite is faster via SwiftPM — `mise exec -- swift test` — and a single test 
 - **Anything new that ships in the app needs its license** in
   `THIRD_PARTY_NOTICES.md` and `licenses/`, every libghostty bump included
   (`third-party-notices.md`).
-- **Release only with `scripts/release.sh` and human-written notes**
-  (`releasing.md`): a generic release tool silently ships a broken release.
+- **Release only with `scripts/release.sh`, human-written notes and a
+  pre-release review record** (`releasing.md`): a bug sweep and a security
+  review of everything since the last tag come first, and a generic release
+  tool silently ships a broken release.
 
 ## Conventions
 

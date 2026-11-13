@@ -19,7 +19,7 @@ triggers:
 > limit). This file is authoritative: edit it here, then run `hydra sync`.
 
 ```sh
-scripts/release.sh --notes notes.md patch      # or minor | major | X.Y.Z
+scripts/release.sh --notes notes.md --review review.md patch   # or minor | major | X.Y.Z
 ```
 
 The script is the whole process: preflight (clean tree, on `main`, up to date,
@@ -85,6 +85,42 @@ override). `release.sh` runs `package.sh --preflight` before its bump, so a
 missing certificate or profile stops it before it pushes; `--adhoc` packages
 an un-notarized build for a machine without the certificate — never ship it.
 Releases up to 0.1.52 were ad-hoc signed.
+
+## Pre-release review (required, 2026-11-13)
+
+Glen: "Fix all bugs or look for bugs and fix and ensure every release is free
+from it." Every release is preceded by a bug sweep and a security review of
+everything since the last tag, and `scripts/release.sh` refuses to run
+without the record (`--review <file>`).
+
+1. **Range:** `git log --oneline $(git describe --tags --abbrev=0)..HEAD`.
+2. **Bug sweep:** fresh, read-only reviewers on the most capable model, one
+   per area the range touches (split by feature, not by file), each briefed
+   with the area's rule file and the failure modes the tests don't exercise:
+   hangs and main-thread blocking, races, crashes, data loss on upgrade,
+   untrusted input reaching a pane or a command line, and what an existing
+   user's state looks like after updating. They report concrete findings
+   with a failure scenario; a finding is fixed with a test that failed first
+   wherever one can be written.
+3. **Security review:** the `security-review` skill on the same range
+   (global rule `release-security-review.md`). Only Glen accepts a finding
+   unfixed.
+4. **Regression checks** that tests can't cover, in the isolated test app:
+   turning the Claude mod off and reloading, then opening a tab (the
+   environment crash, `surfaces-and-memory.md`); a session started by the
+   previous zmx pin still attaching, reading back and ending
+   (`session-preservation.md`); a hibernate and a `quit --kill-sessions`
+   returning promptly.
+5. **The record**, a file outside the repo like the notes, with:
+   - `Reviewed: <last tag>..<HEAD short sha>`: exactly the range released, so
+     a commit after the review sends it back;
+   - each finding and what happened to it;
+   - `Unresolved: none`, or `Unresolved: accepted by Glen …`.
+
+`swift test` (which release.sh runs) also carries source guards
+(`ReleaseGuardTests`) for bug classes that shipped once: process-environment
+changes after the first pane, and listing zmx with `--short`. Add a guard
+there when a bug class can be caught by reading the source.
 
 ## Release notes
 

@@ -29,13 +29,14 @@ regardless of whether anything is filed into it. Array order in `spaces` IS
 sidebar order; there is deliberately no second ordering field to disagree
 with it.
 
-`regroup()` mirrors the sidebar's sections: Home → spaceless pinned →
-spaceless unpinned → each Space in `spaces` order → Scratch terminals last.
-**Inside a Space, awake members come before dormant ones**, and members are
-never pinned — `assign` clears the pin on the way in and `regroup()`
-normalises any that slipped through (self-healing for a `workspace.json`
-written before that rule). Scratch is held back explicitly so model order
-matches the sidebar;
+`regroup()` mirrors the sidebar's sections: Home → spaceless projects →
+each Space in `spaces` order → Scratch terminals last (pinning was removed
+on 2026-11-12; an old `workspace.json`'s `isPinned` is ignored).
+**Inside a Space, awake members come before dormant ones.** Spaceless
+projects keep their model order, hibernated ones included, so the sidebar's
+Projects rows are not contiguous in the model: a drop maps its gap through
+the row below it, never by counting from the first row. Scratch is held back
+explicitly so model order matches the sidebar;
 
 **The sidebar routes EVERY hibernated project to the Hibernating section**,
 Space members included — `spaceID` is kept, so waking returns the project to

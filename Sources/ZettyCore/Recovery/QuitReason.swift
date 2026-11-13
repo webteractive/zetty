@@ -22,9 +22,21 @@ public enum QuitReason: Equatable, Sendable {
     /// `kAEShutDown`, `kAERestart`, `kAEReallyLogOut`
     public static let powerOffReasons: Set<UInt32> = [fourCC("shut"), fourCC("rest"), fourCC("rlgo")]
 
-    public static func classify(eventClass: UInt32?, eventID: UInt32?, reason: UInt32?) -> QuitReason {
+    /// The process that sends the quit Apple Event at a real restart,
+    /// shutdown or logout.
+    public static let powerOffSender = "loginwindow"
+
+    /// `sender` is the name of the process that sent the event, nil when it
+    /// couldn't be read. Only loginwindow's quit is a power-off: System
+    /// Settings' "Quit & Reopen" after a privacy permission change sends a
+    /// quit with a restart reason too, and on 2026-11-13 that ran restart
+    /// recovery on a Mac that was not restarting.
+    public static func classify(eventClass: UInt32?, eventID: UInt32?, reason: UInt32?,
+                                sender: String? = nil) -> QuitReason {
         guard eventClass == coreEventClass, eventID == quitEventID, let reason else { return .ordinary }
-        return powerOffReasons.contains(reason) ? .powerOff : .ordinary
+        guard powerOffReasons.contains(reason) else { return .ordinary }
+        if let sender, sender != powerOffSender { return .ordinary }
+        return .powerOff
     }
 
     /// Packs a four-character code the way `OSType` does (big-endian ASCII).

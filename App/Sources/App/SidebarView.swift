@@ -232,6 +232,8 @@ final class SidebarView: NSView {
     /// True while a tab or project row is being drag-reordered — freezes
     /// `update(...)` reloads, which would cancel the outline view's drag session.
     private var isReordering = false
+    /// Active rows changed while a drag froze the outline (`updateActive`).
+    private var activeChangedDuringDrag = false
 
     /// The top-level rows currently displayed (headers + visible projects).
     private var topLevel: [OutlineItem.Kind] = []
@@ -242,7 +244,7 @@ final class SidebarView: NSView {
     /// Per-Space (awake, hibernated) member counts, computed from the same
     /// FILTERED member lists used to build that Space's rows — never from
     /// `SidebarSpace` (which carries no counts) or the unfiltered model.
-    private var spaceCounts: [UUID: (awake: Int, hibernated: Int)] = [:]
+    private var spaceCounts: [UUID: (awake: Int, hibernated: Int, asleep: Int)] = [:]
 
     /// Whether the Hibernating section is shown at all
     /// (`zetty-sidebar-hibernating`). Hidden means hidden: its rows, header and
@@ -686,6 +688,9 @@ final class SidebarView: NSView {
     func updateActive(_ rows: [ActiveRow]) {
         guard rows != activeRows else { return }
         activeRows = rows
+        // A reload mid-drag cancels the drag, as in `update`; the drag's end
+        // rebuilds with whatever arrived meanwhile.
+        guard !isReordering else { activeChangedDuringDrag = true; return }
         rebuildOutline()
     }
 
@@ -795,7 +800,10 @@ final class SidebarView: NSView {
             // still narrows them together.
             spaceCounts[space.id] = (
                 awake: spaceMembers.count,
-                hibernated: hibernated.filter { $0.element.spaceID == space.id }.count
+                hibernated: hibernated.filter { $0.element.spaceID == space.id }.count,
+                // Every dormant member, shown or not: Wake All acts on them
+                // even while the Hibernating section is hidden (the default).
+                asleep: rest.filter { $0.element.isHibernated && $0.element.spaceID == space.id }.count
             )
             // A Space with no AWAKE members renders nothing — its dormant
             // projects are listed under Hibernating (tagged with its name), and
@@ -1044,7 +1052,7 @@ extension SidebarView: NSMenuDelegate {
             // Counts come from `spaceCounts` (the filtered member list), never
             // from `SidebarSpace` — see its doc comment for why.
             let awake = spaceCounts[id]?.awake ?? 0
-            let hibernated = spaceCounts[id]?.hibernated ?? 0
+            let asleep = spaceCounts[id]?.asleep ?? 0
 
             let hibernate = NSMenuItem(title: "Hibernate All",
                                        action: #selector(hibernateSpaceMenuClicked(_:)),
@@ -1058,7 +1066,7 @@ extension SidebarView: NSMenuDelegate {
                                   keyEquivalent: "")
             wake.target = self
             wake.representedObject = id
-            wake.isEnabled = hibernated > 0
+            wake.isEnabled = asleep > 0
             menu.addItem(wake)
 
             menu.addItem(.separator())
@@ -1280,6 +1288,12 @@ extension SidebarView: NSOutlineViewDataSource {
         endedAt screenPoint: NSPoint, operation: NSDragOperation
     ) {
         isReordering = false
+        // A drop's own refresh rebuilds; a drag that ended without one would
+        // otherwise leave Active stale until the next change.
+        if activeChangedDuringDrag {
+            activeChangedDuringDrag = false
+            rebuildOutline()
+        }
     }
 
     func outlineView(
@@ -1411,11 +1425,21 @@ extension SidebarView: NSOutlineViewDataSource {
         let sectionOffsets = topLevel[range].compactMap { kind -> Int? in
             if case .project(let o) = kind { return o } else { return nil }
         }
-        guard let base = sectionOffsets.first else { return false }
+        guard let last = sectionOffsets.last else { return false }
         let clamped = clampProjectDrop(index, into: range)
-        // Section rows are contiguous in model order, so a topLevel gap maps to a
-        // model gap by offsetting from the section's first project.
-        let modelGap = base + (clamped - range.lowerBound)
+        // The gap's model position is the model index of the row below it (or
+        // just past the section's last row). Counting from the section's first
+        // row assumed its rows are contiguous in the model, which a project the
+        // section doesn't show breaks: a hibernated spaceless project keeps
+        // its place among the awake ones, so dragging A between B and C in
+        // [Home, A, H, B, C] used to land A where it started (bug hunt,
+        // 2026-11-13).
+        let modelGap: Int
+        if range.contains(clamped), case .project(let below) = topLevel[clamped] {
+            modelGap = below
+        } else {
+            modelGap = last + 1
+        }
         // The gap counts the row's own old slot when moving down.
         let to = modelGap > from ? modelGap - 1 : modelGap
         guard to != from else { return false }

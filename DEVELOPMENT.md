@@ -195,11 +195,13 @@ what each check covers and what still needs a person.
 ## Releasing
 
 ```sh
-scripts/release.sh --notes notes.md patch   # or minor | major | X.Y.Z; --dry-run first
+scripts/release.sh --notes notes.md --review review.md patch   # or minor | major | X.Y.Z; --dry-run first
 scripts/package.sh                          # just build dist/Zetty-<version>.dmg + .sha256
 ```
 
-Releases go through `scripts/release.sh`: it runs the tests, bumps the version in
+Releases go through `scripts/release.sh`. It needs the pre-release review
+record (`--review`: a bug sweep and security review of everything since the
+last tag, procedure in `.hydra/rules/releasing.md`); then it runs the tests, bumps the version in
 `Project.swift`, packages a Developer ID signed and notarized DMG, tags, and
 uploads both the DMG and the `.sha256` sidecar the in-app updater verifies
 against. Release notes are a required, human-written input. Don't assemble a

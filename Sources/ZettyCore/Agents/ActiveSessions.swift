@@ -39,8 +39,9 @@ public struct ActiveSession: Equatable, Sendable {
 /// A row of the Active section, in display order.
 public struct ActiveRow: Equatable, Sendable {
     public let id: String
-    /// "zetty · Claude", "zetty · Claude · fix" when the project has several
-    /// busy sessions, "WebteractiveGlen · devops · Claude" for another Mac.
+    /// "zetty · Claude", "zetty · Claude · tab 2" (and "· pane 1" when the tab
+    /// holds several) when the project has several busy sessions,
+    /// "WebteractiveGlen · devops · Claude" for another Mac.
     public let label: String
     /// Working or needs attention.
     public let status: AgentStatus
@@ -72,6 +73,16 @@ public final class ActiveSessions {
 
     /// The rows for `sessions` at `now`.
     public func update(_ sessions: [ActiveSession], now: Date) -> [ActiveRow] {
+        // Each busy session's pane number within its tab, in layout order
+        // (the order `sessions` arrives in), for telling two agents in one
+        // tab apart.
+        var paneNumber: [String: Int] = [:]
+        var perTab: [String: Int] = [:]
+        for session in sessions where session.isBusy {
+            let key = Self.tabKey(session)
+            perTab[key, default: 0] += 1
+            paneNumber[session.id] = perTab[key]
+        }
         var next: [String: Entry] = [:]
         for session in sessions where session.isBusy {
             next[session.id] = Entry(session: session, entered: entries[session.id]?.entered ?? now)
@@ -85,12 +96,21 @@ public final class ActiveSessions {
             return a.session.id < b.session.id
         }.map(\.session)
 
-        // A project with several busy sessions names each row's tab too.
+        // A project with several busy sessions names each row's place: its
+        // tab, and its pane when the tab holds more than one. Never the tab's
+        // title: that carries the agent's own terminal title, spinner and
+        // all, and a label that changes every frame rebuilt the whole sidebar
+        // on every frame (bug hunt, 2026-11-13).
         var perProject: [String: Int] = [:]
         for session in ordered { perProject[Self.projectKey(session), default: 0] += 1 }
         return ordered.map { session in
             var parts = [session.machine, session.project, session.tool?.displayName].compactMap { $0 }
-            if perProject[Self.projectKey(session), default: 0] > 1 { parts.append(session.tabTitle) }
+            if perProject[Self.projectKey(session), default: 0] > 1 {
+                parts.append("tab \(Self.tabIndex(session) + 1)")
+                if perTab[Self.tabKey(session), default: 0] > 1, let pane = paneNumber[session.id] {
+                    parts.append("pane \(pane)")
+                }
+            }
             return ActiveRow(id: session.id, label: parts.joined(separator: " · "),
                              status: session.status, tool: session.tool, target: session.target)
         }
@@ -98,6 +118,16 @@ public final class ActiveSessions {
 
     private static func projectKey(_ session: ActiveSession) -> String {
         "\(session.machine ?? "")\u{0}\(session.project)"
+    }
+
+    private static func tabIndex(_ session: ActiveSession) -> Int {
+        switch session.target {
+        case .local(_, let tabIndex, _), .remote(_, _, let tabIndex, _): return tabIndex
+        }
+    }
+
+    private static func tabKey(_ session: ActiveSession) -> String {
+        "\(projectKey(session))\u{0}\(tabIndex(session))"
     }
 
     /// Another Mac's agent sessions, from the snapshot it sent. Hibernated

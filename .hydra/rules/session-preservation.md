@@ -98,7 +98,11 @@ triggers:
     `docs/superpowers/specs/2026-09-04-restart-recovery-design.md`). A
     restart/shutdown/logout kills zmx too, so `applicationShouldTerminate`
     classifies the quit from the Apple Event's `kAEQuitReason` (pure
-    `QuitReason`; ⌘Q/`zetty quit`/`NSApp.terminate` carry no reason → ordinary),
+    `QuitReason`; ⌘Q/`zetty quit`/`NSApp.terminate` carry no reason → ordinary)
+    AND its sender: only `loginwindow`'s quit is a power-off. System
+    Settings' "Quit & Reopen" after a privacy permission change sends a quit
+    with a restart reason too; on 2026-11-13 it ran restart recovery on both
+    Macs (the log now says "quit: event from <sender>"),
     returns `.terminateLater`, captures `zmx history --vt` per preserved pane
     within `RestartRecovery.shutdownBudget` (5s, atomic per-file writes — a late
     finisher leaves a whole unreferenced file the next launch sweeps, never a

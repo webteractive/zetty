@@ -47,7 +47,7 @@ public enum HandoffWake {
     public static func freshCommand(record: HandoffRecord, login: ResumeLogin) -> String? {
         guard HandoffCompaction.supports(record.agent) else { return nil }
         let prefix = RestartRecovery.loginPrefix(environment: login.environment, unsetting: login.unsetting)
-        return "cd \(ShellQuote.singleQuoted(record.cwd)) && "
+        return ShellQuote.changeDirectoryPrefix(record.cwd)
             + "\(prefix)\(RestartRecovery.harnessCommand(for: record.agent))"
     }
 

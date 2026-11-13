@@ -311,8 +311,6 @@ final class TerminalViewController: NSViewController {
     /// permanent key path or a third table to `KeyBindingEngine`.
     private var sidebarDrawerKeyMonitor: Any?
 
-    /// Which window side the sidebar sits on (config `sidebar-position`).
-    /// Settable before the view loads; changing it afterwards re-pins live.
     /// `zetty-sidebar-hibernating`: whether the sidebar lists hibernated projects.
     var showsHibernatingInSidebar = false {
         didSet { sidebarView?.showsHibernating = showsHibernatingInSidebar }
@@ -322,6 +320,8 @@ final class TerminalViewController: NSViewController {
     /// applies it back here.
     var onSetHibernatingInSidebar: ((Bool) -> Void)?
 
+    /// Which window side the sidebar sits on (config `sidebar-position`).
+    /// Settable before the view loads; changing it afterwards re-pins live.
     var sidebarPosition: SidebarPosition = .left {
         didSet {
             guard isViewLoaded, oldValue != sidebarPosition else { return }
@@ -337,7 +337,7 @@ final class TerminalViewController: NSViewController {
     private var firstResponderObservation: NSKeyValueObservation?
 
     /// Called after any change that affects persisted workspace state (tab
-    /// add/close, split/close, project add/pin, rename). The owner (AppDelegate)
+    /// add/close, split/close, project add/move, rename). The owner (AppDelegate)
     /// uses this to autosave, so the on-disk workspace always reflects the
     /// current arrangement — surviving crashes/force-quits, not just clean quit.
     var onWorkspaceDidChange: (() -> Void)?
@@ -2124,8 +2124,11 @@ final class TerminalViewController: NSViewController {
 
     /// Shows `projectID` from that Mac in place of the active project's tabs
     /// and panes. The local project stays selected underneath.
-    func showRemoteProject(machineID: String, projectID: String) {
-        guard let machine = remoteMachines.first(where: { $0.stableID == machineID }) else { return }
+    /// Shows that Mac's project; false (doing nothing) when the Mac is no
+    /// longer listed.
+    @discardableResult
+    func showRemoteProject(machineID: String, projectID: String) -> Bool {
+        guard let machine = remoteMachines.first(where: { $0.stableID == machineID }) else { return false }
         exitCopyModeIfActive()
         let remote = remoteProject ?? {
             let made = RemoteProjectController(
@@ -2144,6 +2147,7 @@ final class TerminalViewController: NSViewController {
         if let terminal = remote.focusedTerminalView {
             view.window?.makeFirstResponder(terminal)
         }
+        return true
     }
 
     /// Back to this Mac's active project, as it was left.
@@ -5323,11 +5327,11 @@ final class TerminalViewController: NSViewController {
     /// distinction is the whole point: a button must open ITS pane, not
     /// whichever pane happens to hold focus.
     private func directoryURL(for surfaceID: UUID?) -> URL {
-        let surface = surfaceID.flatMap { workspace.surface(with: $0) }
-        let path = surface.flatMap { registry.workingDirectory(for: $0) }
-            ?? surface?.workingDir
-            ?? NSHomeDirectory()
-        return URL(fileURLWithPath: path, isDirectory: true)
+        // The pane's live directory, as the status bar reads it
+        // (`paneDirectory`): the per-pane file first, which the shell
+        // integration writes on every cd, then libghostty's OSC 7 report.
+        URL(fileURLWithPath: paneDirectory(for: surfaceID.flatMap { workspace.surface(with: $0) }),
+            isDirectory: true)
     }
 
     /// The "Open" picker for one pane: installed editors + Reveal in Finder.
@@ -7353,7 +7357,9 @@ final class TerminalViewController: NSViewController {
             }
         case .remote(let machineID, let projectID, let tabIndex, _):
             leaveTileModeForSidebarClick()
-            showRemoteProject(machineID: machineID, projectID: projectID)
+            // A Mac that left the list since the row was drawn shows nothing,
+            // and the tab must not change on whatever remote project is up.
+            guard showRemoteProject(machineID: machineID, projectID: projectID) else { break }
             // The remote view selects tabs, not panes, so the pane is left to
             // the user.
             remoteProject?.selectTab(at: tabIndex)

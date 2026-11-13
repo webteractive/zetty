@@ -65,3 +65,13 @@ private extension TailnetLifecycle {
     let afterStop = life.signOut()
     #expect(never == .nothing && afterStop == .nothing)
 }
+
+@Test func aRenameWhileNotRunningIsWhatTheNextStartUses() {
+    // Keychain refused, the device renamed in Settings, then Sign Out: the
+    // restart used the old name (bug hunt, 2026-11-13).
+    var lifecycle = TailnetLifecycle()
+    _ = lifecycle.requestStart(hostname: "zetty-old")
+    lifecycle.startFailed(keychain: true)
+    lifecycle.rename(to: "zetty-new")
+    #expect(lifecycle.signOut() == .forgetAndRestart(hostname: "zetty-new"))
+}

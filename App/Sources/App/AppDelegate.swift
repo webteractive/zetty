@@ -1777,10 +1777,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         }
         // AEEventClass/AEEventID/OSType are all FourCharCode (UInt32) already.
         let reason = event.attributeDescriptor(forKeyword: AEKeyword(kAEQuitReason))?.enumCodeValue
-        return QuitReason.classify(
+        let sender = event.attributeDescriptor(forKeyword: AEKeyword(keySenderPIDAttr))
+            .flatMap { descriptor -> String? in
+                let pid = descriptor.int32Value
+                guard pid > 0 else { return nil }
+                var name = [CChar](repeating: 0, count: 256)
+                guard proc_name(pid, &name, UInt32(name.count)) > 0 else { return nil }
+                return String(cString: name)
+            }
+        let classified = QuitReason.classify(
             eventClass: event.eventClass,
             eventID: event.eventID,
-            reason: reason)
+            reason: reason,
+            sender: sender)
+        ZettyLog.lifecycle.log("quit: event from \(sender ?? "an unknown sender")")
+        return classified
     }
 
     /// A restart / shutdown / logout kills every zmx session; snapshot what we
@@ -1937,6 +1948,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     private let tailnetNotifier = TailnetNotifier()
     /// The node's latest state, on main (`.off` until it first starts).
     private var tailnetState: TailnetState = .off
+    /// The same state and node for the control socket's queue, which must not
+    /// `main.sync` for the remote feature (remote-machines.md).
+    private let tailnetStateForSocket = LockedValue<TailnetState>(.off)
+    private let tailnetForSocket = LockedBox<Tailnet>()
     /// Exists only while `zetty-serve` is on and the node runs.
     private var remoteServer: RemoteServer?
     /// Exists only while `zetty-remote-machines` is on.
@@ -2012,7 +2027,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     /// `zetty remote sign-in`, off main (it waits for Tailscale's page): a
     /// fresh page and its QR code, or why there's nothing to sign in.
     func remoteSignInResponse() -> ControlResponse {
-        let state = DispatchQueue.main.sync { tailnetState }
+        let state = tailnetStateForSocket.value
         switch state {
         case .off:
             return .error("Other Macs is off: turn on zetty-remote-machines or zetty-serve "
@@ -2024,7 +2039,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             return .signIn(.init(state: .signedIn, account: status.loginName, device: status.me?.hostName))
         case .needsLogin:
             let page = SignInPage()
-            DispatchQueue.main.sync { tailnet.login { page.deliver($0) } }
+            // Tailnet.login hops to its own queue; no main hop needed.
+            guard let node = tailnetForSocket.value else {
+                return .error("Other Macs is off: turn on zetty-remote-machines or zetty-serve "
+                              + "(Settings → Remote)")
+            }
+            node.login { page.deliver($0) }
             guard let url = page.wait(seconds: 10) else {
                 return .error("Tailscale didn't send a sign-in page: try again, "
                               + "or use Sign In… in Settings → Remote")
@@ -2047,6 +2067,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
 
     private func tailnetChanged(_ state: TailnetState) {
         tailnetState = state
+        tailnetStateForSocket.value = state
         ZettyLog.remote.log("tailnet: \(state.logDescription)")
         tailnetNotifier.note(state)
         syncRemoteServer()
@@ -2131,6 +2152,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     /// `zmx history` subprocess and `quit --kill-sessions`' kill-wait run
     /// off-main so a slow/hung zmx can't freeze the UI.
     private func startControlSocket() {
+        tailnetForSocket.value = tailnet
         let server = ControlSocketServer { [weak self] request in
             guard let self else { return .error("Zetty is shutting down") }
             // Taken here, off-main, before any of the paths below reaches

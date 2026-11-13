@@ -109,12 +109,16 @@ public struct RemoteMachineCache {
     }
 
     /// Owner-only (0600): it holds other Macs' pane titles and directories.
+    /// The temporary file is created 0600 and renamed over the cache, so the
+    /// contents are never readable by others, not even for the moment between
+    /// a write and a chmod (`.atomic` writes with the umask's 0644 first).
     public func save(_ machines: [RemoteMachine]) {
         guard let data = try? JSONEncoder.cache.encode(machines) else { return }
-        try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(),
-                                                 withIntermediateDirectories: true)
-        guard (try? data.write(to: url, options: .atomic)) != nil else { return }
-        try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
+        let fm = FileManager.default
+        try? fm.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let temp = url.appendingPathExtension("new-\(UUID().uuidString)")
+        guard fm.createFile(atPath: temp.path, contents: data, attributes: [.posixPermissions: 0o600]) else { return }
+        if rename(temp.path, url.path) != 0 { try? fm.removeItem(at: temp) }
     }
 }
 

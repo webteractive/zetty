@@ -195,6 +195,7 @@ final class Tailnet {
 
     func rename(_ name: String) {
         queue.async { [self] in
+            lifecycle.rename(to: name)
             guard running else { return }
             if let failure = Self.bridgeCall({ err in
                 name.withCString { zt_set_hostname(UnsafeMutablePointer(mutating: $0), err) }
@@ -387,6 +388,19 @@ private let tailnetLogCallback: zt_log_cb = { line in
     let text = raw.replacingOccurrences(of: #"https?://\S+"#, with: "<link>",
                                                           options: .regularExpression)
     ZettyLog.remote.log("tailscale: \(text)")
+}
+
+/// A value read and written from any thread.
+final class LockedValue<Value>: @unchecked Sendable {
+    private let lock = NSLock()
+    private var stored: Value
+
+    init(_ value: Value) { stored = value }
+
+    var value: Value {
+        get { lock.withLock { stored } }
+        set { lock.withLock { stored = newValue } }
+    }
 }
 
 /// A reference read and written from any thread.

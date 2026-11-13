@@ -30,3 +30,15 @@ private let quit = QuitReason.fourCC("quit")   // kAEQuitApplication
     // kAEQuitAll ('quia') is a "quit every app" gesture, not a power-off; sessions survive.
     #expect(QuitReason.classify(eventClass: core, eventID: quit, reason: QuitReason.fourCC("quia")) == .ordinary)
 }
+
+@Test func aPowerOffReasonFromAnyoneButLoginwindowIsOrdinary() {
+    // System Settings' "Quit & Reopen" after a privacy permission change sends
+    // a quit with a restart reason; 2026-11-13 it was read as a power-off, ran
+    // restart recovery on both Macs, and the laptop's recovery burst crashed.
+    // A real restart, shutdown or logout comes from loginwindow.
+    let rest = QuitReason.fourCC("rest")
+    #expect(QuitReason.classify(eventClass: core, eventID: quit, reason: rest, sender: "System Settings") == .ordinary)
+    #expect(QuitReason.classify(eventClass: core, eventID: quit, reason: rest, sender: "loginwindow") == .powerOff)
+    // Sender unknown (the attribute was missing): the reason decides, as before.
+    #expect(QuitReason.classify(eventClass: core, eventID: quit, reason: rest, sender: nil) == .powerOff)
+}

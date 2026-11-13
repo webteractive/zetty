@@ -124,10 +124,16 @@ final class RemoteProjectController {
 
     func show(_ machine: RemoteMachine, projectID: String) {
         if self.machine?.stableID != machine.stableID || self.projectID != projectID {
+            // Take the project being returned to out of `kept` BEFORE keeping
+            // the one being left: `keepShown` prunes to the surface cap,
+            // most recently left first, and would free the very project about
+            // to be shown, which then reconnected from scratch (bug hunt,
+            // 2026-11-13).
+            let back = kept.firstIndex(where: { $0.machine == machine.stableID && $0.project == projectID })
+                .map { kept.remove(at: $0) }
             keepShown()
             projectName = nil
-            if let at = kept.firstIndex(where: { $0.machine == machine.stableID && $0.project == projectID }) {
-                let back = kept.remove(at: at)
+            if let back {
                 // Its relays can't follow the Mac to a new address.
                 if back.address != machine.address { release(Set(back.surfaces.values)) }
                 schedulePrune()

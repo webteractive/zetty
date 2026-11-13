@@ -8,9 +8,9 @@ import Foundation
 private let t0 = Date(timeIntervalSinceReferenceDate: 1_000_000)
 
 private func local(_ id: String, _ status: AgentStatus, project: String = "zetty",
-                   tool: AgentKind? = .claude, tab: String = "main") -> ActiveSession {
+                   tool: AgentKind? = .claude, tab: String = "main", tabIndex: Int = 0) -> ActiveSession {
     ActiveSession(id: id, status: status, machine: nil, project: project, tool: tool, tabTitle: tab,
-                  target: .local(projectID: UUID(), tabIndex: 0, surfaceID: UUID()))
+                  target: .local(projectID: UUID(), tabIndex: tabIndex, surfaceID: UUID()))
 }
 
 @Test func onlyWorkingAndNeedsAttentionSessionsAreActive() {
@@ -66,12 +66,27 @@ private func local(_ id: String, _ status: AgentStatus, project: String = "zetty
 @Test func labelsNameTheProjectAndToolAndTheTabWhenAProjectHasSeveral() {
     let active = ActiveSessions()
     let rows = active.update([
-        local("a", .running, project: "zetty", tab: "fix"),
-        local("b", .running, project: "zetty", tool: .codex, tab: "docs"),
+        local("a", .running, project: "zetty", tab: "fix", tabIndex: 0),
+        local("b", .running, project: "zetty", tool: .codex, tab: "docs", tabIndex: 2),
         local("c", .running, project: "api"),
         local("d", .running, project: "web", tool: nil),
     ], now: t0)
-    #expect(rows.map(\.label) == ["zetty · Claude · fix", "zetty · Codex · docs", "api · Claude", "web"])
+    #expect(rows.map(\.label) == ["zetty · Claude · tab 1", "zetty · Codex · tab 3", "api · Claude", "web"])
+}
+
+@Test func labelsStayPutWhileAnAgentAnimatesItsTitle() {
+    // The tab's title carries the agent's own terminal title, spinner and
+    // all; a label built from it rebuilt the whole sidebar on every frame
+    // (bug hunt, 2026-11-13). Two agents in one tab are told apart by pane.
+    let active = ActiveSessions()
+    let first = active.update([
+        local("a", .running, tab: "⠋ fixing"), local("b", .running, tab: "⠋ fixing"),
+    ], now: t0)
+    let second = active.update([
+        local("a", .running, tab: "⠙ fixing"), local("b", .running, tab: "⠙ fixing"),
+    ], now: t0 + 1)
+    #expect(first.map(\.label) == ["zetty · Claude · tab 1 · pane 1", "zetty · Claude · tab 1 · pane 2"])
+    #expect(second.map(\.label) == first.map(\.label))
 }
 
 @Test func remoteSessionsComeFromOnlineSnapshotsWithTheMacsName() {
@@ -94,5 +109,5 @@ private func local(_ id: String, _ status: AgentStatus, project: String = "zetty
     #expect(sessions[0].target == .remote(machineID: "node1", projectID: "P1", tabIndex: 0, paneID: "aa"))
     #expect(sessions[2].target == .remote(machineID: "node1", projectID: "P1", tabIndex: 1, paneID: "cc"))
     let rows = ActiveSessions().update(sessions, now: t0)
-    #expect(rows.map(\.label) == ["WebteractiveGlen · devops · two", "WebteractiveGlen · devops · Claude · one"])
+    #expect(rows.map(\.label) == ["WebteractiveGlen · devops · tab 2", "WebteractiveGlen · devops · Claude · tab 1"])
 }

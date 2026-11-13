@@ -13,10 +13,13 @@
 #     release missing it breaks updates for everyone already running Zetty.
 #
 # Release notes are deliberately a required input, never generated: see the
-# Releasing rule, .hydra/rules/releasing.md.
+# Releasing rule, .hydra/rules/releasing.md. So is the pre-release review
+# record (--review): every release is preceded by a bug sweep and a security
+# review of everything since the last tag, and the record has to name exactly
+# that range, so a commit landed after the review sends it back.
 #
 # Usage:
-#   scripts/release.sh --notes <file> (patch | minor | major | X.Y.Z) [--yes] [--dry-run]
+#   scripts/release.sh --notes <file> --review <file> (patch | minor | major | X.Y.Z) [--yes] [--dry-run]
 set -eu
 cd "$(dirname "$0")/.."
 
@@ -24,6 +27,7 @@ REMOTE=origin
 BRANCH=main
 LEVEL=
 NOTES=
+REVIEW=
 ASSUME_YES=0
 DRY_RUN=0
 
@@ -31,10 +35,15 @@ die() { printf '%s\n' "error: $*" >&2; exit 1; }
 
 usage() {
   cat <<'USAGE'
-usage: scripts/release.sh --notes <file> (patch | minor | major | X.Y.Z) [--yes] [--dry-run]
+usage: scripts/release.sh --notes <file> --review <file> (patch | minor | major | X.Y.Z) [--yes] [--dry-run]
 
   --notes <file>  release notes body (required — releases ship human-written
                   notes; see .hydra/rules/releasing.md)
+  --review <file> the pre-release review record (required): a line
+                  "Reviewed: <last tag>..<HEAD short sha>" naming exactly the
+                  range being released, and "Unresolved: none" (or
+                  "Unresolved: accepted by Glen …" for findings he accepted);
+                  see .hydra/rules/releasing.md, "Pre-release review"
   patch|minor|major|X.Y.Z
                   how to bump CFBundleShortVersionString in Project.swift
   --yes, -y       skip the confirmation prompt
@@ -46,6 +55,8 @@ while [ $# -gt 0 ]; do
   case "$1" in
     --notes) [ $# -ge 2 ] || die "--notes needs a file"; NOTES=$2; shift 2 ;;
     --notes=*) NOTES=${1#--notes=}; shift ;;
+    --review) [ $# -ge 2 ] || die "--review needs a file"; REVIEW=$2; shift 2 ;;
+    --review=*) REVIEW=${1#--review=}; shift ;;
     --yes|-y) ASSUME_YES=1; shift ;;
     --dry-run) DRY_RUN=1; shift ;;
     patch|minor|major) LEVEL=$1; shift ;;
@@ -59,6 +70,14 @@ done
 [ -n "$NOTES" ] || die "--notes <file> is required; releases ship human-written notes (see .hydra/rules/releasing.md)"
 [ -f "$NOTES" ] || die "notes file not found: $NOTES"
 [ -s "$NOTES" ] || die "notes file is empty: $NOTES"
+[ -n "$REVIEW" ] || die "--review <file> is required: run the pre-release bug sweep and security review first (.hydra/rules/releasing.md)"
+[ -f "$REVIEW" ] || die "review file not found: $REVIEW"
+LAST_TAG=$(git describe --tags --abbrev=0 2>/dev/null) || die "no earlier tag to review from"
+REVIEWED_RANGE="$LAST_TAG..$(git rev-parse --short HEAD)"
+grep -qxF "Reviewed: $REVIEWED_RANGE" "$REVIEW" \
+  || die "the review record must say \"Reviewed: $REVIEWED_RANGE\": it covers a different range (or none), so review what is being released"
+grep -qE '^Unresolved: (none|accepted by Glen)' "$REVIEW" \
+  || die "the review record must say \"Unresolved: none\" (only Glen can accept a finding unfixed)"
 
 # --- Preconditions -----------------------------------------------------------
 command -v gh >/dev/null 2>&1 || die "gh (GitHub CLI) is required"
