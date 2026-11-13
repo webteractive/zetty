@@ -118,22 +118,47 @@ struct ModInstaller {
         }
     }
 
-    /// Sets (or clears) the plugin-folder variable for every pane spawned from
-    /// now on. A running agent keeps what it started with.
-    func applyEnvironment(enabled: Bool, tools: Bool) {
-        if let binary = Bundle.main.executablePath {
-            setenv(ModInstall.binaryVariable, binary, 1)
-        }
-        setenv(ModInstall.toolsVariable, tools ? "1" : "0", 1)
+    /// The plugin-folder variable as Zetty inherited it, without the mod. Read
+    /// once, by the first `applyEnvironment`.
+    private var inheritedPluginDirs: String?
+    private var inheritedPluginDirsRead = false
+
+    /// The mod's variables for every pane spawned from now on, laid over the
+    /// process environment by the app's surface environment provider. A
+    /// running agent keeps what it started with.
+    private(set) var paneEnvironment: [String: String] = [:]
+
+    /// Recomputes `paneEnvironment`. Never touches the process environment
+    /// after the first call, and that call runs before any pane exists.
+    ///
+    /// libghostty copies the `environ` pointer and its length once, in
+    /// `ghostty_init`, and walks that copy for every pane it builds later. A
+    /// `setenv` or `unsetenv` after that can move or shrink the array under it,
+    /// and the next pane reads freed memory: turning the mod off and reloading
+    /// crashed in `ghostty_config_finalize`, every time.
+    mutating func applyEnvironment(enabled: Bool, tools: Bool) {
         let variable = ModInstall.pluginDirsVariable
-        let value = ModInstall.pluginDirs(
-            existing: getenv(variable).map { String(cString: $0) },
-            modPath: installedURL.path,
-            enabled: enabled && installIfNeeded())
-        if let value {
-            setenv(variable, value, 1)
-        } else {
+        if !inheritedPluginDirsRead {
+            inheritedPluginDirsRead = true
+            inheritedPluginDirs = ModInstall.pluginDirs(
+                existing: getenv(variable).map { String(cString: $0) },
+                modPath: installedURL.path, enabled: false)
+            // Safe only here, before the first pane and so before
+            // ghostty_init: from now on panes get the value per pane, so a
+            // reload that turns the mod off never needs an unsetenv.
             unsetenv(variable)
         }
+        var environment: [String: String] = [:]
+        if let binary = Bundle.main.executablePath {
+            environment[ModInstall.binaryVariable] = binary
+        }
+        environment[ModInstall.toolsVariable] = tools ? "1" : "0"
+        if let value = ModInstall.pluginDirs(
+            existing: inheritedPluginDirs,
+            modPath: installedURL.path,
+            enabled: enabled && installIfNeeded()) {
+            environment[variable] = value
+        }
+        paneEnvironment = environment
     }
 }

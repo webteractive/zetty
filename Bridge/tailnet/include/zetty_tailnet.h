@@ -20,6 +20,9 @@ typedef void (*zt_state_cb)(const char *json);
 typedef void (*zt_persist_cb)(const uint8_t *blob, size_t len);
 typedef void (*zt_log_cb)(const char *line);
 
+/// Sets the process environment the node needs. Call once at launch, before
+/// the first pane exists (it calls setenv), and before zt_start. Doesn't block.
+void zt_prepare_env(void);
 /// Starts the node. `authkey` may be NULL. `ephemeral` != 0 keeps state in
 /// memory only (persist is never called). 0 on success.
 int zt_start(char *dir, char *hostname, char *authkey, int ephemeral,

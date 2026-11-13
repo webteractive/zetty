@@ -86,7 +86,10 @@ installed or running. The Tailscale app is never touched or needed.
   while signed out (final review, 2026-11-10). It sets `TS_NO_LOGS_NO_SUPPORT` too, and
   netstack keepalive 10s/3s (a vanished viewer is dropped in under a minute;
   gVisor's outgoing conns expose no keepalive, so a viewer notices a sleeping
-  Mac when its peer goes offline in Tailscale, a minute or two).
+  Mac when its peer goes offline in Tailscale, a minute or two). Those three
+  variables are set by `zt_prepare_env`, called from `main.swift` before any
+  pane exists, never by `zt_start`: setting them while panes exist crashed
+  the laptop in `ghostty_surface_new` (`surfaces-and-memory.md`, 2026-11-13).
 - **State lives in the login Keychain** (`TailnetStateStore`: service
   `co.webteractive.zetty.tailscale-state`, account `<home> @ <hardware UUID>`
   from `RemoteMachineID.stateAccount`, so the isolated test app has its own

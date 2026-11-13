@@ -1,5 +1,6 @@
 import AppKit
 import ZettyGhostty
+import ZettyTailnet
 
 // CLI mode: the app binary doubles as the `Zetty` CLI when invoked with a
 // recognized command (Settings installs a symlink into ~/.local/bin).
@@ -51,6 +52,12 @@ if isatty(STDIN_FILENO) != 0 {
 // GUI from here on. A relaunch from inside a pane (`open -a` passes the shell's
 // env) must not put every Default-login pane on that pane's account.
 LaunchEnvironment.clearInherited()
+
+// The embedded Tailscale node's environment, set now whether or not Other
+// Macs is on: every process-environment change has to happen before the first
+// pane, because libghostty copies environ once in ghostty_init and keeps
+// reading that copy (zt_prepare_env in Bridge/tailnet/bridge.go).
+zt_prepare_env()
 
 // GHOSTTY_RESOURCES_DIR is NOT set here: libghostty-spm overwrites it with
 // its own bundle just before `ghostty_init`, so the shell-integration scripts

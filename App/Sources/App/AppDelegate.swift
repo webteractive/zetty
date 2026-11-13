@@ -77,7 +77,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
 
     /// Installs/removes agent hooks in each harness's config.
     private let hookInstaller = HookInstaller()
-    private let modInstaller = ModInstaller()
+    private var modInstaller = ModInstaller()
 
     /// `~/Library/Application Support/zetty/` (created on first use) — shared
     /// by the workspace and project-settings stores.
@@ -139,8 +139,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         // Load config and resolve the active scheme BEFORE the view controller
         // is created (it reads ZTheme.current in viewDidLoad).
         appConfig = configStore.load()
-        // Before any pane spawns, like ZETTY above: a pane's environment is
-        // captured once, when its shell starts.
+        // Before any pane spawns, like ZETTY above: its first call is the only
+        // process-environment change it makes (ModInstaller.applyEnvironment).
         modInstaller.applyEnvironment(enabled: appConfig.claudeMod, tools: appConfig.claudeTools)
         ZTheme.scheme = resolvedScheme()
         applyChromeFontFromConfig()             // chrome font before any view reads monoFont
@@ -296,7 +296,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
                 ?? self?.layoutTemplateStore.load()
         }
         tvc.surfaceEnvironmentProvider = { [weak self, weak tvc] surface in
-            var env: [String: String] = [:]
+            // The mod's variables are per pane, never process-wide: see
+            // ModInstaller.applyEnvironment.
+            var env: [String: String] = self?.modInstaller.paneEnvironment ?? [:]
             if let self, let tvc {
                 var projectAccountID: String?
                 if let project = tvc.workspace.project(containing: surface.id) {
@@ -306,7 +308,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
                     // already draws the same line.
                     if !project.isScratch {
                         let resolved = self.resolvedSettings(for: project)
-                        env = resolved.env
+                        env.merge(resolved.env) { _, project in project }
                         // Inherited by clones along with the rest of the source's
                         // settings, which is what we want: a clone of a work
                         // project is still work.
@@ -326,8 +328,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             }
             // The bundled zsh integration writes $PWD here on every cd so the
             // status bar can show the focused pane's live working directory.
-            // A project's own plugin folders replace the process-wide value in
-            // this pane, so Zetty's mod has to be put back beside them.
+            // A project's own plugin folders replace the mod's value in this
+            // pane, so Zetty's mod has to be put back beside them.
             if let own = env[ModInstall.pluginDirsVariable], self?.appConfig.claudeMod == true {
                 env[ModInstall.pluginDirsVariable] = ModInstall.pluginDirs(
                     existing: own,

@@ -14,6 +14,33 @@ triggers:
 > Split out of `CLAUDE.md` / `AGENTS.md` (which stay under the agent context
 > limit). This file is authoritative: edit it here, then run `hydra sync`.
 
+## Never change the process environment after the first pane
+
+`ghostty_init` (run once, by the first `TerminalController`) copies the
+`environ` pointer and its length, and libghostty walks that copy for every
+pane it builds later (`Surface.init` building the child environment,
+`ghostty_config_finalize`). A `setenv`/`unsetenv`/`putenv` afterwards can
+make libc move or shrink the array, and the next pane reads freed memory.
+
+- **Measured, 2026-11-13.** The laptop crashed in `ghostty_surface_new`
+  (SIGSEGV at 0x17) two seconds after a restart-recovery relaunch: the
+  embedded Tailscale node's `zt_start` set three `TS_*` variables on a
+  background queue while the first pane was being built. Turning the Claude
+  mod off and reloading crashed every time, from `unsetenv`. Whether the
+  Tailscale race crashes depends on heap layout, so it can run for hours
+  first.
+- **Where changes may happen:** `main.swift` before `NSApplication` runs
+  (`LaunchEnvironment.clearInherited`, `TERMINFO_DIRS`, `zt_prepare_env`), and
+  `applicationDidFinishLaunching` before the first `TerminalController`
+  (`ZETTY`, the first `ModInstaller.applyEnvironment`). Anything that changes
+  after that, on reload or when a feature turns on, goes to panes through
+  `surfaceEnvironmentProvider`.
+- **Go code counts:** with cgo, `os.Setenv` and `envknob.Setenv` call libc
+  `setenv`. Tailscale's are in `zt_prepare_env`, called from `main.swift`.
+- **Regression check** in the isolated test app: launch with
+  `zetty-claude-mod = true`, change it to `false`, `iz reload`, then
+  `iz new-tab`. Before the fix the app died in the reload.
+
 ## Memory profile: the floor is GPU, not the heap
 
 Measured across 5 → 37 live panes (34 projects awake), footprint is

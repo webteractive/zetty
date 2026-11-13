@@ -75,7 +75,8 @@ so it reads as "my change did nothing".
 ## The path, end to end
 
 1. `ModInstaller` copies the bundled mod to `~/.zetty/mods/zetty-bridge` and
-   sets `CLAUDE_CODE_PLUGIN_DIRS` process-wide, so every pane inherits it.
+   puts `CLAUDE_CODE_PLUGIN_DIRS` into every new pane's environment
+   (`ModInstaller.paneEnvironment`, laid on by `surfaceEnvironmentProvider`).
 2. Claude Code loads the mod. On session start, turn start/end and every
    `session.measure` it rewrites `~/.zetty/agent-usage/<SURFACE-UUID>.json`.
 3. `AgentUsageWatcher` polls that directory (1s, mtime-gated) and hands each
@@ -123,8 +124,15 @@ so it reads as "my change did nothing".
   agent in a preserved session created earlier, keeps what it started with.
   `zetty run` inherits the pane's environment, so account launches carry the
   variable without help. A project that sets `CLAUDE_CODE_PLUGIN_DIRS` itself
-  replaces the process-wide value in its panes, so `surfaceEnvironmentProvider`
+  replaces the mod's value in its panes, so `surfaceEnvironmentProvider`
   puts Zetty's path back beside it.
+- **Per pane, never process-wide (2026-11-13).** `applyEnvironment` used to
+  `setenv`/`unsetenv` these variables on Zetty itself, and turning the mod off
+  then reloading crashed in `ghostty_config_finalize` every time: libghostty
+  copies `environ` once in `ghostty_init` and reads that copy for every later
+  pane (`surfaces-and-memory.md`). Now its first call, before any pane, takes
+  the inherited `CLAUDE_CODE_PLUGIN_DIRS` out of the process (keeping the
+  user's own folders) and every call only recomputes `paneEnvironment`.
 - **A `settings.json` `env` block beats the process environment.** Claude
   Code applies `env.CLAUDE_CODE_PLUGIN_DIRS` from a config dir's
   `settings.json` OVER the variable Zetty sets, so a user who lists their own
@@ -198,8 +206,8 @@ obvious from the API's types.
   (`mcp__zetty-bridge__show_file`) is spelled out.
 - **`$.env.get` takes a string literal.** The variables are `ZETTY`, `HOME`,
   `ZETTY_SURFACE`, `ZETTY_CWD_FILE`, `CLAUDE_CONFIG_DIR`, `ZETTY_BIN`,
-  `ZETTY_CLAUDE_TOOLS`. `ModInstaller.applyEnvironment` sets the last two
-  process-wide.
+  `ZETTY_CLAUDE_TOOLS`. `ModInstaller.applyEnvironment` computes the last two
+  per pane (`paneEnvironment`).
 - **State a drawing reads is in `$.state`**, declared in `types/index.d.ts`
   (named by `plugin.json`'s `types`), never a module variable: a hot reload
   keeps the former and restarts the latter. A render hook only reads; writes

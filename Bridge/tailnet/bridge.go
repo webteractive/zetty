@@ -80,6 +80,22 @@ func current() (*tsnet.Server, error) {
 	return server, nil
 }
 
+//export zt_prepare_env
+func zt_prepare_env() {
+	// No logs leave the Mac, and a peer that vanishes without a FIN is
+	// dropped by keepalive in under a minute instead of two hours.
+	//
+	// These go through libc setenv, so they must run before the app's first
+	// pane: libghostty copies environ once in ghostty_init and reads that
+	// copy for every later pane, and a setenv afterwards can move the array
+	// out from under it. zt_start used to set them on a background queue at
+	// launch, racing the first pane; the laptop crashed in
+	// ghostty_surface_new when the pane won.
+	envknob.SetNoLogsNoSupport()
+	envknob.Setenv("TS_NETSTACK_KEEPALIVE_IDLE", "10s")
+	envknob.Setenv("TS_NETSTACK_KEEPALIVE_INTERVAL", "3s")
+}
+
 //export zt_start
 func zt_start(dir, hostname, authkey *C.char, ephemeral C.int, blob *C.uint8_t, blobLen C.size_t,
 	stateCB C.zt_state_cb, persistCB C.zt_persist_cb, logCB C.zt_log_cb, errOut **C.char) C.int {
@@ -89,12 +105,6 @@ func zt_start(dir, hostname, authkey *C.char, ephemeral C.int, blob *C.uint8_t, 
 		return result(errOut, errors.New("already started"))
 	}
 	mu.Unlock()
-
-	// No logs leave the Mac, and a peer that vanishes without a FIN is
-	// dropped by keepalive in under a minute instead of two hours.
-	envknob.SetNoLogsNoSupport()
-	envknob.Setenv("TS_NETSTACK_KEEPALIVE_IDLE", "10s")
-	envknob.Setenv("TS_NETSTACK_KEEPALIVE_INTERVAL", "3s")
 
 	C.zt_set_callbacks(stateCB, persistCB, logCB)
 
