@@ -167,14 +167,12 @@ are authoritative.
 
 - **Window** — `bg1`, 14pt radius, `bord` border; appearance is pinned to the
   effective scheme axis so native chrome (menus, scrollers, titlebar) tracks it.
-- **Sidebar** (`bg0`) — filter field (`bg2`); then, while any agent is busy, a
-  fixed **Active** area that does not scroll with the list: a collapsible
-  uppercase `Active` header (chevron, like the outline's) with a count and up
-  to five 26pt rows before it scrolls
-  inside itself, each a 6pt status dot (yellow needs you, green working), the
-  tool's logo and `project · Tool` in `fg2` (another Mac's rows lead with its
-  name), `bg2` on hover. Below it the scrolling list: a **Home** row at the
-  very top with no section header and no tab children; then uppercase section
+- **Sidebar** (`bg0`) — filter field (`bg2`), then one scrolling list. While
+  any agent is busy it opens with a collapsible uppercase `Active` header and
+  count, then a row per busy session drawn like a tab row: a 6pt status dot
+  (yellow needs you, green working), the tool's logo and `project · Tool` in
+  `fg2` (another Mac's rows lead with its name). Then a **Home** row
+  with no section header and no tab children; then uppercase section
   headers with counts — a collapsible `Projects`, each Space (collapsible),
   `Scratch`, and, when turned on, a collapsible `Hibernating` sorted by name. A
   collapsed `Projects` still shows the active project, as a collapsed Space does. Project rows (12pt radius) carry

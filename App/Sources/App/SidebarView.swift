@@ -80,6 +80,9 @@ func agentStatusColor(_ status: AgentStatus?) -> NSColor? {
 
 /// A top-level section grouping.
 private enum SidebarSection: Hashable {
+    /// Every busy agent session, on this Mac and the other Macs shown. The
+    /// first section in the list, above "This Mac" when that header shows.
+    case active
     case home
     case projects
     case scratch
@@ -92,6 +95,7 @@ private enum SidebarSection: Hashable {
 
     func title(spaces: [SidebarSpace], machines: [SidebarMachine]) -> String {
         switch self {
+        case .active:     return "Active"
         case .home:       return "Home"
         case .projects:   return "Projects"
         case .scratch:    return "Scratch"
@@ -118,6 +122,8 @@ private final class OutlineItem: NSObject {
         case tab(project: Int, tab: Int)
         /// A project on another Mac: view-only, never selected, dragged or dropped on.
         case remoteProject(machine: String, index: Int)
+        /// An Active row, by `ActiveRow.id`: a shortcut, never dragged or dropped on.
+        case active(String)
     }
     let kind: Kind
     init(_ kind: Kind) { self.kind = kind }
@@ -255,6 +261,8 @@ final class SidebarView: NSView {
     /// Whether Projects is collapsed. Transient, like `hibernatedCollapsed`;
     /// the active project still shows under it, as under a collapsed Space.
     private var projectsCollapsed = false
+    /// Whether Active is collapsed. Transient, like `hibernatedCollapsed`.
+    private var activeCollapsed = false
     /// A machine group's collapse state as the user set it, by stable ID.
     /// Without one, a group is collapsed exactly while its Mac is offline, and
     /// the choice is dropped whenever that Mac goes on- or offline, so a Mac
@@ -300,10 +308,11 @@ final class SidebarView: NSView {
     /// An Active row was clicked.
     var onSelectActive: ((ActiveSession.Target) -> Void)?
 
-    /// The Active section, fixed above the scrolling list.
-    private let activeView = SidebarActiveView()
     /// Every Active row as last received; the filter narrows what shows.
     private var activeRows: [ActiveRow] = []
+    /// The Active rows the outline shows, by id, as of the last rebuild.
+    private var shownActiveRows: [String: ActiveRow] = [:]
+    private var activeCount = 0
 
     // MARK: - Init
 
@@ -314,12 +323,6 @@ final class SidebarView: NSView {
         layer?.backgroundColor = ZTheme.current.bg0Color.cgColor
 
         setupSearchField()
-        activeView.onSelect = { [weak self] target in self?.onSelectActive?(target) }
-        activeView.onToggleCollapsed = { [weak self] in
-            guard let self else { return }
-            self.activeView.isCollapsed.toggle()
-        }
-        addSubview(activeView)
         setupOutlineView()
         setupAddButton()
         setupLayout()
@@ -572,13 +575,7 @@ final class SidebarView: NSView {
             topAddButton.widthAnchor.constraint(equalToConstant: 22),
             topAddButton.heightAnchor.constraint(equalToConstant: 22),
 
-            // Active sits between the filter and the list, so it stays put
-            // while the list scrolls; only the boundary moves as rows come
-            // and go.
-            activeView.topAnchor.constraint(equalTo: searchField.bottomAnchor, constant: 6),
-            activeView.leadingAnchor.constraint(equalTo: leadingAnchor),
-            activeView.trailingAnchor.constraint(equalTo: trailingAnchor),
-            scrollView.topAnchor.constraint(equalTo: activeView.bottomAnchor),
+            scrollView.topAnchor.constraint(equalTo: searchField.bottomAnchor, constant: 6),
             scrollView.leadingAnchor.constraint(equalTo: leadingAnchor),
             scrollView.trailingAnchor.constraint(equalTo: trailingAnchor),
             scrollView.bottomAnchor.constraint(equalTo: addPill.topAnchor, constant: -6),
@@ -610,7 +607,6 @@ final class SidebarView: NSView {
         styleBellButton()
         styleGearButton()
         styleTopAddButton()
-        activeView.applyTheme()
         // Row views take their colors from the theme at build time, and
         // `update(...)` now skips reloads when the data is unchanged — so a
         // scheme switch has to rebuild the rows itself or they keep the old
@@ -685,19 +681,12 @@ final class SidebarView: NSView {
         rebuildOutline()
     }
 
-    /// Replaces the Active rows. Cheap when nothing changed: the view diffs
-    /// by row and re-renders in place.
+    /// Replaces the Active rows, rebuilding only when they changed: agents
+    /// report status many times a minute without changing what Active shows.
     func updateActive(_ rows: [ActiveRow]) {
+        guard rows != activeRows else { return }
         activeRows = rows
-        applyActiveFilter()
-    }
-
-    /// Filtering keeps the Active rows whose label matches, rather than hiding
-    /// the section outright.
-    private func applyActiveFilter() {
-        let query = filterText.trimmingCharacters(in: .whitespaces).lowercased()
-        activeView.update(rows: query.isEmpty ? activeRows
-                          : activeRows.filter { $0.label.lowercased().contains(query) })
+        rebuildOutline()
     }
 
     /// Toggles the Hibernating section's collapsed state and rebuilds.
@@ -708,6 +697,11 @@ final class SidebarView: NSView {
 
     private func toggleThisMacCollapsed() {
         thisMacCollapsed.toggle()
+        rebuildOutline()
+    }
+
+    private func toggleActiveCollapsed() {
+        activeCollapsed.toggle()
         rebuildOutline()
     }
 
@@ -836,6 +830,18 @@ final class SidebarView: NSView {
                     .map { .remoteProject(machine: machine.id, index: $0) }
             }
         }
+        // Active heads the whole list, above "This Mac": it covers every Mac,
+        // and collapsing a Mac's group never hides its sessions from it. The
+        // filter keeps the rows whose label matches.
+        let shownActive = query.isEmpty ? activeRows
+            : activeRows.filter { $0.label.lowercased().contains(query) }
+        shownActiveRows = Dictionary(shownActive.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        activeCount = shownActive.count
+        if !shownActive.isEmpty {
+            rows = [.header(.active)]
+                + (activeCollapsed ? [] : shownActive.map { .active($0.id) })
+                + rows
+        }
         topLevel = rows
 
         // A collapsed Space still renders its active member — an invisible
@@ -872,6 +878,7 @@ final class SidebarView: NSView {
                 return projects.indices.contains(p) && projects[p].tabTitles.indices.contains(t)
             case .remoteProject(let id, let index):
                 return machines.first { $0.id == id }?.projects.indices.contains(index) ?? false
+            case .active(let id):       return shownActiveRows[id] != nil
             }
         }
 
@@ -1186,7 +1193,6 @@ extension SidebarView: NSSearchFieldDelegate {
         guard obj.object as? NSSearchField === searchField else { return }
         filterText = searchField.stringValue
         rebuildOutline()
-        applyActiveFilter()
     }
 }
 
@@ -1247,7 +1253,7 @@ extension SidebarView: NSOutlineViewDataSource {
             let pb = NSPasteboardItem()
             pb.setString("\(p)", forType: SidebarView.projectDragType)
             return pb
-        case .remoteProject:
+        case .remoteProject, .active:
             return nil
         case .header(.space(let id)):
             // Same filter guard as a project drag: visible rows (incl. header
@@ -1508,9 +1514,10 @@ extension SidebarView: NSOutlineViewDataSource {
                 // folded into `default`) so a future `Kind` case fails to
                 // compile here instead of silently matching this arm.
                 return first..<end
-            case .remoteProject:
-                // Another Mac's rows always follow a machine header, so the
-                // band has already ended; listed for the same reason as `.tab`.
+            case .remoteProject, .active:
+                // Another Mac's rows always follow a machine header, and
+                // Active rows head the list, so the band has already ended;
+                // listed for the same reason as `.tab`.
                 return first..<end
             case .header:
                 // A non-space header ends the band.
@@ -1584,6 +1591,11 @@ extension SidebarView: NSOutlineViewDelegate {
             var dimmed = false
             var hairline = false
             switch section {
+            case .active:
+                count = activeCount
+                collapsible = true
+                collapsed = activeCollapsed
+                onToggle = { [weak self] in self?.toggleActiveCollapsed() }
             case .home:       count = homeCount
             case .projects:
                 count = projectsCount
@@ -1700,6 +1712,23 @@ extension SidebarView: NSOutlineViewDelegate {
             )
             return cellView
 
+        case .active(let id):
+            guard let row = shownActiveRows[id] else { return nil }
+            // The tab child's anatomy (status dot, tool logo, title) at the
+            // top level, so the dot sits where the project glyphs do.
+            let identifier = NSUserInterfaceItemIdentifier("TabCell")
+            let cellView: TabCellView
+            if let recycled = outlineView.makeView(withIdentifier: identifier, owner: nil) as? TabCellView {
+                cellView = recycled
+            } else {
+                cellView = TabCellView()
+                cellView.identifier = identifier
+            }
+            cellView.configure(title: row.label, isActive: false, agentStatus: row.status,
+                               icon: row.tool.flatMap(AgentIcons.icon(for:)), alignedWithProjects: true)
+            cellView.toolTip = row.label
+            return cellView
+
         case .tab(let p, let t):
             guard projects.indices.contains(p),
                   projects[p].tabTitles.indices.contains(t) else { return nil }
@@ -1717,6 +1746,7 @@ extension SidebarView: NSOutlineViewDelegate {
                 cellView = TabCellView()
                 cellView.identifier = identifier
             }
+            cellView.toolTip = nil   // an Active row may have set one on this recycled cell
             cellView.configure(title: title, isActive: p == activeProject && t == activeTab,
                                agentStatus: status, icon: icon, accountColor: accountColor)
             return cellView
@@ -1760,6 +1790,17 @@ extension SidebarView: NSOutlineViewDelegate {
             onSelectProject?(p)
         case .tab(let p, let t):
             onSelectTab?(p, t)
+        case .active(let id):
+            guard let row = shownActiveRows[id] else { break }
+            onSelectActive?(row.target)
+            // An Active row is a shortcut, never the selection: hand it back
+            // to the row the click made active. Usually the refresh the click
+            // caused has done so already; not when it named the project and
+            // tab that were active anyway.
+            if let selected = outlineView.item(atRow: outlineView.selectedRow) as? OutlineItem,
+               case .active = selected.kind {
+                rebuildOutline()
+            }
         }
     }
 }
@@ -2166,6 +2207,8 @@ private final class TabCellView: NSTableCellView {
     /// Collapses the logo slot when a tab has none (0 width, no gap).
     private var iconWidth: NSLayoutConstraint!
     private var iconGap: NSLayoutConstraint!
+    private var dotLeading: NSLayoutConstraint!
+    private var dotToIcon: NSLayoutConstraint!
     /// The pane's agent account, trailing (the leading dot is agent status).
     private let accountDot = NSView()
     private var accountDotWidth: NSLayoutConstraint!
@@ -2198,13 +2241,15 @@ private final class TabCellView: NSTableCellView {
         iconWidth = iconView.widthAnchor.constraint(equalToConstant: 0)
         iconGap = titleLabel.leadingAnchor.constraint(equalTo: iconView.trailingAnchor, constant: 0)
         accountDotWidth = accountDot.widthAnchor.constraint(equalToConstant: 0)
+        dotLeading = dot.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 4)
+        dotToIcon = iconView.leadingAnchor.constraint(equalTo: dot.trailingAnchor, constant: 8)
         NSLayoutConstraint.activate([
-            dot.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 4),
+            dotLeading,
             dot.centerYAnchor.constraint(equalTo: centerYAnchor),
             dot.widthAnchor.constraint(equalToConstant: 6),
             dot.heightAnchor.constraint(equalToConstant: 6),
 
-            iconView.leadingAnchor.constraint(equalTo: dot.trailingAnchor, constant: 8),
+            dotToIcon,
             iconView.centerYAnchor.constraint(equalTo: centerYAnchor),
             iconWidth,
             iconView.heightAnchor.constraint(equalToConstant: 12),
@@ -2222,8 +2267,13 @@ private final class TabCellView: NSTableCellView {
     @available(*, unavailable)
     required init?(coder _: NSCoder) { fatalError("not supported") }
 
+    /// `alignedWithProjects` lays the row out at the top level (Active): the
+    /// dot centred under the project glyphs' 15pt slot, the logo or title
+    /// starting where project names do.
     func configure(title: String, isActive: Bool, agentStatus: AgentStatus?, icon: NSImage? = nil,
-                   accountColor: NSColor? = nil) {
+                   accountColor: NSColor? = nil, alignedWithProjects: Bool = false) {
+        dotLeading.constant = alignedWithProjects ? 8.5 : 4
+        dotToIcon.constant = alignedWithProjects ? 11.5 : 8
         // Trailing, deliberately: the LEADING dot is agent status, and two dots
         // at the same edge would read as one noisy cluster.
         accountDotWidth.constant = accountColor == nil ? 0 : 6

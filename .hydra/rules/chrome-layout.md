@@ -9,7 +9,6 @@ paths:
     - "Sources/ZettyCore/Support/CommandSearch.swift"
     - "Sources/ZettyCore/Support/FuzzyMatch.swift"
     - "Sources/ZettyCore/Model/SidebarMetrics.swift"
-    - "App/Sources/App/SidebarActiveView.swift"
     - "Sources/ZettyCore/Agents/ActiveSessions.swift"
 triggers:
     - "changing the tab bar, status bar, sidebar, or command palette"
@@ -354,11 +353,13 @@ this shipped.
 Pinning was removed on 2026-11-12 in favour of **Active**
 (`docs/superpowers/specs/2026-11-06-sidebar-active-design.md`, git-ignored).
 
-- **Active is its own view, not outline rows** (`SidebarActiveView`, between
-  the filter field and the outline's scroll view). Rows in the outline would
-  shift everything below them each time an agent starts or stops, and would
-  scroll away; a separate fixed area only moves the boundary. It grows to five
-  rows, then scrolls inside itself, and has zero height while empty.
+- **Active is outline rows, the list's first section** (`SidebarSection.active`
+  header, `OutlineItem.Kind.active(id)` rows drawn with `TabCellView`), above
+  "This Mac" when other Macs show, since it covers every Mac. It was first
+  built as a separate fixed area above the scroll view that grew to five rows
+  and then scrolled inside itself, so rows coming and going never shifted the
+  list; Glen did not want a sticky second scroller (2026-11-12), so now the
+  rows below do shift as agents start and stop. Absent while nothing is busy.
 - **What and in what order is `ActiveSessions` (ZettyCore), fed a clock.**
   `TerminalViewController.refreshActive` runs inside `refreshSidebar`, so it
   rides the coalesced chrome refresh: every pane of every awake project here
@@ -372,12 +373,15 @@ Pinning was removed on 2026-11-12 in favour of **Active**
   busy again re-enters at the bottom of its group.
 - **Active and Projects collapse from their headers** (Glen, 2026-11-12),
   view-local and transient like Hibernating and This Mac
-  (`SidebarActiveView.isCollapsed`, `SidebarView.projectsCollapsed`): no
+  (`SidebarView.activeCollapsed`, `SidebarView.projectsCollapsed`): no
   model field and no UserDefaults, since the isolated test app shares the real
   app's defaults domain. Collapsed Active keeps its header and count;
   collapsed Projects keeps the active project's row, as a collapsed Space does.
-- **Rows re-render in place**: `SidebarActiveView.update` keeps a view per row
-  id and re-orders the stack only when the order changed.
+- **`updateActive` rebuilds the outline only when the rows changed**: agents
+  report status far more often than Active's rows change. An Active row is
+  never the selection: a click calls `onSelectActive`, and if nothing has
+  moved the selection off it by the time that returns (the target was
+  already active), the outline rebuilds to put it back.
 - **Clicks**: a local row selects its project and tab, then focuses the pane
   (`focusAttachedTile` first, as the sidebar's own clicks do); another Mac's
   row opens that project and selects the tab, since the remote view selects

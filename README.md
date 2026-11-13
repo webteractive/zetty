@@ -132,7 +132,7 @@ copy-bind = n copy-cursor-down
 
 ### Projects
 
-- **Active** — the top of the sidebar lists every agent that is working
+- **Active** — the first section of the sidebar lists every agent that is working
   (green) or needs you (yellow), on this Mac and your other Macs, needs-you
   first. Click a row to jump to its pane. A row leaves as soon as its agent
   stops. Click the **Active** or **Projects** header to fold that section.
