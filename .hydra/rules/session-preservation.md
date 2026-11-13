@@ -233,6 +233,12 @@ downloads and `~/.zetty/bin/zmx` are no longer used for new sessions.
     (`ZmxCommand.targetSessions`); a `kill` across versions runs once per
     binary. Listing uses the bundled binary's full `list`, and an unreachable
     session's pid comes from its daemon's child in the process table.
+  - **Only this user's daemons, and only safely owned binaries.** Session
+    names show in `ps` to every account, so before running or copying a
+    daemon's binary Zetty checks the daemon's uid (`proc_pidinfo`) is this
+    user's and the file is owned by this user or root and not group- or
+    world-writable (`ZmxBinaries.trustedExecutable`; security review,
+    2026-11-13). Anything else is treated as unreachable.
   - **A session whose binary is gone** (vanished before any launch could copy
     it) is unreachable: nothing sends it a zmx command, and its pane runs a
     notice with the daemon's pid instead of `zmx attach`, which would start a

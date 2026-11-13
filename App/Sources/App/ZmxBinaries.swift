@@ -113,12 +113,12 @@ enum ZmxBinaries {
             // The kernel's answer only: argv[0] is not evidence. After a
             // `brew upgrade`, /opt/homebrew/bin/zmx names the new version
             // while the daemon still runs the old one.
-            guard let path = executablePath(pid: daemon.pid) else {
+            guard let path = trustedExecutable(pid: daemon.pid) else {
                 unreachable.insert(session)
                 continue
             }
-            let resolved = URL(fileURLWithPath: path).resolvingSymlinksInPath()
-            guard resolved.path.hasPrefix("/"), fm.isExecutableFile(atPath: resolved.path) else {
+            let resolved = URL(fileURLWithPath: path)
+            guard fm.isExecutableFile(atPath: resolved.path) else {
                 unreachable.insert(session)
                 continue
             }
@@ -171,7 +171,7 @@ enum ZmxBinaries {
         let end = pid.map { "To end it, run: kill \($0)" } ?? "It shows in Activity Monitor as zmx."
         let lines = [
             "The session for this pane (\(session)) is still running, but the zmx",
-            "that started it is no longer on this Mac, so Zetty cannot reattach it.",
+            "that started it is gone or is not safe to run, so Zetty cannot reattach it.",
             end,
         ]
         // One line of shell: printf's %b turns each \n back into a line break.
@@ -209,11 +209,9 @@ enum ZmxBinaries {
                 chosen.append(bundled)
                 continue
             }
-            let path = executablePath(pid: daemon.pid).map {
-                URL(fileURLWithPath: $0).resolvingSymlinksInPath().path
-            } ?? ""
-            guard path.hasPrefix("/"), FileManager.default.isExecutableFile(atPath: path) else {
-                return (nil, "\(session) runs a zmx that is no longer on this Mac, so no zmx can reach it; to end it: kill \(daemon.pid)")
+            let path = trustedExecutable(pid: daemon.pid) ?? ""
+            guard FileManager.default.isExecutableFile(atPath: path) else {
+                return (nil, "\(session) runs a zmx that is gone, or not owned by you or root, so Zetty won't drive it; to end it: kill \(daemon.pid)")
             }
             chosen.append(path)
         }
@@ -278,6 +276,26 @@ enum ZmxBinaries {
         guard FileManager.default.isExecutableFile(atPath: path),
               let output = ZmxRunner.runDirect(path, ["version"], timeout: 5) else { return nil }
         return ZmxVersion.parse(versionOutput: output)
+    }
+
+    /// The executable of a daemon Zetty may run and copy, or nil. Session
+    /// names show in `ps` to every account on the Mac, so a process merely
+    /// named `zmx attach zetty-…` proves nothing: the daemon must be this
+    /// user's, and its binary owned by this user or root and writable by no
+    /// one else. Otherwise another account could have its own program run as
+    /// this user by Zetty's `zmx version` (security review, 2026-11-13).
+    private static func trustedExecutable(pid: Int32) -> String? {
+        var info = proc_bsdinfo()
+        let size = Int32(MemoryLayout<proc_bsdinfo>.size)
+        guard proc_pidinfo(pid, PROC_PIDTBSDINFO, 0, &info, size) == size,
+              info.pbi_uid == getuid(),
+              let path = executablePath(pid: pid) else { return nil }
+        let resolved = URL(fileURLWithPath: path).resolvingSymlinksInPath().path
+        var status = stat()
+        guard resolved.hasPrefix("/"), stat(resolved, &status) == 0,
+              status.st_uid == getuid() || status.st_uid == 0,
+              status.st_mode & (S_IWGRP | S_IWOTH) == 0 else { return nil }
+        return resolved
     }
 
     /// The real executable of a running process (symlinks resolved by the
