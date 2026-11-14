@@ -129,9 +129,13 @@ final class RemoteProjectController {
             // most recently left first, and would free the very project about
             // to be shown, which then reconnected from scratch (bug hunt,
             // 2026-11-13).
+            // Out of `kept`, its panes would look unowned to `keepShown`,
+            // which frees what no project holds: after `close()` nothing
+            // shows, so it freed exactly these (85cc88c, caught by
+            // remote-e2e's "coming back" check). Spare them.
             let back = kept.firstIndex(where: { $0.machine == machine.stableID && $0.project == projectID })
                 .map { kept.remove(at: $0) }
-            keepShown()
+            keepShown(sparing: back.map { Set($0.surfaces.values) } ?? [])
             projectName = nil
             if let back {
                 // Its relays can't follow the Mac to a new address.
@@ -404,8 +408,10 @@ final class RemoteProjectController {
     }
 
     /// Takes the shown project out of view with its panes still connected.
-    private func keepShown() {
+    /// `spared` are panes about to be shown again, never freed here.
+    private func keepShown(sparing spared: Set<UUID> = []) {
         let shownIDs = registry.liveIDs.subtracting(keptIDs).subtracting(awaitingTeardown)
+            .subtracting(spared)
         clearContent()
         focusedSurfaceID = nil
         guard let machine, let projectID, let address = machine.address else {

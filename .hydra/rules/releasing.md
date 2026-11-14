@@ -116,7 +116,11 @@ without the record (`--review <file>`).
    environment crash, `surfaces-and-memory.md`); a session started by the
    previous zmx pin still attaching, reading back and ending
    (`session-preservation.md`); a hibernate and a `quit --kill-sessions`
-   returning promptly.
+   returning promptly. When the range touches Other Macs
+   (`App/Sources/App/Remote/**`, `Sources/ZettyCore/Remote/**`,
+   `Bridge/tailnet/**`), `scripts/remote-e2e.sh` against the other Mac with
+   0 failed: 85cc88c changed how a remote project is returned to without it,
+   and its "coming back" check caught the reconnect only at the next run.
 5. **The record**, a file outside the repo like the notes, with:
    - `Reviewed: <last tag>..<HEAD short sha>`: exactly the range released, so
      a commit after the review sends it back;
