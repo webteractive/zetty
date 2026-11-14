@@ -64,17 +64,17 @@ ship as part of Zetty's binary. Every license text, with copyright lines, is in
 | `github.com/x448/float16` v0.8.4 | MIT |
 | `go4.org/mem` v0.0.0-… | Apache-2.0 |
 | `go4.org/netipx` v0.0.0-… | BSD-3-Clause |
-| `golang.org/x/crypto` v0.57.0 | BSD-3-Clause |
+| `golang.org/x/crypto` v0.58.0 | BSD-3-Clause |
 | `golang.org/x/exp` v0.0.0-… | BSD-3-Clause |
-| `golang.org/x/net` v0.59.0 | BSD-3-Clause |
+| `golang.org/x/net` v0.60.0 | BSD-3-Clause |
 | `golang.org/x/oauth2` v0.37.0 | BSD-3-Clause |
-| `golang.org/x/sync` v0.23.0 | BSD-3-Clause |
-| `golang.org/x/sys` v0.48.0 | BSD-3-Clause |
-| `golang.org/x/term` v0.46.0 | BSD-3-Clause |
-| `golang.org/x/text` v0.42.0 | BSD-3-Clause |
+| `golang.org/x/sync` v0.24.0 | BSD-3-Clause |
+| `golang.org/x/sys` v0.49.0 | BSD-3-Clause |
+| `golang.org/x/term` v0.47.0 | BSD-3-Clause |
+| `golang.org/x/text` v0.43.0 | BSD-3-Clause |
 | `golang.org/x/time` v0.16.0 | BSD-3-Clause |
 | `gvisor.dev/gvisor` v0.0.0-… | Apache-2.0 |
-| `tailscale.com` v1.104.1 | BSD-3-Clause |
+| `tailscale.com` v1.104.7 | BSD-3-Clause |
 
 Tailscale's code is © Tailscale Inc & contributors. "Tailscale" is a trademark
 of Tailscale Inc.; Zetty is not affiliated with or endorsed by Tailscale.

@@ -1317,7 +1317,7 @@ CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
 OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-==== github.com/tailscale/wireguard-go v0.0.0-20260928213032-417aef361226 (MIT) ====
+==== github.com/tailscale/wireguard-go v0.0.0-20261106233718-9e0ab45c16ca (MIT) ====
 --- LICENSE ---
 Permission is hereby granted, free of charge, to any person obtaining a copy of
 this software and associated documentation files (the "Software"), to deal in
@@ -1595,7 +1595,7 @@ THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-==== golang.org/x/crypto v0.57.0 (BSD-3-Clause) ====
+==== golang.org/x/crypto v0.58.0 (BSD-3-Clause) ====
 --- LICENSE ---
 Copyright 2009 The Go Authors.
 
@@ -1703,7 +1703,7 @@ infringement, or inducement of patent infringement, then any patent
 rights granted to you under this License for this implementation of Go
 shall terminate as of the date such litigation is filed.
 
-==== golang.org/x/net v0.59.0 (BSD-3-Clause) ====
+==== golang.org/x/net v0.60.0 (BSD-3-Clause) ====
 --- LICENSE ---
 Copyright 2009 The Go Authors.
 
@@ -1787,7 +1787,7 @@ THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-==== golang.org/x/sync v0.23.0 (BSD-3-Clause) ====
+==== golang.org/x/sync v0.24.0 (BSD-3-Clause) ====
 --- LICENSE ---
 Copyright 2009 The Go Authors.
 
@@ -1841,7 +1841,7 @@ infringement, or inducement of patent infringement, then any patent
 rights granted to you under this License for this implementation of Go
 shall terminate as of the date such litigation is filed.
 
-==== golang.org/x/sys v0.48.0 (BSD-3-Clause) ====
+==== golang.org/x/sys v0.49.0 (BSD-3-Clause) ====
 --- LICENSE ---
 Copyright 2009 The Go Authors.
 
@@ -1895,7 +1895,7 @@ infringement, or inducement of patent infringement, then any patent
 rights granted to you under this License for this implementation of Go
 shall terminate as of the date such litigation is filed.
 
-==== golang.org/x/term v0.46.0 (BSD-3-Clause) ====
+==== golang.org/x/term v0.47.0 (BSD-3-Clause) ====
 --- LICENSE ---
 Copyright 2009 The Go Authors.
 
@@ -1949,7 +1949,7 @@ infringement, or inducement of patent infringement, then any patent
 rights granted to you under this License for this implementation of Go
 shall terminate as of the date such litigation is filed.
 
-==== golang.org/x/text v0.42.0 (BSD-3-Clause) ====
+==== golang.org/x/text v0.43.0 (BSD-3-Clause) ====
 --- LICENSE ---
 Copyright 2009 The Go Authors.
 
@@ -2314,7 +2314,7 @@ Some files carry the "BSD" license, noted at the top of each file:
    ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
    POSSIBILITY OF SUCH DAMAGE.
 
-==== tailscale.com v1.104.1 (BSD-3-Clause) ====
+==== tailscale.com v1.104.7 (BSD-3-Clause) ====
 --- LICENSE ---
 BSD 3-Clause License
 
