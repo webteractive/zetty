@@ -84,7 +84,13 @@ Apple's log on rejection. No secret lives in the repo: notarytool uses the
 override). `release.sh` runs `package.sh --preflight` before its bump, so a
 missing certificate or profile stops it before it pushes; `--adhoc` packages
 an un-notarized build for a machine without the certificate — never ship it.
-Releases up to 0.1.52 were ad-hoc signed.
+Releases up to 0.1.52 were ad-hoc signed. The identity lookup lives in
+`scripts/signing-identity.sh`, shared with `scripts/build.sh`, which signs
+everyday and test builds with the same Developer ID (hardened runtime, no
+`get-task-allow`, no timestamp, not notarized). They therefore carry a
+release's designated requirement, so macOS keeps Zetty's privacy grants and
+Keychain access across builds; without the certificate they fall back to
+ad-hoc and say so.
 
 ## Pre-release review (required, 2026-11-13)
 

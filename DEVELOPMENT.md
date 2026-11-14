@@ -55,10 +55,8 @@ cd zetty
 # Generate the Xcode project (Tuist)
 tuist generate --no-open        # or: mise exec -- tuist generate --no-open
 
-# Build the app
-xcodebuild -project zetty.xcodeproj -scheme zetty \
-  -configuration Release -destination 'generic/platform=macOS' \
-  -derivedDataPath build build
+# Build the app (extra arguments go to xcodebuild)
+scripts/build.sh -configuration Release -derivedDataPath build
 
 # Install
 ditto build/Build/Products/Release/zetty.app /Applications/zetty.app
@@ -66,10 +64,16 @@ open /Applications/zetty.app
 ```
 
 The generated project lists source files explicitly, so **run `tuist generate`
-again after adding or removing a file**. A build you compile yourself is ad-hoc
-signed, so macOS asks for folder access again after each build, and, with Other
-Macs on, once for Zetty's Tailscale sign-in in the login Keychain (each build is
-a new signature to macOS).
+again after adding or removing a file**.
+
+`scripts/build.sh` signs with the "Developer ID Application" certificate in your
+keychain when there is exactly one (hardened runtime, no debugger entitlement;
+`ZETTY_SIGN_IDENTITY` picks one by name or hash). Every build then carries the
+same identity as a release, so macOS keeps Zetty's privacy grants (Screen
+Recording, folder access) and the Keychain "Always Allow" for its Tailscale
+sign-in from build to build. Without the certificate it builds ad-hoc and says
+so: macOS then treats each build as a new app and asks for all of those again.
+Plain `xcodebuild` builds ad-hoc too.
 
 Building needs **Go** (`brew install go`): Other Macs embeds a Tailscale node
 written in Go (`Bridge/tailnet`), which the "Build the Tailscale bridge" build

@@ -9,9 +9,9 @@ import Security
 /// home folder into their VMs, and whoever reads the node key *is* this
 /// Zetty on the user's tailnet. A VM only sees the encrypted Keychain.
 ///
-/// macOS ties the item to the app that made it, so an ad-hoc dev build is
-/// asked once at launch; signed releases aren't. Every call may wait on that
-/// prompt: never call one on main.
+/// macOS ties the item to the app that made it, so an ad-hoc build is asked
+/// at every new build; a Developer ID build (releases, scripts/build.sh) keeps
+/// "Always Allow". Every call may wait on that prompt: never call one on main.
 struct TailnetStateStore {
     static let service = "co.webteractive.zetty.tailscale-state"
 

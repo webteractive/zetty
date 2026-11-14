@@ -31,7 +31,7 @@ the recipe that was run end to end on 2026-10-15.
 ```sh
 # 1. Build, then FREEZE a copy: the next build must not change the binary
 #    under a running process. Keep the home short (socket paths cap ~100 chars).
-xcodebuild -project zetty.xcodeproj -scheme zetty -destination 'platform=macOS' build
+scripts/build.sh     # Developer ID signed, like the copy you install
 mkdir -p /tmp/zti/.config/zetty /tmp/zti/zmx /tmp/zti/.claude
 printf 'preserve-sessions = true\n' > /tmp/zti/.config/zetty/config
 ln -s "$HOME/.claude/projects" /tmp/zti/.claude/projects   # handoffs need it

@@ -18,7 +18,7 @@
 set -eu
 cd "$(dirname "$0")/.."
 
-SIGN_IDENTITY=${ZETTY_SIGN_IDENTITY:-}
+SIGN_IDENTITY=
 NOTARY_PROFILE=${ZETTY_NOTARY_PROFILE:-notary}
 
 MODE=release
@@ -30,25 +30,14 @@ case "${1:-}" in
   *) echo "usage: scripts/package.sh [--preflight | --adhoc]" >&2; exit 2 ;;
 esac
 
+. scripts/signing-identity.sh
+
 die() { printf '%s\n' "error: $*" >&2; exit 1; }
 
 # Checked before anything builds: release.sh runs this ahead of its version
 # bump, so a missing certificate or profile stops it before it pushes.
 preflight() {
-  if [ -n "$SIGN_IDENTITY" ]; then
-    security find-identity -v -p codesigning | grep -qF "$SIGN_IDENTITY" \
-      || die "ZETTY_SIGN_IDENTITY is not a valid signing identity in the keychain"
-  else
-    # Signed by SHA-1 hash, not name: a renewed certificate keeps its name, and
-    # codesign refuses a name two valid certificates share.
-    found=$(security find-identity -v -p codesigning | grep '"Developer ID Application: ' || true)
-    case $(printf '%s' "$found" | grep -c . || true) in
-      0) die "no valid \"Developer ID Application\" certificate in the keychain" ;;
-      1) SIGN_IDENTITY=$(printf '%s' "$found" | awk '{print $2}') ;;
-      *) printf '%s\n' "$found" >&2
-         die "several Developer ID Application certificates — pick one with ZETTY_SIGN_IDENTITY=<hash>" ;;
-    esac
-  fi
+  resolve_sign_identity || die "$SIGN_IDENTITY_ERROR"
   xcrun notarytool history --keychain-profile "$NOTARY_PROFILE" >/dev/null 2>&1 \
     || die "notary keychain profile '$NOTARY_PROFILE' is missing or rejected — run: xcrun notarytool store-credentials $NOTARY_PROFILE"
 }

@@ -23,13 +23,18 @@ after the commit; do not ask first.
 
 ```sh
 zetty quit; sleep 2
-xcodebuild -project zetty.xcodeproj -scheme zetty \
-  -destination 'platform=macOS' build
+scripts/build.sh    # Developer ID signed: macOS keeps the grants and Keychain access
 ditto <DerivedData>/Build/Products/Debug/zetty.app /Applications/zetty.app
 defaults read /Applications/zetty.app/Contents/Info.plist ZettyBuildCommit
 open -a /Applications/zetty.app
 ```
 
+- **Build with `scripts/build.sh`, not plain `xcodebuild`.** A plain build is
+  ad-hoc signed, a new app to macOS each time: Glen loses Zetty's Screen
+  Recording grant (then re-grants it in System Settings, whose "Quit & Reopen"
+  restarts Zetty) and is asked again for the Keychain item that holds the
+  Tailscale sign-in, on both Macs. The script signs with the Developer ID, so
+  each build keeps the identity macOS trusted.
 - **Build AFTER committing.** The stamp script writes the short commit with a
   `*` suffix on a dirty tree, so a build run before the commit installs a
   bundle whose `ZettyBuildCommit` does not match HEAD. Verify the two are

@@ -16,7 +16,7 @@
 #            ZETTY_E2E_PEER.
 # --key      SSH key (default ~/.ssh/zetty-e2e when it exists).
 # --app      the build to test (default: the Debug product in DerivedData).
-# --no-build skip the xcodebuild step.
+# --no-build skip the build (scripts/build.sh).
 # --keep     leave both test apps running for a look (tear down by running
 #            again, or quit them with their own CLI).
 #
@@ -185,7 +185,7 @@ if [ -z "$APP" ]; then
 fi
 if [ "$BUILD" = 1 ]; then
     log "building"
-    xcodebuild -project zetty.xcodeproj -scheme zetty -destination 'platform=macOS' build >/tmp/zre-build.log 2>&1 \
+    scripts/build.sh >/tmp/zre-build.log 2>&1 \
         || { echo "remote-e2e: build failed, see /tmp/zre-build.log" >&2; exit 2; }
 fi
 [ -x "$APP/Contents/MacOS/zetty" ] || { echo "remote-e2e: no app at $APP" >&2; exit 2; }

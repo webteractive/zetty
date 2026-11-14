@@ -96,7 +96,8 @@ installed or running. The Tailscale app is never touched or needed.
   and a Keychain migrated to another Mac never hands it this Mac's device),
   never a file: Lima and Colima mount the home folder into VMs, and whoever
   holds the node key *is* this Zetty. An ad-hoc build is asked once at
-  launch; releases aren't. An **unreadable** item (locked Keychain over SSH,
+  launch; a Developer ID build (releases, `scripts/build.sh`) is asked once
+  and then keeps "Always Allow". An **unreadable** item (locked Keychain over SSH,
   a denied prompt) stops the node with the reason in Settings: starting
   empty would enroll a second device. It is **not read again on every config
   reload** (`TailnetLifecycle`), which would prompt each time: only after
