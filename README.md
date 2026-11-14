@@ -184,7 +184,10 @@ copy-bind = n copy-cursor-down
   outlive it.
 - **Layout templates** — save a project's tabs and splits (each pane's folder
   and an optional startup command) to a committable `.zetty/project.json`; it is
-  applied when the project is added, or from Project Settings.
+  applied when the project is added, or from Project Settings. The first time a
+  repo's file would run startup commands, Zetty shows them and asks (**Run
+  Commands** or **Open Without Running**), and asks again whenever they change;
+  your own global template never asks.
 
 ### Panes
 

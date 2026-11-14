@@ -58,6 +58,26 @@ v2/v3 additions (same design doc):
   `registry.sendText` ~0.8s after the pane spawns
   (`pendingStartupCommands`, in-memory only — a relaunch never re-runs
   commands into preserved sessions).
+- **Startup-command trust** (2026-11-14) — a repo's `.zetty/project.json` is
+  written by whoever wrote the repo, so its commands are held
+  (`TerminalViewController.heldTemplateCommands`) until
+  `AppDelegate.approveTemplateCommands` says yes. The provider returns a
+  `ResolvedLayoutTemplate` naming its source: the user's global template
+  (`.globalDefault`) runs without asking. A repo's asks once per project
+  (`settingsKey`) and per exact command list: `StartupCommandTrust` stores a
+  length-prefixed SHA-256 of every pane's folder and command in
+  `startup-command-trust.json` (App Support), so any change asks again.
+  Declining opens the panes without typing anything and is not remembered.
+  A pane that spawned while the prompt was open is typed into on approval
+  (`spawnedWhileHeld`). The prompt (`StartupCommandPrompt`) shows commands
+  through `StartupCommandDisplay`, which turns control characters into their
+  control pictures and bidi or zero-width characters into `<U+XXXX>`, so
+  what is read is what runs. "Open Without Running" is the default button.
+  **It is a plain window, never a sheet or `runModal`:** AppKit ignores
+  `NSApp.terminate` while a sheet is up, before `applicationShouldTerminate`
+  runs (seen in the test app: `zetty quit --force` did nothing), and the
+  prompt can appear unattended from `zetty add-project`, so a sheet would
+  stall quit, the updater and a shutdown.
 - **Env vars** — `ProjectSettings.env` (values in the PRIVATE store only);
   injected as repeated ghostty `env` directives per surface
   (`SurfaceRegistry.surfaceEnvironment` → `config.custom("env", "K=V")`).

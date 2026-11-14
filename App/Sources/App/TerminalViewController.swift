@@ -2919,7 +2919,13 @@ final class TerminalViewController: NSViewController {
 
     /// Resolves a project's layout template (repo `.zetty/project.json`
     /// first, then the global default); nil → seed the usual single pane.
-    var layoutTemplateProvider: ((ProjectRuntime) -> LayoutTemplate?)?
+    var layoutTemplateProvider: ((ProjectRuntime) -> ResolvedLayoutTemplate?)?
+
+    /// Decides whether a template's startup commands may run, and calls back
+    /// with the answer, at once or after asking (a repo's own commands need
+    /// the user's OK: `AppDelegate.approveTemplateCommands`). Nil → they run.
+    var templateCommandApproval:
+        ((ProjectRuntime, ResolvedLayoutTemplate, @escaping (Bool) -> Void) -> Void)?
 
     /// Panes whose pending command is a restart-recovery resume. Such a
     /// command must NEVER be typed into a pane that already has its agent
@@ -2931,9 +2937,45 @@ final class TerminalViewController: NSViewController {
     private var guardedResumeSurfaces: Set<UUID> = []
 
     /// Startup commands awaiting injection into freshly spawned panes —
-    /// populated ONLY by template application, and in-memory only, so a
+    /// in-memory only, so a
     /// relaunch can never re-run a command into a preserved session.
     private var pendingStartupCommands: [UUID: String] = [:]
+
+    /// Template startup commands waiting on `templateCommandApproval`, and
+    /// which of their panes spawned meanwhile (those are typed into at once
+    /// on approval, since their spawn hook has already fired).
+    private var heldTemplateCommands: [UUID: String] = [:]
+    private var spawnedWhileHeld: Set<UUID> = []
+
+    /// Queues a template's startup commands once they are allowed to run.
+    /// The panes themselves open either way: declining only keeps the
+    /// commands from being typed.
+    private func queueTemplateCommands(_ commands: [UUID: String],
+                                       from resolved: ResolvedLayoutTemplate,
+                                       for project: ProjectRuntime) {
+        guard !commands.isEmpty else { return }
+        guard let approval = templateCommandApproval else {
+            pendingStartupCommands.merge(commands) { _, new in new }
+            return
+        }
+        heldTemplateCommands.merge(commands) { _, new in new }
+        approval(project, resolved) { [weak self] run in
+            self?.releaseHeldTemplateCommands(Array(commands.keys), run: run)
+        }
+    }
+
+    private func releaseHeldTemplateCommands(_ ids: [UUID], run: Bool) {
+        for id in ids {
+            guard let command = heldTemplateCommands.removeValue(forKey: id) else { continue }
+            let spawned = spawnedWhileHeld.remove(id) != nil
+            guard run else { continue }
+            if spawned {
+                deliverAfterSpawn(command + "\r", to: id, after: Self.spawnGracePeriod)
+            } else {
+                pendingStartupCommands[id] = command
+            }
+        }
+    }
 
     /// Clones whose copy is in flight — rendered as transient "Cloning…"
     /// spinner rows spliced under their source (never persisted). Keyed by a
@@ -2991,6 +3033,10 @@ final class TerminalViewController: NSViewController {
     /// A restart-recovery resume waits longer and is guarded — see
     /// `deliverAfterSpawn` and `guardedResumeSurfaces`.
     private func injectStartupCommandIfPending(_ surfaceID: UUID) {
+        if heldTemplateCommands[surfaceID] != nil {
+            spawnedWhileHeld.insert(surfaceID)
+            return
+        }
         guard let command = pendingStartupCommands.removeValue(forKey: surfaceID) else { return }
         // A pane starting from a handoff is covered before its line is
         // typed: the grace period below is what lets the cover draw first.
@@ -3156,12 +3202,12 @@ final class TerminalViewController: NSViewController {
     /// killed like a close). Returns false when no template resolves.
     @discardableResult
     func applyLayoutTemplate(to project: ProjectRuntime) -> Bool {
-        guard let template = layoutTemplateProvider?(project),
-              let built = template.tabList(rootPath: project.rootPath) else { return false }
+        guard let resolved = layoutTemplateProvider?(project),
+              let built = resolved.template.tabList(rootPath: project.rootPath) else { return false }
         let closingSurfaces = project.tabList.trees.flatMap { $0.layout.surfaces.map(\.id) }
         project.tabList.replaceTrees(from: built.tabList)
         stampAccounts(in: project)
-        pendingStartupCommands.merge(built.commands) { _, new in new }
+        queueTemplateCommands(built.commands, from: resolved, for: project)
         onSurfacesClosed?(closingSurfaces)
         refreshTabBar()
         rebuildSurfaceNodeView()
@@ -7550,10 +7596,10 @@ final class TerminalViewController: NSViewController {
         // A resolved layout template replaces the default single-pane seed
         // (fresh project → nothing to confirm-discard).
         var usedTemplate = false
-        if let template = layoutTemplateProvider?(project),
-           let built = template.tabList(rootPath: project.rootPath) {
+        if let resolved = layoutTemplateProvider?(project),
+           let built = resolved.template.tabList(rootPath: project.rootPath) {
             project.tabList.replaceTrees(from: built.tabList)
-            pendingStartupCommands.merge(built.commands) { _, new in new }
+            queueTemplateCommands(built.commands, from: resolved, for: project)
             usedTemplate = true
         }
         stampAccounts(in: project)

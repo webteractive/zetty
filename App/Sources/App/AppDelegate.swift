@@ -101,6 +101,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     /// wins when it carries its own).
     private lazy var layoutTemplateStore = LayoutTemplateStore(directory: appSupportDirectory)
 
+    /// Repo startup commands the user agreed to run, per project.
+    private lazy var startupCommandTrustStore = StartupCommandTrustStore(directory: appSupportDirectory)
+
     /// Named agent logins (Claude accounts), each with its own config directory.
     private lazy var agentAccountStore = AgentAccountStore(directory: appSupportDirectory)
 
@@ -296,8 +299,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         }
         tvc.editorProvider = { [weak self] in self?.appConfig.editor }
         tvc.layoutTemplateProvider = { [weak self] project in
-            ProjectFileIO.load(projectRoot: project.rootPath)?.layoutTemplate
-                ?? self?.layoutTemplateStore.load()
+            if let template = ProjectFileIO.load(projectRoot: project.rootPath)?.layoutTemplate {
+                return ResolvedLayoutTemplate(template: template, source: .repoFile)
+            }
+            return self?.layoutTemplateStore.load().map {
+                ResolvedLayoutTemplate(template: $0, source: .globalDefault)
+            }
+        }
+        tvc.templateCommandApproval = { [weak self] project, resolved, decide in
+            guard let self else { return decide(false) }
+            self.approveTemplateCommands(resolved, for: project, decide: decide)
         }
         tvc.surfaceEnvironmentProvider = { [weak self, weak tvc] surface in
             // The mod's variables are per pane, never process-wide: see
@@ -1234,6 +1245,39 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             } : nil
         ) { [weak self] edited in
             self?.updateProjectSettings(edited, for: project)
+        }
+    }
+
+    /// Asks before a repo's own `.zetty/project.json` types its startup
+    /// commands into the user's shells: they come from whoever wrote the repo,
+    /// so adding a cloned project would otherwise run them unseen. The answer
+    /// is remembered for exactly the commands shown, so a change asks again.
+    /// The user's own global template never asks.
+    private func approveTemplateCommands(_ resolved: ResolvedLayoutTemplate,
+                                         for project: ProjectRuntime,
+                                         decide: @escaping (Bool) -> Void) {
+        let commands = resolved.template.startupCommands
+        guard resolved.source == .repoFile, !commands.isEmpty else { return decide(true) }
+        let key = project.settingsKey
+        if startupCommandTrustStore.load().allows(commands, inProject: key) { return decide(true) }
+
+        StartupCommandPrompt.present(
+            projectName: project.name, commands: commands,
+            over: terminalViewController?.view.window
+        ) { [weak self] run in
+            guard run else {
+                ZettyLog.lifecycle.log("startup commands: not run for \(project.name)")
+                return decide(false)
+            }
+            if let store = self?.startupCommandTrustStore {
+                var trust = store.load()
+                trust.approve(commands, inProject: key)
+                do { try store.save(trust) } catch {
+                    ZettyLog.lifecycle.error(
+                        "startup commands: approval not saved: \(error.localizedDescription)")
+                }
+            }
+            decide(true)
         }
     }
 
