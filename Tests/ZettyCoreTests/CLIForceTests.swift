@@ -205,3 +205,14 @@ import Testing
     #expect(try ControlWire.decodeRequest(#"{"command":"hibernate","project":"a"}"#)
         == .hibernateProject(name: "a", asker: nil))
 }
+
+/// A `zmx list` that fails or times out must not read as "no sessions": every
+/// pane would then fall back to the cached probe, the stale source the fresh
+/// reading exists to avoid. Unreadable refuses, like a failed `ps`.
+@Test func foregroundReadingIsUnreadableWhenEitherCallFails() {
+    #expect(BusyPaneGate.reading(sessionPIDs: nil, psOutput: "  1  0 S zsh") == .failed)
+    #expect(BusyPaneGate.reading(sessionPIDs: ["zetty-1": 1], psOutput: nil) == .failed)
+    #expect(BusyPaneGate.reading(sessionPIDs: [:], psOutput: "")
+        == .taken(ForegroundProcess.commands(forSessionPIDs: [:], psOutput: ""),
+                  detached: ForegroundProcess.detachedWork(forSessionPIDs: [:], psOutput: "")))
+}

@@ -1,5 +1,6 @@
 import AppKit
 import ZettyGhostty
+import ZettyLua
 import UserNotifications
 
 /// Window that gives the app's main-menu key equivalents (⌘D / ⇧⌘D / ⌘W)
@@ -78,6 +79,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     /// Installs/removes agent hooks in each harness's config.
     private let hookInstaller = HookInstaller()
     private var modInstaller = ModInstaller()
+    /// ~/.config/zetty/init.lua: actions, prefix bindings, events. First used
+    /// once the terminal view controller exists.
+    private lazy var luaScripting = LuaScripting(perform: { [unowned self] request in
+        // Like a socket request: nothing a script triggers may raise a modal.
+        let tvc = self.terminalViewController
+        let wasServing = tvc?.isServingControlRequest ?? false
+        tvc?.isServingControlRequest = true
+        defer { tvc?.isServingControlRequest = wasServing }
+        return self.handleOnMain(request)
+    }, foregroundGate: terminalViewController,
+       freshForegroundReading: { Self.readForegroundForRequest(timeout: Self.scriptForegroundReadTimeout) })
+    /// Turns workspace snapshots into init.lua's pane and project events.
+    private let paneEvents = PaneEventTracker()
+    /// False until launch has restored the workspace and taken the baseline.
+    private var paneEventsReady = false
+    /// Keeps the status-bar init.lua chip in step with LuaScripting's errors.
+    private var scriptingObserver: NSObjectProtocol?
 
     /// `~/Library/Application Support/zetty/` (created on first use) — shared
     /// by the workspace and project-settings stores.
@@ -199,7 +217,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         applyThemeForActiveProject()   // initial active project's theme override
         // Autosave on every structural change (debounced), so the on-disk
         // workspace always reflects the current layout — not just on clean quit.
-        tvc.onWorkspaceDidChange = { [weak self] in self?.scheduleSave() }
+        tvc.onWorkspaceDidChange = { [weak self] in
+            self?.scheduleSave()
+            self?.trackPaneEvents()
+        }
         tvc.onSelectScheme = { [weak self] scheme in self?.applyScheme(scheme) }
         tvc.onCycleScheme = { [weak self] in self?.cycleColorScheme(nil) }
         tvc.onSetAppearance = { [weak self] mode in self?.setAppearanceMode(mode) }
@@ -289,7 +310,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         tvc.onSetBroadcastScope = { [weak self] project, scope in
             self?.setBroadcastScope(scope, for: project)
         }
-        tvc.onActiveProjectChanged = { [weak self] in self?.applyThemeForActiveProject() }
+        tvc.onActiveProjectChanged = { [weak self] in
+            self?.applyThemeForActiveProject()
+            self?.trackPaneEvents()
+        }
         tvc.viewerSettingsProvider = { [weak self] in
             let config = self?.appConfig ?? AppConfig()
             return (config.viewerHighlightCommand, config.viewerMaxBytes)
@@ -423,14 +447,60 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         // tmux-style prefix-key layer (Ctrl+B by default; prefix/bind/copy-bind
         // config lines remap it). Installed after the window exists so the
         // interceptor's window guard has something to compare against.
-        tvc.installKeyBindings(appConfig.keybindings)
+        tvc.scriptActionHandler = { [weak self] name in
+            // Off the key event, so an action that splits or focuses runs
+            // like a menu command rather than inside the interceptor.
+            DispatchQueue.main.async { self?.luaScripting.run(name, source: "key") }
+        }
+        tvc.scriptPaletteCommands = { [weak self] in
+            guard let self else { return [] }
+            return self.luaScripting.actions.map { action in
+                // Written like the palette's own prefix entries ("⌃B h").
+                let kbd = self.luaScripting.chord(for: action.name).map { chord in
+                    "⌃B " + (chord.hasPrefix("prefix>") ? String(chord.dropFirst("prefix>".count)) : chord)
+                } ?? ""
+                return PaletteCommand(glyph: "λ", label: action.title, kbd: kbd) { [weak self] in
+                    self?.luaScripting.run(action.name, source: "palette")
+                }
+            }
+        }
+        tvc.onAgentStatusChanged = { [weak self] pane, project, agent, status, previous in
+            // Async: handlers may split or focus, which must not happen in
+            // the middle of handleAgentEvents' walk over the workspace.
+            DispatchQueue.main.async {
+                var payload: [String: LuaValue] = ["pane": .string(pane), "project": .string(project),
+                                                   "status": .string(status)]
+                if let agent { payload["agent"] = .string(agent) }
+                if let previous { payload["previous"] = .string(previous) }
+                self?.luaScripting.emit("agent.status", payload)
+            }
+        }
+        luaScripting.onBindingsChanged = { [weak self] in
+            guard let self, let tvc = self.terminalViewController else { return }
+            tvc.applyKeyBindings(self.luaScripting.applyingBindings(to: self.appConfig.keybindings))
+        }
+        tvc.onScriptWarningClicked = { [weak self] in self?.openSettings(tab: .scripting) }
+        scriptingObserver = NotificationCenter.default.addObserver(
+            forName: LuaScripting.didChangeNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            guard let self else { return }
+            self.terminalViewController?.showScriptWarning(!self.luaScripting.state.errors.isEmpty)
+        }
+        luaScripting.reload(enabled: appConfig.scripting)
+        tvc.installKeyBindings(luaScripting.applyingBindings(to: appConfig.keybindings))
+        // The restored workspace is the baseline: panes reattached at launch
+        // already ran their shells, so they fire no pane.opened.
+        let baseline = tvc.paneRecords()
+        _ = paneEvents.update(panes: baseline.panes, activeProject: baseline.activeProject, emitPaneChanges: false)
+        paneEventsReady = true
 
         startObservingSystemAppearance()
         buildMenuBar()
 
-        // Auto-reload when the config file changes on disk.
+        // Auto-reload when the config file changes on disk. init.lua is not
+        // re-run for it (it has its own watcher in LuaScripting).
         let watcher = ConfigFileWatcher(url: configStore.fileURL) { [weak self] in
-            self?.reloadConfiguration(nil)
+            self?.applyConfigFromDisk(rerunScripts: false)
         }
         watcher.start()
         configWatcher = watcher
@@ -833,6 +903,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     /// config + the ghostty file, re-resolves appearance/scheme, and re-applies
     /// the theme + terminal overrides to every live pane — no relaunch needed.
     @objc func reloadConfiguration(_ sender: Any?) {
+        applyConfigFromDisk(rerunScripts: true)
+    }
+
+    /// Re-reads the config and applies it. `rerunScripts` is true for an
+    /// explicit reload (⇧⌘,, the palette, `zetty reload`). The file watcher
+    /// and Settings saves pass false: re-running init.lua on every Settings
+    /// toggle would restart its timers and re-run its top-level code, so they
+    /// only re-merge its existing bindings (and load or stop it when
+    /// `zetty-scripting` itself changed).
+    private func applyConfigFromDisk(rerunScripts: Bool) {
         appConfig = configStore.load()
         modInstaller.applyEnvironment(enabled: appConfig.claudeMod,
                                       tools: appConfig.claudeTools)   // new panes only
@@ -858,9 +938,51 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             tvc.publishAttentionCount()                                       // re-apply Dock badge gating
             tvc.sidebarPosition = appConfig.sidebarPosition                   // re-pins only on change
             tvc.showsHibernatingInSidebar = appConfig.showHibernatingInSidebar
-            tvc.applyKeyBindings(appConfig.keybindings)                       // prefix/bind/copy-bind lines
+            if rerunScripts || appConfig.scripting != luaScripting.isEnabled {
+                luaScripting.reload(enabled: appConfig.scripting)             // init.lua
+            }
+            tvc.applyKeyBindings(luaScripting.applyingBindings(to: appConfig.keybindings))  // + zetty.bind
         }
         applyRemoteConfig()                                                   // zetty-serve / zetty-remote-machines
+    }
+
+    /// Settings → Scripting's Reload (and Create init.lua): runs init.lua
+    /// again and lays its bindings over the key table.
+    private func reloadScripts() {
+        luaScripting.reload(enabled: appConfig.scripting)
+        terminalViewController?.applyKeyBindings(luaScripting.applyingBindings(to: appConfig.keybindings))
+    }
+
+    /// Diffs the workspace against the last snapshot and delivers init.lua's
+    /// `pane.opened`, `pane.closed` and `project.focused`. The snapshot is
+    /// taken now, while the change is fresh; delivery waits for the next
+    /// main-loop turn, so no handler runs inside the code that is mutating
+    /// the workspace. Panes a script's own verbs opened or closed move the
+    /// baseline without firing, so a `pane.opened` handler that splits cannot
+    /// loop; a project switch fires `project.focused` whoever made it.
+    private func trackPaneEvents() {
+        guard paneEventsReady, let tvc = terminalViewController else { return }
+        let snapshot = tvc.paneRecords()
+        let events = paneEvents.update(panes: snapshot.panes, activeProject: snapshot.activeProject,
+                                       emitPaneChanges: !luaScripting.isRunningLua)
+        guard luaScripting.isEnabled, !events.isEmpty else { return }
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            for event in events {
+                switch event {
+                case .paneOpened(let pane):
+                    var payload: [String: LuaValue] = ["pane": .string(pane.pane), "project": .string(pane.project)]
+                    if let cwd = pane.cwd { payload["cwd"] = .string(cwd) }
+                    self.luaScripting.emit("pane.opened", payload)
+                case .paneClosed(let pane, let project):
+                    self.luaScripting.emit("pane.closed", ["pane": .string(pane), "project": .string(project)])
+                case .projectFocused(let project, let previous):
+                    var payload: [String: LuaValue] = ["project": .string(project)]
+                    if let previous { payload["previous"] = .string(previous) }
+                    self.luaScripting.emit("project.focused", payload)
+                }
+            }
+        }
     }
 
     /// ⌘K's Show/Hide Hibernating in Sidebar: saves the key, applies it live,
@@ -1655,9 +1777,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         controller.onShowSignInCode = { [weak self] in self?.showTailscaleSignInCode() }
         controller.onRename = { [weak self] input in self?.renameTailnetDevice(input) ?? input }
         controller.onConfigSaved = { [weak self] in
-            self?.reloadConfiguration(nil)
+            self?.applyConfigFromDisk(rerunScripts: false)
             self?.configWatcher?.markSaved()   // already applied; skip the poll's repeat
         }
+        controller.scriptingStateProvider = { [weak self] in
+            self?.luaScripting.state
+                ?? LuaScriptingState(enabled: false, fileExists: false, loadedAt: nil, actions: [], errors: [], output: [])
+        }
+        controller.onReloadScripts = { [weak self] in self?.reloadScripts() }
         controller.onSetHomeDirectory = { [weak self] path in self?.setHomeDirectory(path) }
         controller.onSetSessionsView = { [weak self] mode in
             MainActor.assumeIsolated { self?.setSessionsView(mode) }
@@ -1958,6 +2085,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
 
     func applicationWillTerminate(_: Notification) {
         controlSocketServer?.stop()
+        luaScripting.shutdown()   // init.lua's timers and running zetty.exec commands
         remoteServer?.stop()
         remoteMachinesClient?.stop()
         if appConfig.serveRemote || appConfig.showRemoteMachines { tailnet.stopBeforeQuit() }
@@ -2461,16 +2589,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     /// What runs in front of every preserved pane right now: one `zmx list`
     /// and one `ps`, each bounded, for one request that may end busy panes.
     /// nil without zmx, where no pane has a session to read.
-    private static func readForegroundForRequest() -> BusyPaneGate.Reading? {
+    static func readForegroundForRequest(timeout: TimeInterval = foregroundReadTimeout) -> BusyPaneGate.Reading? {
         guard let zmx = ZmxRunner.locate() else { return nil }
-        let pids = ZmxRunner.sessionPIDs(zmxPath: zmx, timeout: foregroundReadTimeout)
-        guard let ps = ZmxRunner.psSnapshot(timeout: foregroundReadTimeout) else { return .failed }
-        return .taken(ForegroundProcess.commands(forSessionPIDs: pids, psOutput: ps),
-                      detached: ForegroundProcess.detachedWork(forSessionPIDs: pids, psOutput: ps))
+        // A failed `zmx list` is unreadable too, not "no sessions".
+        guard let pids = ZmxRunner.sessionPIDsIfReadable(zmxPath: zmx, timeout: timeout) else { return .failed }
+        return BusyPaneGate.reading(sessionPIDs: pids, psOutput: ZmxRunner.psSnapshot(timeout: timeout))
     }
 
     /// Seconds each of `readForegroundForRequest`'s two calls may take.
-    private static let foregroundReadTimeout: TimeInterval = 3
+    static let foregroundReadTimeout: TimeInterval = 3
+
+    /// The shorter bound for a reading taken on main, for init.lua's
+    /// `zetty.close`; a timeout reads as unreadable, which refuses the close.
+    static let scriptForegroundReadTimeout: TimeInterval = 0.5
 
     private func handleOnMain(_ request: ControlRequest) -> ControlResponse {
         guard let tvc = terminalViewController else {
@@ -2537,6 +2668,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             return .ok
         case .scratch(let focus):
             return .pane(tvc.newScratchTerminal(focus: focus))
+        case .runAction(let name):
+            if let message = luaScripting.run(name, source: "cli") { return .error(message) }
+            return .ok
+        case .luaEval(let code):
+            return luaScripting.eval(code)
         case .scratchClear(let force):
             if let message = tvc.clearScratchTerminals(force: force) { return .error(message) }
             return .ok
@@ -3379,6 +3515,17 @@ private extension AgentStatus {
 // MARK: - UNUserNotificationCenterDelegate
 
 extension AppDelegate: UNUserNotificationCenterDelegate {
+    /// Only init.lua's `zetty.notify` shows while Zetty is active; everything
+    /// else keeps the default (not shown in front).
+    func userNotificationCenter(
+        _ center: UNUserNotificationCenter,
+        willPresent notification: UNNotification,
+        withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void
+    ) {
+        let fromLua = notification.request.content.userInfo[LuaScripting.notificationKey] != nil
+        completionHandler(fromLua ? [.banner, .sound] : [])
+    }
+
     /// Clicking a needs-attention notification focuses the pane it came from.
     func userNotificationCenter(
         _ center: UNUserNotificationCenter,

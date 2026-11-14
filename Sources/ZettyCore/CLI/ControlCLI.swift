@@ -175,6 +175,8 @@ public enum ControlCLI {
                                               --focus switches to it. Prints its
                                               pane id
       zetty scratch-clear [--force]         close and clear all scratch terminals
+      zetty do <action>                     run a Lua action from ~/.config/zetty/init.lua
+      zetty lua <code>                      evaluate Lua in the app's init.lua state
       zetty quit [--kill-sessions | --simulate-restart] [--force]
                                             quit the app (no confirmation dialog);
                                               --kill-sessions also kills every
@@ -249,7 +251,7 @@ public enum ControlCLI {
         "restart-agent", "handoff", "edit", "reload", "tiles",
         "scratch", "scratch-clear", "quit", "accounts", "run",
         "new-space", "rename-space", "remove-space", "move-to-space",
-        "attach", "remote", "zmx",
+        "attach", "remote", "zmx", "do", "lua",
     ]
 
     /// True when `arguments` look like a CLI invocation (used by the app
@@ -366,6 +368,14 @@ public enum ControlCLI {
             return runTiles(arguments)
         case "scratch":
             return runScratch(arguments)
+        case "do":
+            guard arguments.count == 1, let name = arguments.first else {
+                return failure("usage: zetty do <action>")
+            }
+            return expectOK(.runAction(name: name), success: nil)
+        case "lua":
+            guard !arguments.isEmpty else { return failure("usage: zetty lua <code>") }
+            return expectText(.luaEval(code: arguments.joined(separator: " ")))
         case "scratch-clear":
             guard let flags = parseFlags(arguments, allowed: ["--force"]) else { return 2 }
             return expectOK(.scratchClear(force: flags.contains("--force")), success: "cleared")
@@ -781,6 +791,23 @@ public enum ControlCLI {
         attach/detach/split edit a view without bringing the grid up.
 
         Destroys no session. `delete` removes a saved view for good.
+        """,
+        "do": """
+        usage: zetty do <action>
+
+        Run an action defined with zetty.action{} in ~/.config/zetty/init.lua,
+        as if picked from the command palette. Its ctx.pane is the focused pane.
+
+        Does whatever the action does.
+        """,
+        "lua": """
+        usage: zetty lua <code>
+
+        Evaluate Lua in the running app's init.lua state and print the results.
+        An expression's value is printed (tables rendered); a statement prints
+        nothing. Example: zetty lua 'zetty.status().projects[1].name'
+
+        Does whatever the code does.
         """,
         "scratch": """
         usage: zetty scratch [--focus]

@@ -32,6 +32,15 @@ The Zig and LLVM runtime support compiled into libghostty (compiler-rt and a
 libc++ shim) are under the MIT License and Apache-2.0 with the LLVM exception,
 which require no notice in binary form.
 
+## Linked into the app: Lua
+
+Zetty compiles the [Lua](https://www.lua.org) 5.4.7 interpreter from source
+(`Sources/CLua`) to run `~/.config/zetty/init.lua`.
+
+| Component | License | Text |
+|---|---|---|
+| [Lua](https://www.lua.org) — © 1994–2024 Lua.org, PUC-Rio | MIT | [`lua-MIT.txt`](licenses/lua-MIT.txt) |
+
 ## Linked into the app: Tailscale
 
 Zetty joins your tailnet as its own device through Tailscale's embeddable

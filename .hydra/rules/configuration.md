@@ -47,6 +47,14 @@ in `ZettyCore` (`AppConfig` / `ConfigStore`); `AppDelegate` resolves + applies i
 - **Reload:** ⇧⌘, (also App menu + command palette) re-reads config and
   re-applies theme + terminal overrides to every live pane. Runtime scheme /
   appearance switches persist back to the file (`AppConfig.rendered()`).
+  An explicit reload (⇧⌘,, palette, `zetty reload`) also re-runs init.lua;
+  the file watcher and Settings saves go through
+  `applyConfigFromDisk(rerunScripts: false)`, which only re-merges init.lua's
+  bindings (and loads or stops it when `zetty-scripting` itself changed).
+- **`zetty-scripting = true|false`** (default true) runs `init.lua` beside
+  the config file; false loads nothing (the escape hatch for a script that
+  misbehaves at launch). Switch on Settings → Scripting. See
+  `lua-scripting.md`.
 - **Every config key has a control in Settings (⌘,)** — a new key ships with
   one in `SettingsWindowController`, or with the reason it has none written in
   that file's doc comment (today only `free-background-panes-after`, whose

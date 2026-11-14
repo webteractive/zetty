@@ -162,6 +162,8 @@ let project = Project(
             ],
             dependencies: [
                 .target(name: "ZettyGhostty"),
+                // init.lua scripting.
+                .package(product: "ZettyLua"),
                 // Xcode runs its App Intents metadata pass for app targets even
                 // when they define no intents. Declaring the system framework
                 // keeps that no-op pass valid instead of emitting a warning.

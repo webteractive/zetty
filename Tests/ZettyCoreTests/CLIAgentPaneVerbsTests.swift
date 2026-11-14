@@ -113,3 +113,16 @@ import Testing
     #expect(ControlRequest.hibernateProject(name: "Foo").takesForegroundReading)
     #expect(!ControlRequest.restartAgent(target: .pane("ab12")).takesForegroundReading)
 }
+
+/// `zetty do` runs an init.lua action that may close panes, so the gate needs
+/// the same fresh reading a `close` gets. `zetty lua` gets none: it would run
+/// `ps` for every evaluation.
+@Test func runActionTakesAForegroundReading() {
+    #expect(ControlRequest.runAction(name: "dev").takesForegroundReading)
+    #expect(!ControlRequest.luaEval(code: "1").takesForegroundReading)
+}
+
+@Test func toolSearchPathLeadsWithZettyAndHomebrew() {
+    #expect(ToolSearchPath.directories(home: "/h")
+        == ["/h/.zetty/bin", "/opt/homebrew/bin", "/usr/local/bin", "/h/.local/bin", "/usr/bin", "/bin"])
+}

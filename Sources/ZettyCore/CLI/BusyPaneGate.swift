@@ -40,6 +40,17 @@ public enum BusyPaneGate {
         case failed
     }
 
+    /// One request's reading from its two calls: `zmx list` (session → shell
+    /// pid) and a `ps` snapshot, each nil when it failed or timed out. Either
+    /// failing is unreadable: an empty session map would make every pane fall
+    /// back to the cached probe, which is frozen while Zetty is in the
+    /// background, so a busy pane would read as idle.
+    public static func reading(sessionPIDs: [String: Int32]?, psOutput: String?) -> Reading {
+        guard let sessionPIDs, let psOutput else { return .failed }
+        return .taken(ForegroundProcess.commands(forSessionPIDs: sessionPIDs, psOutput: psOutput),
+                      detached: ForegroundProcess.detachedWork(forSessionPIDs: sessionPIDs, psOutput: psOutput))
+    }
+
     /// What runs in front of the pane whose session is `session`: this
     /// request's reading when it has one, else the cached map's `cached`.
     public static func command(session: String, reading: Reading?, cached: String?) -> String? {

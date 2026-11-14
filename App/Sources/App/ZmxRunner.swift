@@ -34,7 +34,14 @@ enum ZmxRunner {
     /// Blocking — call off-main, or with a `timeout` where that cannot be
     /// helped: a hung zmx otherwise holds the caller for good.
     static func sessionPIDs(zmxPath: String, timeout: TimeInterval? = nil) -> [String: Int32] {
-        guard let output = run(zmxPath, ["list"], timeout: timeout) else { return [:] }
+        sessionPIDsIfReadable(zmxPath: zmxPath, timeout: timeout) ?? [:]
+    }
+
+    /// `sessionPIDs`, but nil when `zmx list` failed or timed out, so a
+    /// caller that must not guess (the busy-pane gate) can tell "no sessions"
+    /// from "could not read".
+    static func sessionPIDsIfReadable(zmxPath: String, timeout: TimeInterval? = nil) -> [String: Int32]? {
+        guard let output = run(zmxPath, ["list"], timeout: timeout) else { return nil }
         var pids = SessionPersistence.sessionPIDs(fromList: output)
         // A session of another zmx version lists as unreachable, without a
         // pid; its shell is its daemon's child in the process table.

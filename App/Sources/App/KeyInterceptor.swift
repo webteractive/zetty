@@ -299,6 +299,7 @@ extension TerminalViewController {
         case .broadcastToggle: toggleBroadcast(.currentTab)
         case .broadcastAgentsToggle: toggleBroadcast(.agents)
         case .broadcastCycle: cycleBroadcast()
+        case .script(let name): scriptActionHandler?(name)
 
         // Copy mode
         case .copyYank, .copyExit:

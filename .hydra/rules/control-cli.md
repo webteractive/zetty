@@ -101,6 +101,12 @@ Commands (see `zetty --help` for full grammar and agent notes):
 - `focus (--pane|--cwd)` · `close (--pane|--cwd) [--tab]` · `reload` ·
   `quit [--kill-sessions]` (no dialog; the flag kills every preserved
   session first — full shutdown).
+- `do <action>` (`.runAction`) runs an init.lua action with `ctx.source =
+  "cli"`; `lua <code>` (`.luaEval`) evaluates in init.lua's live state and
+  prints the result. `do` takes a fresh foreground reading
+  (`takesForegroundReading`), since the action may `zetty.close`; `lua`
+  does not. Both answer `scripting is off (zetty-scripting = false)` when
+  scripting is off. Internals are in `lua-scripting.md`.
 
 ### A socket request never waits on a dialog
 
@@ -134,9 +140,11 @@ raised `confirmClosingBusyPanes`, and the CLI froze for everyone.
   stops this server with a `queue.sync` onto the socket queue, so a sync
   clear deadlocked the app on every unforced `zetty quit` (caught in the
   isolated test app before it shipped). A pane with no preserved
-  session still falls back to the map (`BusyPaneGate.command`). A `ps` that
-  fails or times out refuses with `BusyPaneGate.unreadable` rather than
-  guessing idle. The GUI keeps the map: its dialog only runs while Zetty is
+  session still falls back to the map (`BusyPaneGate.command`). A `ps` or
+  `zmx list` that fails or times out refuses with `BusyPaneGate.unreadable`
+  rather than guessing idle (`BusyPaneGate.reading`). A failed `zmx list`
+  used to read as "no sessions", which sent every pane back to the stale
+  map. The GUI keeps the map: its dialog only runs while Zetty is
   active, when the map is current.
 - **The check comes before anything moves.** `closePane` works out whether it
   will take the pane or its whole tab first; `hibernate --space` is all or

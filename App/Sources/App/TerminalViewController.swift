@@ -362,6 +362,14 @@ final class TerminalViewController: NSViewController {
         statusBarView?.setCLIStatus(status)
     }
 
+    /// The status-bar "init.lua" warning chip was clicked.
+    var onScriptWarningClicked: (() -> Void)?
+
+    /// Shows/hides the init.lua warning chip (driven by LuaScripting's state).
+    func showScriptWarning(_ visible: Bool) {
+        statusBarView?.setScriptWarning(visible)
+    }
+
     /// Called to switch the appearance axis (system / dark / light).
     var onSetAppearance: ((AppearanceMode) -> Void)?
 
@@ -1374,6 +1382,7 @@ final class TerminalViewController: NSViewController {
         statusBar.onBroadcastClicked = { [weak self] in self?.cycleBroadcast() }
         statusBar.onAccountClicked = { [weak self] in self?.onOpenAccountSettings?() }
         statusBar.onCLIReinstallClicked = { [weak self] in self?.onCLIReinstallClicked?() }
+        statusBar.onScriptWarningClicked = { [weak self] in self?.onScriptWarningClicked?() }
         container.addSubview(statusBar)
         NSLayoutConstraint.activate([
             statusBar.leadingAnchor.constraint(equalTo: container.leadingAnchor),
@@ -3223,6 +3232,13 @@ final class TerminalViewController: NSViewController {
 
     /// Fired whenever the number of attention panes changes (Dock badge).
     var onAttentionCountChanged: ((Int) -> Void)?
+    /// init.lua: an agent's status changed. (pane short id,
+    /// project name, agent kind, status, previous status)
+    var onAgentStatusChanged: ((String, String, String?, String, String?) -> Void)?
+    /// init.lua: a `lua:<name>` binding fired.
+    var scriptActionHandler: ((String) -> Void)?
+    /// init.lua: the palette entries for its actions.
+    var scriptPaletteCommands: (() -> [PaletteCommand])?
 
     private func handleAgentEvents(_ events: [AgentEvent], notify: Bool = true) {
         let now = Date().timeIntervalSince1970
@@ -3232,6 +3248,11 @@ final class TerminalViewController: NSViewController {
             let previous = agentDetector.state(for: surface.id).status
             let next = agentDetector.apply(event: event, session: surface.id, now: now)
             changed = true
+            if notify, next.status != previous {
+                onAgentStatusChanged?(SessionPersistence.shortID(for: surface.id), project.name,
+                                      next.kind?.rawValue, next.status?.rawValue ?? "none",
+                                      previous?.rawValue)
+            }
             if notify, next.status == .needsAttention, previous != .needsAttention,
                let kind = next.kind {
                 onAgentNeedsAttention?(surface, kind, project)
@@ -3961,7 +3982,8 @@ final class TerminalViewController: NSViewController {
                 + projectCommands()
                 + spaceCommands()
         }
-        return paneCommands()
+        return (scriptPaletteCommands?() ?? [])
+            + paneCommands()
             + tabCommands()
             + viewCommands()
             + appCommands()
@@ -4285,6 +4307,26 @@ final class TerminalViewController: NSViewController {
     }
 
     /// Snapshot of the whole workspace for `Zetty status` / target resolution.
+    /// The awake panes and the active project, for init.lua's pane and
+    /// project events. Awake only (the same set as `allSurfaceIDs`): a
+    /// hibernated project's panes have no shells, so hibernating reads as
+    /// closing them and waking as opening fresh ones. Another Mac's panes are
+    /// never in `workspace.projects`.
+    func paneRecords() -> (panes: [PaneRecord], activeProject: String?) {
+        let panes = workspace.projects.filter { !$0.isHibernated }.flatMap { project in
+            project.tabList.trees.flatMap { tree in
+                tree.layout.surfaces.map { surface in
+                    PaneRecord(pane: SessionPersistence.shortID(for: surface.id), project: project.name,
+                               cwd: PaneCwdStore.read(surface.id) ?? registry.workingDirectory(for: surface)
+                                   ?? surface.workingDir)
+                }
+            }
+        }
+        let active = workspace.projects.indices.contains(workspace.activeIndex)
+            ? workspace.projects[workspace.activeIndex].name : nil
+        return (panes, active)
+    }
+
     func statusSnapshot() -> StatusSnapshot {
         // Space.id is a UUID minted at creation and never user-editable, so
         // `workspace.spaces` can't hold two entries sharing one — safe to build

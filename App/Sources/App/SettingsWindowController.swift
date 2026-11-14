@@ -1,6 +1,7 @@
 import AppKit
 import ServiceManagement
 import ZettyGhostty
+import ZettyLua
 
 /// The themed Settings window: every key in Zetty's config has a control
 /// here, except `free-background-panes-after`, whose feature is disabled.
@@ -22,6 +23,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         case agents = "Agents"
         case accounts = "Accounts"
         case remote = "Remote"
+        case scripting = "Scripting"
 
         /// The SF Symbols tried in turn for the page's sidebar icon: the
         /// first one this macOS has wins.
@@ -36,11 +38,12 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
             case .agents: return ["sparkles"]
             case .accounts: return ["person.2"]
             case .remote: return ["desktopcomputer.and.macbook", "desktopcomputer"]
+            case .scripting: return ["curlybraces", "chevron.left.forwardslash.chevron.right"]
             }
         }
 
-        /// The project palette hue that fills the icon's square. Sky is used
-        /// twice (nine pages, eight hues), never on neighbouring rows.
+        /// The project palette hue that fills the icon's square. Sky and mauve
+        /// are used twice (ten pages, eight hues), never on neighbouring rows.
         var hue: String {
             switch self {
             case .general: return "steel"
@@ -52,6 +55,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
             case .agents: return "orange"
             case .accounts: return "teal"
             case .remote: return "sky"
+            case .scripting: return "mauve"
             }
         }
     }
@@ -102,6 +106,21 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     private let restartRecoverySwitch = NSSwitch()
     private let hibernatePopup = NSPopUpButton()
     private let handoffsSwitch = NSSwitch()
+
+    // Scripting page (init.lua).
+    /// The live scripting state; set by AppDelegate.
+    var scriptingStateProvider: (() -> LuaScriptingState)?
+    /// Reloads init.lua (the page's Reload button, and after Create).
+    var onReloadScripts: (() -> Void)?
+    private let scriptingSwitch = NSSwitch()
+    private let scriptPathLabel = NSTextField(labelWithString: "")
+    private let scriptStatusLabel = NSTextField(labelWithString: "")
+    private let scriptErrorsLabel = NSTextField(wrappingLabelWithString: "")
+    private let scriptActionsLabel = NSTextField(wrappingLabelWithString: "")
+    private lazy var createScriptButton = NSButton(title: "Create init.lua", target: self,
+                                                   action: #selector(createInitLua(_:)))
+    private let scriptOutputView = NSTextView()
+    private var scriptingObserver: NSObjectProtocol?
     private let sidebarHibernatingSwitch = NSSwitch()
 
     /// `hibernate-after` choices offered by the dropdown, in seconds (0 = off).
@@ -276,6 +295,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         refreshSessions()
         refreshConfigControls()
         refreshAccounts()
+        refreshScripting()
     }
 
     // MARK: - Content
@@ -385,6 +405,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         case .agents: return buildAgentsTab()
         case .accounts: return buildAccountsTab()
         case .remote: return buildRemoteTab()
+        case .scripting: return buildScriptingTab()
         }
     }
 
@@ -514,6 +535,146 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
 
     /// Remote: serving and showing other Macs, and Zetty's own Tailscale
     /// device (sign-in, QR code, name).
+    private func buildScriptingTab() -> NSView {
+        let stack = sectionStack()
+        stack.addArrangedSubview(sectionHeader("init.lua"))
+        scriptingSwitch.target = self
+        scriptingSwitch.action = #selector(scriptingToggled(_:))
+        addFullWidth(switchRow("Run init.lua", control: scriptingSwitch), to: stack)
+        stack.addArrangedSubview(caption(
+            "Lua actions for keys and ⌘K, handlers for agent and pane events, and timers. "
+            + "Experimental. It reloads whenever you save the file; off loads nothing."
+        ))
+
+        scriptPathLabel.stringValue = LuaScripting.fileURL.path
+        scriptPathLabel.font = ZTheme.chromeFont(size: 12)
+        scriptPathLabel.textColor = ZTheme.current.fgColor
+        scriptPathLabel.lineBreakMode = .byTruncatingMiddle
+        scriptPathLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        addFullWidth(scriptPathLabel, to: stack)
+
+        let openButton = NSButton(title: "Open in Editor", target: self, action: #selector(openInitLua(_:)))
+        let reloadButton = NSButton(title: "Reload", target: self, action: #selector(reloadInitLua(_:)))
+        for button in [openButton, reloadButton, createScriptButton] { button.bezelStyle = .rounded }
+        let buttons = NSStackView(views: [openButton, reloadButton, createScriptButton])
+        buttons.orientation = .horizontal
+        buttons.spacing = 8
+        stack.addArrangedSubview(buttons)
+
+        scriptStatusLabel.font = ZTheme.chromeFont(size: 11)
+        scriptStatusLabel.textColor = ZTheme.current.fg3Color
+        addFullWidth(scriptStatusLabel, to: stack)
+
+        scriptErrorsLabel.font = ZTheme.chromeFont(size: 11)
+        scriptErrorsLabel.textColor = ZTheme.current.redColor
+        scriptErrorsLabel.isSelectable = true
+        addFullWidth(scriptErrorsLabel, to: stack)
+
+        stack.addArrangedSubview(spacer())
+        stack.addArrangedSubview(sectionHeader("Actions"))
+        scriptActionsLabel.font = ZTheme.chromeFont(size: 12)
+        scriptActionsLabel.textColor = ZTheme.current.fgColor
+        addFullWidth(scriptActionsLabel, to: stack)
+
+        stack.addArrangedSubview(spacer())
+        stack.addArrangedSubview(sectionHeader("Recent output"))
+        scriptOutputView.isEditable = false
+        scriptOutputView.isSelectable = true
+        scriptOutputView.drawsBackground = true
+        scriptOutputView.backgroundColor = ZTheme.current.bg2Color
+        scriptOutputView.textColor = ZTheme.current.fg2Color
+        scriptOutputView.font = ZTheme.chromeFont(size: 11)
+        scriptOutputView.textContainerInset = NSSize(width: 6, height: 6)
+        scriptOutputView.isVerticallyResizable = true
+        scriptOutputView.autoresizingMask = [.width]
+        let outputScroll = NSScrollView()
+        outputScroll.documentView = scriptOutputView
+        outputScroll.hasVerticalScroller = true
+        outputScroll.borderType = .noBorder
+        outputScroll.wantsLayer = true
+        outputScroll.layer?.cornerRadius = 6
+        outputScroll.layer?.borderWidth = 1
+        outputScroll.layer?.borderColor = ZTheme.current.borderColor.cgColor
+        outputScroll.translatesAutoresizingMaskIntoConstraints = false
+        outputScroll.heightAnchor.constraint(equalToConstant: 140).isActive = true
+        addFullWidth(outputScroll, to: stack)
+        stack.addArrangedSubview(caption("The last 50 lines from print and zetty.log."))
+
+        if scriptingObserver == nil {
+            scriptingObserver = NotificationCenter.default.addObserver(
+                forName: LuaScripting.didChangeNotification, object: nil, queue: .main
+            ) { [weak self] _ in self?.refreshScripting() }
+        }
+        refreshScripting()
+        return stack
+    }
+
+    /// Fills the Scripting page from the live state.
+    private func refreshScripting() {
+        guard let state = scriptingStateProvider?() else { return }
+        createScriptButton.isHidden = state.fileExists
+        if !state.enabled {
+            scriptStatusLabel.stringValue = "Off"
+        } else if let loadedAt = state.loadedAt {
+            let time = DateFormatter.localizedString(from: loadedAt, dateStyle: .none, timeStyle: .short)
+            let actions = state.actions.count == 1 ? "1 action" : "\(state.actions.count) actions"
+            let bound = state.actions.filter { $0.chord != nil }.count
+            let bindings = bound == 1 ? "1 binding" : "\(bound) bindings"
+            scriptStatusLabel.stringValue = "Loaded at \(time) · \(actions) · \(bindings)"
+        } else {
+            scriptStatusLabel.stringValue = state.fileExists ? "Not loaded" : "No init.lua yet"
+        }
+        scriptErrorsLabel.stringValue = state.errors.joined(separator: "\n")
+        scriptErrorsLabel.isHidden = state.errors.isEmpty
+        scriptActionsLabel.stringValue = state.actions.isEmpty
+            ? "None"
+            : state.actions.map { action in
+                action.chord.map { "\(action.title)  —  \($0)" } ?? action.title
+            }.joined(separator: "\n")
+        scriptOutputView.string = state.output.joined(separator: "\n")
+        scriptOutputView.scrollToEndOfDocument(nil)
+    }
+
+    @objc private func scriptingToggled(_ sender: NSSwitch) {
+        updateConfig { $0.scripting = sender.state == .on }
+    }
+
+    @objc private func openInitLua(_ sender: Any?) {
+        let url = LuaScripting.fileURL
+        guard FileManager.default.fileExists(atPath: url.path) else {
+            createInitLua(sender)
+            return
+        }
+        if let editor = ConfigStore(fileURL: configURL).load().editor, let appURL = EditorCatalog.resolve(editor) {
+            NSWorkspace.shared.open([url], withApplicationAt: appURL, configuration: NSWorkspace.OpenConfiguration())
+        } else {
+            NSWorkspace.shared.open(url)
+        }
+    }
+
+    @objc private func reloadInitLua(_ sender: Any?) {
+        onReloadScripts?()
+    }
+
+    /// Writes the commented starter, loads it, and opens it. Never replaces
+    /// an existing file.
+    @objc private func createInitLua(_ sender: Any?) {
+        let url = LuaScripting.fileURL
+        if !FileManager.default.fileExists(atPath: url.path) {
+            try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(),
+                                                     withIntermediateDirectories: true)
+            do {
+                try LuaRuntime.starterFile.write(to: url, atomically: true, encoding: .utf8)
+            } catch {
+                scriptErrorsLabel.stringValue = "Could not create \(url.path): \(error.localizedDescription)"
+                scriptErrorsLabel.isHidden = false
+                return
+            }
+            onReloadScripts?()
+        }
+        openInitLua(sender)
+    }
+
     private func buildRemoteTab() -> NSView {
         let stack = sectionStack()
         stack.addArrangedSubview(sectionHeader("Other Macs"))
@@ -1028,6 +1189,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
 
     deinit {
         sheetObservers.forEach(NotificationCenter.default.removeObserver)
+        if let scriptingObserver { NotificationCenter.default.removeObserver(scriptingObserver) }
     }
 
     private func refreshAccounts() {
@@ -1381,6 +1543,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         let config = ConfigStore(fileURL: configURL).load()
         preserveSwitch.state = config.preserveSessions ? .on : .off
         handoffsSwitch.state = config.hibernateHandoffs ? .on : .off
+        scriptingSwitch.state = config.scripting ? .on : .off
         notifySoundSwitch.state = config.notifySound ? .on : .off
         notifyBadgeSwitch.state = config.notifyBadge ? .on : .off
         notifySystemSwitch.state = config.notifySystem ? .on : .off

@@ -254,6 +254,16 @@ import Testing
     #expect(AppConfig.parse(AppConfig.parse("").rendered()).hibernateHandoffs)
 }
 
+@Test func scriptingIsZettysOwnAndDefaultsOn() {
+    #expect(AppConfig.parse("").scripting)
+    let off = AppConfig.parse("zetty-scripting = off")
+    #expect(!off.scripting)
+    #expect(!off.ghostty.contains { $0.key == "zetty-scripting" })
+    #expect(off.rendered().contains("zetty-scripting = false"))
+    #expect(AppConfig.parse(off.rendered()).scripting == false)
+    #expect(AppConfig.parse(AppConfig.parse("").rendered()).scripting)
+}
+
 @Test func remoteMachineKeysAreZettysOwnAndDefaultOff() {
     let empty = AppConfig.parse("")
     #expect(!empty.serveRemote)

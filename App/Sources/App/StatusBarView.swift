@@ -109,6 +109,13 @@ final class StatusBarView: NSView {
     private var cliStatus: CLIStatus = .current
     var onCLIReinstallClicked: (() -> Void)?
 
+    /// "init.lua" warning chip — hidden unless the last load or a handler
+    /// errored. Opens Settings → Scripting.
+    private let scriptButton = NSButton()
+    private let scriptPill = NSView()
+    private var scriptWarning = false
+    var onScriptWarningClicked: (() -> Void)?
+
     private let appearanceButton = NSButton()
     private let sep0 = NSTextField(labelWithString: "·")
     private let schemeDot = NSView()
@@ -390,6 +397,27 @@ final class StatusBarView: NSView {
             cliButton.centerYAnchor.constraint(equalTo: cliPill.centerYAnchor),
         ])
 
+        // init.lua pill — attention yellow, shown only while a script errored.
+        scriptButton.isBordered = false
+        scriptButton.font = ZTheme.monoFont(size: 11)
+        scriptButton.title = "⚠ init.lua"
+        scriptButton.toolTip = "init.lua reported an error — click for details"
+        scriptButton.target = self
+        scriptButton.action = #selector(scriptClicked)
+        scriptButton.translatesAutoresizingMaskIntoConstraints = false
+        scriptPill.wantsLayer = true
+        scriptPill.layer?.cornerRadius = 10
+        scriptPill.layer?.borderWidth = 1
+        scriptPill.translatesAutoresizingMaskIntoConstraints = false
+        scriptPill.isHidden = true
+        scriptPill.addSubview(scriptButton)
+        NSLayoutConstraint.activate([
+            scriptPill.heightAnchor.constraint(equalToConstant: 20),
+            scriptButton.leadingAnchor.constraint(equalTo: scriptPill.leadingAnchor, constant: 9),
+            scriptButton.trailingAnchor.constraint(equalTo: scriptPill.trailingAnchor, constant: -9),
+            scriptButton.centerYAnchor.constraint(equalTo: scriptPill.centerYAnchor),
+        ])
+
         // The compact chip: a scheme dot, the scheme name, and a chevron — the
         // same anatomy as the location pill on the other side.
         //
@@ -472,9 +500,10 @@ final class StatusBarView: NSView {
             sessionsDot.heightAnchor.constraint(equalToConstant: 6),
         ])
 
-        configureStack(pillStack, views: [broadcastPill, cliPill, sessionsPill, infoChip])
+        configureStack(pillStack, views: [broadcastPill, scriptPill, cliPill, sessionsPill, infoChip])
         pillStack.setCustomSpacing(10, after: sessionsPill)
         pillStack.setCustomSpacing(10, after: broadcastPill)
+        pillStack.setCustomSpacing(10, after: scriptPill)
         pillStack.setCustomSpacing(10, after: cliPill)
 
         addSubview(topBorder)
@@ -873,6 +902,20 @@ final class StatusBarView: NSView {
         onCLIReinstallClicked?()
     }
 
+    @objc private func scriptClicked() {
+        onScriptWarningClicked?()
+    }
+
+    /// Shows or hides the init.lua warning chip.
+    func setScriptWarning(_ visible: Bool) {
+        scriptWarning = visible
+        let theme = ZTheme.current
+        scriptButton.contentTintColor = theme.yellowColor
+        scriptPill.layer?.backgroundColor = theme.bg3Color.cgColor
+        scriptPill.layer?.borderColor = theme.yellowColor.cgColor
+        scriptPill.isHidden = !visible
+    }
+
     /// Shows the CLI pill when the symlink is stale/missing; hides it when the
     /// CLI matches this build.
     func setCLIStatus(_ status: CLIStatus) {
@@ -1041,6 +1084,7 @@ final class StatusBarView: NSView {
         shellLabel.textColor = theme.fg2Color
         renderVersionPill()
         setCLIStatus(cliStatus)
+        setScriptWarning(scriptWarning)
         ghosttyLabel.textColor = theme.fg2Color
         sep0.textColor = theme.fg3Color
         sep1.textColor = theme.fg3Color

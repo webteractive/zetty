@@ -19,6 +19,8 @@ owning **tabs** and nested **split panes**. See [`README.md`](README.md).
 - `App/Sources/App/**` — AppKit app: `AppDelegate`, `TerminalViewController`,
   `SidebarView`, `TabBarView`, `SurfaceNodeView`, `PaneActions`, `Theme.swift`.
 - `App/Sources/ZettyGhostty/**` — libghostty bridge: `SurfaceRegistry`, `Ghostty`.
+- `Sources/ZettyLua/**` — init.lua runtime on the vendored Lua in
+  `Sources/CLua/` (pure, no AppKit); see `lua-scripting.md`.
 
 ## Build / run
 
@@ -137,6 +139,7 @@ Rule files are in `.hydra/rules`.
 | verifying a change in the running app before it is committed · driving the app to check a feature or a fix (/verify, prepare-for-release) · trying anything that quits, hibernates, closes panes or ends sessions | `zetty quit` · `ditto ` · `open -a /Applications/zetty.app` | isolated-test-app.md |
 | changing prefix keys, key bindings, or copy mode · adding a keyboard shortcut | `Sources/ZettyCore/Keybindings/**` · `App/Sources/App/KeyInterceptor.swift` · `App/Sources/App/CopyModeController.swift` | keybindings-copy-mode.md |
 | check-libghostty reports a newer libghostty than the pin · bumping the libghostty-spm pin in Project.swift | `.package.resolved` · `scripts/check-libghostty.sh` | libghostty-bump.md |
+| changing init.lua scripting, its API, events or runtime limits · adding a zetty.<verb> or an init.lua event | `Sources/ZettyLua/**` · `Sources/CLua/**` · `App/Sources/App/LuaScripting.swift` · `Sources/ZettyCore/Scripting/**` · `zetty do` · `zetty lua` | lua-scripting.md |
 | changing project clones, merge-back, or clone removal | `Sources/ZettyCore/Clone/**` · `App/Sources/App/CloneRunner.swift` · `App/Sources/App/CloneWarningBanner.swift` · `App/Sources/App/CloneMergeGuideView.swift` · `App/Sources/App/FileCopyBackRunner.swift` · `App/Sources/App/FileCopyBackSheet.swift` · `zetty clone` · `zetty update-clone` · `zetty remove-project` | project-clones.md |
 | changing per-project settings, color, icon, or theme overrides · layout templates or .zetty/project.json · per-project env vars or startup commands | `Sources/ZettyCore/Settings/**` · `App/Sources/App/ProjectSettingsSheet.swift` · `App/Sources/App/IconPicker.swift` | project-settings.md |
 | cutting a release or writing its notes · changing packaging, signing, notarization or the self-updater | `scripts/release.sh` · `scripts/package.sh` · `Sources/ZettyCore/Update/**` · `App/Sources/App/UpdateChecker.swift` · `App/Sources/App/UpdateInstaller.swift` · `scripts/release.sh` · `scripts/package.sh` | releasing.md |

@@ -54,6 +54,8 @@ public enum BindingCommand: Hashable, Sendable {
     case copyBeginLineSelection
     case copyYank
     case copyExit
+    // A Lua action from init.lua (`zetty.action`), named `lua:<name>` in config.
+    case script(String)
 
     // MARK: - Config names
 
@@ -108,6 +110,7 @@ public enum BindingCommand: Hashable, Sendable {
     /// The kebab-case name used in config files.
     public var configName: String {
         if case .selectTab(let n) = self { return "select-tab-\(n)" }
+        if case .script(let name) = self { return "lua:\(name)" }
         // Every non-parameterized case is in the table by construction.
         return Self.namesByCommand[self]!
     }
@@ -116,6 +119,10 @@ public enum BindingCommand: Hashable, Sendable {
     public init?(configName: String) {
         if let command = Self.commandsByName[configName] {
             self = command
+            return
+        }
+        if configName.hasPrefix("lua:"), configName.count > 4 {
+            self = .script(String(configName.dropFirst(4)))
             return
         }
         if configName.hasPrefix("select-tab-"),

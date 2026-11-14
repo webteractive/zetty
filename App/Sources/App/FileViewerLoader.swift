@@ -204,14 +204,7 @@ enum FileViewerLoader {
     /// Where a highlight tool may live. A GUI app inherits a minimal `PATH`, so
     /// the search is explicit (the same reason `ZmxRunner.locate()` exists).
     private static var binaryDirectories: [String] {
-        [
-            "\(NSHomeDirectory())/.zetty/bin",
-            "/opt/homebrew/bin",
-            "/usr/local/bin",
-            "\(NSHomeDirectory())/.local/bin",
-            "/usr/bin",
-            "/bin",
-        ]
+        ToolSearchPath.directories()
     }
 
     /// Resolves a tool name (or an explicit path) to an executable.

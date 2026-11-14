@@ -23,7 +23,8 @@ Ghostty terminal, with a Swift AppKit app around it.
 - **Other Macs** — over Tailscale, built in, see the projects and agents on
   your other Macs in the same sidebar and type in their panes.
 - **Scriptable** — a `zetty` CLI to inspect, drive and reshape the workspace,
-  usable by the agents running inside it.
+  usable by the agents running inside it, and an `init.lua` for your own
+  actions, keys and event handlers (experimental).
 
 **Platforms:** macOS 14+ (Apple Silicon & Intel). Linux later.
 
@@ -372,6 +373,38 @@ handles `ssh://` links, opening each in a new Home tab.
 connection installs its `xterm-ghostty` terminfo there, and falls back to
 `xterm-256color` when it can't.
 
+### Scripting (experimental)
+
+`~/.config/zetty/init.lua` (beside `config`) adds actions, key bindings and
+event handlers in Lua. It runs at launch and again whenever you save it.
+**Settings → Scripting** creates a commented starter, shows errors and recent
+output, and has the `zetty-scripting` switch. While a load or a handler has an
+error, an **init.lua** chip in the status bar opens that page. Names may still
+change while this is experimental.
+
+```lua
+zetty.action{ name = "dev", title = "Split for a Dev Server", run = function(ctx)
+  local right = zetty.split{ pane = ctx.pane, direction = "right" }
+  zetty.send{ pane = right, text = "npm run dev", enter = true }
+end }
+zetty.bind("prefix>d", "dev")      -- ⌃B d; the action is also in ⌘K by its title
+zetty.on("agent.status", function(e) if e.status == "needsAttention" then zetty.notify(e.project) end end)
+```
+
+| Call | Does |
+|---|---|
+| `zetty.action{ name, title?, run }` · `zetty.bind(chord, name)` · `zetty.run(name)` | Define an action (`run(ctx)` gets `pane`, `cwd`, `project`, `source`), bind it on the prefix layer, run one from Lua |
+| `zetty.split` · `send` · `new_tab` · `focus` · `close` · `status` · `notify` | The matching CLI commands; `close` refuses a busy pane unless `force = true` |
+| `zetty.on(event, fn)` | `agent.status`, `pane.opened`, `pane.closed`, `project.focused` |
+| `zetty.after(s, fn)` · `zetty.every(s, fn)` | Run later, or repeat (at least 1 s); `:cancel()` stops either |
+| `zetty.exec(cmd, opts?, fn)` | Run a shell command (string) or program (`{"git", "status"}`) in the background; `fn` gets `code`, `stdout`, `stderr`, `timed_out`. `opts`: `cwd`, `timeout` (30 s), `env` |
+| `print` · `zetty.log` · `zetty.inspect` | Log a line (shown in Settings → Scripting); render a value |
+
+A runaway script is stopped: each call ends after 2 seconds or 64 MB, and
+`os.execute` / `io.popen` are off — use `zetty.exec`. `require` loads `.lua`
+files from the config folder. `zetty do <action>` and `zetty lua <code>` reach
+the same state from a shell.
+
 ## Troubleshooting
 
 - **Zetty won't launch, with a "Library not loaded" error naming
@@ -394,7 +427,7 @@ Every key below can also be set from **Settings (⌘,)**, whose pages are listed
 down its left side: General (Home directory, update checks), Appearance,
 Sessions, **Files** (file tree and viewer), **Keys** (prefix key, tmux
 passthrough, `bind`/`copy-bind` lines), **Terminal** (pasted ghostty lines),
-Agents, Accounts and **Remote** (Other Macs). Settings stays in front of
+Agents, Accounts, **Remote** (Other Macs) and **Scripting** (`init.lua`). Settings stays in front of
 Zetty's windows while Zetty is the active app, without blocking the panes. The
 Keys and Terminal editors apply with their **Apply** button and name any line
 they couldn't use.
@@ -416,6 +449,7 @@ they couldn't use.
 | `notify-sound` / `notify-badge` / `notify-system` | `true` | Agent needs-attention alerts |
 | `zetty-claude-mod` | `true` | Load Zetty's Claude Code mod into new Claude panes |
 | `zetty-claude-tools` | `true` | Let that mod give Claude its pane and file tools |
+| `zetty-scripting` | `true` | Run `init.lua` beside the config file (see [Scripting](#scripting-experimental)); `false` loads nothing |
 | `editor` | — | App for "Open in Editor" |
 | `viewer-highlight-command` | `bat --style=plain --color=always --paging=never` | Highlighter for the file viewer; `off` disables it |
 | `viewer-max-bytes` | `2097152` | Largest file the viewer renders |
@@ -480,7 +514,9 @@ zetty attach mini:1a2b3c4d               # another Mac's pane in this terminal
 zetty remote list                        # your other Macs, their state and projects
 zetty remote open mini api               # show another Mac's project here (remote close: back)
 zetty remote sign-in                     # sign this Mac in to Tailscale from a phone (QR code)
-zetty reload                             # same as ⇧⌘,
+zetty do dev                             # run an init.lua action
+zetty lua 'zetty.status().projects[1].name'  # evaluate Lua in init.lua's state
+zetty reload                             # same as ⇧⌘, (also re-runs init.lua)
 zetty quit --kill-sessions               # quit and end preserved sessions
 ```
 

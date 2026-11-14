@@ -13,6 +13,8 @@ private let actingArguments: [String: [String]] = [
     "status": ["--json"],
     "ls": [],
     "send": ["--pane", "abcd1234", "echo", "hi", "--enter"],
+    "do": ["dev"],
+    "lua": ["1", "+", "1"],
     "capture": ["--pane", "abcd1234", "--lines", "5"],
     "view": ["/tmp/zetty-help-test.txt:3"],
     "new-tab": ["--project", "Foo", "--focus"],

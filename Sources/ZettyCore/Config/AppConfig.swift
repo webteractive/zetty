@@ -105,6 +105,10 @@ public struct AppConfig: Equatable, Sendable {
     /// project's panes, open a pane, read one it opened). The slash commands
     /// and the reporting stay on without it.
     public var claudeTools: Bool
+    /// Runs `init.lua` beside the config file (`zetty-scripting`, default
+    /// true). Off loads nothing: the escape hatch for a script that
+    /// misbehaves at launch.
+    public var scripting: Bool
     /// Which side of the window the project sidebar sits on.
     public var sidebarPosition: SidebarPosition
     /// Directory the permanent Home project is rooted at, as written in the
@@ -195,6 +199,7 @@ public struct AppConfig: Equatable, Sendable {
         notifySystem: Bool = true,
         claudeMod: Bool = true,
         claudeTools: Bool = true,
+        scripting: Bool = true,
         sidebarPosition: SidebarPosition = .left,
         homePath: String? = nil,
         sessionsView: SessionsViewMode = .drawer,
@@ -225,6 +230,7 @@ public struct AppConfig: Equatable, Sendable {
         self.notifySystem = notifySystem
         self.claudeMod = claudeMod
         self.claudeTools = claudeTools
+        self.scripting = scripting
         self.sidebarPosition = sidebarPosition
         self.homePath = homePath
         self.sessionsView = sessionsView
@@ -346,6 +352,8 @@ public struct AppConfig: Equatable, Sendable {
                 config.showHibernatingInSidebar = ["true", "yes", "on", "1"].contains(value.lowercased())
             case "zetty-hibernate-handoffs":
                 config.hibernateHandoffs = ["true", "yes", "on", "1"].contains(value.lowercased())
+            case "zetty-scripting":
+                config.scripting = ["true", "yes", "on", "1"].contains(value.lowercased())
             case "zetty-file-tree-show-hidden":
                 config.fileTree.showHidden = ["true", "yes", "on", "1"].contains(value.lowercased())
             case "zetty-file-tree-respect-gitignore":
@@ -529,6 +537,9 @@ public struct AppConfig: Equatable, Sendable {
         # Whether that mod may also give the MODEL tools: show a file in the
         # viewer, list this project's panes, open a pane, read one it opened.
         zetty-claude-tools = \(claudeTools)
+
+        # Run ~/.config/zetty/init.lua (actions, key bindings, event handlers). Off loads nothing.
+        zetty-scripting = \(scripting)
 
         # Which side of the window the project sidebar sits on: left | right
         sidebar-position = \(sidebarPosition.rawValue)

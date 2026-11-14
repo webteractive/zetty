@@ -46,6 +46,11 @@ public enum ControlRequest: Equatable, Sendable {
     /// persisted) in the Scratch sidebar section. Background by default; `focus`
     /// switches to it. Response `.pane` with the new pane's short id.
     case scratch(focus: Bool)
+    /// Run a Lua action from init.lua (`zetty.action`). `.ok` or `.error`.
+    case runAction(name: String)
+    /// Evaluate Lua in the app's live init.lua state. `.text` with the
+    /// rendered results, or `.error`.
+    case luaEval(code: String)
     /// Close and clear every scratch terminal at once. Response `.ok`.
     ///
     /// `force`: busy panes (anything but a bare shell in front) are REFUSED
@@ -267,6 +272,8 @@ extension ControlRequest {
     /// script or another agent calls the CLI.
     public var takesForegroundReading: Bool {
         if case .handoffAgent(_, _, _, _, let cancel) = self { return !cancel }
+        // An init.lua action may close panes; its `close` is gated like the CLI's.
+        if case .runAction = self { return true }
         return refusesBusyPanes
     }
 }
@@ -341,6 +348,8 @@ extension ControlRequest: Codable {
                 view: try container.decodeIfPresent(String.self, forKey: .view))
         case "scratch": self = .scratch(focus: try container.decodeIfPresent(Bool.self, forKey: .focus) ?? false)
         case "scratch-clear": self = .scratchClear(force: try decodeForce())
+        case "do": self = .runAction(name: try container.decode(String.self, forKey: .name))
+        case "lua": self = .luaEval(code: try container.decode(String.self, forKey: .text))
         case "send":
             self = .send(
                 target: try container.decodeIfPresent(PaneSelector.self, forKey: .target) ?? .focused,
@@ -536,6 +545,12 @@ extension ControlRequest: Codable {
         case .scratch(let focus):
             try container.encode("scratch", forKey: .command)
             try container.encode(focus, forKey: .focus)
+        case .runAction(let name):
+            try container.encode("do", forKey: .command)
+            try container.encode(name, forKey: .name)
+        case .luaEval(let code):
+            try container.encode("lua", forKey: .command)
+            try container.encode(code, forKey: .text)
         case .scratchClear(let force):
             try container.encode("scratch-clear", forKey: .command)
             try container.encode(force, forKey: .force)
