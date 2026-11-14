@@ -113,6 +113,10 @@ public struct StartupCommandTrustStore {
 /// padding can't push the rest of a command out of sight. The text read is
 /// the text run.
 public enum StartupCommandDisplay {
+    /// Combining marks shown on one letter: real text stacks up to three
+    /// (Vietnamese, Thai), a pile of them hides what is beside it.
+    static let maxMarks = 3
+
     public static func visible(_ command: String) -> String {
         var out = ""
         var spaces = 0
@@ -124,23 +128,57 @@ public enum StartupCommandDisplay {
             }
             spaces = 0
         }
+        // Combining marks on the current base letter; past `maxMarks` they
+        // stack over neighbouring text, so the rest are written out.
+        var marks = 0
+        func escape(_ scalar: Unicode.Scalar) {
+            out += String(format: "<U+%04X>", scalar.value)
+        }
         for scalar in command.unicodeScalars {
             if scalar == " " {
                 spaces += 1
+                marks = 0
                 continue
             }
             flushSpaces()
             switch scalar.value {
             case 0x00...0x1F:
                 out.unicodeScalars.append(Unicode.Scalar(0x2400 + scalar.value)!)
+                marks = 0
+                continue
             case 0x7F:
                 out.unicodeScalars.append(Unicode.Scalar(0x2421)!)
-            case 0x80...0xA0, 0x061C, 0x115F, 0x1160, 0x1680, 0x180E, 0x2000...0x200F,
-                 0x2028...0x202F, 0x205F...0x206F, 0x3000, 0x3164, 0xFE00...0xFE0F, 0xFEFF,
-                 0xFFA0, 0xFFF9...0xFFFB, 0xE0000...0xE007F, 0xE0100...0xE01EF:
-                out += String(format: "<U+%04X>", scalar.value)
+                marks = 0
+                continue
+            case 0x80...0xA0, 0x034F, 0x061C, 0x115F, 0x1160, 0x1680, 0x17B4, 0x17B5, 0x180E,
+                 0x2000...0x200F, 0x2028...0x202F, 0x205F...0x206F, 0x2800, 0x3000, 0x3164,
+                 0xFE00...0xFE0F, 0xFEFF, 0xFFA0, 0xFFF9...0xFFFB, 0xE0000...0xE007F,
+                 0xE0100...0xE01EF:
+                // Known blanks and invisibles, including letters and marks
+                // that draw nothing or a blank (Hangul fillers, the Braille
+                // blank, Khmer inherent vowels, variation selectors).
+                escape(scalar)
+                continue
+            default:
+                break
+            }
+            // Then whole categories, so a code point the list above misses
+            // is still shown: formats, separators other than the plain space,
+            // private use and unassigned code points draw nothing, a blank,
+            // or whatever the font holds.
+            switch scalar.properties.generalCategory {
+            case .format, .spaceSeparator, .lineSeparator, .paragraphSeparator,
+                 .control, .privateUse, .surrogate, .unassigned:
+                escape(scalar)
+                marks = 0
+            case .nonspacingMark, .enclosingMark:
+                marks += 1
+                if marks > maxMarks { escape(scalar) } else { out.unicodeScalars.append(scalar) }
+            case .spacingMark:
+                out.unicodeScalars.append(scalar)
             default:
                 out.unicodeScalars.append(scalar)
+                marks = 0
             }
         }
         flushSpaces()

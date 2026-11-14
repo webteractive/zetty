@@ -69,3 +69,24 @@ private func codeLines(_ text: String) -> [String] {
         }
     }
 }
+
+@Test func stoppingTheControlSocketNeverWaitsForItsQueue() {
+    // applicationWillTerminate runs on main and calls ControlSocketServer.stop.
+    // While a request handler on the socket queue was inside
+    // DispatchQueue.main.sync (`zetty accounts --json`, during `zetty quit`),
+    // a stop() that did queue.sync left each waiting on the other: the app
+    // logged "quit: reason ordinary" and hung with no socket until killed
+    // (b0ed43e install on 2026-11-14). stop() hands the teardown to the queue
+    // instead of waiting for it.
+    let url = repo.appendingPathComponent("App/Sources/App/ControlSocketServer.swift")
+    let text = (try? String(contentsOf: url, encoding: .utf8)) ?? ""
+    guard let start = text.range(of: "func stop()"),
+          let end = text.range(of: "\n    }\n", range: start.upperBound..<text.endIndex) else {
+        Issue.record("ControlSocketServer.stop() not found")
+        return
+    }
+    let body = String(text[start.lowerBound..<end.upperBound])
+    for line in codeLines(body) where line.contains(".sync") || line.contains("asyncAndWait") {
+        Issue.record("stop() waits for a queue: \(line.trimmingCharacters(in: .whitespaces))")
+    }
+}

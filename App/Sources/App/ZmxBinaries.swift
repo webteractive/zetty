@@ -114,7 +114,14 @@ enum ZmxBinaries {
             // `brew upgrade`, /opt/homebrew/bin/zmx names the new version
             // while the daemon still runs the old one.
             guard let path = trustedExecutable(pid: daemon.pid) else {
-                unreachable.insert(session)
+                // Its store copy was replaced by a later launch: the store's
+                // current copy of that version speaks the same protocol.
+                if let kept = replacedStoreCopy(pid: daemon.pid) {
+                    versionsInUse.insert(kept.version)
+                    mapped[session] = kept.copy
+                } else {
+                    unreachable.insert(session)
+                }
                 continue
             }
             let resolved = URL(fileURLWithPath: path)
@@ -209,7 +216,7 @@ enum ZmxBinaries {
                 chosen.append(bundled)
                 continue
             }
-            let path = trustedExecutable(pid: daemon.pid) ?? ""
+            let path = trustedExecutable(pid: daemon.pid) ?? replacedStoreCopy(pid: daemon.pid)?.copy ?? ""
             guard FileManager.default.isExecutableFile(atPath: path) else {
                 return (nil, "\(session) runs a zmx that is gone, or not owned by you or root, so Zetty won't drive it; to end it: kill \(daemon.pid)")
             }
@@ -278,6 +285,33 @@ enum ZmxBinaries {
         return ZmxVersion.parse(versionOutput: output)
     }
 
+    /// For a daemon of this user whose binary was a store copy since
+    /// replaced: `proc_pidpath` fails for a deleted executable, but its
+    /// mapped region still names the file. The store's copy of the same
+    /// version, when that copy is one Zetty may run.
+    private static func replacedStoreCopy(pid: Int32) -> (version: String, copy: String)? {
+        var info = proc_bsdinfo()
+        let size = Int32(MemoryLayout<proc_bsdinfo>.size)
+        guard proc_pidinfo(pid, PROC_PIDTBSDINFO, 0, &info, size) == size,
+              info.pbi_uid == getuid(),
+              executablePath(pid: pid) == nil,
+              let path = deletedExecutablePath(pid: pid),
+              !FileManager.default.fileExists(atPath: path),
+              // The kernel's path has symlinks resolved (/tmp is /private/tmp);
+              // realpath, since URL.resolvingSymlinksInPath strips /private.
+              let store = realpath(storeURL.path, nil).map({ resolved in
+                  defer { free(resolved) }
+                  return String(cString: resolved)
+              }),
+              let version = ZmxVersion.storeVersion(ofExecutable: path, store: store) else { return nil }
+        let copy = storeURL.appendingPathComponent(version, isDirectory: true).appendingPathComponent("zmx").path
+        var status = stat()
+        guard stat(copy, &status) == 0, status.st_uid == getuid() || status.st_uid == 0,
+              status.st_mode & (S_IWGRP | S_IWOTH) == 0,
+              FileManager.default.isExecutableFile(atPath: copy) else { return nil }
+        return (version, copy)
+    }
+
     /// The executable of a daemon Zetty may run and copy, or nil. Session
     /// names show in `ps` to every account on the Mac, so a process merely
     /// named `zmx attach zetty-…` proves nothing: the daemon must be this
@@ -296,6 +330,16 @@ enum ZmxBinaries {
               status.st_uid == getuid() || status.st_uid == 0,
               status.st_mode & (S_IWGRP | S_IWOTH) == 0 else { return nil }
         return resolved
+    }
+
+    /// The file behind a process's first mapped region, its main binary,
+    /// still named after the file is deleted, when `proc_pidpath` fails.
+    /// What `lsof` shows as `txt`.
+    private static func deletedExecutablePath(pid: Int32) -> String? {
+        var buffer = [CChar](repeating: 0, count: 4 * Int(MAXPATHLEN))
+        let length = proc_regionfilename(pid, 0, &buffer, UInt32(buffer.count))
+        guard length > 0 else { return nil }
+        return String(cString: buffer)
     }
 
     /// The real executable of a running process (symlinks resolved by the

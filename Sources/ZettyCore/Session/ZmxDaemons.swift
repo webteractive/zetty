@@ -87,6 +87,22 @@ public enum ZmxVersion {
         return nil
     }
 
+    /// The version folder of Zetty's zmx store (`<store>/<version>/…`) that
+    /// `path` sits directly in, or nil. A daemon started from a store copy
+    /// that a later launch replaced runs a deleted file (each build signs
+    /// its helper anew, so the bytes differ); its folder still names the
+    /// version it speaks, and copies of one version are interchangeable.
+    public static func storeVersion(ofExecutable path: String, store: String) -> String? {
+        let parts = path.split(separator: "/", omittingEmptySubsequences: false)
+        let storeParts = store.split(separator: "/", omittingEmptySubsequences: false)
+        guard path.hasPrefix("/"), parts.count == storeParts.count + 2,
+              Array(parts.prefix(storeParts.count)) == storeParts else { return nil }
+        let version = String(parts[storeParts.count])
+        // The same rule `parse` applies, since the result names a folder.
+        guard parse(versionOutput: "zmx \(version)") == version else { return nil }
+        return version
+    }
+
     /// The `socket_dir` line: the folder holding this zmx's session sockets
     /// (`ZMX_DIR`, or zmx's default under `TMPDIR`). The process table is
     /// machine-wide, so this is what tells this app's sessions from another

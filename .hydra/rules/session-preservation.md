@@ -248,6 +248,18 @@ downloads and `~/.zetty/bin/zmx` are no longer used for new sessions.
     it) is unreachable: nothing sends it a zmx command, and its pane runs a
     notice with the daemon's pid instead of `zmx attach`, which would start a
     fresh session over the name or hang against it.
+  - **Except a store copy a later launch replaced (2026-11-14).** Each build
+    signs its zmx helper anew, so `install` finds the bytes changed and
+    replaces `~/.zetty/zmx/<version>/zmx`; a daemon started from the old copy
+    then runs a deleted file and every such tab came back "cannot reattach"
+    after installing b0ed43e. `proc_pidpath` fails for a deleted executable;
+    `proc_regionfilename(pid, 0)` still names it (by the copy's temporary
+    `.zmx-<uuid>` name, as `lsof` shows). `ZmxBinaries.replacedStoreCopy`
+    routes a daemon of this user whose deleted executable sat directly in a
+    store version folder (`ZmxVersion.storeVersion`, the store compared by
+    `realpath`, since `URL.resolvingSymlinksInPath` strips `/private`) to that
+    folder's current copy, under the same ownership checks: copies of one
+    version speak one protocol.
   - Version directories no live daemon uses are pruned at launch, and only
     after a complete scan (helper `version`, socket folder and `ps` all read):
     a failed scan finds no daemons and would delete the copies old sessions

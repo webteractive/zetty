@@ -1,4 +1,5 @@
 import Foundation
+import os
 import ZettyCore
 import ZettyGhostty
 
@@ -33,6 +34,9 @@ final class ControlSocketServer {
                                             qos: .userInitiated, attributes: .concurrent)
     private var listenerFD: Int32 = -1
     private var acceptSource: DispatchSourceRead?
+    /// True once this instance bound the socket file, so `stop()` (on main)
+    /// never unlinks a socket another running Zetty is listening on.
+    private let ownsSocket = OSAllocatedUnfairLock(initialState: false)
     /// Seconds a client gets to send its request line, and to take the reply.
     private static let exchangeTimeout: TimeInterval = 10
 
@@ -48,13 +52,18 @@ final class ControlSocketServer {
         queue.async { [self] in listen() }
     }
 
+    /// Called from applicationWillTerminate on main, so it must not wait for
+    /// `queue`: a handler there may be inside `DispatchQueue.main.sync`, and
+    /// waiting for it deadlocked `zetty quit` (ReleaseGuardTests). The socket
+    /// file goes at once, so no new client reaches a quitting app; the
+    /// listener closes on the queue, or with the process.
     func stop() {
-        queue.sync { [self] in
+        if ownsSocket.withLock({ $0 }) { unlink(socketURL.path) }
+        queue.async { [self] in
             acceptSource?.cancel()
             acceptSource = nil
             if listenerFD >= 0 { close(listenerFD) }
             listenerFD = -1
-            unlink(socketURL.path)
         }
     }
 
@@ -120,6 +129,7 @@ final class ControlSocketServer {
             return
         }
         chmod(path, 0o600)
+        ownsSocket.withLock { $0 = true }
 
         listenerFD = fd
         let source = DispatchSource.makeReadSource(fileDescriptor: fd, queue: queue)

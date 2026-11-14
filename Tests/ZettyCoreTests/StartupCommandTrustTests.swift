@@ -94,6 +94,26 @@ private func template(_ panes: [(String, String?)]) -> LayoutTemplate {
     #expect(StartupCommandDisplay.visible("a\u{FE0F}\u{E0041}\u{3164}b") == "a<U+FE0F><U+E0041><U+3164>b")
 }
 
+@Test func displayEscapesEveryClassOfInvisibleOrBlankCharacter() {
+    // A fixed list of code points missed some (security review of b0ed43e):
+    // soft hyphen and the combining grapheme joiner draw nothing, the Braille
+    // blank and Khmer inherent vowels draw blank, private-use and unassigned
+    // code points draw whatever the font has, and stacked marks can cover
+    // the text beside them.
+    #expect(StartupCommandDisplay.visible("cu\u{00AD}rl") == "cu<U+00AD>rl")
+    #expect(StartupCommandDisplay.visible("a\u{034F}b") == "a<U+034F>b")
+    #expect(StartupCommandDisplay.visible("a\u{2800}\u{2800}b") == "a<U+2800><U+2800>b")
+    #expect(StartupCommandDisplay.visible("a\u{17B4}\u{17B5}b") == "a<U+17B4><U+17B5>b")
+    #expect(StartupCommandDisplay.visible("a\u{E000}b\u{F0000}") == "a<U+E000>b<U+F0000>")
+    #expect(StartupCommandDisplay.visible("a\u{0378}b") == "a<U+0378>b")
+    let stacked = "e" + String(repeating: "\u{0301}", count: 5)
+    #expect(StartupCommandDisplay.visible(stacked) == "e\u{0301}\u{0301}\u{0301}<U+0301><U+0301>")
+    // Ordinary text in any script still reads as itself.
+    for text in ["café", "cafe\u{0301}", "日本語", "echo \u{05D0}\u{05D1}", "👍🏽 done", "Ελληνικά", "हिन्दी", "Tiếng Việt", "ก็ได้"] {
+        #expect(StartupCommandDisplay.visible(text) == text)
+    }
+}
+
 @Test func displayLinesKeepTheirOrderWhateverScriptTheyHold() {
     // Right-to-left letters reorder the punctuation around them; forced
     // left-to-right, the line reads in the order it is typed.

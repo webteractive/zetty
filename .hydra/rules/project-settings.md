@@ -76,7 +76,12 @@ v2/v3 additions (same design doc):
   it wakes. The prompt (`StartupCommandPrompt`) shows commands through
   `StartupCommandDisplay`, which turns control characters into their control
   pictures; bidi controls, zero-width and other invisible characters, line
-  and paragraph separators and unusual spaces into `<U+XXXX>`; and a run of
+  and paragraph separators and unusual spaces into `<U+XXXX>`, by Unicode
+  category (format, separators, private use, unassigned) as well as a list
+  of blank-drawing letters and marks (Hangul fillers, U+2800, Khmer U+17B4/5,
+  U+034F, variation selectors) — a list alone missed the soft hyphen and the
+  Braille blank (security review of b0ed43e); combining marks past three on
+  one letter, which stack over their neighbours; and a run of
   three or more spaces into `<N spaces>`; and forces each line left to right
   (LRO … PDF), so right-to-left letters can't reorder its punctuation. The
   box is sized from the laid-out text with an always-visible scroller: the

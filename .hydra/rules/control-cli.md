@@ -131,9 +131,21 @@ raised `confirmClosingBusyPanes`, and the CLI froze for everyone.
   `cliForegroundReading`, and clears it after. **The clear is
   `main.async`, never `main.sync`:** an unforced `quit` is gated too, its
   handler has already queued the terminate, and `applicationWillTerminate`
-  stops this server with a `queue.sync` onto the socket queue, so a sync
-  clear deadlocked the app on every unforced `zetty quit` (caught in the
+  then stopped this server with a `queue.sync` onto the socket queue, so a
+  sync clear deadlocked the app on every unforced `zetty quit` (caught in the
   isolated test app before it shipped). A pane with no preserved
+- **Stopping the server never waits for the socket queue (2026-11-14).**
+  The same deadlock came back from outside: a `zetty accounts --json` (any
+  handler inside `DispatchQueue.main.sync`) arriving while main was in
+  `NSApp.terminate` waited for main, and main's `stop()` waited for the queue.
+  Glen's app logged "quit: reason ordinary" and hung with no socket during
+  the b0ed43e install. `stop()` now unlinks the socket at once (only one this
+  instance bound) and closes the listener with `queue.async`;
+  `ReleaseGuardTests` fails on a `sync` in it. Reproduced on demand by pausing
+  a test copy in `applicationWillTerminate` under lldb (an ad-hoc copy with
+  `get-task-allow`), sending `accounts --json`, and resuming: the old build
+  hung, the fixed one exited in 0.5 s.
+- A pane with no preserved
   session still falls back to the map (`BusyPaneGate.command`). A `ps` that
   fails or times out refuses with `BusyPaneGate.unreadable` rather than
   guessing idle. The GUI keeps the map: its dialog only runs while Zetty is

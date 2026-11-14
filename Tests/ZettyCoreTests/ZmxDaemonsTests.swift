@@ -135,3 +135,21 @@ import Testing
     #expect(!ZmxCommand.usesPattern(["kill", "zetty-a"]))
     #expect(!ZmxCommand.usesPattern(["list"]))
 }
+
+@Test func aDaemonWhoseStoreCopyWasReplacedUsesTheCopyOfItsVersion() {
+    // Each build signs its zmx helper anew, so launch replaces the store's
+    // copy and a daemon started from the old one runs a deleted file. The
+    // kernel names it by the copy's temporary name; the folder still says
+    // which version it speaks (b0ed43e install, 2026-11-14: two tabs left
+    // "cannot reattach").
+    let store = "/Users/me/.zetty/zmx"
+    #expect(ZmxVersion.storeVersion(ofExecutable: "/Users/me/.zetty/zmx/1.0.1/.zmx-B8415CA2-490F", store: store) == "1.0.1")
+    #expect(ZmxVersion.storeVersion(ofExecutable: "/Users/me/.zetty/zmx/1.0.1/zmx", store: store) == "1.0.1")
+    // Anything outside the store, or not directly in a version folder, isn't.
+    #expect(ZmxVersion.storeVersion(ofExecutable: "/opt/homebrew/bin/zmx", store: store) == nil)
+    #expect(ZmxVersion.storeVersion(ofExecutable: "/Users/me/.zetty/zmx/zmx", store: store) == nil)
+    #expect(ZmxVersion.storeVersion(ofExecutable: "/Users/me/.zetty/zmx/1.0.1/sub/zmx", store: store) == nil)
+    #expect(ZmxVersion.storeVersion(ofExecutable: "/Users/me/.zetty/zmx/../bin/zmx", store: store) == nil)
+    #expect(ZmxVersion.storeVersion(ofExecutable: "/Users/me/.zetty/zmx-other/1.0.1/zmx", store: store) == nil)
+    #expect(ZmxVersion.storeVersion(ofExecutable: "/Users/me/.zetty/zmx/.hidden/zmx", store: store) == nil)
+}
