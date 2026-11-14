@@ -126,11 +126,12 @@ triggers:
     same reasoning as `zetty-home-path` being a single source) — and it
     registers whichever bundle called it, so toggle from `/Applications`.
     `zetty quit --simulate-restart` is the test path, reusing
-    `performPowerOffRecovery(killingSessions: true)`. To exercise the REAL path
-    without losing sessions, send the app the same Apple Event macOS sends
-    (`kAEQuitApplication` + `kAEQuitReason` = `kAERestart`): it runs
-    classification, snapshot and manifest with `killingSessions: false`, so a
-    session hosting the tester survives.
+    `performPowerOffRecovery(killingSessions: true)`. Sending the app the
+    quit Apple Event yourself (`kAEQuitApplication` + `kAEQuitReason` =
+    `kAERestart`) no longer exercises the real path: since 85cc88c a quit is a
+    power-off only when loginwindow sent it, and that event's sender is
+    osascript or the test tool, so it reads as an ordinary quit. The real path
+    needs a real restart.
   - **Session ids come from TWO sources, and the probe outranks the detector.**
     Hooks name the pane exactly but only fire when the agent acts, so a
     long-running Claude or a Codex pane that never finished a turn would resume

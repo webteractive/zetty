@@ -55,4 +55,12 @@ final class SSHURLHandlerTests: XCTestCase {
         XCTAssertNil(cmd("ssh://%60id%60"))       // `id`
         XCTAssertNil(cmd("ssh://user%20x@host"))  // space in user
     }
+
+    // ssh://-Ex@host became `ssh -Ex@host`: an option, not a target
+    // (pre-release sweep, 2026-11-14).
+    func testUserOrHostThatLooksLikeAnOptionIsRefused() {
+        XCTAssertNil(cmd("ssh://-Ex@host"))
+        XCTAssertNil(cmd("ssh://-oVerbose"))
+        XCTAssertEqual(cmd("ssh://me@my-host"), "ssh me@my-host")
+    }
 }

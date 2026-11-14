@@ -120,6 +120,28 @@ let project = Project(
                     "Zetty needs access so terminals you open in it can read and write files on removable volumes.",
                 "NSNetworkVolumesUsageDescription":
                     "Zetty needs access so terminals you open in it can read and write files on network volumes.",
+                // The same for what App/Zetty.entitlements lets programs in a
+                // pane ask for: the prompt names Zetty, and says why.
+                "NSAppleEventsUsageDescription":
+                    "A program running in Zetty wants to control another app.",
+                "NSMicrophoneUsageDescription":
+                    "A program running in Zetty wants to use the microphone.",
+                "NSCameraUsageDescription":
+                    "A program running in Zetty wants to use the camera.",
+                "NSContactsUsageDescription":
+                    "A program running in Zetty wants to read your contacts.",
+                "NSCalendarsUsageDescription":
+                    "A program running in Zetty wants to use your calendars.",
+                "NSCalendarsFullAccessUsageDescription":
+                    "A program running in Zetty wants to use your calendars.",
+                "NSRemindersUsageDescription":
+                    "A program running in Zetty wants to use your reminders.",
+                "NSRemindersFullAccessUsageDescription":
+                    "A program running in Zetty wants to use your reminders.",
+                "NSLocationUsageDescription":
+                    "A program running in Zetty wants to know your location.",
+                "NSPhotoLibraryUsageDescription":
+                    "A program running in Zetty wants to use your photo library.",
             ]),
             sources: ["App/Sources/App/**"],
             resources: [
@@ -140,6 +162,7 @@ let project = Project(
                 "THIRD_PARTY_NOTICES.md",
                 .folderReference(path: "licenses"),
             ],
+            entitlements: .file(path: "App/Zetty.entitlements"),
             scripts: [
                 .pre(script: fetchZmx,
                      name: "Fetch the pinned zmx",

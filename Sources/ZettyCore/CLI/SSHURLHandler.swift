@@ -10,12 +10,13 @@ import Foundation
 /// host/user cannot inject shell commands.
 public enum SSHURLHandler {
     /// Host/user tokens: letters, digits, dot, hyphen, underscore. No spaces,
-    /// no shell metacharacters, no path separators.
+    /// no shell metacharacters, no path separators, and no leading hyphen,
+    /// which ssh would read as an option (`ssh://-Ex@host`).
     private static let allowed = CharacterSet(charactersIn:
         "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789.-_")
 
     private static func isSafe(_ token: String) -> Bool {
-        !token.isEmpty && token.unicodeScalars.allSatisfy { allowed.contains($0) }
+        !token.isEmpty && !token.hasPrefix("-") && token.unicodeScalars.allSatisfy { allowed.contains($0) }
     }
 
     public static func command(for url: URL) -> String? {

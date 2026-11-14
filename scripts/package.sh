@@ -37,7 +37,7 @@ die() { printf '%s\n' "error: $*" >&2; exit 1; }
 # Checked before anything builds: release.sh runs this ahead of its version
 # bump, so a missing certificate or profile stops it before it pushes.
 preflight() {
-  resolve_sign_identity || die "$SIGN_IDENTITY_ERROR"
+  resolve_sign_identity release || die "$SIGN_IDENTITY_ERROR"
   xcrun notarytool history --keychain-profile "$NOTARY_PROFILE" >/dev/null 2>&1 \
     || die "notary keychain profile '$NOTARY_PROFILE' is missing or rejected — run: xcrun notarytool store-credentials $NOTARY_PROFILE"
 }
@@ -83,15 +83,16 @@ COMMIT=$(/usr/libexec/PlistBuddy -c "Print :ZettyBuildCommit" "$PLIST")
 
 if [ "$MODE" = release ]; then
   # Inside out: each nested framework or dylib first, the app last, since the
-  # app's seal records the signatures of what it contains. Re-signing without
-  # --entitlements also drops Xcode's get-task-allow, which notarization refuses.
+  # app's seal records the signatures of what it contains. Re-signing with
+  # App/Zetty.entitlements alone also drops Xcode's get-task-allow, which
+  # notarization refuses; the helper gets no entitlements at all.
   sign() { codesign --force --timestamp --options runtime --sign "$SIGN_IDENTITY" "$@"; }
   for nested in "$APP"/Contents/Frameworks/*; do
     if [ -e "$nested" ]; then sign "$nested"; fi
   done
   # The bundled zmx (session preservation), before the app that seals it.
   sign --identifier co.webteractive.zetty.zmx "$APP/Contents/Helpers/zmx"
-  sign "$APP"
+  sign --entitlements App/Zetty.entitlements "$APP"
   codesign --verify --deep --strict --verbose=2 "$APP"
 
   # The app is notarized and stapled on its own before the DMG is made, so the

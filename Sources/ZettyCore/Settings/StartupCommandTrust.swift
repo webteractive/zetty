@@ -106,33 +106,56 @@ public struct StartupCommandTrustStore {
 
 /// How a startup command is shown for approval: everything it would type,
 /// with nothing able to hide. Control characters (a carriage return would
-/// type a second command) become their Unicode control pictures, and
-/// characters that reorder or hide text (bidirectional overrides, zero-width
-/// characters) become `<U+XXXX>`, so the text read is the text run.
+/// type a second command) become their Unicode control pictures; characters
+/// that reorder, hide or break text (bidirectional controls, zero-width and
+/// invisible characters, line separators, unusual spaces) become
+/// `<U+XXXX>`; and a run of three or more spaces becomes `<N spaces>`, so
+/// padding can't push the rest of a command out of sight. The text read is
+/// the text run.
 public enum StartupCommandDisplay {
     public static func visible(_ command: String) -> String {
         var out = ""
+        var spaces = 0
+        func flushSpaces() {
+            if spaces >= 3 {
+                out += "<\(spaces) spaces>"
+            } else {
+                out += String(repeating: " ", count: spaces)
+            }
+            spaces = 0
+        }
         for scalar in command.unicodeScalars {
+            if scalar == " " {
+                spaces += 1
+                continue
+            }
+            flushSpaces()
             switch scalar.value {
             case 0x00...0x1F:
                 out.unicodeScalars.append(Unicode.Scalar(0x2400 + scalar.value)!)
             case 0x7F:
                 out.unicodeScalars.append(Unicode.Scalar(0x2421)!)
-            case 0x80...0x9F, 0x200B...0x200F, 0x202A...0x202E, 0x2060...0x2069, 0xFEFF:
+            case 0x80...0xA0, 0x061C, 0x115F, 0x1160, 0x1680, 0x180E, 0x2000...0x200F,
+                 0x2028...0x202F, 0x205F...0x206F, 0x3000, 0x3164, 0xFE00...0xFE0F, 0xFEFF,
+                 0xFFA0, 0xFFF9...0xFFFB, 0xE0000...0xE007F, 0xE0100...0xE01EF:
                 out += String(format: "<U+%04X>", scalar.value)
             default:
                 out.unicodeScalars.append(scalar)
             }
         }
+        flushSpaces()
         return out
     }
 
-    /// One line per command, prefixed by its folder when that is not the root.
+    /// One line per command, prefixed by its folder when that is not the
+    /// root. Each line is forced left to right (LRO … PDF): right-to-left
+    /// letters would otherwise reorder the punctuation around them, and the
+    /// line would read in a different order than it is typed.
     public static func lines(_ commands: [TemplateCommand]) -> String {
         commands.map { entry in
             let folder = entry.workingDir == "." || entry.workingDir.isEmpty
                 ? "" : "[\(visible(entry.workingDir))] "
-            return "\(folder)$ \(visible(entry.command))"
+            return "\u{202D}\(folder)$ \(visible(entry.command))\u{202C}"
         }.joined(separator: "\n")
     }
 }

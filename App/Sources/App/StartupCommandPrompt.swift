@@ -48,6 +48,11 @@ final class StartupCommandPrompt: NSObject {
     private func show(over parent: NSWindow?) {
         alert.layout()
         let window = alert.window
+        // Above the main window, so clicking it doesn't bury the prompt and
+        // leave its commands waiting; hidden while Zetty is in the
+        // background, and back when it returns.
+        window.level = .floating
+        window.hidesOnDeactivate = true
         if let parent {
             let frame = parent.frame
             window.setFrameOrigin(NSPoint(x: frame.midX - window.frame.width / 2,
@@ -69,16 +74,18 @@ final class StartupCommandPrompt: NSObject {
     }
 
     /// The commands, selectable and scrollable so a long list or line is read
-    /// in full rather than cut off.
+    /// in full rather than cut off. The box is as tall as the wrapped text
+    /// (up to a limit) and its scroller always shows, so a command that
+    /// wraps past the box can't look finished.
     private static func commandList(_ text: String) -> NSView {
         let width: CGFloat = 420
         let font = ZTheme.chromeFont(size: 12)
-        let lineCount = CGFloat(text.split(separator: "\n", omittingEmptySubsequences: false).count)
-        let height = min(max(lineCount * (font.boundingRectForFont.height + 2) + 12, 44), 200)
-        let scroll = NSScrollView(frame: NSRect(x: 0, y: 0, width: width, height: height))
+        let scroll = NSScrollView(frame: NSRect(x: 0, y: 0, width: width, height: 200))
         scroll.hasVerticalScroller = true
+        scroll.autohidesScrollers = false
+        scroll.scrollerStyle = .legacy
         scroll.borderType = .bezelBorder
-        let textView = NSTextView(frame: scroll.bounds)
+        let textView = NSTextView(frame: NSRect(origin: .zero, size: scroll.contentSize))
         textView.isEditable = false
         textView.isSelectable = true
         textView.font = font
@@ -88,8 +95,14 @@ final class StartupCommandPrompt: NSObject {
         textView.isVerticallyResizable = true
         textView.autoresizingMask = [.width]
         textView.textContainer?.widthTracksTextView = true
+        textView.baseWritingDirection = .leftToRight
         textView.string = text
         scroll.documentView = textView
+        if let manager = textView.layoutManager, let container = textView.textContainer {
+            manager.ensureLayout(for: container)
+            let textHeight = manager.usedRect(for: container).height + textView.textContainerInset.height * 2
+            scroll.setFrameSize(NSSize(width: width, height: min(max(ceil(textHeight) + 4, 44), 200)))
+        }
         return scroll
     }
 }

@@ -56,7 +56,7 @@ final class Tailnet {
     // MARK: - Lifecycle
 
     /// Safe to call on every config reload: a running node is left alone,
-    /// and a Keychain that refused is asked again only after `stop()` or
+    /// and a failed start is tried again only after Try Again, `stop()` or
     /// Sign Out (`TailnetLifecycle`).
     func start(hostname: String) {
         queue.async { [self] in
@@ -73,7 +73,7 @@ final class Tailnet {
         var blob = Data()
         if let path = ProcessInfo.processInfo.environment[Self.authKeyFileVariable] {
             guard let key = Self.readAuthKey(at: path) else {
-                lifecycle.startFailed(keychain: false)
+                lifecycle.startFailed()
                 return publish(.failed("The test auth key file can't be used: it must be a file only you can read"))
             }
             authKey = key
@@ -85,7 +85,7 @@ final class Tailnet {
             case .blob(let data): blob = data
             case .unreadable(let status):
                 ZettyLog.remote.error("tailnet: Keychain read failed (\(status))")
-                lifecycle.startFailed(keychain: true)
+                lifecycle.startFailed()
                 return publish(.failed("Zetty couldn't read its Tailscale sign-in from the Keychain "
                                        + "(error \(status)). Unlock the Keychain or allow access, then "
                                        + "click Try Again, or click Sign Out to sign in again."))
@@ -111,24 +111,34 @@ final class Tailnet {
             }
         }
         if let failure {
-            lifecycle.startFailed(keychain: false)
+            lifecycle.startFailed()
             return publish(.failed(failure))
         }
         lifecycle.started()
         startRefresh()
     }
 
-    /// Try Again in Settings after a failed start: starts the node now,
-    /// reading the Keychain again, without the user turning Other Macs off.
+    /// Try Again in Settings: starts a node that failed to start (reading
+    /// the Keychain again), or restarts one that runs but reports an error,
+    /// without the user turning Other Macs off. Only while the state is
+    /// failed: a second click queued behind the first one's Keychain prompt
+    /// would otherwise ask again after a Deny.
     func retry() {
         queue.async { [self] in
-            guard let hostname = lifecycle.retry() else { return }
-            startNow(hostname: hostname)
+            guard case .failed? = lastState, let action = lifecycle.retry() else { return }
+            if case .restart = action {
+                refresh?.cancel()
+                refresh = nil
+                zt_stop()
+                lastEvent = Data(#"{"state":"Starting"}"#.utf8)
+                lastStatus = nil
+            }
+            startNow(hostname: action.hostname)
         }
     }
 
-    /// Both remote switches are off. Also a retry after a refused Keychain:
-    /// the next start reads it again.
+    /// Both remote switches are off. Also a retry after a failed start: the
+    /// next start reads the Keychain again.
     func stop() {
         queue.async { [self] in
             pendingPage = nil
@@ -188,7 +198,7 @@ final class Tailnet {
                 let status = store.clear()
                 guard status == errSecSuccess || status == errSecItemNotFound else {
                     ZettyLog.remote.error("tailnet: couldn't forget the saved sign-in (\(status))")
-                    lifecycle.startFailed(keychain: true)
+                    lifecycle.startFailed()
                     return publish(.failed("Zetty couldn't remove its saved Tailscale sign-in from the Keychain "
                                            + "(error \(status)). Delete \"Zetty Tailscale sign-in\" in Keychain "
                                            + "Access, then click Try Again."))

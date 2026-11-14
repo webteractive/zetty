@@ -203,3 +203,24 @@ private func index(of name: String, in model: WorkspaceModel) -> Int {
     #expect(names(model) == ["Home", "src", "src/fork", "mate"])
 }
 
+
+@Test func aMoveOntoAnAttachedCloneStaysInItsSpace() {
+    // Dropping x1 below x2's clone mapped onto the clone, whose own Space is
+    // nil, and the move was refused (pre-release sweep, 2026-11-14).
+    let model = model(["x1", "x2"])
+    let space = model.createSpace(name: "X")!
+    model.assign(projectAt: index(of: "x1", in: model), to: space.id)
+    model.assign(projectAt: index(of: "x2", in: model), to: space.id)
+    model.addCloneProject(name: "x2/fork", rootPath: "/tmp/x2fork", cloneSource: "/tmp/x2")
+    #expect(names(model) == ["Home", "x1", "x2", "x2/fork"])
+    model.moveProject(from: index(of: "x1", in: model), to: index(of: "x2/fork", in: model))
+    #expect(names(model) == ["Home", "x2", "x2/fork", "x1"])
+}
+
+@Test func movingASourceTakesItsCloneAlong() {
+    let model = model(["a", "b"])
+    model.addCloneProject(name: "a/fork", rootPath: "/tmp/afork", cloneSource: "/tmp/a")
+    #expect(names(model) == ["Home", "a", "a/fork", "b"])
+    model.moveProject(from: index(of: "a", in: model), to: index(of: "b", in: model))
+    #expect(names(model) == ["Home", "b", "a", "a/fork"])
+}

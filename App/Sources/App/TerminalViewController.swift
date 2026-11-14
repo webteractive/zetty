@@ -2965,14 +2965,45 @@ final class TerminalViewController: NSViewController {
     }
 
     private func releaseHeldTemplateCommands(_ ids: [UUID], run: Bool) {
+        var spawnedCommands: [UUID: String] = [:]
         for id in ids {
             guard let command = heldTemplateCommands.removeValue(forKey: id) else { continue }
             let spawned = spawnedWhileHeld.remove(id) != nil
             guard run else { continue }
-            if spawned {
-                deliverAfterSpawn(command + "\r", to: id, after: Self.spawnGracePeriod)
-            } else {
+            if spawned && registry.isLive(id) {
+                spawnedCommands[id] = command
+            } else if pendingStartupCommands[id] == nil {
+                // Not spawned yet, or hibernated while the prompt was open:
+                // typed when its shell starts.
                 pendingStartupCommands[id] = command
+            }
+        }
+        typeIntoIdleShells(spawnedCommands)
+    }
+
+    /// Panes that opened while the prompt was up: by the time it is answered
+    /// one may be running something else (an agent, `ssh`), which would get
+    /// the command. It is typed only where the shell is still in front. A
+    /// pane whose foreground can't be probed (sessions not preserved) is
+    /// typed into as before.
+    private func typeIntoIdleShells(_ commands: [UUID: String]) {
+        guard !commands.isEmpty else { return }
+        let zmx = ZmxRunner.locate()
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            let pids = zmx.map { ZmxRunner.sessionPIDs(zmxPath: $0) } ?? [:]
+            let ps = pids.isEmpty ? nil : ZmxRunner.psSnapshot()
+            DispatchQueue.main.async {
+                guard let self else { return }
+                for (id, command) in commands {
+                    if let ps, let pid = pids[SessionPersistence.sessionName(for: id)],
+                       let running = ForegroundProcess.command(forSessionPID: pid, psOutput: ps) {
+                        ZettyLog.lifecycle.log(
+                            "startup commands: not typed into \(SessionPersistence.shortID(for: id))"
+                            + " — \(running) is running there")
+                        continue
+                    }
+                    self.deliverAfterSpawn(command + "\r", to: id, after: Self.spawnGracePeriod)
+                }
             }
         }
     }

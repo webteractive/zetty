@@ -39,10 +39,21 @@ public enum ProjectFileIO {
             .appendingPathComponent(".zetty/project.json")
     }
 
+    /// The largest file read. A real one is a few kilobytes.
+    public static let maxBytes = 1 << 20
+
     /// Missing or malformed file → nil, never throws — a bad repo file must
-    /// never brick project open.
+    /// never brick project open. It is someone else's file, so only a regular
+    /// file (a link to one is fine) of at most `maxBytes` is read: a link to
+    /// `/dev/zero` would otherwise be read forever, on the main thread.
     public static func load(projectRoot: String) -> ProjectFile? {
-        guard let data = try? Data(contentsOf: url(forProjectRoot: projectRoot)),
+        let fileURL = url(forProjectRoot: projectRoot).resolvingSymlinksInPath()
+        guard let values = try? fileURL.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey]),
+              values.isRegularFile == true, (values.fileSize ?? Int.max) <= maxBytes,
+              let handle = try? FileHandle(forReadingFrom: fileURL)
+        else { return nil }
+        defer { try? handle.close() }
+        guard let data = try? handle.read(upToCount: maxBytes + 1), data.count <= maxBytes,
               let file = try? JSONDecoder().decode(ProjectFile.self, from: data)
         else { return nil }
         return file

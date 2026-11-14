@@ -69,7 +69,8 @@ stages out of the DMG, while the app is still alive and the failure can surface
 as an error instead of a silent rollback.
 
 Signing: `scripts/package.sh` signs Release builds with the **Developer ID**
-in the login keychain (hardened runtime, `--timestamp`, no entitlements),
+in the login keychain (hardened runtime, `--timestamp`, the app with
+`App/Zetty.entitlements`, the zmx helper with none),
 notarizes and staples the app, THEN builds, signs, notarizes and staples the
 DMG, and checks both with `spctl`. Order matters three ways: nested code
 (`ZettyGhostty.framework`, and the bundled `Contents/Helpers/zmx` with
@@ -84,7 +85,16 @@ Apple's log on rejection. No secret lives in the repo: notarytool uses the
 override). `release.sh` runs `package.sh --preflight` before its bump, so a
 missing certificate or profile stops it before it pushes; `--adhoc` packages
 an un-notarized build for a machine without the certificate — never ship it.
-Releases up to 0.1.52 were ad-hoc signed. The identity lookup lives in
+Releases up to 0.1.52 were ad-hoc signed. **Entitlements (2026-11-14):** under the hardened runtime, macOS refuses a
+program in a pane (which it charges to Zetty) Apple Events, the microphone,
+the camera, Contacts, Calendars, Location and Photos without asking unless
+Zetty holds the matching entitlement; tccd logged "requires entitlement …
+but it is missing" for `osascript`, a dictation tool and agents from 0.1.53
+on. `App/Zetty.entitlements` carries those seven (as Ghostty's does), the
+Info.plist has a usage string for each, and both signing paths use it
+(Xcode through `entitlements:` in `Project.swift`, `package.sh` with
+`--entitlements`). Entitlements don't change the designated requirement, so
+existing grants and the Keychain "Always Allow" stay. The identity lookup lives in
 `scripts/signing-identity.sh`, shared with `scripts/build.sh`, which signs
 everyday and test builds with the same Developer ID (hardened runtime, no
 `get-task-allow`, no timestamp, not notarized). They therefore carry a
@@ -125,7 +135,11 @@ without the record (`--review <file>`).
    - `Reviewed: <last tag>..<HEAD short sha>`: exactly the range released, so
      a commit after the review sends it back;
    - each finding and what happened to it;
-   - `Unresolved: none`, or `Unresolved: accepted by Glen …`.
+   - one `Unresolved:` line: `Unresolved: none`, or `Unresolved: accepted by
+     Glen …`.
+
+   `release.sh` compares the recorded commit by what it resolves to (a short
+   sha's length differs between clones) and ignores CRs and trailing blanks.
 
 `swift test` (which release.sh runs) also carries source guards
 (`ReleaseGuardTests`) for bug classes that shipped once: process-environment

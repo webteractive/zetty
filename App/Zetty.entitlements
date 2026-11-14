@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- Zetty runs under the hardened runtime, and macOS charges a program in a
+	     pane to Zetty for privacy permissions. Without these the system refuses
+	     those programs Apple Events, the microphone, the camera, Contacts,
+	     Calendars, Location and Photos without asking (tccd: "requires
+	     entitlement … but it is missing"). With them it asks, once, naming
+	     Zetty. The usage strings are in Project.swift's Info.plist keys. -->
+	<key>com.apple.security.automation.apple-events</key>
+	<true/>
+	<key>com.apple.security.device.audio-input</key>
+	<true/>
+	<key>com.apple.security.device.camera</key>
+	<true/>
+	<key>com.apple.security.personal-information.addressbook</key>
+	<true/>
+	<key>com.apple.security.personal-information.calendars</key>
+	<true/>
+	<key>com.apple.security.personal-information.location</key>
+	<true/>
+	<key>com.apple.security.personal-information.photos-library</key>
+	<true/>
+</dict>
+</plist>

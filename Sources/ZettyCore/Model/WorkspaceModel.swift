@@ -231,16 +231,19 @@ public final class WorkspaceModel {
     /// within one Space (or within Projects); a cross-Space move is rejected so
     /// `assign`'s refusals can't be bypassed.
     /// Reassignment to a different Space goes through `assign(projectAt:to:)`.
+    ///
+    /// The Spaces compared are the ones rows render under: a clone's own is
+    /// always nil, so a drop that lands on a member's attached clone was
+    /// refused. `regroup()` afterwards takes a moved source's clones along.
     public func moveProject(from: Int, to: Int) {
-        // Both endpoints must share a Space: a reorder may never move a project across a Space boundary, which would bypass `assign`'s
-        // refusals. Reassignment goes through `assign(projectAt:to:)`.
         guard projects.indices.contains(from), projects.indices.contains(to),
               from != to,
-              projects[from].spaceID == projects[to].spaceID else { return }
+              effectiveSpaceID(of: projects[from]) == effectiveSpaceID(of: projects[to]) else { return }
         let activeID = projects[activeIndex].id
         let moved = projects.remove(at: from)
         projects.insert(moved, at: to)
         activeIndex = projects.firstIndex { $0.id == activeID } ?? 0
+        regroup()
     }
 
     /// The project owning `surfaceID`, or nil. Used by the app layer to

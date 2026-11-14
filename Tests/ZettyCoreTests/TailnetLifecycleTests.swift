@@ -9,7 +9,7 @@ private extension TailnetLifecycle {
 @Test func aDeniedKeychainIsNotAskedAgainOnEveryReload() {
     var life = TailnetLifecycle()
     let first = life.start()
-    life.startFailed(keychain: true)
+    life.startFailed()
     // Config reloads call start again: no new Keychain read, so no new prompt.
     let reload1 = life.start()
     let reload2 = life.start()
@@ -19,12 +19,16 @@ private extension TailnetLifecycle {
     #expect(first && !reload1 && !reload2 && !stopped && retry)
 }
 
-@Test func otherStartFailuresRetryOnTheNextReload() {
+@Test func everyFailedStartWaitsForTryAgain() {
+    // A start that failed for another reason (an unreadable saved state)
+    // read the Keychain again and posted "Other Macs stopped" again on every
+    // config reload (pre-release sweep, 2026-11-14).
     var life = TailnetLifecycle()
     _ = life.start()
-    life.startFailed(keychain: false)
-    let again = life.start()
-    #expect(again)
+    life.startFailed()
+    let reload = life.start()
+    let retried = life.retry()
+    #expect(!reload && retried == .start(hostname: "zetty-mini"))
 }
 
 @Test func aRunningNodeIsNotStartedTwiceAndStopsOnce() {
@@ -49,7 +53,7 @@ private extension TailnetLifecycle {
     // An unreadable Keychain item: Sign Out is the way to start fresh.
     var life = TailnetLifecycle()
     _ = life.start()
-    life.startFailed(keychain: true)
+    life.startFailed()
     let action = life.signOut()
     let restart = life.start()
     #expect(action == .forgetAndRestart(hostname: "zetty-mini"))
@@ -71,7 +75,7 @@ private extension TailnetLifecycle {
     // restart used the old name (bug hunt, 2026-11-13).
     var lifecycle = TailnetLifecycle()
     _ = lifecycle.requestStart(hostname: "zetty-old")
-    lifecycle.startFailed(keychain: true)
+    lifecycle.startFailed()
     lifecycle.rename(to: "zetty-new")
     #expect(lifecycle.signOut() == .forgetAndRestart(hostname: "zetty-new"))
 }
@@ -79,20 +83,28 @@ private extension TailnetLifecycle {
 @Test func tryAgainReadsTheKeychainAgainWithoutTurningOtherMacsOff() {
     var life = TailnetLifecycle()
     _ = life.start("zetty-mini")
-    life.startFailed(keychain: true)
+    life.startFailed()
     let retried = life.retry()
     // The retry is the start: a reload right after it doesn't start a second.
     life.started()
     let reload = life.start("zetty-mini")
-    #expect(retried == "zetty-mini" && !reload)
+    #expect(retried == .start(hostname: "zetty-mini") && !reload)
 }
 
-@Test func tryAgainDoesNothingWhileRunningOrWithOtherMacsOff() {
+@Test func tryAgainDoesNothingWithOtherMacsOff() {
     var off = TailnetLifecycle()
     let whenOff = off.retry()
-    var running = TailnetLifecycle()
-    _ = running.start()
-    running.started()
-    let whenRunning = running.retry()
-    #expect(whenOff == nil && whenRunning == nil)
+    #expect(whenOff == nil)
+}
+
+@Test func tryAgainRestartsARunningNodeThatReportsAnError() {
+    // A running node whose Tailscale reports an error shows Try Again too;
+    // the click did nothing (pre-release sweep, 2026-11-14).
+    var life = TailnetLifecycle()
+    _ = life.start()
+    life.started()
+    let retried = life.retry()
+    // Restarting: the node is down until the new start succeeds.
+    let stop = life.stop()
+    #expect(retried == .restart(hostname: "zetty-mini") && !stop)
 }

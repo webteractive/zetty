@@ -123,7 +123,7 @@ func zt_start(dir, hostname, authkey *C.char, ephemeral C.int, blob *C.uint8_t, 
 	}
 	st, err := newBlobStore(initial, persist)
 	if err != nil {
-		return result(errOut, fmt.Errorf("the saved Tailscale state is unreadable: %w", err))
+		return result(errOut, fmt.Errorf("the saved Tailscale state is unreadable (%w); click Sign Out to sign in again", err))
 	}
 
 	s := &tsnet.Server{

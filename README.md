@@ -41,7 +41,9 @@ Ghostty terminal, with a Swift AppKit app around it.
 pane touches Desktop, Documents, Downloads, iCloud Drive or an external volume —
 every terminal does this. To stop the prompts for good, add
 `/Applications/zetty.app` under **System Settings → Privacy & Security → Full
-Disk Access**, then relaunch Zetty.
+Disk Access**, then relaunch Zetty. A program in a pane that wants the
+microphone, the camera, Contacts, Calendars, Location, Photos or to script
+another app (`osascript`) gets the same one-time prompt, naming Zetty.
 
 To build from source, see [`DEVELOPMENT.md`](DEVELOPMENT.md).
 
@@ -348,7 +350,8 @@ Code…** beside **Sign In…** and approve it on your phone; over SSH,
 `zetty remote sign-in` prints the page and its QR code. Zetty tells you when
 Tailscale needs you to sign in again, and which account a sign-in used. If Other
 Macs stops because Zetty can't read its saved sign-in, unlock or allow the
-Keychain and click **Try Again**, or **Sign Out** to start over with a fresh one. A Mac set up from another with Migration Assistant signs in
+Keychain and click **Try Again**, or **Sign Out** to start over with a fresh one;
+**Try Again** also restarts Other Macs when Tailscale reports an error. A Mac set up from another with Migration Assistant signs in
 as its own device.
 
 Click one of another Mac's projects to open it in this window: its tabs and

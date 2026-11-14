@@ -68,7 +68,8 @@ again after adding or removing a file**.
 
 `scripts/build.sh` signs with the "Developer ID Application" certificate in your
 keychain when there is exactly one (hardened runtime, no debugger entitlement;
-`ZETTY_SIGN_IDENTITY` picks one by name or hash). Every build then carries the
+`ZETTY_SIGN_IDENTITY` picks one by its full name or hash, and a name that
+matches nothing, or several certificates, stops the build). Every build then carries the
 same identity as a release, so macOS keeps Zetty's privacy grants (Screen
 Recording, folder access) and the Keychain "Always Allow" for its Tailscale
 sign-in from build to build. Without the certificate it builds ad-hoc and says

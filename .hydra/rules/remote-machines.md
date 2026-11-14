@@ -99,11 +99,16 @@ installed or running. The Tailscale app is never touched or needed.
   launch; a Developer ID build (releases, `scripts/build.sh`) is asked once
   and then keeps "Always Allow". An **unreadable** item (locked Keychain over SSH,
   a denied prompt) stops the node with the reason in Settings: starting
-  empty would enroll a second device. It is **not read again on every config
-  reload** (`TailnetLifecycle`), which would prompt each time: only after
-  **Try Again** (shown in Settings → Remote while the node is `.failed`;
+  empty would enroll a second device. **No failed start is tried again on
+  every config reload** (`TailnetLifecycle.failed`), which would read the
+  Keychain (and maybe prompt) and post "Other Macs stopped" each time: only
+  after **Try Again** (shown in Settings → Remote while the node is `.failed`;
   `TailnetLifecycle.retry` → `Tailnet.retry`), Other Macs turned off and on,
-  or Sign Out. Turning it off and on means turning off BOTH switches (Serve
+  or Sign Out. Try Again starts a node that failed to start, and restarts one
+  that runs but reports an error (it shows `.failed` too). It acts only while
+  the state is still `.failed`, so a double-click queued behind the first
+  click's Keychain prompt doesn't ask again after a Deny. An unreadable saved
+  state says to click Sign Out, the only way out of it. Turning it off and on means turning off BOTH switches (Serve
   and Remote Machines), since the node runs while either is on, which the
   old message ("turn Other Macs off and on") did not say. tsnet's non-secret files go
   in `~/Library/Caches/co.webteractive.zetty/tailscale`.
