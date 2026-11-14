@@ -88,7 +88,7 @@ final class Tailnet {
                 lifecycle.startFailed(keychain: true)
                 return publish(.failed("Zetty couldn't read its Tailscale sign-in from the Keychain "
                                        + "(error \(status)). Unlock the Keychain or allow access, then "
-                                       + "turn Other Macs off and on, or click Sign Out to sign in again."))
+                                       + "click Try Again, or click Sign Out to sign in again."))
             }
         }
         try? FileManager.default.createDirectory(atPath: workingDirectory, withIntermediateDirectories: true,
@@ -118,8 +118,17 @@ final class Tailnet {
         startRefresh()
     }
 
-    /// Both remote switches are off. Also the user's retry after a refused
-    /// Keychain: the next start reads it again.
+    /// Try Again in Settings after a failed start: starts the node now,
+    /// reading the Keychain again, without the user turning Other Macs off.
+    func retry() {
+        queue.async { [self] in
+            guard let hostname = lifecycle.retry() else { return }
+            startNow(hostname: hostname)
+        }
+    }
+
+    /// Both remote switches are off. Also a retry after a refused Keychain:
+    /// the next start reads it again.
     func stop() {
         queue.async { [self] in
             pendingPage = nil
@@ -182,7 +191,7 @@ final class Tailnet {
                     lifecycle.startFailed(keychain: true)
                     return publish(.failed("Zetty couldn't remove its saved Tailscale sign-in from the Keychain "
                                            + "(error \(status)). Delete \"Zetty Tailscale sign-in\" in Keychain "
-                                           + "Access, then turn Other Macs off and on."))
+                                           + "Access, then click Try Again."))
                 }
                 ZettyLog.remote.log("tailnet: forgot the saved sign-in, starting over")
                 guard lifecycle.requestStart(hostname: hostname) else { return }

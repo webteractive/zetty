@@ -101,7 +101,11 @@ installed or running. The Tailscale app is never touched or needed.
   a denied prompt) stops the node with the reason in Settings: starting
   empty would enroll a second device. It is **not read again on every config
   reload** (`TailnetLifecycle`), which would prompt each time: only after
-  Other Macs is turned off and on, or Sign Out. tsnet's non-secret files go
+  **Try Again** (shown in Settings → Remote while the node is `.failed`;
+  `TailnetLifecycle.retry` → `Tailnet.retry`), Other Macs turned off and on,
+  or Sign Out. Turning it off and on means turning off BOTH switches (Serve
+  and Remote Machines), since the node runs while either is on, which the
+  old message ("turn Other Macs off and on") did not say. tsnet's non-secret files go
   in `~/Library/Caches/co.webteractive.zetty/tailscale`.
 - **Sign-in** is Settings → Remote → **Sign In…**: Tailscale's
   login page in the browser. Every click asks Tailscale again and opens the

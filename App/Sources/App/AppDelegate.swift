@@ -1651,6 +1651,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         controller.deviceNameProvider = { [weak self] in self?.tailnetDeviceName ?? ZettyDeviceName.prefix + "mac" }
         controller.onSignIn = { [weak self] in self?.signInToTailscale() }
         controller.onSignOut = { [weak self] in self?.tailnet.logout() }
+        controller.onTryAgain = { [weak self] in self?.tailnet.retry() }
         controller.onShowSignInCode = { [weak self] in self?.showTailscaleSignInCode() }
         controller.onRename = { [weak self] input in self?.renameTailnetDevice(input) ?? input }
         controller.onConfigSaved = { [weak self] in

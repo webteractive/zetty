@@ -347,8 +347,8 @@ provider. To sign in a Mac you reach over screen sharing, click **Show QR
 Code…** beside **Sign In…** and approve it on your phone; over SSH,
 `zetty remote sign-in` prints the page and its QR code. Zetty tells you when
 Tailscale needs you to sign in again, and which account a sign-in used. If Other
-Macs stops because Zetty can't read its saved sign-in, **Sign Out** starts over
-with a fresh one. A Mac set up from another with Migration Assistant signs in
+Macs stops because Zetty can't read its saved sign-in, unlock or allow the
+Keychain and click **Try Again**, or **Sign Out** to start over with a fresh one. A Mac set up from another with Migration Assistant signs in
 as its own device.
 
 Click one of another Mac's projects to open it in this window: its tabs and

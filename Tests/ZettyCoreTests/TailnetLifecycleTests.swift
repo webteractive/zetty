@@ -75,3 +75,24 @@ private extension TailnetLifecycle {
     lifecycle.rename(to: "zetty-new")
     #expect(lifecycle.signOut() == .forgetAndRestart(hostname: "zetty-new"))
 }
+
+@Test func tryAgainReadsTheKeychainAgainWithoutTurningOtherMacsOff() {
+    var life = TailnetLifecycle()
+    _ = life.start("zetty-mini")
+    life.startFailed(keychain: true)
+    let retried = life.retry()
+    // The retry is the start: a reload right after it doesn't start a second.
+    life.started()
+    let reload = life.start("zetty-mini")
+    #expect(retried == "zetty-mini" && !reload)
+}
+
+@Test func tryAgainDoesNothingWhileRunningOrWithOtherMacsOff() {
+    var off = TailnetLifecycle()
+    let whenOff = off.retry()
+    var running = TailnetLifecycle()
+    _ = running.start()
+    running.started()
+    let whenRunning = running.retry()
+    #expect(whenOff == nil && whenRunning == nil)
+}

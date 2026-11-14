@@ -91,6 +91,8 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     private let deviceNameField = NSTextField(string: "")
     private lazy var signInButton = NSButton(title: "Sign In…", target: self, action: #selector(signInToTailscale(_:)))
     private lazy var signOutButton = NSButton(title: "Sign Out", target: self, action: #selector(signOutOfTailscale(_:)))
+    /// Shown only after a failed start (a refused Keychain read, a bridge error).
+    private lazy var tryAgainButton = NSButton(title: "Try Again", target: self, action: #selector(retryTailscale(_:)))
     private lazy var signInCodeButton = NSButton(title: "Show QR Code…", target: self,
                                                  action: #selector(showSignInCode(_:)))
 
@@ -220,6 +222,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     var deviceNameProvider: (() -> String)?
     var onSignIn: (() -> Void)?
     var onSignOut: (() -> Void)?
+    var onTryAgain: (() -> Void)?
     /// Show QR Code…: asks Tailscale for a page and shows it as a QR code.
     var onShowSignInCode: (() -> Void)?
     /// A new device name typed in Settings; answers the name it became.
@@ -544,8 +547,10 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         signInButton.bezelStyle = .rounded
         signOutButton.bezelStyle = .rounded
         signInCodeButton.bezelStyle = .rounded
+        tryAgainButton.bezelStyle = .rounded
+        tryAgainButton.isHidden = true
         let deviceRow = NSStackView(views: [deviceLabel, prefixLabel, deviceNameField, NSView(),
-                                            signInButton, signInCodeButton, signOutButton])
+                                            tryAgainButton, signInButton, signInCodeButton, signOutButton])
         deviceRow.orientation = .horizontal
         deviceRow.spacing = 6
         addFullWidth(deviceRow, to: stack)
@@ -1599,6 +1604,10 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         onSignOut?()
     }
 
+    @objc private func retryTailscale(_ sender: Any?) {
+        onTryAgain?()
+    }
+
     @objc private func showSignInCode(_ sender: Any?) {
         onShowSignInCode?()
     }
@@ -1619,6 +1628,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
             signInCodeButton.isEnabled = false
             TailnetSignInSheet.dismiss()
         }
+        tryAgainButton.isHidden = { if case .failed = state { return false } else { return true } }()
         switch state {
         case .needsLogin:
             signInButton.isEnabled = true

@@ -3,7 +3,8 @@
 ///
 /// A Keychain read that failed (a denied prompt, a locked Keychain) is not
 /// tried again on every config reload, which would ask again each time:
-/// only when the user turns Other Macs off and on, or signs out.
+/// only when the user clicks Try Again, turns Other Macs off and on, or signs
+/// out.
 public struct TailnetLifecycle: Equatable, Sendable {
     public enum SignOut: Equatable, Sendable {
         /// Sign the running node out (its machine key stays).
@@ -40,6 +41,15 @@ public struct TailnetLifecycle: Equatable, Sendable {
     public mutating func startFailed(keychain: Bool) {
         running = false
         if keychain { keychainRefused = true }
+    }
+
+    /// Try Again after a failed start: the device name to start now (reading
+    /// the Keychain again), or nil when the node is running or Other Macs is
+    /// off.
+    public mutating func retry() -> String? {
+        guard let wanted, !running else { return nil }
+        keychainRefused = false
+        return wanted
     }
 
     /// True when a running node must be stopped.
