@@ -53,7 +53,7 @@ ship as part of Zetty's binary. Every license text, with copyright lines, is in
 | `github.com/google/btree` v1.1.3 | Apache-2.0 |
 | `github.com/hdevalence/ed25519consensus` v0.2.0 | BSD-3-Clause |
 | `github.com/huin/goupnp` v1.3.0 | BSD-2-Clause |
-| `github.com/klauspost/compress` v1.20.0 | Apache-2.0 |
+| `github.com/klauspost/compress` v1.20.2 | Apache-2.0 |
 | `github.com/mitchellh/go-ps` v1.0.0 | MIT |
 | `github.com/pires/go-proxyproto` v0.15.0 | Apache-2.0 |
 | `github.com/tailscale/certstore` v0.1.1-… | MIT |

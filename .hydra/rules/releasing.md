@@ -120,7 +120,15 @@ without the record (`--review <file>`).
    wherever one can be written.
 3. **Security review:** the `security-review` skill on the same range
    (global rule `release-security-review.md`). Only Glen accepts a finding
-   unfixed.
+   unfixed. It includes the Go modules linked into the app: in
+   `Bridge/tailnet`, `go mod verify` and
+   `go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./...`. A vulnerability
+   it says Zetty's code reaches is a finding (fix it with a `go get` of the
+   fixed version, then regenerate the notices, `third-party-notices.md`); one
+   only in modules required but never called goes in the record. The
+   v0.1.62 review missed this until asked: Tailscale v1.104.7 pinned
+   `klauspost/compress` v1.20.0, whose decoders panic on two-block frames
+   (GO-2026-6865), and a Go panic ends the whole app.
 4. **Regression checks** that tests can't cover, in the isolated test app:
    turning the Claude mod off and reloading, then opening a tab (the
    environment crash, `surfaces-and-memory.md`); a session started by the

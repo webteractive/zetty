@@ -27,6 +27,10 @@ the pin only moves when somebody looks.
   Report them in the summary too. A zmx bump follows
   `session-preservation.md` ("Bumping the bundled zmx"); a Tailscale bump is
   `go get tailscale.com@<v>` in `Bridge/tailnet`, then `scripts/remote-e2e.sh`.
+  `go.mod` also requires `github.com/klauspost/compress` v1.20.2, above the
+  v1.20.0 Tailscale v1.104.7 asks for (GO-2026-6865, 2026-11-15); Go keeps
+  the higher of the two, so a bump never lowers it. Run govulncheck after a
+  bump (`releasing.md`, step 3).
 
 - **A libghostty-spm version names the wrapper, not the Ghostty inside it.**
   The script's second block reads `Ghostty.ref` at the resolved tag (and the

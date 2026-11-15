@@ -290,10 +290,7 @@ enum ZmxBinaries {
     /// mapped region still names the file. The store's copy of the same
     /// version, when that copy is one Zetty may run.
     private static func replacedStoreCopy(pid: Int32) -> (version: String, copy: String)? {
-        var info = proc_bsdinfo()
-        let size = Int32(MemoryLayout<proc_bsdinfo>.size)
-        guard proc_pidinfo(pid, PROC_PIDTBSDINFO, 0, &info, size) == size,
-              info.pbi_uid == getuid(),
+        guard isOwnProcess(pid: pid),
               executablePath(pid: pid) == nil,
               let path = deletedExecutablePath(pid: pid),
               !FileManager.default.fileExists(atPath: path),
@@ -305,10 +302,7 @@ enum ZmxBinaries {
               }),
               let version = ZmxVersion.storeVersion(ofExecutable: path, store: store) else { return nil }
         let copy = storeURL.appendingPathComponent(version, isDirectory: true).appendingPathComponent("zmx").path
-        var status = stat()
-        guard stat(copy, &status) == 0, status.st_uid == getuid() || status.st_uid == 0,
-              status.st_mode & (S_IWGRP | S_IWOTH) == 0,
-              FileManager.default.isExecutableFile(atPath: copy) else { return nil }
+        guard isRunnableByThisUser(copy), FileManager.default.isExecutableFile(atPath: copy) else { return nil }
         return (version, copy)
     }
 
@@ -319,17 +313,26 @@ enum ZmxBinaries {
     /// one else. Otherwise another account could have its own program run as
     /// this user by Zetty's `zmx version` (security review, 2026-11-13).
     private static func trustedExecutable(pid: Int32) -> String? {
+        guard isOwnProcess(pid: pid), let path = executablePath(pid: pid) else { return nil }
+        let resolved = URL(fileURLWithPath: path).resolvingSymlinksInPath().path
+        guard resolved.hasPrefix("/"), isRunnableByThisUser(resolved) else { return nil }
+        return resolved
+    }
+
+    /// Whether `pid` runs as this user.
+    private static func isOwnProcess(pid: Int32) -> Bool {
         var info = proc_bsdinfo()
         let size = Int32(MemoryLayout<proc_bsdinfo>.size)
-        guard proc_pidinfo(pid, PROC_PIDTBSDINFO, 0, &info, size) == size,
-              info.pbi_uid == getuid(),
-              let path = executablePath(pid: pid) else { return nil }
-        let resolved = URL(fileURLWithPath: path).resolvingSymlinksInPath().path
+        return proc_pidinfo(pid, PROC_PIDTBSDINFO, 0, &info, size) == size && info.pbi_uid == getuid()
+    }
+
+    /// Whether the file at `path` (links followed) is one only this user or
+    /// root could have put there: owned by one of them, writable by no one else.
+    private static func isRunnableByThisUser(_ path: String) -> Bool {
         var status = stat()
-        guard resolved.hasPrefix("/"), stat(resolved, &status) == 0,
-              status.st_uid == getuid() || status.st_uid == 0,
-              status.st_mode & (S_IWGRP | S_IWOTH) == 0 else { return nil }
-        return resolved
+        return stat(path, &status) == 0
+            && (status.st_uid == getuid() || status.st_uid == 0)
+            && status.st_mode & (S_IWGRP | S_IWOTH) == 0
     }
 
     /// The file behind a process's first mapped region, its main binary,
