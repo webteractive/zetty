@@ -57,3 +57,16 @@ private let s1 = UUID(uuidString: "00000000-0000-0000-0000-0000000000A1")!
     let ended = AgentEvent(cwd: "/p", agent: .claude, event: .ended)
     #expect(detector.apply(event: ended, session: s1, now: 102).session == nil)
 }
+
+@Test func detectorForwardsReportsAndProbeReadingsToItsBoard() {
+    let detector = AgentDetector()
+    let report = AgentReport(source: .mod, agent: .claude, state: .running, at: 10,
+                             session: AgentSession(id: "sess-1", cwd: "/p"))
+    #expect(detector.apply(report: report, session: s1, now: 10).accepted)
+    #expect(detector.state(for: s1) == AgentState(kind: .claude, status: .running,
+                                                  session: AgentSession(id: "sess-1", cwd: "/p")))
+    detector.observeForeground("", session: s1, now: 13)
+    detector.observeForeground("", session: s1, now: 16)
+    #expect(detector.state(for: s1) == AgentState())
+    #expect(detector.noteFinished(session: s1, at: 20))
+}
