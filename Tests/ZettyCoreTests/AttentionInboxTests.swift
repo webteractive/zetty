@@ -106,3 +106,11 @@ private let b = UUID(uuidString: "00000000-0000-0000-0000-00000000000B")!
     inbox.update(needsAttention: [a])
     #expect(inbox.unread == [a])
 }
+
+@Test func aLiveRequestDuringTheReplayIsStillNews() {
+    // Raised by a live report in the moments before the startup replay
+    // finished: it isn't replayed state, so it isn't marked read.
+    let inbox = AttentionInbox(snapshot: AttentionInboxSnapshot(needsAttention: [], acknowledged: []))
+    inbox.settleAfterReplay(needsAttention: [a, b], raisedLive: [b])
+    #expect(inbox.unread == [b])
+}

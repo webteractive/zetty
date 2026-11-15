@@ -68,7 +68,10 @@ Gotchas, all deliberate:
   exists**: any program's output can carry an OSC 7, and this folder is
   where a new split's shell starts (a crafted file `cat`-ed in a pane must
   not steer it, e.g. into a repo whose prompt hooks run code). Agent report
-  times are clamped to now.
+  times are clamped to now. Every pane's cwd file is read off-main on the
+  3 s tick; readers that walk every pane (status snapshot, agent list, tab
+  titles) use that cache (`cachedDirectory(for:)`), and single-pane readers
+  (status bar, splits, this tree) read their one file fresh.
 - **Re-rooting on `cd` is debounced 500ms** (driven from `refreshStatusBar`,
   which already runs on cwd-change cadence) and expansion state is keyed by
   absolute path in `FileTreeExpansionCache`, because agents `cd` several times a

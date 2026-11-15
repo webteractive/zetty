@@ -59,12 +59,22 @@ yellow pane notifies and reopens its inbox entry; replay never notifies. A
 **finished turn** (running → idle, `finished`) posts a banner only — no sound,
 badge or bell entry.
 
+The probe stamps an agent's end with the time `ps` ran, not when main got
+round to it, and runs one tick at a time (`foregroundPollInFlight`), so a slow
+zmx can't count two misses a second apart. Each tick also prunes per-pane
+state (board entries, folder stamps, stale titles) for panes that are gone,
+and the inbox and badge are recounted only when a result moved a status or
+raised attention. A failed turn's banner reuses the pane's "finished"
+notification identifier, so it replaces a "finished" posted for the same
+moment instead of adding a second banner.
+
 **The inbox persists** (`AttentionInboxStore`, `attention-inbox.json` in
 Application Support). Nothing syncs it before the startup replay
 (`hasReplayedAgentEvents`); the first sync after it (`settleAfterReplay`)
 keeps restored entries still waiting, with their read marks — an unread
 survivor still badges — and marks a waiting pane the inbox never held as read
-(true, but not news).
+(true, but not news), unless a live report raised it while the replay was
+still running (`raisedBeforeReplay`).
 
 **Terminal signals** (live, local panes; spec section 7): each terminal
 view's delegate is a `TerminalDelegateProxy` that forwards to its
@@ -81,6 +91,8 @@ receipt with source `.terminal`:
   or re-send progress while it waits to ask).
 - OSC 133;D (shell integration, zsh) in a pane with an agent state → ended,
   and the live title is marked stale: the dot clears as the agent exits.
+- OSC 9;4 pause (state 4) reports nothing; set, error and indeterminate are
+  running, remove is done.
 - BEL in an agent pane not in view → the finished banner. Never yellow.
 - Only the main registry listens: a remote project's panes (another Mac's)
   never drive this Mac's state. Ghostty rate-limits desktop notifications to

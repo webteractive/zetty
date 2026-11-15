@@ -238,8 +238,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
 
         // Agent needs-attention notifications (two levels, config-gated).
         UNUserNotificationCenter.current().delegate = self
-        tvc.onAgentNeedsAttention = { [weak self] surface, kind, project in
-            self?.agentNeedsAttention(surface: surface, kind: kind, project: project)
+        tvc.onAgentNeedsAttention = { [weak self] surface, kind, project, message in
+            self?.agentNeedsAttention(surface: surface, kind: kind, project: project, message: message)
         }
         tvc.onAgentTurnFinished = { [weak self] surface, kind, project, message in
             self?.agentTurnFinished(surface: surface, kind: kind, project: project, message: message)
@@ -1708,7 +1708,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     /// posted whenever the pane isn't in view (`isPaneInView`), Zetty in
     /// front included. Gating uses the project's RESOLVED settings
     /// (per-project override folded over the global notify-* keys).
-    private func agentNeedsAttention(surface: Surface, kind: AgentKind, project: ProjectRuntime) {
+    private func agentNeedsAttention(surface: Surface, kind: AgentKind, project: ProjectRuntime,
+                                     message reported: String? = nil) {
         let resolved = resolvedSettings(for: project)
         if resolved.notifySound {
             NSSound(named: "Ping")?.play()
@@ -1719,8 +1720,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         // A banner whenever you can't see the pane — another project, tab or
         // window, or Zetty in the background — not only while Zetty is.
         guard resolved.notifySystem, !paneInView(surface) else { return }
-        // Read on main, before the authorization callback hops off it.
-        let message = terminalViewController?.attentionMessage(for: surface.id)
+        // Read on main, before the authorization callback hops off it. The
+        // report's own words first (a Codex approval notice), else what the
+        // mod's snapshot says the agent is waiting on.
+        let message = reported ?? terminalViewController?.attentionMessage(for: surface.id)
         let center = UNUserNotificationCenter.current()
         center.requestAuthorization(options: [.alert, .sound]) { granted, _ in
             guard granted else { return }
@@ -1762,8 +1765,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
                 content.body = "\(kind.displayName.capitalized) finished in \(project.name)"
             }
             content.userInfo = ["pane": SessionPersistence.shortID(for: surface.id)]
-            center.add(UNNotificationRequest(identifier: UUID().uuidString, content: content, trigger: nil))
+            center.add(UNNotificationRequest(identifier: Self.finishedNotificationID(for: surface),
+                                             content: content, trigger: nil))
         }
+    }
+
+    /// One "finished" banner per pane at a time, so a failure banner for the
+    /// same moment can take its place (one moment, one banner).
+    private static func finishedNotificationID(for surface: Surface) -> String {
+        "zetty.finished.\(surface.id.uuidString)"
     }
 
     /// An agent's turn ended in an API error or a refusal. Same gates as
@@ -1786,7 +1796,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             content.title = "Claude stopped: \(failure)"
             content.body = "\(project.name) — \(surface.workingDir)"
             content.userInfo = ["pane": SessionPersistence.shortID(for: surface.id)]
-            center.add(UNNotificationRequest(identifier: UUID().uuidString, content: content, trigger: nil))
+            // The finished banner's identifier: a "finished" a hook posted a
+            // moment earlier for this same turn is replaced, not doubled.
+            center.add(UNNotificationRequest(identifier: Self.finishedNotificationID(for: surface),
+                                             content: content, trigger: nil))
         }
     }
 

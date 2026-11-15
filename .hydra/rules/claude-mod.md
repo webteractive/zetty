@@ -105,8 +105,10 @@ so it reads as "my change did nothing".
   `classic.PreToolUse` / `classic.PostToolUse` → running (written only when
   the turn wasn't running, so not per tool call; this is what turns a pane
   green after an approval or a subagent/background wake);
-  `classic.PermissionRequest` → `waiting` with the tool as the attention
-  message (always written: a new request is a new moment);
+  `classic.PermissionRequest` → `waiting` with the tool's NAME as the
+  attention message, never its input (Notification Center keeps what it
+  shows, and a command or path can hold a secret; 0.7.2), always written: a
+  new request is a new moment;
   `classic.Notification` → `waiting` for `permission_prompt` /
   `elicitation_dialog`, otherwise the message only (decisions only:
   `idle_prompt` is not "needs you"); `classic.StopFailure` → idle with
@@ -211,8 +213,12 @@ so it reads as "my change did nothing".
 - **The first batch never notifies.** `AgentUsageWatcher` flags the read made
   at `start()`: those snapshots describe turns that ended before this launch,
   the same reason the hook replay stays silent.
-- **The attention message is read from the FILE at notification time**
-  (`attentionMessage(for:)`), not from the store. The mod's
+- **The attention message is the report's own when it carried one** (a Codex
+  approval notice, the mod's report), else **read from the FILE at
+  notification time** (`attentionMessage(for:)`), not from the store, and
+  only while that snapshot is shown and `waiting`: `session.end` clears the
+  attention (0.7.2), and an older snapshot's leftover question must never
+  name a later agent's prompt. The mod's
   `classic.PermissionRequest` / `classic.Notification` hooks write the
   snapshot BEFORE calling `next`, so when the settings hook beneath raises
   needs-attention first (the hook watcher polls every 0.5 s, the usage watcher

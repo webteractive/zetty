@@ -3,9 +3,16 @@ import GhosttyTerminal
 
 /// Sits in a terminal view's delegate slot in front of its `TerminalViewState`.
 ///
-/// It forwards every callback the state takes, so the state behaves exactly as
-/// before, and passes on the ones that can say what an agent is doing as
-/// `onSignal`. It also takes OSC 9;4 progress, which the state does not
+/// It forwards every delegate callback the state takes, and passes on the
+/// ones that can say what an agent is doing as `onSignal`.
+///
+/// Not quite transparent: the pinned wrapper also casts its delegate to
+/// `TerminalViewState` directly in two places (`AppTerminalView+Lifecycle`:
+/// replaying a pending `requestFocus()` on attach, and adopting the system
+/// color scheme through the state). With the proxy in the slot both take their
+/// other branch. Zetty uses neither — it never calls the state's
+/// `requestFocus()`, and the other branch still sets the scheme on the
+/// controller — but check both casts on every bump. It also takes OSC 9;4 progress, which the state does not
 /// publish at all (the wrapper only hands it to a delegate adopting
 /// `TerminalSurfaceProgressReportDelegate`).
 ///
@@ -72,11 +79,13 @@ public final class TerminalDelegateProxy:
         onSignal?(.commandFinished(exitCode: exitCode))
     }
 
+    /// OSC 9;4: set (1), error (2) and indeterminate (3) mean working;
+    /// remove (0) means done. Pause (4) says neither, so it reports nothing.
     public func terminalDidReportProgress(state progress: TerminalProgressState, percent: Int?) {
-        if case .remove = progress {
-            onSignal?(.progress(active: false))
-        } else {
-            onSignal?(.progress(active: true))
+        switch progress {
+        case .remove: onSignal?(.progress(active: false))
+        case .set, .error, .indeterminate: onSignal?(.progress(active: true))
+        case .pause: break
         }
     }
 }

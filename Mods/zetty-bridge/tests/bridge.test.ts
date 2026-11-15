@@ -161,6 +161,8 @@ test('a permission request writes waiting before the hooks beneath run', async (
   expect(written[1]?.snapshot.turn.state).toBe('waiting')
   expect(written[1]?.snapshot.attention?.type).toBe('permission_prompt')
   expect(written[1]?.snapshot.attention?.message).toContain('Bash')
+  // Notification Center keeps what it shows; a command can hold a secret.
+  expect(written[1]?.snapshot.attention?.message).not.toContain('rm -rf build')
 })
 
 test('a tool call after an approval writes running', async ($, on) => {
@@ -260,4 +262,15 @@ test('a session start stamps its time', async ($, on) => {
   on('session.start', (_$, e) => ({ cwd: (e as any).cwd }))
   await $.session.start({ source: 'startup', cwd: '/work/app' } as any)
   expect(written[0]?.snapshot.turn).toEqual({ state: 'idle', at: 1000 })
+})
+
+test('a session end clears what it was asking', async ($, on) => {
+  const written = world(on, IN_PANE)
+  beneath(on, written, ['classic.PermissionRequest'])
+  on('session.end', () => ({ sessionId: 'sess-1' }))
+
+  await $.classic.PermissionRequest({ tool_name: 'Bash', tool_input: {} } as any)
+  await $.session.end({ reason: 'prompt_input_exit' } as any)
+
+  expect(written[written.length - 1]?.snapshot.attention).toBe(undefined)
 })

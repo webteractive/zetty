@@ -38,6 +38,11 @@ public final class AgentDetector {
         board.noteFinished(pane: session, at: at)
     }
 
+    /// Forgets every session not in `ids` (closed panes, hibernated projects).
+    public func prune(keeping ids: Set<UUID>) {
+        board.prune(keeping: ids)
+    }
+
     /// Clears a session's state (e.g. when its surface closes).
     public func clear(session: UUID) {
         board.clear(pane: session)

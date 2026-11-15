@@ -253,3 +253,13 @@ private func report(_ state: AgentReport.State, at: TimeInterval, from source: A
     board.apply(long, to: pane, replay: true, now: now)
     #expect(board.state(for: pane).status == .running)
 }
+
+@Test func pruneForgetsPanesThatAreGone() {
+    let board = AgentStatusBoard()
+    let kept = UUID()
+    board.apply(report(.running, at: 10), to: pane, replay: false, now: 10)
+    board.apply(report(.running, at: 10), to: kept, replay: false, now: 10)
+    board.prune(keeping: [kept])
+    #expect(board.state(for: pane) == AgentState())
+    #expect(board.state(for: kept).status == .running)
+}

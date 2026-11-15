@@ -35,11 +35,12 @@ public final class AttentionInbox {
     /// The first sync after a relaunch's replay. A restored entry survives
     /// only if its pane is still waiting, read mark and all; a pane waiting
     /// now that the restored inbox didn't hold is replayed state, true but not
-    /// news, so it starts read.
-    public func settleAfterReplay(needsAttention current: Set<UUID>) {
+    /// news, so it starts read — unless a live report raised it (`raisedLive`)
+    /// in the moments before the replay finished.
+    public func settleAfterReplay(needsAttention current: Set<UUID>, raisedLive: Set<UUID> = []) {
         let restored = needsAttention
         update(needsAttention: current)
-        acknowledged.formUnion(current.subtracting(restored))
+        acknowledged.formUnion(current.subtracting(restored).subtracting(raisedLive))
     }
 
     /// A repeat request in a pane already waiting: its episode is unread again.

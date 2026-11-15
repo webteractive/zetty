@@ -162,6 +162,11 @@ public final class AgentStatusBoard {
         panes[id] = nil
     }
 
+    /// Forgets every pane not in `ids` (closed, or its project hibernated).
+    public func prune(keeping ids: Set<UUID>) {
+        panes = panes.filter { ids.contains($0.key) }
+    }
+
     /// For `AgentDetector`'s output-heuristic path, which predates reports.
     func overwrite(_ state: AgentState, pane id: UUID) {
         var pane = panes[id] ?? Pane()

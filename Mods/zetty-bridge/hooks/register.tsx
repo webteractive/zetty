@@ -108,13 +108,11 @@ function clearWaiting(): void {
   waitingLoops = new Set()
 }
 
-// What a permission request is for, short enough for a notification.
-function describeTool(name: string, input: unknown): string {
-  const detail = input !== null && typeof input === 'object'
-    ? Object.values(input as Record<string, unknown>).find(v => typeof v === 'string') as string | undefined
-    : undefined
-  const short = detail === undefined ? '' : `: ${detail.length > 120 ? `${detail.slice(0, 117)}...` : detail}`
-  return `Claude needs your permission to use ${name}${short}`
+// What a permission request is for, as a notification says it. The tool's
+// name only: Notification Center keeps what it shows, and a command or a path
+// in the tool's input can hold a secret.
+function describeTool(name: string): string {
+  return `Claude needs your permission to use ${name}`
 }
 
 // MARK: - Talking to Zetty
@@ -549,7 +547,7 @@ export const register: Register = on => {
   on('classic.PermissionRequest', async ($, e, next) => {
     const loop = e.agent_id ?? 'main'
     waitingLoops.add(loop)
-    attention = { message: describeTool(e.tool_name, e.tool_input), type: 'permission_prompt' }
+    attention = { message: describeTool(e.tool_name), type: 'permission_prompt' }
     await moveTurn($, { state: 'waiting', loop }, true)
     return next(e)
   })
@@ -587,6 +585,9 @@ export const register: Register = on => {
 
   on('session.end', async ($, e, next) => {
     clearWaiting()
+    // What it was asking no longer stands; left in the file it would name a
+    // later agent's prompt in this pane.
+    attention = undefined
     // After a /clear the process goes on under a new session id.
     await moveTurn($, e.reason === 'clear' ? { state: 'idle' } : { state: 'ended', reason: e.reason }, true)
     return next(e)

@@ -655,7 +655,7 @@ final class TerminalViewController: NSViewController {
                 for surface in tree.layout.surfaces {
                     guard let command = foregroundBySurface[surface.id], !command.isEmpty,
                           let kind = AgentRegistry.match(command: command)?.kind else { continue }
-                    found.append((surface: surface.id, cwd: currentDirectory(for: surface), agent: kind))
+                    found.append((surface: surface.id, cwd: cachedDirectory(for: surface), agent: kind))
                 }
             }
         }
@@ -803,17 +803,38 @@ final class TerminalViewController: NSViewController {
         // names and dots, and they froze until you clicked back in. Skipped
         // only when nothing of Zetty can be seen.
         guard view.window?.occlusionState.contains(.visible) == true else { return }
-        guard let zmx = ZmxRunner.locate() else { return }
         let ids = allSurfaceIDs
+        // Panes closed (or their projects hibernated) since the last tick.
+        pruneClosedPaneState(keeping: Set(ids))
+        // One tick at a time: with zmx or ps slow, overlapping ticks would
+        // count two misses a second apart and end a live agent early.
+        guard !foregroundPollInFlight else { return }
+        foregroundPollInFlight = true
+        let zmx = ZmxRunner.locate()
         let wanted = Set(ids.map(SessionPersistence.sessionName(for:)))
         DispatchQueue.global(qos: .utility).async { [weak self] in
+            // Each pane's cwd file, read here rather than on main: a stat and
+            // a read per pane every tick.
+            var cwdFiles: [UUID: StampedPath] = [:]
+            for id in ids { cwdFiles[id] = PaneCwdStore.readStamped(id) }
+            DispatchQueue.main.async { self?.ingestCwdFiles(cwdFiles, for: ids) }
             // Bounded: a hung zmx must not freeze identity for good.
+            guard let zmx else {
+                DispatchQueue.main.async { self?.foregroundPollInFlight = false }
+                return
+            }
             let listed = ZmxRunner.sessionPIDsIfListed(zmxPath: zmx, timeout: 2)
+            // The reading's own time: an agent ends when ps saw the shell, not
+            // when main got round to it (a SessionStart in between counts).
+            let readAt = Date().timeIntervalSince1970
             guard let listed, let ps = ZmxRunner.psSnapshot(timeout: 2) else {
                 // No answer: keep the last reading once, then stop trusting
                 // it — an unprobed pane falls back to reports, never to a
                 // stale identity.
-                DispatchQueue.main.async { self?.foregroundProbeFailed() }
+                DispatchQueue.main.async {
+                    self?.foregroundPollInFlight = false
+                    self?.foregroundProbeFailed()
+                }
                 return
             }
             // Sessions `zmx list` skipped or couldn't reach (another zmx
@@ -842,15 +863,13 @@ final class TerminalViewController: NSViewController {
             }
             DispatchQueue.main.async {
                 guard let self else { return }
+                self.foregroundPollInFlight = false
                 // Every tick, changed or not: two empty readings in a row end
                 // an agent that died without reporting (`AgentStatusBoard`).
-                let now = Date().timeIntervalSince1970
                 var ended = false
                 for id in ids {
-                    let result = self.agentDetector.observeForeground(commands[id], session: id, now: now)
+                    let result = self.agentDetector.observeForeground(commands[id], session: id, now: readAt)
                     if result.accepted && result.changedStatus { ended = true }
-                    // The cwd file carries its own time; persist what moved.
-                    self.refreshCurrentDirectory(id)
                 }
                 if ended {
                     self.setNeedsChromeRefresh(tabBar: true, sidebar: true)
@@ -909,6 +928,29 @@ final class TerminalViewController: NSViewController {
 
     /// Consecutive probe ticks with no answer from zmx or ps.
     private var foregroundProbeFailures = 0
+    /// A probe tick is out (off-main); the next waits for it.
+    private var foregroundPollInFlight = false
+
+    /// Takes the cwd files read off-main and persists each pane's folder
+    /// where it moved.
+    private func ingestCwdFiles(_ files: [UUID: StampedPath], for ids: [UUID]) {
+        for id in ids {
+            cwdFileStamps[id] = files[id]
+            refreshCurrentDirectory(id)
+        }
+    }
+
+    /// Drops per-pane state for panes no longer in the workspace (closed, or
+    /// in a hibernated project): the status board, folder stamps and stale
+    /// titles were otherwise kept for every pane ever opened.
+    private func pruneClosedPaneState(keeping ids: Set<UUID>) {
+        agentDetector.prune(keeping: ids)
+        osc7Stamps = osc7Stamps.filter { ids.contains($0.key) }
+        agentCwdStamps = agentCwdStamps.filter { ids.contains($0.key) }
+        cwdFileStamps = cwdFileStamps.filter { ids.contains($0.key) }
+        suppressedLiveTitles = suppressedLiveTitles.filter { ids.contains($0.key) }
+        staleTitleSurfaces.formIntersection(ids)
+    }
 
     private func foregroundProbeFailed() {
         foregroundProbeFailures += 1
@@ -1526,14 +1568,24 @@ final class TerminalViewController: NSViewController {
     /// the folder the agent reported; else the persisted one; else the spawn
     /// folder. Every reader of "where the pane is" goes through this: status
     /// bar, tile footers, Open/Reveal, tab title, file tree, new splits.
+    ///
+    /// Reads the pane's cwd file fresh (one file): for the readers that act on
+    /// one pane. `cachedDirectory(for:)` serves the ones that walk every pane.
     func currentDirectory(for surface: Surface?) -> String {
         guard let surface else { return Self.normalizedPath(NSHomeDirectory()) }
+        cwdFileStamps[surface.id] = PaneCwdStore.readStamped(surface.id)
         return Self.normalizedPath(chosenDirectory(for: surface))
+    }
+
+    /// `currentDirectory(for:)` without touching the disk: the cwd file as the
+    /// last 3 s tick read it.
+    func cachedDirectory(for surface: Surface) -> String {
+        Self.normalizedPath(chosenDirectory(for: surface))
     }
 
     private func chosenDirectory(for surface: Surface) -> String {
         CurrentDirectory.choose(
-            cwdFile: PaneCwdStore.readStamped(surface.id),
+            cwdFile: cwdFileStamps[surface.id],
             osc7: osc7Stamps[surface.id],
             agent: agentIdentity(for: surface) != nil ? agentCwdStamps[surface.id] : nil,
             persisted: surface.currentDirectory,
@@ -1542,6 +1594,9 @@ final class TerminalViewController: NSViewController {
 
     /// When each pane's OSC 7 folder last changed (it carries no time itself).
     private var osc7Stamps: [UUID: StampedPath] = [:]
+    /// Each pane's cwd file as last read (off-main every tick, or fresh by a
+    /// single-pane reader).
+    private var cwdFileStamps: [UUID: StampedPath] = [:]
     /// The folder each pane's agent last reported, with the report's time.
     private var agentCwdStamps: [UUID: StampedPath] = [:]
 
@@ -1886,8 +1941,12 @@ final class TerminalViewController: NSViewController {
                let surface = workspace.surface(with: usage.surface) {
                 let result = agentDetector.apply(report: report, session: usage.surface,
                                                  replay: isInitial, now: now)
-                accepted = accepted || result.accepted
-                if handleAgentResult(result, surface: surface, project: project, message: nil, report: report) {
+                accepted = accepted || Self.movesAttention(result)
+                // A turn that just failed posts the failure banner below; a
+                // "finished" one too would be two banners for one moment.
+                let failedNow = usage.turnFailed && !wasFailed
+                if handleAgentResult(result, surface: surface, project: project, message: nil,
+                                     report: report, postFinished: !failedNow) {
                     dotsChanged = true
                 }
             }
@@ -1964,10 +2023,14 @@ final class TerminalViewController: NSViewController {
     func attentionMessage(for surfaceID: UUID) -> String? {
         let url = AgentUsageWatcher.directory
             .appendingPathComponent(AgentUsage.fileName(for: surfaceID))
-        if let data = try? Data(contentsOf: url), let usage = AgentUsage.parse(data: data) {
-            return usage.attention?.message
-        }
-        return agentUsage.usage(for: surfaceID)?.attention?.message
+        let usage = (try? Data(contentsOf: url)).flatMap(AgentUsage.parse(data:))
+            ?? agentUsage.usage(for: surfaceID)
+        // Only a snapshot that still describes this pane's agent, waiting: a
+        // Claude that quit mid-prompt left its question in the file, and a
+        // later agent's needs-you must not show it.
+        guard let usage, usage.turnState == .waiting,
+              usage.isShown(foreground: foregroundBySurface[surfaceID]) else { return nil }
+        return usage.attention?.message
     }
 
     /// Trims the hook-event log to a bounded tail, synchronously and BEFORE the
@@ -2016,9 +2079,10 @@ final class TerminalViewController: NSViewController {
 
     /// Fired when a report raises "needs you" (a decision; once per 2 s
     /// moment, repeats included, never during replay). Payload: pane surface,
-    /// agent kind, and the owning project (per-project notification overrides
-    /// are resolved by the receiver).
-    var onAgentNeedsAttention: ((Surface, AgentKind, ProjectRuntime) -> Void)?
+    /// agent kind, the owning project (per-project notification overrides are
+    /// resolved by the receiver), and the agent's own words when the report
+    /// carried them.
+    var onAgentNeedsAttention: ((Surface, AgentKind, ProjectRuntime, String?) -> Void)?
 
     /// Fired when a pane's agent finished a turn (running → idle, or a
     /// terminal notice classified as finished). The message is the agent's own
@@ -3407,7 +3471,7 @@ final class TerminalViewController: NSViewController {
             let report = event.report()
             let result = agentDetector.apply(report: report, session: surface.id,
                                              replay: replay, now: now)
-            accepted = accepted || result.accepted
+            accepted = accepted || Self.movesAttention(result)
             if handleAgentResult(result, surface: surface, project: project, message: nil, report: report) {
                 dotsChanged = true
             }
@@ -3452,7 +3516,7 @@ final class TerminalViewController: NSViewController {
     @discardableResult
     private func handleAgentResult(_ result: AgentApplyResult, surface: Surface,
                                    project: ProjectRuntime, message: String?,
-                                   report: AgentReport? = nil) -> Bool {
+                                   report: AgentReport? = nil, postFinished: Bool = true) -> Bool {
         if result.accepted, let report, let cwd = report.session?.cwd, !cwd.isEmpty {
             // Clamped to now: a report stamped in the future must not pin the
             // folder against everything the shell reports after it.
@@ -3462,13 +3526,26 @@ final class TerminalViewController: NSViewController {
         if result.raisedAttention, let kind = result.state.kind {
             // A repeat request in a pane already waiting is news again.
             attentionInbox.reopen(surface.id)
-            onAgentNeedsAttention?(surface, kind, project)
+            // Raised live before the replay settled the inbox: still news.
+            if !hasReplayedAgentEvents { raisedBeforeReplay.insert(surface.id) }
+            // The agent's own words when the report carried them (a Codex
+            // approval notice, the mod's message).
+            onAgentNeedsAttention?(surface, kind, project, report?.message ?? message)
         }
-        if result.finished, let kind = result.state.kind {
+        if result.finished, postFinished, let kind = result.state.kind {
             onAgentTurnFinished?(surface, kind, project, message)
         }
         return result.accepted && result.changedStatus
     }
+
+    /// Whether a result can change who is waiting or unread, so the inbox
+    /// and badge need recounting (not every tool call's running-while-running).
+    private static func movesAttention(_ result: AgentApplyResult) -> Bool {
+        result.accepted && (result.changedStatus || result.raisedAttention)
+    }
+
+    /// Panes a live report raised before the startup replay finished.
+    private var raisedBeforeReplay: Set<UUID> = []
 
     /// A live pane's terminal reported a notification, progress, a finished
     /// command or a bell (spec 2026-11-14, section 7). The main registry
@@ -3486,7 +3563,7 @@ final class TerminalViewController: NSViewController {
             if handleAgentResult(result, surface: surface, project: project, message: message) {
                 setNeedsChromeRefresh(tabBar: true, sidebar: true)
             }
-            if result.accepted { attentionChanged() }
+            if Self.movesAttention(result) { attentionChanged() }
         }
 
         func finished(_ agent: AgentKind, message: String?) {
@@ -3614,7 +3691,8 @@ final class TerminalViewController: NSViewController {
         // then would drop every restored entry (and its read mark).
         guard hasReplayedAgentEvents else { return }
         if !attentionInboxSettled {
-            attentionInbox.settleAfterReplay(needsAttention: needsAttention)
+            attentionInbox.settleAfterReplay(needsAttention: needsAttention, raisedLive: raisedBeforeReplay)
+            raisedBeforeReplay = []
             attentionInboxSettled = true
         } else {
             attentionInbox.update(needsAttention: needsAttention)
@@ -4600,7 +4678,7 @@ final class TerminalViewController: NSViewController {
                     StatusSnapshot.Pane(
                         id: SessionPersistence.shortID(for: surface.id),
                         title: displayTitle(for: surface),
-                        cwd: currentDirectory(for: surface),
+                        cwd: cachedDirectory(for: surface),
                         tool: foregroundBySurface[surface.id].flatMap { $0.isEmpty ? nil : $0 },
                         agentStatus: displayedStatus(for: surface.id)?.rawValue,
                         isFocused: tileFocus.map { $0 == surface.id }
