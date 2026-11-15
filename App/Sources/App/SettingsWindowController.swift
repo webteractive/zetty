@@ -881,8 +881,8 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
 
         stack.addArrangedSubview(sectionHeader("Notifications"))
         stack.addArrangedSubview(caption(
-            "When an agent needs attention. The badge shows the attention-pane "
-            + "count; macOS notifications fire only while Zetty is in the background."
+            "When an agent needs a decision. The badge shows the unread attention-pane "
+            + "count; macOS notifications fire whenever you can't see the pane."
         ))
         notifySoundSwitch.target = self
         notifySoundSwitch.action = #selector(notifySoundToggled(_:))

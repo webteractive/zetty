@@ -100,7 +100,7 @@ so it reads as "my change did nothing".
   ("zetty-bridge: its classic.Notification hook was skipped.
   cc-plugin-sec-default runs first and sent the event on past it",
   2026-11-15). Codex and Hermes have no mod at all.
-- **What the mod reports (0.7.0)**, each written BEFORE `next` so a later
+- **What the mod reports (0.7.0; loops 0.7.1)**, each written BEFORE `next` so a later
   mod that stops the chain can't hide it: `turn.start` → running;
   `classic.PreToolUse` / `classic.PostToolUse` → running (written only when
   the turn wasn't running, so not per tool call; this is what turns a pane
@@ -113,7 +113,14 @@ so it reads as "my change did nothing".
   reason `error`; main-loop `turn.complete` → idle with its reason;
   `session.end` → ended (`clear` → idle). `turn.at` (ms) is stamped on each
   transition and not on `session.measure`. An older Zetty reads `waiting`
-  as idle; `SNAPSHOT_VERSION` stays 1. `classic.PreToolUse`'s `e` is the
+  as idle; `SNAPSHOT_VERSION` stays 1. **Loops (0.7.1):** a permission
+  request or decision notification records its loop (`agent_id`, else
+  `main`) in `waitingLoops` and writes it as `turn.loop`; a tool event only
+  marks the turn running once no other loop's prompt is open (a parallel
+  subagent's tool call must not clear another's prompt). `session.start` also
+  stamps `turn.at`. `classic.PreToolUse`/`PostToolUse` are often skipped
+  here by another mod earlier in the chain (cc-plugin-sec-default, seen
+  2026-11-16), so the settings hooks carry the same loop rule. `classic.PreToolUse`'s `e` is the
   tool-call envelope and can't be fired from a test, so it shares
   `toolActivity` with PostToolUse, which is tested. The state writes never
   throw (`moveTurn`): these classic hooks gate tool calls.

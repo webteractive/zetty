@@ -5,8 +5,10 @@ import Foundation
 private let pane = UUID(uuidString: "00000000-0000-0000-0000-0000000000B1")!
 
 private func report(_ state: AgentReport.State, at: TimeInterval, from source: AgentReport.Source = .hook,
-                    agent: AgentKind = .claude, session: AgentSession? = nil) -> AgentReport {
-    AgentReport(source: source, agent: agent, state: state, at: at, session: session)
+                    agent: AgentKind = .claude, session: AgentSession? = nil, loop: String? = nil) -> AgentReport {
+    var r = AgentReport(source: source, agent: agent, state: state, at: at, session: session)
+    r.loop = loop
+    return r
 }
 
 @Test func newerReportWins() {
@@ -62,11 +64,13 @@ private func report(_ state: AgentReport.State, at: TimeInterval, from source: A
 }
 
 @Test func replayAgesOutOldYellow() {
+    // Old, and the probe doesn't cover the pane (nil): nothing can confirm it.
     let now: TimeInterval = 100_000
     let old = AgentStatusBoard()
     let aged = old.apply(report(.needsAttention, at: now - 901), to: pane, replay: true, now: now)
-    #expect(old.state(for: pane).status == .idle)
     #expect(aged.raisedAttention == false)
+    old.observeForeground(nil, pane: pane, now: now + 3)
+    #expect(old.state(for: pane).status == .idle)
 
     let fresh = AgentStatusBoard()
     let kept = fresh.apply(report(.needsAttention, at: now - 60), to: pane, replay: true, now: now)
@@ -78,6 +82,77 @@ private func report(_ state: AgentReport.State, at: TimeInterval, from source: A
     let now: TimeInterval = 100_000
     let board = AgentStatusBoard()
     board.apply(report(.running, at: now - 901), to: pane, replay: true, now: now)
+    board.observeForeground(nil, pane: pane, now: now + 3)
+    #expect(board.state(for: pane).status == .idle)
+}
+
+@Test func replayKeepsAnOldPromptTheAgentIsStillShowing() {
+    // A permission prompt left for an hour, then a relaunch: the agent is
+    // still in the foreground, so the decision is still pending.
+    let now: TimeInterval = 100_000
+    let board = AgentStatusBoard()
+    board.apply(report(.needsAttention, at: now - 3600), to: pane, replay: true, now: now)
+    let probed = board.observeForeground("claude", pane: pane, now: now + 3)
+    #expect(probed.changedStatus == false)
+    board.observeForeground(nil, pane: pane, now: now + 6)   // a later unprobed tick changes nothing
+    #expect(board.state(for: pane).status == .needsAttention)
+}
+
+@Test func replayAgesALegacyLineAtOnce() {
+    // A line with no time (0) is never trusted, probe or not.
+    let board = AgentStatusBoard()
+    board.apply(report(.needsAttention, at: 0), to: pane, replay: true, now: 100_000)
+    #expect(board.state(for: pane).status == .idle)
+}
+
+// MARK: - Which loop is waiting (parallel subagents)
+
+@Test func anotherLoopsToolCallLeavesThePromptPending() {
+    let board = AgentStatusBoard()
+    board.apply(report(.needsAttention, at: 10, loop: "agent-a"), to: pane, replay: false, now: 10)
+    let other = board.apply(report(.running, at: 11, loop: "agent-b"), to: pane, replay: false, now: 11)
+    #expect(other.changedStatus == false)
+    #expect(board.state(for: pane).status == .needsAttention)
+    board.apply(report(.running, at: 12, loop: "main"), to: pane, replay: false, now: 12)
+    #expect(board.state(for: pane).status == .needsAttention)
+}
+
+@Test func theAskingLoopsToolCallResolvesItsPrompt() {
+    let board = AgentStatusBoard()
+    board.apply(report(.needsAttention, at: 10, loop: "agent-a"), to: pane, replay: false, now: 10)
+    board.apply(report(.running, at: 15, loop: "agent-a"), to: pane, replay: false, now: 15)
+    #expect(board.state(for: pane).status == .running)
+}
+
+@Test func twoPendingPromptsNeedBothResolved() {
+    let board = AgentStatusBoard()
+    board.apply(report(.needsAttention, at: 10, loop: "agent-a"), to: pane, replay: false, now: 10)
+    board.apply(report(.needsAttention, at: 11, loop: "agent-b"), to: pane, replay: false, now: 11)
+    board.apply(report(.running, at: 12, loop: "agent-a"), to: pane, replay: false, now: 12)
+    #expect(board.state(for: pane).status == .needsAttention)
+    board.apply(report(.running, at: 13, loop: "agent-b"), to: pane, replay: false, now: 13)
+    #expect(board.state(for: pane).status == .running)
+}
+
+@Test func aSameMomentDuplicateStillNamesItsLoop() {
+    // The mod's report and the hook's for one prompt: the older one is
+    // rejected, but its loop is still the one waiting.
+    let board = AgentStatusBoard()
+    board.apply(report(.needsAttention, at: 10.004, from: .hook, loop: "agent-a"), to: pane, replay: false, now: 10.01)
+    board.apply(report(.needsAttention, at: 10.000, from: .mod, loop: "main"), to: pane, replay: false, now: 10.01)
+    board.apply(report(.running, at: 12, loop: "agent-a"), to: pane, replay: false, now: 12)
+    #expect(board.state(for: pane).status == .needsAttention)
+}
+
+@Test func aReportWithoutALoopResolvesEveryPrompt() {
+    // A new prompt (UserPromptSubmit), a turn's end, or an older helper
+    // that names no loop: authoritative for the whole pane.
+    let board = AgentStatusBoard()
+    board.apply(report(.needsAttention, at: 10, loop: "agent-a"), to: pane, replay: false, now: 10)
+    board.apply(report(.running, at: 11), to: pane, replay: false, now: 11)
+    #expect(board.state(for: pane).status == .running)
+    board.apply(report(.needsAttention, at: 20, loop: "agent-a"), to: pane, replay: false, now: 20)
+    board.apply(report(.idle, at: 21, loop: "agent-b"), to: pane, replay: false, now: 21)
     #expect(board.state(for: pane).status == .idle)
 }
 

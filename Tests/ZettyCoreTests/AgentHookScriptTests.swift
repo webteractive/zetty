@@ -127,3 +127,33 @@ private func runHook(args: [String], stdin: String, extraEnv: [String: String]) 
     // Sub-second, so two events in one second still order.
     #expect(lines.last?.contains(#""ts": "#) == true)
 }
+
+private func loop(of lines: [String]) -> String?? {
+    guard let line = lines.last, let event = AgentEvent.parse(line: line) else { return nil }
+    return .some(event.report().loop)
+}
+
+@Test func toolEventsNameTheirLoop() throws {
+    let sub = try runHook(args: ["emit", "claude", "running"],
+                          stdin: #"{"cwd":"/p","hook_event_name":"PostToolUse","agent_id":"agent-a"}"#, extraEnv: [:])
+    #expect(loop(of: sub) == .some("agent-a"))
+    let main = try runHook(args: ["emit", "claude", "needsAttention"],
+                           stdin: #"{"cwd":"/p","hook_event_name":"PermissionRequest"}"#, extraEnv: [:])
+    #expect(loop(of: main) == .some("main"))
+    let prompt = try runHook(args: ["emit", "claude", "running"],
+                             stdin: #"{"cwd":"/p","hook_event_name":"UserPromptSubmit"}"#, extraEnv: [:])
+    #expect(loop(of: prompt) == .some(nil))
+}
+
+@Test func nonDecisionNotificationsAreNotEmitted() throws {
+    // A session started before the Notification hook had its matcher still
+    // fires it for idle_prompt; the helper (re-read on every call) drops it.
+    let idle = try runHook(args: ["emit", "claude", "needsAttention"],
+                           stdin: #"{"cwd":"/p","hook_event_name":"Notification","notification_type":"idle_prompt"}"#,
+                           extraEnv: [:])
+    #expect(idle.isEmpty)
+    let ask = try runHook(args: ["emit", "claude", "needsAttention"],
+                          stdin: #"{"cwd":"/p","hook_event_name":"Notification","notification_type":"permission_prompt"}"#,
+                          extraEnv: [:])
+    #expect(ask.count == 1)
+}

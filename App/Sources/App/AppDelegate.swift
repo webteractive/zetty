@@ -1702,11 +1702,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
 
     // MARK: - Agent notifications
 
-    /// An agent transitioned into needs-attention. Config-gated levels:
-    /// attention sound, Dock badge (follows the attention count, applied in
-    /// the count callback), and a macOS notification — posted only while
-    /// Zetty is in the background (in front, the sound + yellow dots
-    /// already tell the story). Gating uses the project's RESOLVED settings
+    /// An agent raised "needs you" (a decision; repeats included). Config-
+    /// gated levels: attention sound, Dock badge (follows the attention
+    /// count, applied in the count callback), and a macOS notification —
+    /// posted whenever the pane isn't in view (`isPaneInView`), Zetty in
+    /// front included. Gating uses the project's RESOLVED settings
     /// (per-project override folded over the global notify-* keys).
     private func agentNeedsAttention(surface: Surface, kind: AgentKind, project: ProjectRuntime) {
         let resolved = resolvedSettings(for: project)

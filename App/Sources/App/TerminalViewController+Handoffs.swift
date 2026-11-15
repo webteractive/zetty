@@ -84,8 +84,8 @@ extension TerminalViewController {
     }
 
     /// What is in each pane's foreground, for a hibernation about to happen:
-    /// the reading `hibernate-after` just took, or a fresh one when Zetty is
-    /// in the background and the probe's own is stale. nil is "use the
+    /// the reading `hibernate-after` just took, or a fresh one when Zetty's
+    /// window is hidden and the probe's own is stale. nil is "use the
     /// probe's". Both the handoff capture and the teardown plan read it, so
     /// a scripted hibernate neither misses an agent nor types `exit` into one.
     func foregroundForHibernation(_ surfaceIDs: [UUID], request: HandoffRequest) -> [UUID: String]? {
@@ -431,7 +431,7 @@ extension TerminalViewController {
 
     /// The backstop for a pane whose harness never reports through a hook.
     /// It takes its own reading: the poll behind `foregroundBySurface` stops
-    /// while Zetty is in the background, and a record left unconsumed has
+    /// while no Zetty window is on screen, and a record left unconsumed has
     /// its wake line typed into the pane again at the next launch.
     func scheduleHandoffConsume(_ surfaceID: UUID) {
         guard handoffWakeSurfaces.contains(surfaceID), let zmx = ZmxRunner.locate() else { return }
@@ -626,8 +626,8 @@ extension TerminalViewController {
     /// Three hops, because the truth is in three places. The idle clock and
     /// the hook states are here on main. What is really in each pane's
     /// foreground has to be read fresh off-main — the poll behind
-    /// `foregroundBySurface` stops while Zetty is in the background, which is
-    /// exactly when projects go idle. And whether an idle agent has a draft in
+    /// `foregroundBySurface` stops while no Zetty window is on screen, which
+    /// is exactly when projects go idle. And whether an idle agent has a draft in
     /// front of it, and when it last wrote its transcript, is on disk and on
     /// its screen.
     func evaluateAutoHibernation() {

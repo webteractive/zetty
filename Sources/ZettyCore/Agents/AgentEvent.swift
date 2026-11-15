@@ -35,9 +35,13 @@ public struct AgentEvent: Equatable, Sendable {
     /// When the hook fired, in epoch seconds with a sub-second fraction (the
     /// helper's `ts`). nil for a line from a helper older than the field.
     public let at: TimeInterval?
+    /// The agent loop a tool or permission event came from (`main` or a
+    /// subagent id); nil for every other event and for older helpers.
+    public let loop: String?
 
     public init(cwd: String, agent: AgentKind, event: Kind, surface: UUID? = nil,
-                session: String? = nil, configDirectory: String? = nil, at: TimeInterval? = nil) {
+                session: String? = nil, configDirectory: String? = nil, at: TimeInterval? = nil,
+                loop: String? = nil) {
         self.cwd = cwd
         self.agent = agent
         self.event = event
@@ -45,6 +49,7 @@ public struct AgentEvent: Equatable, Sendable {
         self.session = session
         self.configDirectory = configDirectory
         self.at = at
+        self.loop = loop
     }
 
     /// This event as a report for `AgentStatusBoard`. A line with no `ts`
@@ -58,8 +63,10 @@ public struct AgentEvent: Equatable, Sendable {
         case .needsAttention: state = .needsAttention
         case .ended: state = .ended
         }
-        return AgentReport(source: .hook, agent: agent, state: state, at: at ?? 0,
-                           session: session.map { AgentSession(id: $0, cwd: cwd) })
+        var report = AgentReport(source: .hook, agent: agent, state: state, at: at ?? 0,
+                                 session: session.map { AgentSession(id: $0, cwd: cwd) })
+        report.loop = loop
+        return report
     }
 
     /// `[A-Za-z0-9._-]{1,128}` — everything Claude and Codex emit, nothing a
@@ -107,8 +114,9 @@ public struct AgentEvent: Equatable, Sendable {
         let surface = (object["surface"] as? String).flatMap(UUID.init(uuidString:))
         let session = (object["session"] as? String).flatMap { isValidSessionID($0) ? $0 : nil }
         let at = (object["ts"] as? NSNumber)?.doubleValue
+        let loop = (object["loop"] as? String).flatMap { isValidSessionID($0) ? $0 : nil }
         return AgentEvent(cwd: cwd, agent: agent, event: kind, surface: surface, session: session,
-                          configDirectory: object["config"] as? String, at: at)
+                          configDirectory: object["config"] as? String, at: at, loop: loop)
     }
 
     private static func resolveAgent(_ raw: String) -> AgentKind? {

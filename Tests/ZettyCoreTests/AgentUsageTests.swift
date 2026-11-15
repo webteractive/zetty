@@ -237,7 +237,11 @@ private func snapshot(turn: String, updatedAt: Int = 1_794_726_713_000) -> Strin
 @Test func reportFallsBackToUpdatedAtForOlderMod() throws {
     let usage = try #require(parse(snapshot(turn: #"{"state":"idle","reason":"answer"}"#)))
     #expect(usage.turnAt == nil)
-    #expect(usage.report()?.at == 1_794_726_713)
+    // No transition time: the oldest possible report, so it never beats a
+    // hook's (an older mod rewrites it on every measurement). Ageing still
+    // reads when it was written.
+    #expect(usage.report()?.at == 0)
+    #expect(usage.report()?.confirmedAt == 1_794_726_713)
     #expect(usage.report()?.state == .idle)
 }
 
@@ -251,6 +255,13 @@ private func snapshot(turn: String, updatedAt: Int = 1_794_726_713_000) -> Strin
 
 @Test func endedSnapshotReportsEnded() throws {
     #expect(try #require(parse(snapshot(turn: #"{"state":"ended","at":5000}"#))).report()?.state == .ended)
+}
+
+@Test func waitingSnapshotNamesTheLoopThatAsked() throws {
+    let usage = try #require(parse(snapshot(turn: #"{"state":"waiting","at":5000,"loop":"agent-a"}"#)))
+    #expect(usage.report()?.loop == "agent-a")
+    let running = try #require(parse(snapshot(turn: #"{"state":"running","at":5000}"#)))
+    #expect(running.report()?.loop == nil)
 }
 
 @Test func waitingSnapshotIsShownLikeRunning() throws {

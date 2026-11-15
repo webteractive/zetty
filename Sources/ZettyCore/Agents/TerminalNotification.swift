@@ -1,5 +1,18 @@
 import Foundation
 
+/// What OSC 9;4 progress may say about an agent pane.
+public enum TerminalProgressPolicy {
+    /// The report a progress change makes, or nil for none. A set means
+    /// running and a clear ends a running turn, but neither moves a pane out
+    /// of "needs you": Claude may clear or re-send its progress while it waits
+    /// to ask, and the mod or a hook already raised that yellow.
+    public static func report(active: Bool, current: AgentStatus?) -> AgentReport.State? {
+        if current == .needsAttention { return nil }
+        if active { return .running }
+        return current == .running ? .idle : nil
+    }
+}
+
 /// What a desktop notification (OSC 9 / 777) from an agent pane means.
 public enum TerminalNotificationMeaning: Equatable, Sendable {
     /// The agent is blocked on a decision: "needs you", with its own words.

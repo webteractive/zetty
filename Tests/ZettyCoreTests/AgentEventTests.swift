@@ -87,3 +87,10 @@ import Testing
     #expect(event.report() == AgentReport(source: .hook, agent: .codex, state: .needsAttention, at: 12.5,
                                           session: AgentSession(id: "s-1", cwd: "/p")))
 }
+
+@Test func parsesTheLoopAToolEventCameFrom() throws {
+    let tool = try #require(AgentEvent.parse(line: #"{"cwd": "/p", "agent": "claude", "event": "running", "ts": 5, "loop": "agent-a"}"#))
+    #expect(tool.report().loop == "agent-a")
+    let legacy = try #require(AgentEvent.parse(line: #"{"cwd": "/p", "agent": "claude", "event": "running"}"#))
+    #expect(legacy.report().loop == nil)
+}

@@ -39,3 +39,18 @@ import Testing
 @Test func emptyNotificationIsFinishedWithEmptyText() {
     #expect(TerminalNotification.classify(title: nil, body: nil, agent: .codex) == .finished(""))
 }
+
+// MARK: - Progress (OSC 9;4)
+
+@Test func progressNeverMovesAPaneOutOfNeedsYou() {
+    // Claude may clear or re-send its progress while it waits to ask.
+    #expect(TerminalProgressPolicy.report(active: true, current: .needsAttention) == nil)
+    #expect(TerminalProgressPolicy.report(active: false, current: .needsAttention) == nil)
+}
+
+@Test func progressSetIsRunningAndClearEndsARunningTurn() {
+    #expect(TerminalProgressPolicy.report(active: true, current: nil) == .running)
+    #expect(TerminalProgressPolicy.report(active: true, current: .idle) == .running)
+    #expect(TerminalProgressPolicy.report(active: false, current: .running) == .idle)
+    #expect(TerminalProgressPolicy.report(active: false, current: .idle) == nil)
+}

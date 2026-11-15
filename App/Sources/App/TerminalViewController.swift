@@ -791,6 +791,13 @@ final class TerminalViewController: NSViewController {
     }
 
     private func pollForegroundAgents() {
+        // Drain every live pane's Ghostty mailbox first, visible or not.
+        // libghostty-spm ticks a pane only while its view is attached and the
+        // app is active, so a pane in another project (or all of them, with
+        // Zetty in the background) queued its notifications, progress and
+        // bells until shown, then delivered the backlog stamped as new.
+        // Draining here bounds that to one tick (`drainMailboxes`).
+        registry.drainMailboxes(of: Set(allSurfaceIDs))
         // Probe while the window is on screen, not only while Zetty is the
         // active app: a window beside or behind another app still shows tab
         // names and dots, and they froze until you clicked back in. Skipped
@@ -2664,7 +2671,7 @@ final class TerminalViewController: NSViewController {
     /// produced `codex resume <claude id>`.
     ///
     /// `foreground` is a reading the caller just took. The poll that fills
-    /// `foregroundBySurface` stops while Zetty is in the background, so the
+    /// `foregroundBySurface` stops while no Zetty window is on screen, so the
     /// map can be hours stale exactly when a project is being put away.
     func probedResumableKind(for surfaceID: UUID, using foreground: [UUID: String]? = nil) -> AgentKind? {
         guard let running = (foreground ?? foregroundBySurface)[surfaceID], !running.isEmpty,
@@ -3506,15 +3513,11 @@ final class TerminalViewController: NSViewController {
                 break
             }
         case .progress(let active):
-            guard let kind else { return }
-            if active {
-                report(.running, agent: kind)
-            } else if agentDetector.state(for: surfaceID).status == .running {
-                // A clear ends a running turn only: Claude clears its progress
-                // when it stops to ask, and that must not wipe the yellow the
-                // mod or a hook just raised.
-                report(.idle, agent: kind)
-            }
+            guard let kind,
+                  let state = TerminalProgressPolicy.report(active: active,
+                                                            current: agentDetector.state(for: surfaceID).status)
+            else { return }
+            report(state, agent: kind)
         case .commandFinished:
             // The shell is back at its prompt: whatever agent the pane had has
             // exited, without waiting for the probe.

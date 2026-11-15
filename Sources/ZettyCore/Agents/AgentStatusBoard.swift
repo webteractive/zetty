@@ -8,8 +8,13 @@ import Foundation
 /// - The foreground probe gates liveness: two consecutive probes that see the
 ///   shell at its prompt end the agent, whatever it last reported. A pane the
 ///   probe doesn't cover is decided by reports alone.
-/// - Replay (the event log read at launch) restores state quietly and ages a
-///   running or waiting report older than `replayMaxAge` to idle.
+/// - Replay (the event log read at launch) restores state quietly. A running
+///   or waiting report older than `replayMaxAge` is kept until the first probe:
+///   an agent still in the foreground confirms it (a prompt left over lunch is
+///   still pending), an unprobed pane ages it to idle, and the probe gate ends
+///   a dead one. A report with no time (an older helper's line) ages at once.
+/// - A waiting pane stays waiting until the loop that asked moves on: a tool
+///   call from a parallel subagent doesn't resolve another loop's prompt.
 /// - "Needs you" and "finished" each post once per moment: repeats within
 ///   `collapseWindow` of the last one posted collapse into it.
 public final class AgentStatusBoard {
@@ -24,6 +29,12 @@ public final class AgentStatusBoard {
         var lastAttentionAt: TimeInterval?
         var lastFinishedAt: TimeInterval?
         var misses = 0
+        /// The loops with a prompt still pending ("main" or a subagent id).
+        var waitingLoops: Set<String> = []
+        /// Restored from replay older than `replayMaxAge`: kept until the
+        /// probe says whether the agent is still there (then confirmed), or
+        /// that the pane isn't probed at all (then aged to idle).
+        var ageOnProbe = false
     }
 
     private var panes: [UUID: Pane] = [:]
@@ -39,23 +50,45 @@ public final class AgentStatusBoard {
         var pane = panes[id] ?? Pane()
         let previous = pane.state.status
         guard report.supersedes(pane.latest) else {
+            // The other source's report of the same prompt: older, so it
+            // loses, but the loop it names is still waiting.
+            if report.state == .needsAttention, previous == .needsAttention {
+                pane.waitingLoops.insert(report.loop ?? "main")
+                panes[id] = pane
+            }
             return AgentApplyResult(accepted: false, previous: previous, state: pane.state)
         }
         pane.latest = report
+        pane.ageOnProbe = false
 
         var raised = false
         var finished = false
         switch report.state {
         case .ended:
             pane.state = AgentState()
+            pane.waitingLoops = []
         case .running, .idle, .needsAttention:
             var status = Self.status(report.state)
             if replay, status != .idle, now - max(report.at, report.confirmedAt ?? 0) > Self.replayMaxAge {
-                status = .idle
+                // A line with no time is never trusted; anything else waits
+                // for the probe to say whether its agent is still there.
+                if report.at == 0 { status = .idle } else { pane.ageOnProbe = true }
+            }
+            switch status {
+            case .needsAttention:
+                pane.waitingLoops.insert(report.loop ?? "main")
+            case .running where previous == .needsAttention:
+                // A tool call resolves only its own loop's prompt; a report
+                // with no loop (a new prompt) resolves them all.
+                if let loop = report.loop { pane.waitingLoops.remove(loop) } else { pane.waitingLoops = [] }
+                if !pane.waitingLoops.isEmpty { status = .needsAttention }
+            default:
+                pane.waitingLoops = []
             }
             pane.state = AgentState(kind: report.agent, status: status,
                                     session: report.session ?? pane.state.session)
-            if !replay, status == .needsAttention, !Self.within(pane.lastAttentionAt, of: report.at) {
+            if !replay, status == .needsAttention, report.state == .needsAttention,
+               !Self.within(pane.lastAttentionAt, of: report.at) {
                 raised = true
                 pane.lastAttentionAt = report.at
             }
@@ -79,10 +112,19 @@ public final class AgentStatusBoard {
         }
         let previous = pane.state.status
         guard let command else {
-            return AgentApplyResult(accepted: false, previous: previous, state: pane.state)
+            // Not probed: nothing will ever confirm an old replayed state.
+            guard pane.ageOnProbe else {
+                return AgentApplyResult(accepted: false, previous: previous, state: pane.state)
+            }
+            pane.ageOnProbe = false
+            pane.waitingLoops = []
+            if pane.state.kind != nil { pane.state.status = .idle }
+            panes[id] = pane
+            return AgentApplyResult(accepted: true, previous: previous, state: pane.state)
         }
         guard command.isEmpty else {
             pane.misses = 0
+            pane.ageOnProbe = false   // the agent (or its tool) is still there
             panes[id] = pane
             return AgentApplyResult(accepted: false, previous: previous, state: pane.state)
         }
@@ -98,6 +140,8 @@ public final class AgentStatusBoard {
                                       state: .ended, at: now)
             pane.state = AgentState()
             pane.misses = 0
+            pane.waitingLoops = []
+            pane.ageOnProbe = false
             accepted = true
         }
         panes[id] = pane

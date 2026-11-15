@@ -35,6 +35,12 @@ public struct AgentReport: Sendable, Equatable {
     /// rewrites its snapshot while a turn runs). Replay ages from this, so a
     /// long turn that is still going isn't restored as idle.
     public var confirmedAt: TimeInterval?
+    /// Which of the agent's loops this came from: `"main"` or a subagent's
+    /// id, on tool and permission events only. A waiting pane stays waiting
+    /// until the loop that asked moves on, so a parallel subagent's tool call
+    /// can't clear another's pending prompt. nil (a new prompt, a turn's end,
+    /// an older helper) speaks for the whole pane.
+    public var loop: String?
 
     public init(source: Source, agent: AgentKind, state: State, at: TimeInterval,
                 session: AgentSession? = nil, message: String? = nil) {

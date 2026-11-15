@@ -240,3 +240,24 @@ test('the turn state is written before the hooks beneath run', async ($, on) => 
   expect(atStart).toBe(1)
   expect(atComplete).toBe(2)
 })
+
+test('a parallel subagent\'s tool call leaves another loop\'s prompt waiting', async ($, on) => {
+  const written = world(on, IN_PANE)
+  beneath(on, written, ['classic.PermissionRequest', 'classic.PostToolUse'])
+
+  await $.classic.PermissionRequest({ tool_name: 'Bash', tool_input: {}, agent_id: 'agent-a' } as any)
+  expect(written[written.length - 1]?.snapshot.turn).toEqual(expect.objectContaining({ state: 'waiting', loop: 'agent-a' }))
+
+  await $.classic.PostToolUse({ tool_name: 'Read', tool_input: {}, tool_use_id: 'u1', agent_id: 'agent-b' } as any)
+  expect(written[written.length - 1]?.snapshot.turn.state).toBe('waiting')
+
+  await $.classic.PostToolUse({ tool_name: 'Bash', tool_input: {}, tool_use_id: 'u2', agent_id: 'agent-a' } as any)
+  expect(written[written.length - 1]?.snapshot.turn.state).toBe('running')
+})
+
+test('a session start stamps its time', async ($, on) => {
+  const written = world(on, IN_PANE)
+  on('session.start', (_$, e) => ({ cwd: (e as any).cwd }))
+  await $.session.start({ source: 'startup', cwd: '/work/app' } as any)
+  expect(written[0]?.snapshot.turn).toEqual({ state: 'idle', at: 1000 })
+})

@@ -32,10 +32,18 @@ every source is a timestamped `AgentReport` (hook line `ts`, the mod's
 foreground probes in a row end the agent (only an idle shell is a miss; a
 tool the agent runs is presence; an unprobed pane is decided by reports
 alone), and the probe's end outranks every earlier report so a dead agent's
-snapshot can't revive the dot. Replay restores quietly and ages a running or
-waiting report older than 15 min (from its last confirmation: the mod's
-`updatedAt`) to idle; a hook line without `ts` reads as time 0, so it always
-ages.
+snapshot can't revive the dot. **A waiting pane stays waiting until the loop
+that asked moves on**: tool and permission events carry `loop` (`main` or the
+subagent's `agent_id`, from the hook payload or the mod), and a parallel
+subagent's tool call doesn't resolve another loop's prompt; a report with no
+loop (a new prompt, a turn's end, an older helper) speaks for the whole pane.
+Replay restores quietly. A running or waiting report older than 15 min (from
+its last confirmation: the mod's `updatedAt`) waits for the first probe: an
+agent still in the foreground keeps it (a prompt left over lunch is still
+pending, and the install relaunch must not dim it), an unprobed pane ages it
+to idle, and the gate ends a dead one. A hook line without `ts` reads as time
+0 and ages at once; so does an older mod's snapshot without `turn.at`, which
+never beats a hook's report.
 
 **Needs-attention notifications** (config-gated, Settings ⌘, → Agents):
 "needs you" = blocked on a decision (permission or question; Glen
@@ -68,8 +76,9 @@ receipt with source `.terminal`:
   with a Codex decision prefix (`Approval requested`, `Codex wants to edit`,
   `Question requested`, `Implement this plan?`, from Codex 0.157.1's binary)
   → needsAttention; anything else → idle plus the finished banner.
-- OSC 9;4 progress → running; a clear → idle **only from running** (Claude
-  clears progress when it stops to ask; that must not wipe the yellow).
+- OSC 9;4 progress → running; a clear → idle only from running; **neither
+  moves a pane out of needs-you** (`TerminalProgressPolicy`: Claude may clear
+  or re-send progress while it waits to ask).
 - OSC 133;D (shell integration, zsh) in a pane with an agent state → ended,
   and the live title is marked stale: the dot clears as the agent exits.
 - BEL in an agent pane not in view → the finished banner. Never yellow.
@@ -77,10 +86,12 @@ receipt with source `.terminal`:
   never drive this Mac's state. Ghostty rate-limits desktop notifications to
   1/s app-wide (identical ones 5 s), which can drop a second pane's notice;
   hooks and the mod cover Claude.
-- **A pane not on screen gets no signals until it is shown**: each pane has
-  its own Ghostty controller, ticked only while its view is in the window, so
-  a project in the background queues its actions (observed 2026-11-16). Hooks
-  and the mod cover those panes.
+- **Every live pane's mailbox is drained on the 3 s tick**
+  (`drainMailboxes`), visible or not. libghostty-spm ticks a pane only while
+  its view is attached and the app is active, so a pane in another project
+  (or every pane, with Zetty in the background) queued its actions and
+  delivered the backlog stamped as new when shown (observed 2026-11-16).
+  Signals from a hidden pane now arrive at most one tick late.
 
 Detection is **hook-driven** — libghostty exposes no PTY fd / child PID, so
 harness hooks *ping* Zetty:
@@ -104,7 +115,9 @@ Per-harness install (`HookInstaller` + the pure `*HookConfig` transforms):
   SessionStart→idle, UserPromptSubmit/PreToolUse/PostToolUse→running,
   PermissionRequest→needsAttention, Notification→needsAttention **with matcher
   `permission_prompt|elicitation_dialog`** (decisions only: `idle_prompt`, ~60 s
-  after a turn, is not "needs you"), Stop→idle, SessionEnd→ended. Every launch
+  after a turn, is not "needs you"; the helper also drops a non-decision
+  Notification itself, which covers sessions that loaded the old unfiltered
+  hook), Stop→idle, SessionEnd→ended. Every launch
   repairs them (`HookInstaller.repairClaudeHooksEverywhere`) in `~/.claude` and
   each Claude account's directory: a missing event is added and our group's
   matcher corrected, in place; a directory without Zetty's hooks is never

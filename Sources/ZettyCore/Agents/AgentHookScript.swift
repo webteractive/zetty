@@ -33,7 +33,7 @@ public enum AgentHookScript {
 
     public static let contents = ##"""
     #!/usr/bin/env python3
-    # Zetty agent hook — appends {cwd, agent, event, ts, surface?, session?, config?} to the
+    # Zetty agent hook — appends {cwd, agent, event, ts, surface?, session?, config?, loop?} to the
     # event sink. Only reports sessions hosted INSIDE Zetty: Zetty sets ZETTY=1
     # in its panes' environment, so hooks fired from other terminals stay silent.
     import sys, os, json, time
@@ -57,12 +57,14 @@ public enum AgentHookScript {
                 return stem[:-4]
         return None
 
-    def emit(cwd, agent, event, session=None):
+    def emit(cwd, agent, event, session=None, loop=None):
         if not IN_ZETTY:
             return
         # Sub-second, so Zetty can order this against the mod's report of the
         # same moment (newest wins).
         record = {"cwd": cwd, "agent": agent, "event": event, "ts": time.time()}
+        if loop:
+            record["loop"] = str(loop)
         surface = surface_id()
         if surface:
             record["surface"] = surface
@@ -91,8 +93,20 @@ public enum AgentHookScript {
         agent = args[1] if len(args) > 1 else "?"
         event = args[2] if len(args) > 2 else "running"
         payload = stdin_payload()
+        hook = payload.get("hook_event_name")
+        # Decisions only: a session started before the Notification hook had
+        # its matcher still fires it for idle_prompt and the like. This file is
+        # re-read on every call, so dropping them here fixes those sessions too.
+        kind = payload.get("notification_type")
+        if hook == "Notification" and kind and kind not in ("permission_prompt", "elicitation_dialog"):
+            sys.exit(0)
+        # Which loop a tool or permission event came from, so a parallel
+        # subagent's tool call can't clear another loop's pending prompt.
+        loop = None
+        if hook in ("PreToolUse", "PostToolUse", "PermissionRequest", "Notification"):
+            loop = payload.get("agent_id") or "main"
         cwd = payload.get("cwd") or os.environ.get("PWD") or os.getcwd()
-        emit(cwd, agent, event, payload.get("session_id"))
+        emit(cwd, agent, event, payload.get("session_id"), loop)
     elif mode == "codex":
         # Codex appends its JSON payload as the final arg; anything before it
         # is the original notify command to chain to.

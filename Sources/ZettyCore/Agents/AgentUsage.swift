@@ -71,13 +71,16 @@ public struct AgentUsage: Equatable, Sendable {
     /// When the turn entered `turnState`, in epoch seconds (mod 0.7.0+; nil
     /// from an older mod, whose reports then fall back to `updatedAt`).
     public var turnAt: TimeInterval?
+    /// The loop a `waiting` turn is waiting on (`main` or a subagent id).
+    public var turnLoop: String?
 
     public init(surface: UUID, session: String? = nil, cwd: String? = nil, model: String? = nil,
                 configDirectory: String? = nil, turnState: TurnState = .idle,
                 turnReason: String? = nil, contextTokens: Int? = nil,
                 contextWindow: Int? = nil, contextPercent: Int? = nil,
                 costUSD: Double? = nil, rateLimits: [RateLimit] = [],
-                attention: Attention? = nil, updatedAt: TimeInterval = 0, turnAt: TimeInterval? = nil) {
+                attention: Attention? = nil, updatedAt: TimeInterval = 0, turnAt: TimeInterval? = nil,
+                turnLoop: String? = nil) {
         self.surface = surface
         self.session = session
         self.cwd = cwd
@@ -93,6 +96,7 @@ public struct AgentUsage: Equatable, Sendable {
         self.attention = attention
         self.updatedAt = updatedAt
         self.turnAt = turnAt
+        self.turnLoop = turnLoop
     }
 
     /// The turn state as a report for `AgentStatusBoard`.
@@ -104,10 +108,13 @@ public struct AgentUsage: Equatable, Sendable {
         case .waiting: state = .needsAttention
         case .ended: state = .ended
         }
-        var report = AgentReport(source: .mod, agent: .claude, state: state, at: turnAt ?? updatedAt,
+        // An older mod stamps no transition time and rewrites the file on
+        // every measurement: time 0, so it never beats a hook's report.
+        var report = AgentReport(source: .mod, agent: .claude, state: state, at: turnAt ?? 0,
                                  session: session.map { AgentSession(id: $0, cwd: cwd ?? "") },
                                  message: attention?.message)
         report.confirmedAt = updatedAt
+        report.loop = turnState == .waiting ? turnLoop : nil
         return report
     }
 
@@ -179,7 +186,8 @@ public struct AgentUsage: Equatable, Sendable {
             rateLimits: limits,
             attention: attention,
             updatedAt: ((object["updatedAt"] as? NSNumber)?.doubleValue ?? 0) / 1000,
-            turnAt: (turn["at"] as? NSNumber).map { $0.doubleValue / 1000 })
+            turnAt: (turn["at"] as? NSNumber).map { $0.doubleValue / 1000 },
+            turnLoop: (turn["loop"] as? String).flatMap { AgentEvent.isValidSessionID($0) ? $0 : nil })
     }
 
     private static func parseDate(_ raw: String) -> Date? {
@@ -210,6 +218,7 @@ public struct AgentUsage: Equatable, Sendable {
         var copy = self
         copy.updatedAt = 0
         copy.turnAt = nil
+        copy.turnLoop = nil
         copy.contextTokens = nil
         copy.costUSD = nil
         copy.rateLimits = rateLimits.map {

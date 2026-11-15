@@ -23,6 +23,8 @@ type Turn = {
   // When this state began (ms epoch). Zetty orders it against the hook's
   // report of the same moment: the newest wins.
   at?: number
+  // While waiting: the loop that asked ("main" or a subagent id).
+  loop?: string
 }
 
 type Usage = Pick<SessionUsage, 'context' | 'rateLimits' | 'cost'>
@@ -32,6 +34,9 @@ type Attention = { message: string; type: string }
 
 let turn: Turn = { state: 'idle' }
 let attention: Attention | undefined
+// Loops with a permission prompt still open. A parallel subagent's tool call
+// must not mark the pane running while another loop is still waiting.
+let waitingLoops = new Set<string>()
 // Events can land back to back; one write at a time keeps the file whole.
 let writes: Promise<void> = Promise.resolve()
 
@@ -89,10 +94,18 @@ async function moveTurn($: EngineInterface, next: Turn, fresh = false): Promise<
   await publish($)
 }
 
-// A tool starting or finishing: the turn is running, whatever woke it.
-async function toolActivity($: EngineInterface): Promise<void> {
+// A tool starting or finishing in `loop`: the turn is running, whatever woke
+// it — unless another loop's prompt is still open.
+async function toolActivity($: EngineInterface, loop: string): Promise<void> {
+  waitingLoops.delete(loop)
+  if (waitingLoops.size > 0) return
   if (turn.state !== 'running') attention = undefined
   await moveTurn($, { state: 'running' })
+}
+
+// A new turn, a turn's end, or the session's: no prompt is open any more.
+function clearWaiting(): void {
+  waitingLoops = new Set()
 }
 
 // What a permission request is for, short enough for a notification.
@@ -490,8 +503,8 @@ async function refreshFleet($: EngineInterface): Promise<boolean> {
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
     const started = await next(e)
-    turn = { state: 'idle' }
-    await publish($)
+    clearWaiting()
+    await moveTurn($, { state: 'idle' }, true)
     // Never let one piece failing to start cost the others, or the session.
     await startCommands($).catch(() => {})
     await startTools($).catch(() => {})
@@ -503,6 +516,7 @@ export const register: Register = on => {
   // Every state is written BEFORE `next`: a mod later in the chain can stop
   // an event, and Zetty must still hear of it.
   on('turn.start', async ($, e, next) => {
+    clearWaiting()
     attention = undefined
     await moveTurn($, { state: 'running' }, true)
     return next(e)
@@ -511,6 +525,7 @@ export const register: Register = on => {
   on('turn.complete', async ($, e, next) => {
     // A subagent's run is a turn too; only the main loop decides the pane's state.
     if (e.agentId === undefined) {
+      clearWaiting()
       attention = undefined
       await moveTurn($, { state: 'idle', reason: e.reason, durationMs: e.durationMs }, true)
     }
@@ -520,18 +535,22 @@ export const register: Register = on => {
   // Work that starts without a prompt: after an approval, or a subagent or
   // background task waking. Written only when the turn wasn't running.
   on('classic.PreToolUse', async ($, e, next) => {
-    await toolActivity($)
+    // Its `e` is the bare tool envelope, which declares no loop; a subagent's
+    // call may still carry `agentId` at run time.
+    await toolActivity($, (e as unknown as { agentId?: string }).agentId ?? 'main')
     return next(e)
   })
 
   on('classic.PostToolUse', async ($, e, next) => {
-    await toolActivity($)
+    await toolActivity($, e.agent_id ?? 'main')
     return next(e)
   })
 
   on('classic.PermissionRequest', async ($, e, next) => {
+    const loop = e.agent_id ?? 'main'
+    waitingLoops.add(loop)
     attention = { message: describeTool(e.tool_name, e.tool_input), type: 'permission_prompt' }
-    await moveTurn($, { state: 'waiting' }, true)
+    await moveTurn($, { state: 'waiting', loop }, true)
     return next(e)
   })
 
@@ -542,8 +561,10 @@ export const register: Register = on => {
   on('classic.Notification', async ($, e, next) => {
     attention = { message: e.message, type: e.notification_type }
     if (e.notification_type === 'permission_prompt' || e.notification_type === 'elicitation_dialog') {
+      const loop = e.agent_id ?? 'main'
+      waitingLoops.add(loop)
       if (turn.state === 'waiting') await publish($)
-      else await moveTurn($, { state: 'waiting' })
+      else await moveTurn($, { state: 'waiting', loop })
     } else {
       await publish($)
     }
@@ -551,6 +572,7 @@ export const register: Register = on => {
   })
 
   on('classic.StopFailure', async ($, e, next) => {
+    clearWaiting()
     attention = undefined
     await moveTurn($, { state: 'idle', reason: 'error' })
     return next(e)
@@ -564,6 +586,7 @@ export const register: Register = on => {
   })
 
   on('session.end', async ($, e, next) => {
+    clearWaiting()
     // After a /clear the process goes on under a new session id.
     await moveTurn($, e.reason === 'clear' ? { state: 'idle' } : { state: 'ended', reason: e.reason }, true)
     return next(e)
