@@ -79,7 +79,7 @@ if let ghosttyResources = Bundle.main.resourceURL?
     let existing = ProcessInfo.processInfo.environment["TERMINFO_DIRS"]
     setenv("TERMINFO_DIRS", existing.map { "\(terminfo):\($0)" } ?? "\(terminfo):", 1)
 }
-PaneCwdStore.clearAllAndEnsureDirectory()
+PaneCwdStore.ensureDirectory()
 
 // Programmatic AppKit entry point. We deliberately avoid `@main` /
 // NSApplicationMain (see AppDelegate) because Tuist's default Info.plist

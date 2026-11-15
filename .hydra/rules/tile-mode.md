@@ -438,7 +438,7 @@ Four rules keep it cheap:
   and ●n out first. A tile too short for a footer plus a usable terminal
   (`fitsFooter`) zeroes the footer's height in `setFrameSize` rather than
   over-constrain header + footer + body.
-  The cwd chain is `paneDirectory(for:)`, shared with the bar so the two
+  The cwd chain is `currentDirectory(for:)`, shared with the bar so the two
   cannot disagree. It reads a FILE (`PaneCwdStore`), so `TileDirectoryCache`
   re-reads only a dirty pane, at most once a second each (a spinning agent
   dirties its pane every frame), and schedules one retry so a `cd` followed by

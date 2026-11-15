@@ -655,10 +655,7 @@ final class TerminalViewController: NSViewController {
                 for surface in tree.layout.surfaces {
                     guard let command = foregroundBySurface[surface.id], !command.isEmpty,
                           let kind = AgentRegistry.match(command: command)?.kind else { continue }
-                    let cwd = PaneCwdStore.read(surface.id)
-                        ?? registry.workingDirectory(for: surface)
-                        ?? surface.workingDir
-                    found.append((surface: surface.id, cwd: cwd, agent: kind))
+                    found.append((surface: surface.id, cwd: currentDirectory(for: surface), agent: kind))
                 }
             }
         }
@@ -729,6 +726,11 @@ final class TerminalViewController: NSViewController {
                 self.suppressedLiveTitles[id] = nil
             }
             self.persistTitle(for: id)
+            // Only on an OSC 7 change: an animating title fires this many
+            // times a second, and the 3 s poll covers the cwd file.
+            if let surface = self.surface(with: id), self.noteOSC7(for: surface) {
+                self.refreshCurrentDirectory(id)
+            }
             // This subscription fires for a cwd change as well as a title, so
             // it is what tells a tile footer its directory may have moved.
             if self.tileMode { self.tileDirectories.markDirty(id) }
@@ -837,6 +839,8 @@ final class TerminalViewController: NSViewController {
                 for id in ids {
                     let result = self.agentDetector.observeForeground(commands[id], session: id, now: now)
                     if result.accepted && result.changedStatus { ended = true }
+                    // The cwd file carries its own time; persist what moved.
+                    self.refreshCurrentDirectory(id)
                 }
                 if ended {
                     self.setNeedsChromeRefresh(tabBar: true, sidebar: true)
@@ -1458,7 +1462,7 @@ final class TerminalViewController: NSViewController {
         // In tile mode the bar describes the tile you are typing into, not the
         // active project's focused pane — which is not even on screen.
         let focused = statusBarSurface
-        let cwd = paneDirectory(for: focused)
+        let cwd = currentDirectory(for: focused)
         let shell = URL(fileURLWithPath: ProcessInfo.processInfo.environment["SHELL"] ?? "/bin/zsh")
             .lastPathComponent
         statusBar.update(
@@ -1507,14 +1511,45 @@ final class TerminalViewController: NSViewController {
                                      home: NSHomeDirectory())
     }
 
-    /// The pane's working directory, normalised — the one chain the status bar
-    /// and the tile footers both read, so they cannot disagree.
-    private func paneDirectory(for surface: Surface?) -> String {
-        let raw = surface.flatMap { PaneCwdStore.read($0.id) }
-            ?? surface.flatMap { registry.workingDirectory(for: $0) }
-            ?? surface?.workingDir
-            ?? NSHomeDirectory()
-        return Self.normalizedPath(raw)
+    /// The pane's folder, normalised (`CurrentDirectory.choose`): the newest
+    /// of the shell's cwd file, OSC 7 and — while an agent holds the pane —
+    /// the folder the agent reported; else the persisted one; else the spawn
+    /// folder. Every reader of "where the pane is" goes through this: status
+    /// bar, tile footers, Open/Reveal, tab title, file tree, new splits.
+    func currentDirectory(for surface: Surface?) -> String {
+        guard let surface else { return Self.normalizedPath(NSHomeDirectory()) }
+        return Self.normalizedPath(chosenDirectory(for: surface))
+    }
+
+    private func chosenDirectory(for surface: Surface) -> String {
+        CurrentDirectory.choose(
+            cwdFile: PaneCwdStore.readStamped(surface.id),
+            osc7: osc7Stamps[surface.id],
+            agent: agentIdentity(for: surface) != nil ? agentCwdStamps[surface.id] : nil,
+            persisted: surface.currentDirectory,
+            spawn: surface.workingDir)
+    }
+
+    /// When each pane's OSC 7 folder last changed (it carries no time itself).
+    private var osc7Stamps: [UUID: StampedPath] = [:]
+    /// The folder each pane's agent last reported, with the report's time.
+    private var agentCwdStamps: [UUID: StampedPath] = [:]
+
+    /// Persists the pane's chosen folder when it moved, so it survives a
+    /// relaunch before the shell reports again.
+    private func refreshCurrentDirectory(_ surfaceID: UUID) {
+        guard let surface = workspace.surface(with: surfaceID) else { return }
+        let chosen = Self.normalizedPath(chosenDirectory(for: surface))
+        guard chosen != surface.currentDirectory else { return }
+        updateSurfaceAnywhere(surfaceID) { $0.currentDirectory = chosen }
+    }
+
+    /// Stamps the pane's OSC 7 folder when it changed; true if it did.
+    @discardableResult
+    private func noteOSC7(for surface: Surface) -> Bool {
+        guard let path = registry.workingDirectory(for: surface), osc7Stamps[surface.id]?.path != path else { return false }
+        osc7Stamps[surface.id] = StampedPath(path: path, at: Date().timeIntervalSince1970)
+        return true
     }
 
     /// Git state for the tile footers, probed once per directory.
@@ -1543,7 +1578,7 @@ final class TerminalViewController: NSViewController {
         for id in ids {
             guard let surface = workspace.surface(with: id) else { continue }
             let lookup = tileDirectories.directory(for: id, now: now) {
-                paneDirectory(for: surface)
+                currentDirectory(for: surface)
             }
             if let wait = lookup.retryAfter { retryAfter = min(retryAfter ?? wait, wait) }
             let directory = lookup.directory
@@ -1836,7 +1871,7 @@ final class TerminalViewController: NSViewController {
                 let result = agentDetector.apply(report: report, session: usage.surface,
                                                  replay: isInitial, now: now)
                 accepted = accepted || result.accepted
-                if handleAgentResult(result, surface: surface, project: project, message: nil) {
+                if handleAgentResult(result, surface: surface, project: project, message: nil, report: report) {
                     dotsChanged = true
                 }
             }
@@ -2146,7 +2181,8 @@ final class TerminalViewController: NSViewController {
     /// Splits the focused pane, optionally injecting a startup command once the
     /// new pane spawns (used by the agent chooser). Shared by the split actions.
     func performSplit(direction: SplitDirection, startupCommand: String?, accountID: String? = nil) {
-        let workingDir = paneTree.focusedSurface?.workingDir ?? NSHomeDirectory()
+        // Where the pane is now, not where it was spawned.
+        let workingDir = currentDirectory(for: paneTree.focusedSurface)
         // Stamped at construction, before the surface reaches the tree — so it
         // is in place well ahead of the rebuild that spawns it.
         let newSurface = Surface(
@@ -2386,9 +2422,7 @@ final class TerminalViewController: NSViewController {
         // Carry the live state forward. `lastTitle` deliberately does NOT come
         // along: the new process announces itself.
         var replacement = Surface(
-            workingDir: PaneCwdStore.read(surfaceID)
-                ?? registry.workingDirectory(for: old)
-                ?? old.workingDir,
+            workingDir: currentDirectory(for: old),
             accountID: accountID)
         replacement.fileTreeVisible = old.fileTreeVisible
         replacement.fileTreeWidth = old.fileTreeWidth
@@ -3354,10 +3388,11 @@ final class TerminalViewController: NSViewController {
         var accepted = false
 
         func apply(_ event: AgentEvent, to surface: Surface, in project: ProjectRuntime) {
-            let result = agentDetector.apply(report: event.report(), session: surface.id,
+            let report = event.report()
+            let result = agentDetector.apply(report: report, session: surface.id,
                                              replay: replay, now: now)
             accepted = accepted || result.accepted
-            if handleAgentResult(result, surface: surface, project: project, message: nil) {
+            if handleAgentResult(result, surface: surface, project: project, message: nil, report: report) {
                 dotsChanged = true
             }
         }
@@ -3385,8 +3420,8 @@ final class TerminalViewController: NSViewController {
             for project in workspace.projects {
                 for tree in project.tabList.trees {
                     for surface in tree.layout.surfaces {
-                        let cwd = registry.workingDirectory(for: surface).map(Self.normalizedPath)
-                            ?? Self.normalizedPath(surface.workingDir)
+                        let cwd = Self.normalizedPath(surface.currentDirectory
+                            ?? registry.workingDirectory(for: surface) ?? surface.workingDir)
                         if cwd == target { apply(event, to: surface, in: project) }
                     }
                 }
@@ -3400,7 +3435,12 @@ final class TerminalViewController: NSViewController {
     /// True when the pane's shown status moved (the dots need a refresh).
     @discardableResult
     private func handleAgentResult(_ result: AgentApplyResult, surface: Surface,
-                                   project: ProjectRuntime, message: String?) -> Bool {
+                                   project: ProjectRuntime, message: String?,
+                                   report: AgentReport? = nil) -> Bool {
+        if result.accepted, let report, let cwd = report.session?.cwd, !cwd.isEmpty {
+            agentCwdStamps[surface.id] = StampedPath(path: cwd, at: report.at)
+            refreshCurrentDirectory(surface.id)
+        }
         if result.raisedAttention, let kind = result.state.kind {
             // A repeat request in a pane already waiting is news again.
             attentionInbox.reopen(surface.id)
@@ -4481,7 +4521,7 @@ final class TerminalViewController: NSViewController {
                     StatusSnapshot.Pane(
                         id: SessionPersistence.shortID(for: surface.id),
                         title: displayTitle(for: surface),
-                        cwd: PaneCwdStore.read(surface.id) ?? registry.workingDirectory(for: surface) ?? surface.workingDir,
+                        cwd: currentDirectory(for: surface),
                         tool: foregroundBySurface[surface.id].flatMap { $0.isEmpty ? nil : $0 },
                         agentStatus: displayedStatus(for: surface.id)?.rawValue,
                         isFocused: tileFocus.map { $0 == surface.id }
@@ -4499,7 +4539,7 @@ final class TerminalViewController: NSViewController {
                     manualTitle: tree.manualTitle,
                     agentName: agentDisplayName(for: tree.focusedSurface),
                     focusedSurfaceTitle: displayTitle(for: tree.focusedSurface),
-                    workingDir: tree.focusedSurface?.workingDir,
+                    workingDir: tree.focusedSurface?.currentDirectory ?? tree.focusedSurface?.workingDir,
                     index: tIdx
                 )
                 return StatusSnapshot.Tab(title: title, isActive: isActiveTab, panes: panes,
@@ -5128,8 +5168,9 @@ final class TerminalViewController: NSViewController {
                 return .failure(.noSuchPane("pane \(pane.id) not found"))
             }
             let tabList = workspace.projects[location.projectIndex].tabList
-            let workingDir = tabList.trees[location.tabIndex].layout.surfaces
-                .first(where: { $0.id == location.surfaceID })?.workingDir ?? NSHomeDirectory()
+            // Where the pane is now, not where it was spawned.
+            let workingDir = currentDirectory(for: tabList.trees[location.tabIndex].layout.surfaces
+                .first(where: { $0.id == location.surfaceID }))
             // Stamped from the target project's default, not the active one —
             // a background split must not inherit whatever project is on screen.
             let newSurface = Surface(
@@ -5548,10 +5589,9 @@ final class TerminalViewController: NSViewController {
     /// distinction is the whole point: a button must open ITS pane, not
     /// whichever pane happens to hold focus.
     private func directoryURL(for surfaceID: UUID?) -> URL {
-        // The pane's live directory, as the status bar reads it
-        // (`paneDirectory`): the per-pane file first, which the shell
-        // integration writes on every cd, then libghostty's OSC 7 report.
-        URL(fileURLWithPath: paneDirectory(for: surfaceID.flatMap { workspace.surface(with: $0) }),
+        // The pane's current folder, as the status bar reads it
+        // (`currentDirectory(for:)`).
+        URL(fileURLWithPath: currentDirectory(for: surfaceID.flatMap { workspace.surface(with: $0) }),
             isDirectory: true)
     }
 
@@ -7346,7 +7386,11 @@ final class TerminalViewController: NSViewController {
     /// Title shared by the tab bar, sidebar tab rows, and hidden-window menu.
     private func tabDisplayTitle(for tree: PaneTree, at index: Int) -> String {
         let focusedSurface = tree.focusedSurface
-        let workingDir = focusedSurface.flatMap { registry.workingDirectory(for: $0) }
+        // The persisted folder (kept current by title events and the 3 s
+        // poll), not `currentDirectory(for:)`: this runs for every tab on
+        // every chrome refresh, and that reads the cwd file.
+        let workingDir = focusedSurface?.currentDirectory
+            ?? focusedSurface.flatMap { registry.workingDirectory(for: $0) }
             ?? focusedSurface?.workingDir
         let icon = agentIcon(for: focusedSurface)
         return TabTitle.display(
@@ -9660,7 +9704,7 @@ final class TerminalViewController: NSViewController {
         for leaf in rootContentView?.leafContainers() ?? [] where leaf.hasFileTree {
             guard let surface = paneTree.layout.surfaces.first(where: { $0.id == leaf.surfaceID })
             else { continue }
-            let root = PaneCwdStore.read(leaf.surfaceID) ?? surface.workingDir
+            let root = currentDirectory(for: surface)
             guard root != leaf.fileTreeCurrentRoot else { continue }
             // Bank what was open under the OLD root before moving.
             if let previous = leaf.fileTreeCurrentRoot {

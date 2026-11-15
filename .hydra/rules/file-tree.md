@@ -60,6 +60,10 @@ Gotchas, all deliberate:
   `\r\n` as a SINGLE `Character`, so `split(separator: "\n")` never splits a
   CRLF file — the whole thing collapses into one nonsense pattern that silently
   matches nothing. Regression-tested.
+- **The root is the pane's current folder** (`currentDirectory(for:)`, the
+  same rule as the status bar and new splits: the newest of the cwd file,
+  OSC 7 and the foreground agent's folder, else the persisted
+  `Surface.currentDirectory`, else the spawn folder).
 - **Re-rooting on `cd` is debounced 500ms** (driven from `refreshStatusBar`,
   which already runs on cwd-change cadence) and expansion state is keyed by
   absolute path in `FileTreeExpansionCache`, because agents `cd` several times a

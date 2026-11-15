@@ -47,6 +47,11 @@ public struct Surface: Codable, Sendable, Equatable, Identifiable {
     /// exits, and at restore for panes that own no preserved session.
     public var runningAccountID: String?
 
+    /// Where the pane is now (`CurrentDirectory.choose`), persisted so the
+    /// status bar, splits and the file tree keep it across a relaunch, before
+    /// the shell reports again. nil until something reported a folder.
+    public var currentDirectory: String?
+
     public init(
         id: UUID = UUID(),
         workingDir: String,
@@ -55,7 +60,8 @@ public struct Surface: Codable, Sendable, Equatable, Identifiable {
         fileTreeVisible: Bool = false,
         fileTreeWidth: Double? = nil,
         accountID: String? = nil,
-        runningAccountID: String? = nil
+        runningAccountID: String? = nil,
+        currentDirectory: String? = nil
     ) {
         self.id = id
         self.workingDir = workingDir
@@ -65,11 +71,12 @@ public struct Surface: Codable, Sendable, Equatable, Identifiable {
         self.fileTreeWidth = fileTreeWidth
         self.accountID = accountID
         self.runningAccountID = runningAccountID
+        self.currentDirectory = currentDirectory
     }
 
     private enum CodingKeys: String, CodingKey {
         case id, workingDir, command, lastTitle, fileTreeVisible, fileTreeWidth, accountID
-        case runningAccountID
+        case runningAccountID, currentDirectory
     }
 
     /// Hand-written so a `workspace.json` written by an older build — one with
@@ -84,5 +91,6 @@ public struct Surface: Codable, Sendable, Equatable, Identifiable {
         fileTreeWidth = try c.decodeIfPresent(Double.self, forKey: .fileTreeWidth)
         accountID = try c.decodeIfPresent(String.self, forKey: .accountID)
         runningAccountID = try c.decodeIfPresent(String.self, forKey: .runningAccountID)
+        currentDirectory = try c.decodeIfPresent(String.self, forKey: .currentDirectory)
     }
 }

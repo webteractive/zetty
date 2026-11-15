@@ -51,11 +51,12 @@ To build from source, see [`DEVELOPMENT.md`](DEVELOPMENT.md).
 
 1. Click **+** in the sidebar (or `⌘O`) to add a project — pick an existing
    folder, or **New Folder** to create one (optionally `git init`).
-2. Open tabs with `⌘T` and split with `⌘D` / `⇧⌘D`. The focused pane is the one
-   with the accent dot.
+2. Open tabs with `⌘T` and split with `⌘D` / `⇧⌘D`. A split opens in the
+   folder its pane is in now. The focused pane is the one with the accent dot.
 3. Press `⌘K` for the command palette — every action is in it.
 
-Your layout, tab titles and sidebar persist across relaunches. **Home** — the
+Your layout, tab titles, each pane's folder and the sidebar persist across
+relaunches. **Home** — the
 row at the top of the sidebar — is a permanent terminal at your home folder
 (or `zetty-home-path`); `⌃⌘N` opens a throwaway **scratch terminal**.
 
