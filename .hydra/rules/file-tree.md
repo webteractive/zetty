@@ -61,9 +61,14 @@ Gotchas, all deliberate:
   CRLF file — the whole thing collapses into one nonsense pattern that silently
   matches nothing. Regression-tested.
 - **The root is the pane's current folder** (`currentDirectory(for:)`, the
-  same rule as the status bar and new splits: the newest of the cwd file,
-  OSC 7 and the foreground agent's folder, else the persisted
-  `Surface.currentDirectory`, else the spawn folder).
+  same rule as the status bar and new splits: the newest of the cwd file
+  and the foreground agent's folder, else the persisted
+  `Surface.currentDirectory`, else the spawn folder). **OSC 7 counts only
+  when the shell writes no cwd file, and only for a local directory that
+  exists**: any program's output can carry an OSC 7, and this folder is
+  where a new split's shell starts (a crafted file `cat`-ed in a pane must
+  not steer it, e.g. into a repo whose prompt hooks run code). Agent report
+  times are clamped to now.
 - **Re-rooting on `cd` is debounced 500ms** (driven from `refreshStatusBar`,
   which already runs on cwd-change cadence) and expansion state is keyed by
   absolute path in `FileTreeExpansionCache`, because agents `cd` several times a

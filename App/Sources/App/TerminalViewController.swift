@@ -1544,10 +1544,16 @@ final class TerminalViewController: NSViewController {
         updateSurfaceAnywhere(surfaceID) { $0.currentDirectory = chosen }
     }
 
-    /// Stamps the pane's OSC 7 folder when it changed; true if it did.
+    /// Stamps the pane's OSC 7 folder when it changed; true if it did. An
+    /// OSC 7 naming no local directory (a remote host's path, or anything a
+    /// program printed) is never stamped: this folder is where splits spawn.
     @discardableResult
     private func noteOSC7(for surface: Surface) -> Bool {
         guard let path = registry.workingDirectory(for: surface), osc7Stamps[surface.id]?.path != path else { return false }
+        var isDirectory: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: path, isDirectory: &isDirectory), isDirectory.boolValue else {
+            return false
+        }
         osc7Stamps[surface.id] = StampedPath(path: path, at: Date().timeIntervalSince1970)
         return true
     }
@@ -3438,7 +3444,9 @@ final class TerminalViewController: NSViewController {
                                    project: ProjectRuntime, message: String?,
                                    report: AgentReport? = nil) -> Bool {
         if result.accepted, let report, let cwd = report.session?.cwd, !cwd.isEmpty {
-            agentCwdStamps[surface.id] = StampedPath(path: cwd, at: report.at)
+            // Clamped to now: a report stamped in the future must not pin the
+            // folder against everything the shell reports after it.
+            agentCwdStamps[surface.id] = StampedPath(path: cwd, at: min(report.at, Date().timeIntervalSince1970))
             refreshCurrentDirectory(surface.id)
         }
         if result.raisedAttention, let kind = result.state.kind {
