@@ -104,9 +104,11 @@ public struct AgentUsage: Equatable, Sendable {
         case .waiting: state = .needsAttention
         case .ended: state = .ended
         }
-        return AgentReport(source: .mod, agent: .claude, state: state, at: turnAt ?? updatedAt,
-                           session: session.map { AgentSession(id: $0, cwd: cwd ?? "") },
-                           message: attention?.message)
+        var report = AgentReport(source: .mod, agent: .claude, state: state, at: turnAt ?? updatedAt,
+                                 session: session.map { AgentSession(id: $0, cwd: cwd ?? "") },
+                                 message: attention?.message)
+        report.confirmedAt = updatedAt
+        return report
     }
 
     /// Whether the last turn ended in a way the user did not ask for: an API

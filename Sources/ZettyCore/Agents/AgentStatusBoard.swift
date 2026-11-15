@@ -50,7 +50,7 @@ public final class AgentStatusBoard {
             pane.state = AgentState()
         case .running, .idle, .needsAttention:
             var status = Self.status(report.state)
-            if replay, status != .idle, now - report.at > Self.replayMaxAge {
+            if replay, status != .idle, now - max(report.at, report.confirmedAt ?? 0) > Self.replayMaxAge {
                 status = .idle
             }
             pane.state = AgentState(kind: report.agent, status: status,

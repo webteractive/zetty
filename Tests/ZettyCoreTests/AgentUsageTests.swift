@@ -228,8 +228,10 @@ private func snapshot(turn: String, updatedAt: Int = 1_794_726_713_000) -> Strin
 
 @Test func reportUsesTurnAtOverUpdatedAt() throws {
     let usage = try #require(parse(snapshot(turn: #"{"state":"running","at":1794726712500}"#)))
-    #expect(usage.report() == AgentReport(source: .mod, agent: .claude, state: .running, at: 1_794_726_712.5,
-                                          session: AgentSession(id: "s-1", cwd: "/w")))
+    var expected = AgentReport(source: .mod, agent: .claude, state: .running, at: 1_794_726_712.5,
+                               session: AgentSession(id: "s-1", cwd: "/w"))
+    expected.confirmedAt = 1_794_726_713   // updatedAt: the mod rewrote it then
+    #expect(usage.report() == expected)
 }
 
 @Test func reportFallsBackToUpdatedAtForOlderMod() throws {

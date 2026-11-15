@@ -800,7 +800,20 @@ final class TerminalViewController: NSViewController {
                 commands[id] = ForegroundProcess.command(forSessionPID: pid, psOutput: ps) ?? ""
             }
             DispatchQueue.main.async {
-                guard let self, self.foregroundBySurface != commands else { return }
+                guard let self else { return }
+                // Every tick, changed or not: two empty readings in a row end
+                // an agent that died without reporting (`AgentStatusBoard`).
+                let now = Date().timeIntervalSince1970
+                var ended = false
+                for id in ids {
+                    let result = self.agentDetector.observeForeground(commands[id], session: id, now: now)
+                    if result.accepted && result.changedStatus { ended = true }
+                }
+                if ended {
+                    self.setNeedsChromeRefresh(tabBar: true, sidebar: true)
+                    self.publishAttentionCount()
+                }
+                guard self.foregroundBySurface != commands else { return }
                 let previous = self.foregroundBySurface
                 self.foregroundBySurface = commands
                 // A pane that just went idle keeps whatever title its tool
@@ -1763,11 +1776,26 @@ final class TerminalViewController: NSViewController {
     /// the coalescer: a failed turn flips a dot, a limit moves a chip.
     private func applyAgentUsage(_ usages: [AgentUsage], isInitial: Bool) {
         let accounts = accountsProvider?() ?? []
+        let now = Date().timeIntervalSince1970
         var dotsChanged = false
         var limitsChanged = false
+        var accepted = false
         for usage in usages {
             let wasFailed = agentUsage.usage(for: usage.surface)?.turnFailed ?? false
             agentUsage.apply(usage)
+            // The snapshot's turn state is a report like a hook's: the newest
+            // wins. The first batch is a replay (quiet, aged).
+            if usage.isShown(foreground: foregroundBySurface[usage.surface]),
+               let report = usage.report(),
+               let project = workspace.project(containing: usage.surface),
+               let surface = workspace.surface(with: usage.surface) {
+                let result = agentDetector.apply(report: report, session: usage.surface,
+                                                 replay: isInitial, now: now)
+                accepted = accepted || result.accepted
+                if handleAgentResult(result, surface: surface, project: project, message: nil) {
+                    dotsChanged = true
+                }
+            }
             if usage.turnFailed != wasFailed {
                 dotsChanged = true
                 // The first batch describes turns that ended before this
@@ -1791,6 +1819,7 @@ final class TerminalViewController: NSViewController {
             }
         }
         if dotsChanged { setNeedsChromeRefresh(tabBar: true, sidebar: true) }
+        if accepted { attentionChanged() }
         if limitsChanged {
             // A deleted account's reading must not resurface under a reused id.
             accountLimits.prune(keeping: Set(accounts.map(\.id) + [AgentAccountSupport.defaultID]))
@@ -1806,8 +1835,9 @@ final class TerminalViewController: NSViewController {
         return usage
     }
 
-    /// The status a pane's dot shows: the hooks' word, with an idle agent
-    /// whose last turn failed shown as errored. Every dot reads this, never
+    /// The status a pane's dot shows: the status board's word (mod, hooks
+    /// and the probe), with an idle agent whose last turn failed shown as
+    /// errored. Every dot reads this, never
     /// `agentDetector` directly, or one surface would disagree with another.
     func displayedStatus(for surfaceID: UUID) -> AgentStatus? {
         AgentStatus.displayed(agentDetector.state(for: surfaceID).status,
@@ -1867,24 +1897,38 @@ final class TerminalViewController: NSViewController {
     private func replayAgentEvents(from url: URL) {
         let maxReplayBytes = 256 * 1024
         DispatchQueue.global(qos: .utility).async { [weak self] in
-            guard let data = try? Data(contentsOf: url), !data.isEmpty else { return }
-            let tail = data.count > maxReplayBytes ? data.suffix(maxReplayBytes) : data
-            guard let text = String(data: tail, encoding: .utf8) else { return }
-            let events = AgentEventReplay.liveEvents(fromJSONL: text)
-            guard !events.isEmpty else { return }
-            // Replayed state must not ring bells — it's potentially stale.
-            DispatchQueue.main.async { self?.handleAgentEvents(events, notify: false) }
+            var events: [AgentEvent] = []
+            if let data = try? Data(contentsOf: url), !data.isEmpty {
+                let tail = data.count > maxReplayBytes ? data.suffix(maxReplayBytes) : data
+                if let text = String(data: tail, encoding: .utf8) {
+                    events = AgentEventReplay.liveEvents(fromJSONL: text)
+                }
+            }
+            DispatchQueue.main.async {
+                guard let self else { return }
+                // Replayed state must not ring bells — it's potentially stale.
+                if !events.isEmpty { self.handleAgentEvents(events, replay: true) }
+                // Only now is "who is waiting" known; the inbox waits for it.
+                self.hasReplayedAgentEvents = true
+                self.publishAttentionCount()
+            }
         }
     }
 
-    /// Routes hook events to the pane the event names (`surface`), falling back
-    /// to every surface whose working directory matches the event's `cwd`, then
-    /// refreshes the status dots.
-    /// Fired when a pane's agent transitions INTO needs-attention (never
-    /// during the startup replay). Payload: pane surface, agent kind, and the
-    /// owning project (per-project notification overrides are resolved by the
-    /// receiver).
+    /// Set once the startup replay has been applied: until then the board
+    /// doesn't yet know which panes are waiting.
+    private(set) var hasReplayedAgentEvents = false
+
+    /// Fired when a report raises "needs you" (a decision; once per 2 s
+    /// moment, repeats included, never during replay). Payload: pane surface,
+    /// agent kind, and the owning project (per-project notification overrides
+    /// are resolved by the receiver).
     var onAgentNeedsAttention: ((Surface, AgentKind, ProjectRuntime) -> Void)?
+
+    /// Fired when a pane's agent finished a turn (running → idle, or a
+    /// terminal notice classified as finished). The message is the agent's own
+    /// notice when one came with it. Banner only: no badge, no inbox entry.
+    var onAgentTurnFinished: ((Surface, AgentKind, ProjectRuntime, String?) -> Void)?
 
     /// Per-project dock-badge gate (nil → everything counts). The in-app
     /// bell/inbox always sees every unread pane — only the Dock badge is
@@ -3255,17 +3299,22 @@ final class TerminalViewController: NSViewController {
     /// Fired whenever the number of attention panes changes (Dock badge).
     var onAttentionCountChanged: ((Int) -> Void)?
 
-    private func handleAgentEvents(_ events: [AgentEvent], notify: Bool = true) {
+    /// Routes hook events to the pane the event names (`surface`), falling back
+    /// to every surface whose working directory matches the event's `cwd`, and
+    /// feeds each to the status board. `replay` is the startup read of the
+    /// log: quiet (no sound, banner or badge) and aged (`AgentStatusBoard`).
+    private func handleAgentEvents(_ events: [AgentEvent], replay: Bool = false) {
         let now = Date().timeIntervalSince1970
-        var changed = false
+        let notify = !replay
+        var dotsChanged = false
+        var accepted = false
 
         func apply(_ event: AgentEvent, to surface: Surface, in project: ProjectRuntime) {
-            let previous = agentDetector.state(for: surface.id).status
-            let next = agentDetector.apply(event: event, session: surface.id, now: now)
-            changed = true
-            if notify, next.status == .needsAttention, previous != .needsAttention,
-               let kind = next.kind {
-                onAgentNeedsAttention?(surface, kind, project)
+            let result = agentDetector.apply(report: event.report(), session: surface.id,
+                                             replay: replay, now: now)
+            accepted = accepted || result.accepted
+            if handleAgentResult(result, surface: surface, project: project, message: nil) {
+                dotsChanged = true
             }
         }
 
@@ -3299,14 +3348,31 @@ final class TerminalViewController: NSViewController {
                 }
             }
         }
-        if changed {
-            setNeedsChromeRefresh(tabBar: true, sidebar: true)
-            publishAttentionCount()
-            // An episode that starts in the pane the user is already looking
-            // at is read on arrival — visiting marks read, and they're there.
-            if NSApp.isActive, let focused = paneTree.focusedSurfaceID {
-                acknowledgeAttention(for: focused)
-            }
+        if dotsChanged { setNeedsChromeRefresh(tabBar: true, sidebar: true) }
+        if accepted { attentionChanged() }
+    }
+
+    /// Fires the needs-you and finished callbacks a board result asks for.
+    /// True when the pane's shown status moved (the dots need a refresh).
+    @discardableResult
+    private func handleAgentResult(_ result: AgentApplyResult, surface: Surface,
+                                   project: ProjectRuntime, message: String?) -> Bool {
+        if result.raisedAttention, let kind = result.state.kind {
+            onAgentNeedsAttention?(surface, kind, project)
+        }
+        if result.finished, let kind = result.state.kind {
+            onAgentTurnFinished?(surface, kind, project, message)
+        }
+        return result.accepted && result.changedStatus
+    }
+
+    /// After reports moved any pane's state: recount the inbox and badge.
+    private func attentionChanged() {
+        publishAttentionCount()
+        // An episode that starts in the pane the user is already looking
+        // at is read on arrival — visiting marks read, and they're there.
+        if NSApp.isActive, let focused = paneTree.focusedSurfaceID {
+            acknowledgeAttention(for: focused)
         }
     }
 

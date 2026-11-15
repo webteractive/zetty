@@ -38,18 +38,6 @@ public final class AgentDetector {
         board.noteFinished(pane: session, at: at)
     }
 
-    /// Applies a harness-hook `AgentEvent` stamped with `now` (each call a
-    /// hair newer than the pane's last report, so a batch read in one poll
-    /// keeps its order) and returns the new state.
-    @discardableResult
-    public func apply(event: AgentEvent, session: UUID, now: TimeInterval) -> AgentState {
-        lastForwarded = max(now, lastForwarded + 0.000_001)
-        var report = event.report()
-        report.at = lastForwarded
-        return board.apply(report, to: session, replay: false, now: now).state
-    }
-    private var lastForwarded: TimeInterval = 0
-
     /// Clears a session's state (e.g. when its surface closes).
     public func clear(session: UUID) {
         board.clear(pane: session)

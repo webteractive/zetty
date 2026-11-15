@@ -9,10 +9,10 @@ public enum AgentStatus: String, Codable, Sendable {
     /// from what the Claude Code mod reports.
     case errored
 
-    /// The status a dot shows: the hook-driven one, with an idle agent whose
+    /// The status a dot shows: the status board's, with an idle agent whose
     /// last turn FAILED shown as errored.
     ///
-    /// Running and needs-attention are the hooks' word and always win: they
+    /// Running and needs-attention are the reports' word and always win: they
     /// mean a new turn is under way or the agent is waiting on the user, and
     /// either is more current than how the previous turn ended. `foreground`
     /// is the foreground-process probe's reading, so a snapshot left behind by

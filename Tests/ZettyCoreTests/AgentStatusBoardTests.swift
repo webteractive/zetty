@@ -167,3 +167,14 @@ private func report(_ state: AgentReport.State, at: TimeInterval, from source: A
     #expect(board.state(for: pane) == AgentState())
     #expect(board.apply(report(.running, at: 5), to: pane, replay: false, now: 11).accepted)
 }
+
+@Test func replayKeepsALongTurnItsSourceStillConfirms() {
+    // A turn running for 20 minutes whose mod snapshot was rewritten a minute
+    // ago is still running; ageing reads the last confirmation, not the start.
+    let now: TimeInterval = 100_000
+    let board = AgentStatusBoard()
+    var long = report(.running, at: now - 1200, from: .mod)
+    long.confirmedAt = now - 60
+    board.apply(long, to: pane, replay: true, now: now)
+    #expect(board.state(for: pane).status == .running)
+}

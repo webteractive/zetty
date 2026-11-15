@@ -25,18 +25,13 @@ private let s1 = UUID(uuidString: "00000000-0000-0000-0000-0000000000A1")!
 
 @Test func detectorAppliesHookEventBySession() {
     let detector = AgentDetector()
-    let running = detector.apply(
-        event: AgentEvent(cwd: "/x", agent: .claude, event: .needsAttention),
-        session: s1, now: 100
-    )
-    #expect(running == AgentState(kind: .claude, status: .needsAttention))
+    let attention = AgentEvent(cwd: "/x", agent: .claude, event: .needsAttention, at: 100)
+    #expect(detector.apply(report: attention.report(), session: s1, now: 100).state
+            == AgentState(kind: .claude, status: .needsAttention))
 
     // `.ended` clears presence.
-    let ended = detector.apply(
-        event: AgentEvent(cwd: "/x", agent: .claude, event: .ended),
-        session: s1, now: 101
-    )
-    #expect(ended == AgentState(kind: nil, status: nil))
+    let ended = AgentEvent(cwd: "/x", agent: .claude, event: .ended, at: 101)
+    #expect(detector.apply(report: ended.report(), session: s1, now: 101).state == AgentState(kind: nil, status: nil))
 }
 
 @Test func detectorRemembersPerSessionStateForStickiness() {
@@ -50,12 +45,13 @@ private let s1 = UUID(uuidString: "00000000-0000-0000-0000-0000000000A1")!
 
 @Test func detectorApplyRecordsSessionFromEventAndEndedClearsIt() {
     let detector = AgentDetector()
-    let running = AgentEvent(cwd: "/p", agent: .claude, event: .running, surface: s1, session: "sess-1")
-    #expect(detector.apply(event: running, session: s1, now: 100).session == AgentSession(id: "sess-1", cwd: "/p"))
-    let idle = AgentEvent(cwd: "/p", agent: .claude, event: .idle)
-    #expect(detector.apply(event: idle, session: s1, now: 101).session?.id == "sess-1")
-    let ended = AgentEvent(cwd: "/p", agent: .claude, event: .ended)
-    #expect(detector.apply(event: ended, session: s1, now: 102).session == nil)
+    let running = AgentEvent(cwd: "/p", agent: .claude, event: .running, surface: s1, session: "sess-1", at: 100)
+    #expect(detector.apply(report: running.report(), session: s1, now: 100).state.session
+            == AgentSession(id: "sess-1", cwd: "/p"))
+    let idle = AgentEvent(cwd: "/p", agent: .claude, event: .idle, at: 101)
+    #expect(detector.apply(report: idle.report(), session: s1, now: 101).state.session?.id == "sess-1")
+    let ended = AgentEvent(cwd: "/p", agent: .claude, event: .ended, at: 102)
+    #expect(detector.apply(report: ended.report(), session: s1, now: 102).state.session == nil)
 }
 
 @Test func detectorForwardsReportsAndProbeReadingsToItsBoard() {

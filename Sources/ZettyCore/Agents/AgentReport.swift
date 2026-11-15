@@ -31,6 +31,10 @@ public struct AgentReport: Sendable, Equatable {
     public var session: AgentSession?
     /// What the agent asked or said, when the source carried it.
     public var message: String?
+    /// When the source last confirmed this state, if later than `at` (the mod
+    /// rewrites its snapshot while a turn runs). Replay ages from this, so a
+    /// long turn that is still going isn't restored as idle.
+    public var confirmedAt: TimeInterval?
 
     public init(source: Source, agent: AgentKind, state: State, at: TimeInterval,
                 session: AgentSession? = nil, message: String? = nil) {
