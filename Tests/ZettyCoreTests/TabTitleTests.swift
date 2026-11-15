@@ -54,3 +54,30 @@ import Foundation
     let back = try JSONDecoder().decode(PaneTree.self, from: data)
     #expect(back.manualTitle == "named")
 }
+
+// MARK: - Agent status glyphs
+
+@Test func stripsBrailleSpinner() {
+    #expect(TabTitle.strippingStatusGlyph("⠋ fixing tests") == "fixing tests")
+    #expect(TabTitle.strippingStatusGlyph("⣾ build") == "build")
+}
+
+@Test func stripsClaudeGlyph() {
+    #expect(TabTitle.strippingStatusGlyph("✳ systat") == "systat")
+    #expect(TabTitle.strippingStatusGlyph("✶ systat") == "systat")
+    #expect(TabTitle.strippingStatusGlyph("· systat") == "systat")
+}
+
+@Test func stripsHalfCircle() {
+    #expect(TabTitle.strippingStatusGlyph("◑ systat") == "systat")
+}
+
+@Test func keepsPlainTitle() {
+    #expect(TabTitle.strippingStatusGlyph("vim README.md") == "vim README.md")
+    #expect(TabTitle.strippingStatusGlyph("a ✳ b") == "a ✳ b")
+}
+
+@Test func keepsGlyphOnlyTitle() {
+    #expect(TabTitle.strippingStatusGlyph("✳") == "✳")
+    #expect(TabTitle.strippingStatusGlyph("⠋ ") == "⠋ ")
+}

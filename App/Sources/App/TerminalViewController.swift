@@ -720,9 +720,13 @@ final class TerminalViewController: NSViewController {
         // working-directory change so the active tab's name stays current.
         registry.onTitleChange = { [weak self] id in
             guard let self else { return }
-            // A fresh live title supersedes any staleness mark.
-            if let surface = self.surface(with: id), self.registry.title(for: surface) != nil {
+            // A fresh live title supersedes any staleness mark. Fresh means
+            // changed: this also fires for a cwd change, with the tool's old
+            // title still standing.
+            if let surface = self.surface(with: id), let live = self.registry.title(for: surface),
+               live != self.suppressedLiveTitles[id] {
                 self.staleTitleSurfaces.remove(id)
+                self.suppressedLiveTitles[id] = nil
             }
             self.persistTitle(for: id)
             // This subscription fires for a cwd change as well as a title, so
@@ -847,6 +851,11 @@ final class TerminalViewController: NSViewController {
                 // emits a fresh title.
                 for (id, command) in commands where command.isEmpty && previous[id] != "" {
                     self.markTitleStale(id)
+                }
+                // An agent identified after its title arrived: persist the
+                // title again, now without its status glyph.
+                for (id, command) in commands where !command.isEmpty && previous[id] != command {
+                    self.persistTitle(for: id)
                 }
                 // The pane's foreground process is no longer that account's
                 // agent, so the `zetty run` it was launched by has ended.
@@ -5686,9 +5695,15 @@ final class TerminalViewController: NSViewController {
     /// probe saw them go idle). Their titles are suppressed — the tab shows
     /// the directory instead — until the terminal emits a fresh title.
     private var staleTitleSurfaces: Set<UUID> = []
+    /// The live title each stale pane still holds (Ghostty never resets a
+    /// title): ignored until the terminal emits a different one.
+    private var suppressedLiveTitles: [UUID: String] = [:]
 
     private func markTitleStale(_ surfaceID: UUID) {
         staleTitleSurfaces.insert(surfaceID)
+        if let surface = surface(with: surfaceID), let live = registry.title(for: surface) {
+            suppressedLiveTitles[surfaceID] = live
+        }
         // Clear the persisted copy too, or a relaunch would reseed the stale
         // name (the probe would re-mark it, but only after the first poll).
         for project in workspace.projects
@@ -5699,12 +5714,25 @@ final class TerminalViewController: NSViewController {
 
     /// The pane's display title: live terminal title, falling back to the
     /// persisted one — unless the title is known-stale (tool exited).
+    /// In an agent pane, a leading status glyph (spinner frame, ✳) is
+    /// dropped: the dot shows the status, and a frame persisted in `lastTitle`
+    /// would freeze mid-spin after a relaunch.
     func displayTitle(for surface: Surface?) -> String? {
         guard let surface else { return nil }
-        guard !staleTitleSurfaces.contains(surface.id) else {
-            return registry.title(for: surface)   // only a FRESH live title counts
-        }
-        return registry.title(for: surface) ?? surface.lastTitle
+        let title = staleTitleSurfaces.contains(surface.id)
+            ? liveTitle(for: surface)   // only a FRESH live title counts
+            : liveTitle(for: surface) ?? surface.lastTitle
+        return title.map { agentTitle($0, for: surface) }
+    }
+
+    /// The terminal's title, unless it is the stale one `markTitleStale` saw.
+    private func liveTitle(for surface: Surface) -> String? {
+        guard let live = registry.title(for: surface), live != suppressedLiveTitles[surface.id] else { return nil }
+        return live
+    }
+
+    private func agentTitle(_ title: String, for surface: Surface) -> String {
+        agentIdentity(for: surface) != nil ? TabTitle.strippingStatusGlyph(title) : title
     }
 
     /// Writes the live terminal title through to the persisted model, so tab
@@ -5715,8 +5743,11 @@ final class TerminalViewController: NSViewController {
         for project in workspace.projects {
             let surfaces = project.tabList.trees.flatMap { $0.layout.surfaces }
             guard let surface = surfaces.first(where: { $0.id == surfaceID }) else { continue }
-            guard let title = registry.title(for: surface), !title.isEmpty,
-                  title != surface.lastTitle else { return }
+            // A pane that isn't live (its project unopened since launch) has
+            // only the persisted title; drop a glyph saved before this build.
+            guard let source = liveTitle(for: surface) ?? surface.lastTitle, !source.isEmpty else { return }
+            let title = agentTitle(source, for: surface)
+            guard title != surface.lastTitle else { return }
             project.tabList.updateSurface(surfaceID) { $0.lastTitle = title }
             return
         }

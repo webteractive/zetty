@@ -39,6 +39,20 @@ pwd basename → positional.
   empty but successful answer clears it at once. Each tick also feeds the
   status board (`observeForeground`): two empty readings in a row end an
   agent that died without reporting (`agent-detection.md`).
+- **Agent titles lose their status glyph** (`TabTitle.strippingStatusGlyph`:
+  braille spinner frames U+2800–U+28FF, `◐◓◑◒`, `✢✳✶✻✽·` and the space
+  after; a glyph-only title is kept). Done in `displayTitle` and before
+  `persistTitle` writes `lastTitle`, for panes with an agent identity only;
+  the running indicator is the status dot, not the agent's spinner. A title
+  that arrived before the probe identified the agent is persisted again when
+  the identity appears, and a pane that isn't live has its saved title
+  cleaned the same way, so a relaunch never shows a frame frozen mid-spin.
+- **A stale live title stays hidden until it changes.** `markTitleStale`
+  (probe saw the tool go idle) records the live title in
+  `suppressedLiveTitles`; Ghostty never resets a title, so `displayTitle`
+  ignores the terminal's title while it still equals that one, and
+  `onTitleChange` (which also fires for cwd changes) un-stales the pane only
+  when the title actually differs.
 - **Logos** live in `App/Resources/AgentLogos/agent-<command>.svg` — monochrome
   SVGs from simple-icons (CC0) / lobe-icons (MIT), loaded as template images
   and tinted to match the row's text (`AgentIcons`). Agents also have glyph
