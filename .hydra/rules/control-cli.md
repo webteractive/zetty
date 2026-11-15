@@ -120,9 +120,9 @@ raised `confirmClosingBusyPanes`, and the CLI froze for everyone.
   dialog means: anything but a bare shell in the foreground probe. `--force`
   goes ahead without asking.
 - **Busy is read FRESH for each gated request, not from the probe's map.**
-  `foregroundBySurface` is refreshed by `pollForegroundAgents`, which skips
-  every tick while Zetty is not the active app, so it is frozen exactly when
-  agents and scripts call the CLI. It happened (Oct 2026): with an editor in
+  `foregroundBySurface` is refreshed by `pollForegroundAgents`, which skipped
+  every tick while Zetty was not the active app (now: while no window is on
+  screen), so it can be frozen exactly when agents and scripts call the CLI. It happened (Oct 2026): with an editor in
   front, a pane's `sleep 900` read as a bare shell, and an unforced `zetty
   hibernate` (and the mod's `/z-hibernate`) killed it. Now the socket
   queue takes one bounded `zmx list` + `ps` (3s each,

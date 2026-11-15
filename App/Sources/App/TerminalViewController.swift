@@ -782,15 +782,30 @@ final class TerminalViewController: NSViewController {
     }
 
     private func pollForegroundAgents() {
-        // Skip ticks while Zetty is in the background — identities can't
-        // change visibly and the zmx/ps calls are pure overhead; the next
-        // tick after reactivation catches up.
-        guard NSApp.isActive else { return }
+        // Probe while the window is on screen, not only while Zetty is the
+        // active app: a window beside or behind another app still shows tab
+        // names and dots, and they froze until you clicked back in. Skipped
+        // only when nothing of Zetty can be seen.
+        guard view.window?.occlusionState.contains(.visible) == true else { return }
         guard let zmx = ZmxRunner.locate() else { return }
         let ids = allSurfaceIDs
+        let wanted = Set(ids.map(SessionPersistence.sessionName(for:)))
         DispatchQueue.global(qos: .utility).async { [weak self] in
-            let pids = ZmxRunner.sessionPIDs(zmxPath: zmx)
-            guard !pids.isEmpty, let ps = ZmxRunner.psSnapshot() else { return }
+            // Bounded: a hung zmx must not freeze identity for good.
+            let listed = ZmxRunner.sessionPIDsIfListed(zmxPath: zmx, timeout: 2)
+            guard let listed, let ps = ZmxRunner.psSnapshot(timeout: 2) else {
+                // No answer: keep the last reading once, then stop trusting
+                // it — an unprobed pane falls back to reports, never to a
+                // stale identity.
+                DispatchQueue.main.async { self?.foregroundProbeFailed() }
+                return
+            }
+            // Sessions `zmx list` skipped or couldn't reach (another zmx
+            // version) still have a shell under their daemon.
+            let pids = SessionPersistence.sessionPIDs(listed: listed,
+                                                      daemons: ZmxDaemons.daemons(psOutput: ps),
+                                                      wanted: wanted)
+            DispatchQueue.main.async { self?.foregroundProbeFailures = 0 }
             // Its OWN main hop, deliberately. The one below returns early when
             // foreground identities are unchanged — which is most ticks — and
             // sampling from inside it would freeze the CPU column exactly when
@@ -867,6 +882,16 @@ final class TerminalViewController: NSViewController {
                 self.setNeedsChromeRefresh(tabBar: true, sidebar: true)
             }
         }
+    }
+
+    /// Consecutive probe ticks with no answer from zmx or ps.
+    private var foregroundProbeFailures = 0
+
+    private func foregroundProbeFailed() {
+        foregroundProbeFailures += 1
+        guard foregroundProbeFailures >= 2, !foregroundBySurface.isEmpty else { return }
+        foregroundBySurface = [:]
+        setNeedsChromeRefresh(tabBar: true, sidebar: true)
     }
 
     /// Tab-name identity for a pane. The probe is authoritative for any pane

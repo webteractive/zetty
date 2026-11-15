@@ -119,8 +119,9 @@ security delete-generic-password -s co.webteractive.zetty.tailscale-state -a "/t
   until the test app was gone (2026-10-18). The sessions survived, but
   nothing was attached to them.
 - **Activating another app is a test condition, not a side effect.** The
-  foreground probe only polls while Zetty is the active app, so focus
-  changes what `status` reports. A step that opens an editor or Finder
+  foreground probe polls while the window is on screen (since 2026-11-16;
+  before, only while Zetty was the active app), so a window fully covered
+  or minimised changes what `status` reports. A step that opens an editor or Finder
   (`/z-open`, `zetty edit`) moves focus; say so, and restore it after.
 
 ## What still needs the installed app

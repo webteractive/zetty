@@ -132,6 +132,19 @@ public enum SessionPersistence {
         return pids
     }
 
+    /// The probe's session → shell pid map: what `zmx list` gave, plus every
+    /// wanted session it left out, from that session's daemon in the process
+    /// table (a session of another zmx version, which `list` may skip or name
+    /// without a pid). A daemon with no child yet adds nothing.
+    public static func sessionPIDs(listed: [String: Int32], daemons: [String: ZmxDaemon],
+                                   wanted: Set<String>) -> [String: Int32] {
+        var pids = listed
+        for name in wanted where pids[name] == nil {
+            if let shell = daemons[name]?.shellPID { pids[name] = shell }
+        }
+        return pids
+    }
+
     /// Every one of our sessions full `zmx list` output names, reachable or
     /// not. zmx 1.0's `list --short` leaves out sessions whose daemon runs
     /// another version (measured 2026-11-13), so a caller that must see every

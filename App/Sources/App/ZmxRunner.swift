@@ -48,6 +48,16 @@ enum ZmxRunner {
         return pids
     }
 
+    /// `zmx list` → session name to root shell pid for the sessions it can
+    /// reach, or nil when the call failed or outran `timeout` (the probe then
+    /// tells "no answer" from "no sessions", `[:]`). Sessions it can't reach
+    /// are the caller's to fill from the process table
+    /// (`SessionPersistence.sessionPIDs(listed:daemons:wanted:)`).
+    static func sessionPIDsIfListed(zmxPath: String, timeout: TimeInterval) -> [String: Int32]? {
+        guard let output = run(zmxPath, ["list"], timeout: timeout) else { return nil }
+        return SessionPersistence.sessionPIDs(fromList: output)
+    }
+
     /// One process-table snapshot, feeding BOTH foreground resolution and the
     /// task manager's session load (nil on failure). Blocking — call off-main.
     ///

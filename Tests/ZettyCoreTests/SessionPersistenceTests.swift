@@ -243,3 +243,23 @@ private let idB = UUID(uuidString: "11111111-2222-3333-4444-555555555555")!
     #expect(printed == Data(RemoteSizeHandoff.clearScreen.utf8))
     #expect(process.terminationStatus == 0)
 }
+
+// MARK: - Probe coverage: sessions `zmx list` misses
+
+@Test func missingSessionTakesDaemonShellPID() {
+    let daemons = ["zetty-aaaa": ZmxDaemon(pid: 10, executable: "/old/zmx", shellPID: 11)]
+    #expect(SessionPersistence.sessionPIDs(listed: [:], daemons: daemons, wanted: ["zetty-aaaa"]) == ["zetty-aaaa": 11])
+}
+
+@Test func listedPIDWinsOverDaemon() {
+    let daemons = ["zetty-aaaa": ZmxDaemon(pid: 10, executable: "/old/zmx", shellPID: 11)]
+    #expect(SessionPersistence.sessionPIDs(listed: ["zetty-aaaa": 20], daemons: daemons, wanted: ["zetty-aaaa"])
+            == ["zetty-aaaa": 20])
+}
+
+@Test func unwantedDaemonIsIgnored() {
+    let daemons = ["zetty-bbbb": ZmxDaemon(pid: 10, executable: "/old/zmx", shellPID: 11),
+                   "zetty-cccc": ZmxDaemon(pid: 12, executable: "/old/zmx", shellPID: nil)]
+    #expect(SessionPersistence.sessionPIDs(listed: ["zetty-aaaa": 20], daemons: daemons,
+                                           wanted: ["zetty-aaaa", "zetty-cccc"]) == ["zetty-aaaa": 20])
+}

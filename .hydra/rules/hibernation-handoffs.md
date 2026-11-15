@@ -419,8 +419,9 @@ Needs `preserve-sessions` (`handoffsEnabled`); without zmx both hibernation and
   `zmx history --vt`, about one screen each because both harnesses draw on the
   alternate screen). Re-capture them when a harness changes its prompt.
 - **The pass never trusts `foregroundBySurface`.** `pollForegroundAgents`
-  returns early unless `NSApp.isActive`, so the map is frozen while Zetty is in
-  the background, which is when projects go idle: a pane was still reported as
+  returns early while no Zetty window is on screen (until 2026-11-16: unless
+  `NSApp.isActive`), so the map can be frozen while Zetty is hidden, which is
+  when projects go idle: a pane was still reported as
   running Codex long after Codex quit. `evaluateAutoHibernation` takes its own
   reading off-main, and a failed reading is unknown, never idle.
 - **A harness's session store is never searched on the main thread from the
