@@ -715,6 +715,9 @@ final class TerminalViewController: NSViewController {
 
         // Refresh the tab bar whenever any live surface reports a title or
         // working-directory change so the active tab's name stays current.
+        registry.onTerminalSignal = { [weak self] id, signal in
+            self?.handleTerminalSignal(signal, surfaceID: id)
+        }
         registry.onTitleChange = { [weak self] id in
             guard let self else { return }
             // A fresh live title supersedes any staleness mark. Fresh means
@@ -3458,6 +3461,71 @@ final class TerminalViewController: NSViewController {
             onAgentTurnFinished?(surface, kind, project, message)
         }
         return result.accepted && result.changedStatus
+    }
+
+    /// A live pane's terminal reported a notification, progress, a finished
+    /// command or a bell (spec 2026-11-14, section 7). The main registry
+    /// only: a remote project's panes never reach here.
+    private func handleTerminalSignal(_ signal: TerminalSignal, surfaceID: UUID) {
+        guard let surface = workspace.surface(with: surfaceID),
+              let project = workspace.project(containing: surfaceID) else { return }
+        let kind = agentIdentity(for: surface)
+        let now = Date().timeIntervalSince1970
+
+        func report(_ state: AgentReport.State, agent: AgentKind, message: String? = nil) {
+            let result = agentDetector.apply(
+                report: AgentReport(source: .terminal, agent: agent, state: state, at: now, message: message),
+                session: surfaceID, now: now)
+            if handleAgentResult(result, surface: surface, project: project, message: message) {
+                setNeedsChromeRefresh(tabBar: true, sidebar: true)
+            }
+            if result.accepted { attentionChanged() }
+        }
+
+        func finished(_ agent: AgentKind, message: String?) {
+            guard agentDetector.noteFinished(session: surfaceID, at: now) else { return }
+            onAgentTurnFinished?(surface, agent, project, message)
+        }
+
+        switch signal {
+        case let .notification(title, body):
+            // Outside an agent pane a notification is the program's own
+            // business (and Zetty posts none for it, as before).
+            guard let kind else { return }
+            switch TerminalNotification.classify(title: title, body: body, agent: kind) {
+            case .decision(let text):
+                report(.needsAttention, agent: kind, message: text)
+            case .finished(let text):
+                // A turn ended: dim dot and a banner. The report posts the
+                // banner when the pane was running; otherwise post it here
+                // (deduplicated with the report's within 2 s).
+                let message = text.isEmpty ? nil : text
+                report(.idle, agent: kind, message: message)
+                finished(kind, message: message)
+            case .noState:
+                break
+            }
+        case .progress(let active):
+            guard let kind else { return }
+            if active {
+                report(.running, agent: kind)
+            } else if agentDetector.state(for: surfaceID).status == .running {
+                // A clear ends a running turn only: Claude clears its progress
+                // when it stops to ask, and that must not wipe the yellow the
+                // mod or a hook just raised.
+                report(.idle, agent: kind)
+            }
+        case .commandFinished:
+            // The shell is back at its prompt: whatever agent the pane had has
+            // exited, without waiting for the probe.
+            guard let agent = agentDetector.state(for: surfaceID).kind else { return }
+            report(.ended, agent: agent)
+            markTitleStale(surfaceID)
+        case .bell:
+            // A bell can't say whether it means a decision: a banner at most.
+            guard let kind, !isPaneInView(surfaceID) else { return }
+            finished(kind, message: nil)
+        }
     }
 
     /// After reports moved any pane's state: recount the inbox and badge.

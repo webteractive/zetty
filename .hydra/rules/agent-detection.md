@@ -58,6 +58,30 @@ keeps restored entries still waiting, with their read marks — an unread
 survivor still badges — and marks a waiting pane the inbox never held as read
 (true, but not news).
 
+**Terminal signals** (live, local panes; spec section 7): each terminal
+view's delegate is a `TerminalDelegateProxy` that forwards to its
+`TerminalViewState` and raises `SurfaceRegistry.onTerminalSignal`
+(`TerminalSignal`), handled by `handleTerminalSignal`, reports stamped on
+receipt with source `.terminal`:
+- OSC 9 / 777 notification → `TerminalNotification.classify`: Claude →
+  nothing (the mod and hooks label its notices); otherwise a text starting
+  with a Codex decision prefix (`Approval requested`, `Codex wants to edit`,
+  `Question requested`, `Implement this plan?`, from Codex 0.157.1's binary)
+  → needsAttention; anything else → idle plus the finished banner.
+- OSC 9;4 progress → running; a clear → idle **only from running** (Claude
+  clears progress when it stops to ask; that must not wipe the yellow).
+- OSC 133;D (shell integration, zsh) in a pane with an agent state → ended,
+  and the live title is marked stale: the dot clears as the agent exits.
+- BEL in an agent pane not in view → the finished banner. Never yellow.
+- Only the main registry listens: a remote project's panes (another Mac's)
+  never drive this Mac's state. Ghostty rate-limits desktop notifications to
+  1/s app-wide (identical ones 5 s), which can drop a second pane's notice;
+  hooks and the mod cover Claude.
+- **A pane not on screen gets no signals until it is shown**: each pane has
+  its own Ghostty controller, ticked only while its view is in the window, so
+  a project in the background queues its actions (observed 2026-11-16). Hooks
+  and the mod cover those panes.
+
 Detection is **hook-driven** — libghostty exposes no PTY fd / child PID, so
 harness hooks *ping* Zetty:
 

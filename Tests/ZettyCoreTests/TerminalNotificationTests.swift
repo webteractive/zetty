@@ -1,0 +1,41 @@
+import Testing
+@testable import ZettyCore
+
+@Test func claudeNotificationsNeverSetState() {
+    // The mod and hooks label Claude's notifications; its OSC 777 only
+    // collapses into the banner they raised.
+    #expect(TerminalNotification.classify(title: "Claude Code", body: "Claude needs your permission to use Bash",
+                                          agent: .claude) == .noState)
+}
+
+@Test func codexApprovalIsADecision() {
+    #expect(TerminalNotification.classify(title: nil, body: "Approval requested: rm -rf build", agent: .codex)
+            == .decision("Approval requested: rm -rf build"))
+    #expect(TerminalNotification.classify(title: nil, body: "Approval requested by reviewer", agent: .codex)
+            == .decision("Approval requested by reviewer"))
+    #expect(TerminalNotification.classify(title: nil, body: "Question requested", agent: .codex)
+            == .decision("Question requested"))
+    #expect(TerminalNotification.classify(title: nil, body: "Implement this plan?", agent: .codex)
+            == .decision("Implement this plan?"))
+}
+
+@Test func codexEditIsADecision() {
+    #expect(TerminalNotification.classify(title: nil, body: "Codex wants to edit 3 files", agent: .codex)
+            == .decision("Codex wants to edit 3 files"))
+}
+
+@Test func codexTurnEndIsFinished() {
+    #expect(TerminalNotification.classify(title: nil, body: "Agent turn complete", agent: .codex)
+            == .finished("Agent turn complete"))
+    #expect(TerminalNotification.classify(title: nil, body: "  Refactored the parser.  ", agent: .codex)
+            == .finished("Refactored the parser."))
+}
+
+@Test func unknownAgentPlainTextIsFinished() {
+    #expect(TerminalNotification.classify(title: "Build", body: nil, agent: nil) == .finished("Build"))
+    #expect(TerminalNotification.classify(title: nil, body: "done", agent: .hermes) == .finished("done"))
+}
+
+@Test func emptyNotificationIsFinishedWithEmptyText() {
+    #expect(TerminalNotification.classify(title: nil, body: nil, agent: .codex) == .finished(""))
+}

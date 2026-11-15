@@ -261,7 +261,9 @@ every new request. A finished turn isn't "needs you": the dot goes dim and a
 banner is posted, with no badge. Banners appear whenever you can't see the pane
 (another project, tab or window), Zetty in front included. After a relaunch,
 only panes still waiting stay yellow, and only the ones you hadn't seen
-badge.
+badge. Agents without hooks get this from the terminal too: Codex's "Approval
+requested" notice turns its pane yellow and its turn-end notice dims it with a
+banner, and a pane's dot clears as soon as its agent exits to the shell.
 
 **Launch agents.** Enable agents under **Project Settings → Agents** (Claude
 Code, Codex, Hermes, Gemini, opencode, Pi, Cursor). A new tab or split then asks
