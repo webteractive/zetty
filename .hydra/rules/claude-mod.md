@@ -77,8 +77,9 @@ so it reads as "my change did nothing".
 1. `ModInstaller` copies the bundled mod to `~/.zetty/mods/zetty-bridge` and
    puts `CLAUDE_CODE_PLUGIN_DIRS` into every new pane's environment
    (`ModInstaller.paneEnvironment`, laid on by `surfaceEnvironmentProvider`).
-2. Claude Code loads the mod. On session start, turn start/end and every
-   `session.measure` it rewrites `~/.zetty/agent-usage/<SURFACE-UUID>.json`.
+2. Claude Code loads the mod. On session start, every turn-state change
+   (see "What the mod reports") and every `session.measure` it rewrites
+   `~/.zetty/agent-usage/<SURFACE-UUID>.json`.
 3. `AgentUsageWatcher` polls that directory (1s, mtime-gated) and hands each
    batch to `applyAgentUsage`, which stores it and requests a coalesced
    refresh ONLY for what moved: dots when a turn's failed state flipped, the
@@ -87,9 +88,35 @@ so it reads as "my change did nothing".
 
 ## Rules
 
-- **The classic hooks stay the only source of running / idle /
-  needs-attention.** The mod ADDS to them. Two writers for one dot is how a dot
-  ends up wrong, and Codex and Hermes have no mod at all.
+- **The mod and the hooks both report; the newest report wins** (Glen,
+  2026-11-15; spec `2026-11-14-agent-status-signals-design.md`). Each report
+  carries its time (the snapshot's `turn.at`, the hook line's `ts`), and
+  `AgentStatusBoard` keeps the newest per pane, a tie going to the mod. With
+  times, the mod and the hook for the same moment agree and a late duplicate
+  is older and loses, so the dot can't flicker between them. The hooks stay
+  installed as the fallback: **the mod can be skipped silently** — it may
+  fail to load, a preserved session may predate it, `zetty-claude-mod` may be
+  off, and **a mod earlier in the chain can pass an event on past it**
+  ("zetty-bridge: its classic.Notification hook was skipped.
+  cc-plugin-sec-default runs first and sent the event on past it",
+  2026-11-15). Codex and Hermes have no mod at all.
+- **What the mod reports (0.7.0)**, each written BEFORE `next` so a later
+  mod that stops the chain can't hide it: `turn.start` → running;
+  `classic.PreToolUse` / `classic.PostToolUse` → running (written only when
+  the turn wasn't running, so not per tool call; this is what turns a pane
+  green after an approval or a subagent/background wake);
+  `classic.PermissionRequest` → `waiting` with the tool as the attention
+  message (always written: a new request is a new moment);
+  `classic.Notification` → `waiting` for `permission_prompt` /
+  `elicitation_dialog`, otherwise the message only (decisions only:
+  `idle_prompt` is not "needs you"); `classic.StopFailure` → idle with
+  reason `error`; main-loop `turn.complete` → idle with its reason;
+  `session.end` → ended (`clear` → idle). `turn.at` (ms) is stamped on each
+  transition and not on `session.measure`. An older Zetty reads `waiting`
+  as idle; `SNAPSHOT_VERSION` stays 1. `classic.PreToolUse`'s `e` is the
+  tool-call envelope and can't be fired from a test, so it shares
+  `toolActivity` with PostToolUse, which is tested. The state writes never
+  throw (`moveTurn`): these classic hooks gate tool calls.
 - **The mod is loaded from the COPY, never from inside `zetty.app`.** Claude
   Code writes `.claude-plugin/types/` and a `tsconfig.json` beside any mod it
   loads from disk; inside the bundle that breaks the signature. Both are
@@ -166,8 +193,8 @@ so it reads as "my change did nothing".
   only the appended window takes the attention / error token, so identity
   never changes colour with usage. `StatusBarView.accountTitle` is shared by
   the status bar and `TileStatusLineView`.
-- **Errored is an overlay on idle, never a hook state.** `AgentStateMachine`
-  and the hooks are untouched; `AgentStatus.displayed` returns `.errored` only
+- **Errored is an overlay on idle, never a reported state.** The reports
+  carry idle; `AgentStatus.displayed` returns `.errored` only
   for an idle (or stateless) pane whose snapshot says the last turn ended in
   `error` or `refusal`. Running and needs-attention always win, and `aborted`
   is the user's own interrupt. Roll-up order: needs-attention, errored,
@@ -179,9 +206,10 @@ so it reads as "my change did nothing".
   the same reason the hook replay stays silent.
 - **The attention message is read from the FILE at notification time**
   (`attentionMessage(for:)`), not from the store. The mod's
-  `classic.Notification` hook writes the snapshot BEFORE calling `next`, and
-  the settings hook beneath it is what raises needs-attention — so the file is
-  already there, while the watcher's 1s poll may not have come round. The
+  `classic.PermissionRequest` / `classic.Notification` hooks write the
+  snapshot BEFORE calling `next`, so when the settings hook beneath raises
+  needs-attention first (the hook watcher polls every 0.5 s, the usage watcher
+  every 1 s) the file is already there. The
   message is flattened to one line and capped at 200 characters in
   `AgentUsage.parse`, because it lands in a notification.
 - **Tile dots are retuned in place** (`TileGridView.updateStatuses`, on the

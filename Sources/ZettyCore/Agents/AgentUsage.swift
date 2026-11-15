@@ -3,9 +3,9 @@ import Foundation
 /// One pane's snapshot from the Claude Code mod (`Mods/zetty-bridge`), which
 /// rewrites `~/.zetty/agent-usage/<surface>.json` whole on every change.
 ///
-/// The classic hooks stay the only source of running / idle / needs-attention.
-/// This ADDS what they cannot see: context fill, cost, rate limits, and why
-/// the last turn ended.
+/// Its turn state is one of the reports `AgentStatusBoard` folds with the
+/// hooks' (newest wins, a tie to the mod). It also carries what hooks cannot
+/// see: context fill, cost, rate limits, and why the last turn ended.
 public struct AgentUsage: Equatable, Sendable {
 
     /// The contract version this build reads. A file carrying another is
@@ -15,6 +15,8 @@ public struct AgentUsage: Equatable, Sendable {
     public enum TurnState: String, Sendable, Equatable {
         case running
         case idle
+        /// Blocked on a decision: a permission or a question (mod 0.7.0+).
+        case waiting
         /// The session is over; nothing about it is worth showing.
         case ended
     }
@@ -66,13 +68,16 @@ public struct AgentUsage: Equatable, Sendable {
     public var attention: Attention?
     /// Seconds since the epoch.
     public var updatedAt: TimeInterval
+    /// When the turn entered `turnState`, in epoch seconds (mod 0.7.0+; nil
+    /// from an older mod, whose reports then fall back to `updatedAt`).
+    public var turnAt: TimeInterval?
 
     public init(surface: UUID, session: String? = nil, cwd: String? = nil, model: String? = nil,
                 configDirectory: String? = nil, turnState: TurnState = .idle,
                 turnReason: String? = nil, contextTokens: Int? = nil,
                 contextWindow: Int? = nil, contextPercent: Int? = nil,
                 costUSD: Double? = nil, rateLimits: [RateLimit] = [],
-                attention: Attention? = nil, updatedAt: TimeInterval = 0) {
+                attention: Attention? = nil, updatedAt: TimeInterval = 0, turnAt: TimeInterval? = nil) {
         self.surface = surface
         self.session = session
         self.cwd = cwd
@@ -87,6 +92,21 @@ public struct AgentUsage: Equatable, Sendable {
         self.rateLimits = rateLimits
         self.attention = attention
         self.updatedAt = updatedAt
+        self.turnAt = turnAt
+    }
+
+    /// The turn state as a report for `AgentStatusBoard`.
+    public func report() -> AgentReport? {
+        let state: AgentReport.State
+        switch turnState {
+        case .running: state = .running
+        case .idle: state = .idle
+        case .waiting: state = .needsAttention
+        case .ended: state = .ended
+        }
+        return AgentReport(source: .mod, agent: .claude, state: state, at: turnAt ?? updatedAt,
+                           session: session.map { AgentSession(id: $0, cwd: cwd ?? "") },
+                           message: attention?.message)
     }
 
     /// Whether the last turn ended in a way the user did not ask for: an API
@@ -156,7 +176,8 @@ public struct AgentUsage: Equatable, Sendable {
             costUSD: (object["costUSD"] as? NSNumber)?.doubleValue,
             rateLimits: limits,
             attention: attention,
-            updatedAt: ((object["updatedAt"] as? NSNumber)?.doubleValue ?? 0) / 1000)
+            updatedAt: ((object["updatedAt"] as? NSNumber)?.doubleValue ?? 0) / 1000,
+            turnAt: (turn["at"] as? NSNumber).map { $0.doubleValue / 1000 })
     }
 
     private static func parseDate(_ raw: String) -> Date? {
@@ -186,6 +207,7 @@ public struct AgentUsage: Equatable, Sendable {
     var visible: AgentUsage {
         var copy = self
         copy.updatedAt = 0
+        copy.turnAt = nil
         copy.contextTokens = nil
         copy.costUSD = nil
         copy.rateLimits = rateLimits.map {

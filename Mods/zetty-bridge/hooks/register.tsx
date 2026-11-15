@@ -14,10 +14,15 @@ import {
 const SNAPSHOT_VERSION = 1
 
 type Turn = {
-  state: 'running' | 'idle' | 'ended'
+  // `waiting`: blocked on a decision (a permission or a question). An older
+  // Zetty reads it as idle.
+  state: 'running' | 'idle' | 'waiting' | 'ended'
   // Why the last turn ended (answer, aborted, refusal, error) or the session did.
   reason?: string
   durationMs?: number
+  // When this state began (ms epoch). Zetty orders it against the hook's
+  // report of the same moment: the newest wins.
+  at?: number
 }
 
 type Usage = Pick<SessionUsage, 'context' | 'rateLimits' | 'cost'>
@@ -67,6 +72,36 @@ async function write($: EngineInterface, measured?: Usage): Promise<void> {
 function publish($: EngineInterface, measured?: Usage): Promise<void> {
   writes = writes.then(() => write($, measured)).catch(() => {})
   return writes
+}
+
+// Moves the turn to `next`, stamping when it began, and writes the snapshot.
+// A move to the state already held writes nothing (tool calls fire many times
+// a turn), unless `fresh`: a new permission request is a new moment even in a
+// pane already waiting.
+// Never throws: the classic hooks that call it gate tool calls.
+async function moveTurn($: EngineInterface, next: Turn, fresh = false): Promise<void> {
+  if (!fresh && next.state === turn.state && next.reason === turn.reason) return
+  try {
+    turn = { ...next, at: await $.clock.now() }
+  } catch {
+    turn = { ...next }
+  }
+  await publish($)
+}
+
+// A tool starting or finishing: the turn is running, whatever woke it.
+async function toolActivity($: EngineInterface): Promise<void> {
+  if (turn.state !== 'running') attention = undefined
+  await moveTurn($, { state: 'running' })
+}
+
+// What a permission request is for, short enough for a notification.
+function describeTool(name: string, input: unknown): string {
+  const detail = input !== null && typeof input === 'object'
+    ? Object.values(input as Record<string, unknown>).find(v => typeof v === 'string') as string | undefined
+    : undefined
+  const short = detail === undefined ? '' : `: ${detail.length > 120 ? `${detail.slice(0, 117)}...` : detail}`
+  return `Claude needs your permission to use ${name}${short}`
 }
 
 // MARK: - Talking to Zetty
@@ -465,30 +500,59 @@ export const register: Register = on => {
     return started
   })
 
+  // Every state is written BEFORE `next`: a mod later in the chain can stop
+  // an event, and Zetty must still hear of it.
   on('turn.start', async ($, e, next) => {
-    const started = await next(e)
-    turn = { state: 'running' }
     attention = undefined
-    await publish($)
-    return started
+    await moveTurn($, { state: 'running' }, true)
+    return next(e)
   })
 
   on('turn.complete', async ($, e, next) => {
-    const completed = await next(e)
     // A subagent's run is a turn too; only the main loop decides the pane's state.
     if (e.agentId === undefined) {
-      turn = { state: 'idle', reason: e.reason, durationMs: e.durationMs }
       attention = undefined
-      await publish($)
+      await moveTurn($, { state: 'idle', reason: e.reason, durationMs: e.durationMs }, true)
     }
-    return completed
+    return next(e)
   })
 
-  // Written BEFORE `next`: the settings hook beneath is what raises
-  // needs-attention in Zetty, which reads this file the moment it does.
+  // Work that starts without a prompt: after an approval, or a subagent or
+  // background task waking. Written only when the turn wasn't running.
+  on('classic.PreToolUse', async ($, e, next) => {
+    await toolActivity($)
+    return next(e)
+  })
+
+  on('classic.PostToolUse', async ($, e, next) => {
+    await toolActivity($)
+    return next(e)
+  })
+
+  on('classic.PermissionRequest', async ($, e, next) => {
+    attention = { message: describeTool(e.tool_name, e.tool_input), type: 'permission_prompt' }
+    await moveTurn($, { state: 'waiting' }, true)
+    return next(e)
+  })
+
+  // A permission or a question is "needs you"; anything else (idle_prompt,
+  // ~60 s after a turn) only records the message (Glen, 2026-11-15: decisions
+  // only). The settings hook beneath is Zetty's fallback when this mod is
+  // skipped, and Zetty reads the message from this file when it notifies.
   on('classic.Notification', async ($, e, next) => {
     attention = { message: e.message, type: e.notification_type }
-    await publish($)
+    if (e.notification_type === 'permission_prompt' || e.notification_type === 'elicitation_dialog') {
+      if (turn.state === 'waiting') await publish($)
+      else await moveTurn($, { state: 'waiting' })
+    } else {
+      await publish($)
+    }
+    return next(e)
+  })
+
+  on('classic.StopFailure', async ($, e, next) => {
+    attention = undefined
+    await moveTurn($, { state: 'idle', reason: 'error' })
     return next(e)
   })
 
@@ -500,11 +564,9 @@ export const register: Register = on => {
   })
 
   on('session.end', async ($, e, next) => {
-    const ended = await next(e)
     // After a /clear the process goes on under a new session id.
-    turn = e.reason === 'clear' ? { state: 'idle' } : { state: 'ended', reason: e.reason }
-    await publish($)
-    return ended
+    await moveTurn($, e.reason === 'clear' ? { state: 'idle' } : { state: 'ended', reason: e.reason }, true)
+    return next(e)
   })
 
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {

@@ -213,3 +213,48 @@ private func parse(_ json: String) -> AgentUsage? {
     #expect(AgentStatus.displayed(.idle, usage: fine, foreground: "claude") == .idle)
     #expect(AgentStatus.displayed(.idle, usage: nil, foreground: "claude") == .idle)
 }
+
+// MARK: - Turn state as a report
+
+private func snapshot(turn: String, updatedAt: Int = 1_794_726_713_000) -> String {
+    #"{"v":1,"agent":"claude","surface":"E7AE73DA-B1D9-4649-A122-02134E893AE8","session":"s-1","cwd":"/w","turn":"# + turn + #","updatedAt":"# + String(updatedAt) + "}"
+}
+
+@Test func parsesWaitingAndTurnAt() throws {
+    let usage = try #require(parse(snapshot(turn: #"{"state":"waiting","at":1794726712500}"#)))
+    #expect(usage.turnState == .waiting)
+    #expect(usage.turnAt == 1_794_726_712.5)
+}
+
+@Test func reportUsesTurnAtOverUpdatedAt() throws {
+    let usage = try #require(parse(snapshot(turn: #"{"state":"running","at":1794726712500}"#)))
+    #expect(usage.report() == AgentReport(source: .mod, agent: .claude, state: .running, at: 1_794_726_712.5,
+                                          session: AgentSession(id: "s-1", cwd: "/w")))
+}
+
+@Test func reportFallsBackToUpdatedAtForOlderMod() throws {
+    let usage = try #require(parse(snapshot(turn: #"{"state":"idle","reason":"answer"}"#)))
+    #expect(usage.turnAt == nil)
+    #expect(usage.report()?.at == 1_794_726_713)
+    #expect(usage.report()?.state == .idle)
+}
+
+@Test func waitingMapsToNeedsAttentionWithItsMessage() throws {
+    let json = #"{"v":1,"agent":"claude","surface":"E7AE73DA-B1D9-4649-A122-02134E893AE8","turn":{"state":"waiting","at":5000},"attention":{"message":"Claude needs your permission to use Bash","type":"permission_prompt"},"updatedAt":6000}"#
+    let report = try #require(parse(json)?.report())
+    #expect(report.state == .needsAttention)
+    #expect(report.at == 5)
+    #expect(report.message == "Claude needs your permission to use Bash")
+}
+
+@Test func endedSnapshotReportsEnded() throws {
+    #expect(try #require(parse(snapshot(turn: #"{"state":"ended","at":5000}"#))).report()?.state == .ended)
+}
+
+@Test func waitingSnapshotIsShownLikeRunning() throws {
+    let usage = try #require(parse(snapshot(turn: #"{"state":"waiting","at":5000}"#)))
+    #expect(usage.isShown(foreground: "claude"))
+    #expect(usage.isShown(foreground: nil))
+    #expect(!usage.isShown(foreground: "zsh"))
+    #expect(!usage.turnFailed)
+}
