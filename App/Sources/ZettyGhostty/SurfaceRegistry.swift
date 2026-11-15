@@ -63,6 +63,18 @@ public struct TerminalViewPair {
     /// reference is dropped, the live title/workingDirectory subscription dies
     /// silently. Keep the pair (and thus `viewState`) retained for the surface's lifetime.
     public let viewState: TerminalViewState?
+    /// Forwards the view's delegate callbacks to `viewState` and passes the
+    /// agent-relevant ones on (`SurfaceRegistry.onTerminalSignal`). Its only
+    /// strong owner, like `viewState`: the view's delegate slot is weak.
+    public let delegateProxy: TerminalDelegateProxy?
+
+    public init(controller: any TerminalControlling, view: NSView, viewState: TerminalViewState?,
+                delegateProxy: TerminalDelegateProxy? = nil) {
+        self.controller = controller
+        self.view = view
+        self.viewState = viewState
+        self.delegateProxy = delegateProxy
+    }
 }
 
 // MARK: - SurfaceRegistry
@@ -95,6 +107,12 @@ public final class SurfaceRegistry {
     /// directory changes.  The `UUID` is the surface ID that changed.
     /// `TerminalViewController` installs this closure to trigger a tab-bar refresh.
     public var onTitleChange: ((UUID) -> Void)?
+
+    /// Called on the main actor when a live pane's terminal reports a desktop
+    /// notification, progress, a finished command or a bell. Only the main
+    /// workspace's registry sets it; a remote project's leaves it nil, so a
+    /// pane served by another Mac never drives this Mac's state.
+    public var onTerminalSignal: ((UUID, TerminalSignal) -> Void)?
 
     /// The terminal color theme applied to every controller as it is created.
     /// Set by the app layer from the active `ZTheme` so the terminal surface
@@ -429,7 +447,18 @@ public final class SurfaceRegistry {
             }
         }
         let (view, state) = viewFactory(surface, ctrl)
-        let pair = TerminalViewPair(controller: ctrl, view: view, viewState: state)
+        // Put the proxy in front of the state, so signals the state doesn't
+        // publish (progress) or that shouldn't wake the chrome on their own
+        // reach `onTerminalSignal` instead of the title subscription.
+        var proxy: TerminalDelegateProxy?
+        if let state, let terminal = view as? TerminalView {
+            let forwarder = TerminalDelegateProxy(state: state)
+            let id = surface.id
+            forwarder.onSignal = { [weak self] signal in self?.onTerminalSignal?(id, signal) }
+            terminal.delegate = forwarder
+            proxy = forwarder
+        }
+        let pair = TerminalViewPair(controller: ctrl, view: view, viewState: state, delegateProxy: proxy)
         pairs[surface.id] = pair
 
         // Notify on title + workingDirectory changes ONLY (not every @Published

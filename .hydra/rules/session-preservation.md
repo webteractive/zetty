@@ -289,3 +289,21 @@ downloads and `~/.zetty/bin/zmx` are no longer used for new sessions.
   still attaches it, reads its history and kills it; update
   `THIRD_PARTY_NOTICES.md` if the license or what zmx compiles in changed.
   `scripts/check-libghostty.sh` reports a newer zmx release.
+
+## Terminal signals through zmx
+
+Checked 2026-11-16 in the isolated test app (zmx 1.0.1, libghostty-spm
+2.2.2026110702), in a preserved pane, through `TerminalDelegateProxy`:
+
+- **Pass through while attached:** OSC 9;4 progress (set and clear), OSC 777
+  and OSC 9 desktop notifications, BEL, and OSC 133;D (one
+  `commandFinished` per shell command, zsh integration). Each reached
+  `SurfaceRegistry.onTerminalSignal`.
+- **Anything sent while no client is attached is lost**: zmx replays the
+  screen, not the escape sequences, the same reason it replays no title.
+  Hooks and the mod cover detached panes (`agent-detection.md`).
+- **Nobody answers `OSC 7501 ; ?`**: a raw read for 2 s after the query got
+  nothing back, from zmx or from the pinned Ghostty. Claude Code therefore
+  still sends its title glyph and OSC 9;4 in preserved panes. If either ever
+  starts answering, Claude stops sending both, and Zetty must act on the 7501
+  reports first (spec 2026-11-14, section 7.5).
