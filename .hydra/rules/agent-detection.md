@@ -39,7 +39,10 @@ harness hooks *ping* Zetty:
    shared hook helper (`~/.zetty/hooks/zetty-hook.py`) and registers it in the
    harness config (toggle off to uninstall).
 2. On a lifecycle event the harness runs the helper, which appends
-   `{cwd, agent, event}` to `~/.zetty/agent-events.jsonl` — plus `surface`,
+   `{cwd, agent, event, ts}` to `~/.zetty/agent-events.jsonl` (`ts` is
+   `time.time()`, epoch seconds with a fraction, so the hook and the mod's
+   report of the same moment order; a line without it parses as time 0, the
+   oldest) — plus `surface`,
    `session`, and `config` (the harness's config-dir variable as the hook
    process sees it; that last one drives the account chip, see
    `agent-accounts.md`).
@@ -47,8 +50,17 @@ harness hooks *ping* Zetty:
    event to panes **by working directory** and drives the dots.
 
 Per-harness install (`HookInstaller` + the pure `*HookConfig` transforms):
-- **Claude** — additive hooks in `~/.claude/settings.json` (UserPromptSubmit→running,
-  Notification→needsAttention, Stop→idle, SessionEnd→ended).
+- **Claude** — additive hooks in `~/.claude/settings.json` (`ClaudeHookConfig.events`):
+  SessionStart→idle, UserPromptSubmit/PreToolUse/PostToolUse→running,
+  PermissionRequest→needsAttention, Notification→needsAttention **with matcher
+  `permission_prompt|elicitation_dialog`** (decisions only: `idle_prompt`, ~60 s
+  after a turn, is not "needs you"), Stop→idle, SessionEnd→ended. Every launch
+  repairs them (`HookInstaller.repairClaudeHooksEverywhere`) in `~/.claude` and
+  each Claude account's directory: a missing event is added and our group's
+  matcher corrected, in place; a directory without Zetty's hooks is never
+  touched. `isInstalled` stays "any of ours present" (the Settings toggle);
+  `needsRepair` is "installed but out of date". Launch writers of
+  `settings.json` (mod sync, repair, account installs) share one serial queue.
 - **Codex** — chains the single `~/.codex/config.toml` `notify` (emits then execs
   your original; uninstall restores it). Only turn-ended fires → idle/presence.
 - **Hermes** — `hooks:` block in `~/.hermes/config.yaml` (pre_approval_request→

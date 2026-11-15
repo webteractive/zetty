@@ -112,6 +112,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
 
     /// In-memory agent accounts; loaded at launch, saved on every edit.
     private(set) var agentAccounts = AgentAccountsFile()
+    /// Serializes launch-time read-modify-writes of Claude's `settings.json`
+    /// (mod sync, hook repair), which would otherwise race on the same file.
+    private let claudeSettingsQueue = DispatchQueue(label: "co.webteractive.zetty.claude-settings", qos: .utility)
 
     func applicationDidFinishLaunching(_: Notification) {
         // TerminalController internally calls ghostty_init(0, nil) exactly once
@@ -169,6 +172,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         // after a fallback every entry would be dropped anyway.
         // Accounts first: a resume pins the login its agent was running under.
         agentAccounts = agentAccountStore.load()
+        repairClaudeHooks()
         syncModIntoClaudeSettings()
         if let manifest = RestartRecoveryRunner.consumeManifest() {
             applyRecoveryManifest(manifest, to: tvc, restoredFromDisk: restoredFromDisk)
@@ -1049,8 +1053,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
                 AgentAccountSupport.canonical($0.directory, home: home)
             }
         let enabled = appConfig.claudeMod
-        DispatchQueue.global(qos: .utility).async { [modInstaller] in
+        claudeSettingsQueue.async { [modInstaller] in
             modInstaller.syncSettings(configDirectories: directories, enabled: enabled)
+        }
+    }
+
+    /// Launch-time repair of Zetty's Claude hooks in the default config dir
+    /// and every Claude account's (`HookInstaller.repairClaudeHooksEverywhere`).
+    private func repairClaudeHooks() {
+        let home = NSHomeDirectory()
+        let directories = agentAccounts.accounts(forAgent: "claude")
+            .map { AgentAccountSupport.canonical($0.directory, home: home) }
+        claudeSettingsQueue.async { [hookInstaller] in
+            hookInstaller.repairClaudeHooksEverywhere(accountDirectories: directories)
         }
     }
 
@@ -1065,7 +1080,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         guard !work.isEmpty else { return }
 
         let home = NSHomeDirectory()
-        DispatchQueue.global(qos: .utility).async { [hookInstaller] in
+        claudeSettingsQueue.async { [hookInstaller] in
             for (harness, accounts, wanted) in work {
                 for account in accounts {
                     let directory = AgentAccountSupport.canonical(account.directory, home: home)

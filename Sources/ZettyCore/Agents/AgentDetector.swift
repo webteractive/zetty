@@ -44,7 +44,7 @@ public final class AgentDetector {
     @discardableResult
     public func apply(event: AgentEvent, session: UUID, now: TimeInterval) -> AgentState {
         lastForwarded = max(now, lastForwarded + 0.000_001)
-        var report = event.legacyReport
+        var report = event.report()
         report.at = lastForwarded
         return board.apply(report, to: session, replay: false, now: now).state
     }
@@ -74,19 +74,5 @@ public final class AgentDetector {
         let next = AgentStateMachine.reduce(previous: state(for: session), observation: observation)
         board.overwrite(next, pane: session)
         return next
-    }
-}
-
-private extension AgentEvent {
-    var legacyReport: AgentReport {
-        let state: AgentReport.State
-        switch event {
-        case .running: state = .running
-        case .idle: state = .idle
-        case .needsAttention: state = .needsAttention
-        case .ended: state = .ended
-        }
-        return AgentReport(source: .hook, agent: agent, state: state, at: 0,
-                           session: session.map { AgentSession(id: $0, cwd: cwd) })
     }
 }

@@ -72,6 +72,22 @@ final class HookInstaller {
         }
     }
 
+    /// Brings Zetty's Claude hooks up to date wherever they are installed:
+    /// `~/.claude` and each account directory. A directory without our hooks
+    /// is left alone (the Settings toggle decides that), and a file is only
+    /// rewritten when something is missing or its matcher is stale. Launch
+    /// calls this so a hook added to the map (SessionStart, PreToolUse, …)
+    /// reaches installs made before it, without re-toggling.
+    func repairClaudeHooksEverywhere(accountDirectories: [String]) {
+        let urls = [configURL(.claude)] + accountDirectories.map { claudeSettingsURL(inConfigDirectory: $0) }
+        let path = scriptURL.path
+        for url in urls {
+            guard let dict = jsonObject(from: url),
+                  ClaudeHookConfig.needsRepair(in: dict, scriptPath: path) else { continue }
+            try? writeJSON(ClaudeHookConfig.install(into: dict, scriptPath: path), to: url)
+        }
+    }
+
     /// Codex's status hook is the `notify` key in `config.toml`, which lives in
     /// its config dir — so an account needs the hook written into ITS copy, for
     /// the same reason Claude accounts need it in their own `settings.json`.

@@ -116,3 +116,14 @@ private func runHook(args: [String], stdin: String, extraEnv: [String: String]) 
     let event = try #require(AgentEvent.parse(line: line))
     #expect(event.configDirectory == nil)
 }
+
+@Test func recordCarriesTimestamp() throws {
+    let before = Date().timeIntervalSince1970
+    let lines = try runHook(args: ["emit", "claude", "running"], stdin: #"{"cwd":"/p"}"#, extraEnv: [:])
+    let after = Date().timeIntervalSince1970
+    let line = try #require(lines.last)
+    let at = try #require(AgentEvent.parse(line: line)?.at)
+    #expect(at >= before - 1 && at <= after + 1)
+    // Sub-second, so two events in one second still order.
+    #expect(lines.last?.contains(#""ts": "#) == true)
+}

@@ -69,3 +69,21 @@ import Testing
     #expect(unset?.configDirectory == "")
     #expect(set?.configDirectory == "/a/b")
 }
+
+@Test func parsesFractionalTimestamp() {
+    let line = #"{"cwd": "/p", "agent": "claude", "event": "idle", "ts": 1794726712.125}"#
+    #expect(AgentEvent.parse(line: line)?.at == 1794726712.125)
+    #expect(AgentEvent.parse(line: #"{"cwd": "/p", "agent": "claude", "event": "idle"}"#)?.at == nil)
+}
+
+@Test func reportFromLegacyLineIsOldest() throws {
+    let event = try #require(AgentEvent.parse(line: #"{"cwd": "/p", "agent": "claude", "event": "running"}"#))
+    #expect(event.report().at == 0)
+}
+
+@Test func reportCarriesSourceStateTimeAndSession() throws {
+    let line = #"{"cwd": "/p", "agent": "codex", "event": "needsAttention", "ts": 12.5, "session": "s-1"}"#
+    let event = try #require(AgentEvent.parse(line: line))
+    #expect(event.report() == AgentReport(source: .hook, agent: .codex, state: .needsAttention, at: 12.5,
+                                          session: AgentSession(id: "s-1", cwd: "/p")))
+}

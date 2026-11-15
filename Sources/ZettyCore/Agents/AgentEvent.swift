@@ -32,15 +32,34 @@ public struct AgentEvent: Equatable, Sendable {
     /// nothing — it predates the field, or the harness hosts no accounts —
     /// which must not be read as "default".
     public let configDirectory: String?
+    /// When the hook fired, in epoch seconds with a sub-second fraction (the
+    /// helper's `ts`). nil for a line from a helper older than the field.
+    public let at: TimeInterval?
 
     public init(cwd: String, agent: AgentKind, event: Kind, surface: UUID? = nil,
-                session: String? = nil, configDirectory: String? = nil) {
+                session: String? = nil, configDirectory: String? = nil, at: TimeInterval? = nil) {
         self.cwd = cwd
         self.agent = agent
         self.event = event
         self.surface = surface
         self.session = session
         self.configDirectory = configDirectory
+        self.at = at
+    }
+
+    /// This event as a report for `AgentStatusBoard`. A line with no `ts`
+    /// reports time 0, the oldest possible, so replay ages it to idle and any
+    /// timed report beats it.
+    public func report() -> AgentReport {
+        let state: AgentReport.State
+        switch event {
+        case .running: state = .running
+        case .idle: state = .idle
+        case .needsAttention: state = .needsAttention
+        case .ended: state = .ended
+        }
+        return AgentReport(source: .hook, agent: agent, state: state, at: at ?? 0,
+                           session: session.map { AgentSession(id: $0, cwd: cwd) })
     }
 
     /// `[A-Za-z0-9._-]{1,128}` — everything Claude and Codex emit, nothing a
@@ -66,9 +85,9 @@ public struct AgentEvent: Equatable, Sendable {
     }
 
     /// Parses one JSON line:
-    /// `{"cwd": "...", "agent": "claude", "event": "running", "surface": "<uuid>", "session": "<id>", "config": "<dir>"}`.
+    /// `{"cwd": "...", "agent": "claude", "event": "running", "surface": "<uuid>", "session": "<id>", "config": "<dir>", "ts": 1794726712.125}`.
     /// Returns nil for malformed input, an unknown agent, or an unknown event.
-    /// `surface`, `session` and `config` are OPTIONAL — a helper predating them, or a
+    /// `surface`, `session`, `config` and `ts` are OPTIONAL — a helper predating them, or a
     /// value that fails validation, yields nil for that field without
     /// rejecting the line.
     /// `agent` matches an `AgentKind` raw value or any of its registry `binaryNames`;
@@ -87,8 +106,9 @@ public struct AgentEvent: Equatable, Sendable {
         guard let agent = resolveAgent(agentRaw), let kind = resolveEvent(eventRaw) else { return nil }
         let surface = (object["surface"] as? String).flatMap(UUID.init(uuidString:))
         let session = (object["session"] as? String).flatMap { isValidSessionID($0) ? $0 : nil }
+        let at = (object["ts"] as? NSNumber)?.doubleValue
         return AgentEvent(cwd: cwd, agent: agent, event: kind, surface: surface, session: session,
-                          configDirectory: object["config"] as? String)
+                          configDirectory: object["config"] as? String, at: at)
     }
 
     private static func resolveAgent(_ raw: String) -> AgentKind? {

@@ -33,10 +33,10 @@ public enum AgentHookScript {
 
     public static let contents = ##"""
     #!/usr/bin/env python3
-    # Zetty agent hook — appends {cwd, agent, event, surface?, session?, config?} to the
+    # Zetty agent hook — appends {cwd, agent, event, ts, surface?, session?, config?} to the
     # event sink. Only reports sessions hosted INSIDE Zetty: Zetty sets ZETTY=1
     # in its panes' environment, so hooks fired from other terminals stay silent.
-    import sys, os, json
+    import sys, os, json, time
 
     SINK = os.path.expanduser("~/.zetty/agent-events.jsonl")
     IN_ZETTY = bool(os.environ.get("ZETTY"))
@@ -60,7 +60,9 @@ public enum AgentHookScript {
     def emit(cwd, agent, event, session=None):
         if not IN_ZETTY:
             return
-        record = {"cwd": cwd, "agent": agent, "event": event}
+        # Sub-second, so Zetty can order this against the mod's report of the
+        # same moment (newest wins).
+        record = {"cwd": cwd, "agent": agent, "event": event, "ts": time.time()}
         surface = surface_id()
         if surface:
             record["surface"] = surface

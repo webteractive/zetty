@@ -99,3 +99,64 @@ private func claudeCommands(_ settings: [String: Any], event: String) -> [String
     let removed = ClaudeHookConfig.uninstall(from: out, scriptPath: script)
     #expect(claudeCommands(removed, event: "SessionStart").isEmpty)
 }
+
+// MARK: - Claude hook map and repair
+
+private func claudeGroups(_ settings: [String: Any], event: String) -> [[String: Any]] {
+    ((settings["hooks"] as? [String: Any])?[event] as? [[String: Any]]) ?? []
+}
+
+@Test func installAddsAllEightEventsWithNotificationMatcher() {
+    let out = ClaudeHookConfig.install(into: [:], scriptPath: script)
+    let expected = ["SessionStart": "idle", "UserPromptSubmit": "running", "PreToolUse": "running",
+                    "PostToolUse": "running", "PermissionRequest": "needsAttention",
+                    "Notification": "needsAttention", "Stop": "idle", "SessionEnd": "ended"]
+    for (event, status) in expected {
+        #expect(claudeCommands(out, event: event) == ["\(script) emit claude \(status)"], "\(event)")
+    }
+    #expect(claudeGroups(out, event: "Notification").first?["matcher"] as? String
+            == "permission_prompt|elicitation_dialog")
+    #expect(claudeGroups(out, event: "Stop").first?["matcher"] == nil)
+}
+
+@Test func needsRepairWhenSessionStartMissing() {
+    // What an install from before SessionStart left behind.
+    let ours = { (status: String) in [["hooks": [["type": "command", "command": "\(script) emit claude \(status)"]]]] }
+    let old: [String: Any] = ["hooks": ["UserPromptSubmit": ours("running"), "Notification": ours("needsAttention"),
+                                        "Stop": ours("idle"), "SessionEnd": ours("ended")]]
+    #expect(ClaudeHookConfig.needsRepair(in: old, scriptPath: script))
+    #expect(!ClaudeHookConfig.needsRepair(in: ClaudeHookConfig.install(into: old, scriptPath: script), scriptPath: script))
+}
+
+@Test func installFixesMatcherOnExistingGroup() {
+    let old: [String: Any] = ["hooks": ["Notification": [
+        ["hooks": [["type": "command", "command": "/other/notify.sh"]]],
+        ["hooks": [["type": "command", "command": "\(script) emit claude needsAttention"]]],
+    ]]]
+    #expect(ClaudeHookConfig.needsRepair(in: old, scriptPath: script))
+    let out = ClaudeHookConfig.install(into: old, scriptPath: script)
+    let groups = claudeGroups(out, event: "Notification")
+    let ours = groups.filter { ($0["hooks"] as? [[String: Any]])?.contains { ($0["command"] as? String)?.contains(script) == true } == true }
+    #expect(ours.count == 1)
+    #expect(ours.first?["matcher"] as? String == "permission_prompt|elicitation_dialog")
+    #expect(groups.first?["matcher"] == nil)   // the user's group is left alone
+}
+
+@Test func installRemovesAMatcherTheMapNoLongerHas() {
+    let old: [String: Any] = ["hooks": ["Stop": [
+        ["matcher": "x", "hooks": [["type": "command", "command": "\(script) emit claude idle"]]],
+    ]]]
+    #expect(ClaudeHookConfig.needsRepair(in: old, scriptPath: script))
+    #expect(claudeGroups(ClaudeHookConfig.install(into: old, scriptPath: script), event: "Stop").first?["matcher"] == nil)
+}
+
+@Test func needsRepairFalseWhenNotInstalled() {
+    #expect(!ClaudeHookConfig.needsRepair(in: [:], scriptPath: script))
+    let others: [String: Any] = ["hooks": ["Stop": [["hooks": [["type": "command", "command": "/other/thing.sh"]]]]]]
+    #expect(!ClaudeHookConfig.needsRepair(in: others, scriptPath: script))
+}
+
+@Test func uninstallRemovesEveryMappedEvent() {
+    let out = ClaudeHookConfig.uninstall(from: ClaudeHookConfig.install(into: [:], scriptPath: script), scriptPath: script)
+    #expect(out["hooks"] == nil)
+}

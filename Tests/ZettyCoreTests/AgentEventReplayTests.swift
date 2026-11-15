@@ -1,4 +1,5 @@
 import Testing
+import Foundation
 @testable import ZettyCore
 
 @Test func replayKeepsLatestEventPerCwdAndAgent() {
@@ -58,4 +59,20 @@ import Testing
     let events = AgentEventReplay.liveEvents(fromJSONL: log)
     #expect(events.count == 2)
     #expect(events.map(\.session) == ["s-a", "s-b"])
+}
+
+@Test func legacyLinesReplayIdle() {
+    // Lines written before events carried `ts` restore idle, never yellow,
+    // and raise nothing (the first launch after upgrading).
+    let log = """
+    {"cwd": "/a", "agent": "claude", "event": "needsAttention"}
+    {"cwd": "/b", "agent": "claude", "event": "running"}
+    """
+    let board = AgentStatusBoard()
+    let pane = UUID()
+    for event in AgentEventReplay.liveEvents(fromJSONL: log) {
+        let result = board.apply(event.report(), to: pane, replay: true, now: 1_800_000_000)
+        #expect(result.raisedAttention == false)
+        #expect(result.state.status == .idle)
+    }
 }
