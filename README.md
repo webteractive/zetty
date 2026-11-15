@@ -251,8 +251,16 @@ keeps it off until you turn it on:
 
 **Status dots.** Turn on the harnesses you use under **Settings → Agent Status
 Hooks** (Claude Code, Codex, Hermes). Tabs, projects and tiles then show:
-green — working · yellow — needs you (optional sound, Dock badge and
-notification) · red — Claude's last turn failed · dim — idle.
+green — working · yellow — needs you · red — Claude's last turn failed ·
+dim — idle.
+
+**Needs you.** Yellow means the agent is waiting on a decision: a permission or
+a question. You get the optional sound, a Dock badge and the bell, again for
+every new request. A finished turn isn't "needs you": the dot goes dim and a
+banner is posted, with no badge. Banners appear whenever you can't see the pane
+(another project, tab or window), Zetty in front included. After a relaunch,
+only panes still waiting stay yellow, and only the ones you hadn't seen
+badge.
 
 **Launch agents.** Enable agents under **Project Settings → Agents** (Claude
 Code, Codex, Hermes, Gemini, opencode, Pi, Cursor). A new tab or split then asks

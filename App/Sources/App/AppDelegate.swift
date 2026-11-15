@@ -241,6 +241,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         tvc.onAgentNeedsAttention = { [weak self] surface, kind, project in
             self?.agentNeedsAttention(surface: surface, kind: kind, project: project)
         }
+        tvc.onAgentTurnFinished = { [weak self] surface, kind, project, message in
+            self?.agentTurnFinished(surface: surface, kind: kind, project: project, message: message)
+        }
         tvc.badgeEligible = { [weak self] project in
             self?.resolvedSettings(for: project).notifyBadge ?? true
         }
@@ -260,6 +263,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         tvc.onOpenProjectSettings = { [weak self] project in self?.presentProjectSettings(project) }
         tvc.accountsProvider = { [weak self] in self?.agentAccounts.accounts ?? [] }
         tvc.accountLimitsStore = AccountLimitsStore(directory: appSupportDirectory)
+        tvc.attentionInboxStore = AttentionInboxStore(directory: appSupportDirectory)
         tvc.onAgentTurnFailed = { [weak self] surface, project, failure in
             self?.agentTurnFailed(surface: surface, project: project, failure: failure)
         }
@@ -1712,7 +1716,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
                 NSApp.requestUserAttention(.informationalRequest)   // one Dock bounce
             }
         }
-        guard resolved.notifySystem, !NSApp.isActive else { return }
+        // A banner whenever you can't see the pane — another project, tab or
+        // window, or Zetty in the background — not only while Zetty is.
+        guard resolved.notifySystem, !paneInView(surface) else { return }
         // Read on main, before the authorization callback hops off it.
         let message = terminalViewController?.attentionMessage(for: surface.id)
         let center = UNUserNotificationCenter.current()
@@ -1727,6 +1733,33 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
                 content.body = message
             } else {
                 content.body = "\(project.name) — \(surface.workingDir)"
+            }
+            content.userInfo = ["pane": SessionPersistence.shortID(for: surface.id)]
+            center.add(UNNotificationRequest(identifier: UUID().uuidString, content: content, trigger: nil))
+        }
+    }
+
+    private func paneInView(_ surface: Surface) -> Bool {
+        terminalViewController?.isPaneInView(surface.id) ?? false
+    }
+
+    /// An agent finished a turn. Not "needs you" (decisions only, Glen
+    /// 2026-11-15): a banner when you can't see the pane, and nothing else —
+    /// no sound, no badge, no bell entry.
+    private func agentTurnFinished(surface: Surface, kind: AgentKind, project: ProjectRuntime, message: String?) {
+        let resolved = resolvedSettings(for: project)
+        guard resolved.notifySystem, !paneInView(surface) else { return }
+        let center = UNUserNotificationCenter.current()
+        center.requestAuthorization(options: [.alert, .sound]) { granted, _ in
+            guard granted else { return }
+            let content = UNMutableNotificationContent()
+            if let message, !message.isEmpty {
+                content.title = "\(kind.displayName.capitalized) finished"
+                content.subtitle = project.name
+                content.body = message
+            } else {
+                content.title = "\(kind.displayName.capitalized) finished"
+                content.body = "\(kind.displayName.capitalized) finished in \(project.name)"
             }
             content.userInfo = ["pane": SessionPersistence.shortID(for: surface.id)]
             center.add(UNNotificationRequest(identifier: UUID().uuidString, content: content, trigger: nil))
@@ -3394,6 +3427,19 @@ private extension AgentStatus {
 // MARK: - UNUserNotificationCenterDelegate
 
 extension AppDelegate: UNUserNotificationCenterDelegate {
+    /// Agent banners show while Zetty is active too: whether one is posted at
+    /// all was decided before it was added (`isPaneInView`), and without this
+    /// macOS hides every banner of the frontmost app. Other notifications
+    /// (Tailscale's) keep the system default, hidden while Zetty is in front.
+    func userNotificationCenter(
+        _ center: UNUserNotificationCenter,
+        willPresent notification: UNNotification,
+        withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void
+    ) {
+        let isAgent = notification.request.content.userInfo["pane"] != nil
+        completionHandler(isAgent ? [.banner, .list] : [])
+    }
+
     /// Clicking a needs-attention notification focuses the pane it came from.
     func userNotificationCenter(
         _ center: UNUserNotificationCenter,

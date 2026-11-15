@@ -331,7 +331,17 @@ final class TerminalViewController: NSViewController {
 
     /// Read/unread bookkeeping for the attention bell (visiting a pane marks
     /// its current attention episode read; session-scoped, not persisted).
-    private let attentionInbox = AttentionInbox()
+    private var attentionInbox = AttentionInbox()
+    /// Where the inbox persists. Set by `AppDelegate` at launch, which loads it;
+    /// nothing reads it into the badge until the startup replay has run.
+    var attentionInboxStore: AttentionInboxStore? {
+        didSet {
+            if let snapshot = attentionInboxStore?.load() {
+                attentionInbox = AttentionInbox(snapshot: snapshot)
+            }
+        }
+    }
+    private var savedAttentionSnapshot: AttentionInboxSnapshot?
 
     /// KVO token for observing `window.firstResponder`.
     private var firstResponderObservation: NSKeyValueObservation?
@@ -3358,6 +3368,8 @@ final class TerminalViewController: NSViewController {
     private func handleAgentResult(_ result: AgentApplyResult, surface: Surface,
                                    project: ProjectRuntime, message: String?) -> Bool {
         if result.raisedAttention, let kind = result.state.kind {
+            // A repeat request in a pane already waiting is news again.
+            attentionInbox.reopen(surface.id)
             onAgentNeedsAttention?(surface, kind, project)
         }
         if result.finished, let kind = result.state.kind {
@@ -3410,6 +3422,29 @@ final class TerminalViewController: NSViewController {
         updateSurfaceAnywhere(surface.id) { $0.runningAccountID = next }
     }
 
+    private var attentionInboxSettled = false
+
+    private func saveAttentionInboxIfChanged() {
+        let snapshot = attentionInbox.snapshot
+        guard snapshot != savedAttentionSnapshot, let store = attentionInboxStore else { return }
+        if (try? store.save(snapshot)) != nil { savedAttentionSnapshot = snapshot }
+    }
+
+    /// Whether the user can see this pane right now: Zetty is active, its
+    /// window is key, and the pane is drawn — in the selected project's
+    /// visible tab (only the zoomed pane while one is zoomed), or a tile on
+    /// screen. A pane in view never banners: its state is already in front of
+    /// you. Per Mac: a remote viewer's screen doesn't count here.
+    func isPaneInView(_ surfaceID: UUID) -> Bool {
+        guard NSApp.isActive, view.window?.isKeyWindow == true else { return false }
+        if tileMode { return tileGridView?.attachedSurfaceIDs.contains(surfaceID) ?? false }
+        let project = workspace.activeProject
+        guard !project.isHibernated else { return false }
+        let tree = project.tabList.activeTree
+        if let zoomed = tree.zoomedSurfaceID { return zoomed == surfaceID }
+        return tree.layout.surfaces.contains { $0.id == surfaceID }
+    }
+
     /// Recomputes the UNREAD attention count and fires the callback — always,
     /// so a config reload can re-apply Dock-badge gating even when the count
     /// itself is unchanged (re-setting the same badge is free). Syncs the
@@ -3422,7 +3457,16 @@ final class TerminalViewController: NSViewController {
                 .filter { agentDetector.state(for: $0.id).status == .needsAttention }
                 .map(\.id)
         )
-        attentionInbox.update(needsAttention: needsAttention)
+        // Before the replay the board doesn't know who is waiting; syncing
+        // then would drop every restored entry (and its read mark).
+        guard hasReplayedAgentEvents else { return }
+        if !attentionInboxSettled {
+            attentionInbox.settleAfterReplay(needsAttention: needsAttention)
+            attentionInboxSettled = true
+        } else {
+            attentionInbox.update(needsAttention: needsAttention)
+        }
+        saveAttentionInboxIfChanged()
         sidebarView?.updateBell(count: attentionInbox.unreadCount)
 
         let unread = attentionInbox.unread

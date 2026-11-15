@@ -20,17 +20,43 @@ NOT a hook state — it is `AgentStatus.errored`, produced only by
 `claude-mod.md`). Every dot reads `displayedStatus(for:)`, never
 `agentDetector` directly. The engine is pure/tested in `ZettyCore`
 (`AgentRegistry`, `AgentStateMachine`, `AgentDetector`, `AgentEvent`).
-Hooks drive the **status dots only** — tab names/logos come from the
+Reports drive the **status dots only** — tab names/logos come from the
 foreground-process probe (see "Tab identity" above). At startup the existing
 event log replays once (`AgentEventReplay`: last event per cwd+agent, `ended`
 drops) so dots recover for agents already running inside preserved sessions.
 
+**Status model** (spec `docs/superpowers/specs/2026-11-14-agent-status-signals-design.md`):
+every source is a timestamped `AgentReport` (hook line `ts`, the mod's
+`turn.at`, terminal signals stamped on receipt) folded per pane by
+`AgentStatusBoard`: the newest wins, a tie goes to the mod, two empty
+foreground probes in a row end the agent (only an idle shell is a miss; a
+tool the agent runs is presence; an unprobed pane is decided by reports
+alone), and the probe's end outranks every earlier report so a dead agent's
+snapshot can't revive the dot. Replay restores quietly and ages a running or
+waiting report older than 15 min (from its last confirmation: the mod's
+`updatedAt`) to idle; a hook line without `ts` reads as time 0, so it always
+ages.
+
 **Needs-attention notifications** (config-gated, Settings ⌘, → Agents):
-`notify-sound` plays a sound; `notify-badge` badges the Dock icon with the
-attention-pane count (auto-clears when the agent resumes); `notify-system`
-posts a macOS notification while Zetty is in the background — clicking it
-focuses the pane. Fired on the *transition into* needsAttention; the startup
-replay never notifies (stale state).
+"needs you" = blocked on a decision (permission or question; Glen
+2026-11-15). `notify-sound` plays a sound; `notify-badge` badges the Dock icon
+with the unread attention-pane count; `notify-system` posts a macOS
+notification **whenever the pane isn't in view** (`isPaneInView`: Zetty active,
+window key, the pane drawn in the selected tab — only the zoomed one while
+zoomed — or a tile on screen), clicking it focuses the pane. `willPresent`
+shows agent banners (userInfo `pane`) while Zetty is active; others keep the
+system default. Raised on every needsAttention report the board accepts
+outside a 2 s collapse window (`raisedAttention`), so a repeat request in a
+yellow pane notifies and reopens its inbox entry; replay never notifies. A
+**finished turn** (running → idle, `finished`) posts a banner only — no sound,
+badge or bell entry.
+
+**The inbox persists** (`AttentionInboxStore`, `attention-inbox.json` in
+Application Support). Nothing syncs it before the startup replay
+(`hasReplayedAgentEvents`); the first sync after it (`settleAfterReplay`)
+keeps restored entries still waiting, with their read marks — an unread
+survivor still badges — and marks a waiting pane the inbox never held as read
+(true, but not news).
 
 Detection is **hook-driven** — libghostty exposes no PTY fd / child PID, so
 harness hooks *ping* Zetty:
