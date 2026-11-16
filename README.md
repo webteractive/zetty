@@ -384,7 +384,11 @@ handles `ssh://` links, opening each in a new Home tab.
 
 `ssh` from a pane works on hosts that don't know Zetty's terminal: the first
 connection installs its `xterm-ghostty` terminfo there, and falls back to
-`xterm-256color` when it can't.
+`xterm-256color` when it can't. Zetty also puts an `ssh` stand-in in
+`~/.local/bin` (a file of your own there is left alone), so ssh run any other
+way from a pane — a bash or fish shell, an agent, a script — sends
+`xterm-256color` too. `shell-integration-features = no-ssh-env,no-ssh-terminfo`
+turns both off and removes the stand-in.
 
 ## Troubleshooting
 

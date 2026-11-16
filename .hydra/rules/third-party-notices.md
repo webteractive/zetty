@@ -40,7 +40,21 @@ green; check a new pane with `whence -w ssh` (a function, not a command).
 +ssh`, and Zetty ships no `ghostty` binary, so a straight copy would break
 `ssh` in every pane. Port upstream fixes into Zetty's copies one at a time
 instead, keeping Zetty's own patches (zsh's `_ghostty_report_pwd` sends a
-`file://` OSC 7 and writes `$ZETTY_CWD_FILE`). Ported so far: `ebd449995d`
+`file://` OSC 7 and writes `$ZETTY_CWD_FILE`; the zsh and bash `ssh` wrappers
+pass `ZETTY_SSH_WRAPPED=1` to the ssh they run).
+
+**The wrapper covers only an `ssh` typed in a zsh pane** (`shell-integration
+= zsh` is pinned, and agents, scripts and git call ssh directly), so Zetty
+also keeps an `ssh` stand-in in `~/.local/bin` (`SSHShim`,
+`SSHShimInstaller`; 2026-11-16, Glen). Inside a pane (`ZETTY_SURFACE` set)
+it turns `TERM=xterm-ghostty` into `xterm-256color` unless
+`ZETTY_SSH_WRAPPED` says the wrapper chose the TERM, then execs the next
+`ssh` on PATH after its own folder (never one before, so two copies can't
+loop), or `/usr/bin/ssh`. It is written at launch and on reload while the
+effective `shell-integration-features` keep `ssh-env` or `ssh-terminfo`,
+removed when both are off, and a file there without `# zetty-ssh-shim` on
+line 2 is never touched. A PATH folder set only in the pane's environment
+would not work: `/etc/zprofile`'s `path_helper` moves `/usr/bin` ahead of it. Ported so far: `ebd449995d`
 (directory names can't inject escape sequences: zsh `print -r` with `$'...'`
 framing, control bytes stripped in zsh and bash), on 2026-11-11.
 

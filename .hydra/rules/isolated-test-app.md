@@ -106,6 +106,10 @@ security delete-generic-password -s co.webteractive.zetty.tailscale-state -a "/t
   also counts an agent pane as busy, so hibernating one needs `--force`
   (the handoff still runs): an idle Claude is spared only on its hooks' word,
   and none reach the test app.
+- **The `ssh` stand-in on PATH is the installed one.** The test app writes
+  its own copy to `/tmp/zti/.local/bin/ssh`, which no pane's PATH lists; a
+  test pane runs the real `~/.local/bin/ssh`. Run the copy by path to test a
+  change to it.
 - **Codex's shared daemon is shared**, and the busy-pane teardown freeze was
   never reproduced in isolation (`DEVELOPMENT.md`).
 - **The test app is a real window on Glen's screen** with the same bundle id.

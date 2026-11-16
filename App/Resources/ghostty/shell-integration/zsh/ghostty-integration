@@ -406,8 +406,9 @@ _ghostty_deferred_init() {
           fi
         fi
 
-        # Execute SSH with TERM environment variable
-        TERM="$ssh_term" command ssh "${ssh_opts[@]}" "$@"
+        # Execute SSH with TERM environment variable. ZETTY_SSH_WRAPPED tells
+        # Zetty's ssh stand-in in ~/.local/bin that this TERM was chosen here.
+        TERM="$ssh_term" ZETTY_SSH_WRAPPED=1 command ssh "${ssh_opts[@]}" "$@"
       }
     fi
 

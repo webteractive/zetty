@@ -186,6 +186,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         // Idempotent: repairs shims after an app move, and clears any left by
         // an account removed while this build wasn't running.
         AccountShimInstaller.sync(accounts: agentAccounts.accounts)
+        syncSSHShim()
         // A pane with no preserved session had its process killed when the app
         // quit, so a `zetty run` override that survived in workspace.json is
         // stale. A pane WITH a session may still be running its agent, so it is
@@ -824,6 +825,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         ("shell-integration-features", "ssh-env,ssh-terminfo"),
     ]
 
+    /// Keeps the `ssh` stand-in in `~/.local/bin` while the panes' ssh
+    /// integration is on (Zetty's default), and removes it when the user's
+    /// directives turn it off.
+    private func syncSSHShim() {
+        let key = "shell-integration-features"
+        let values = (Self.defaultGhosttyDirectives.map { ($0.key, $0.value) }
+                      + appConfig.ghostty.map { ($0.key, $0.value) })
+            .filter { $0.0 == key }
+            .map(\.1)
+        SSHShimInstaller.sync(featureValues: values)
+    }
+
     /// Builds the terminal config: Zetty's default directives, then the
     /// ghostty directives pasted into Zetty's config.
     private func makeTerminalConfiguration() -> TerminalConfiguration? {
@@ -845,6 +858,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         modInstaller.applyEnvironment(enabled: appConfig.claudeMod,
                                       tools: appConfig.claudeTools)   // new panes only
         syncModIntoClaudeSettings()
+        syncSSHShim()
         // Turned on after launch (Settings, or a hand edit): start the timer
         // now rather than at the next relaunch. Turning it off needs nothing —
         // every check re-reads the flag.

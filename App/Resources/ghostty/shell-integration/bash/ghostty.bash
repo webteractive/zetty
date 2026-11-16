@@ -179,8 +179,9 @@ if [[ "$GHOSTTY_SHELL_FEATURES" == *ssh-* ]]; then
       fi
     fi
 
-    # Execute SSH with TERM environment variable
-    TERM="$ssh_term" builtin command ssh "${ssh_opts[@]}" "$@"
+    # Execute SSH with TERM environment variable. ZETTY_SSH_WRAPPED tells
+    # Zetty's ssh stand-in in ~/.local/bin that this TERM was chosen here.
+    TERM="$ssh_term" ZETTY_SSH_WRAPPED=1 builtin command ssh "${ssh_opts[@]}" "$@"
   }
 fi
 
