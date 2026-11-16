@@ -338,6 +338,7 @@ public enum RemoteRelay {
             switch frame {
             case .data(let bytes):
                 writeAll(1, bytes)
+                driver.output(now: Date())
             case .ended(let reason):
                 return .ended(reason)
             case .sizeMoved:

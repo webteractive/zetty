@@ -476,8 +476,13 @@ lost, and neither focus nor a harmless control byte can claim the size
   on timing, and a key typed afterwards always fixed it (found 2026-11-09).
   zmx doesn't flush input pending at startup, so raw from the start is
   enough. Output processing stays on for the `zmx history` replay.
-- **Then a repaint**, after `RemoteSizeHandoff.settle` (0.4s) for the program
-  to redraw. Claiming alone redraws Claude Code's visible screen (it clears on
+- **Then a repaint**, once the program has redrawn: at least
+  `RemoteSizeHandoff.settle` (0.4s), then until the session's output has been
+  quiet for `quiet` (0.15s), never past `settleLimit` (2.5s). The relay times
+  it from the output it receives. A fixed 0.4s let Claude Code on a long
+  conversation still be redrawing, so the repaint replayed a half-drawn screen
+  that stayed garbled until a key (Glen, 2026-11-16, laptop viewing the
+  mini). The local pane's repaint still waits the fixed `settle`. Claiming alone redraws Claude Code's visible screen (it clears on
   a width change), but scrollback above stays mangled, so the screen in use
   restarts its attach from a clean replay of zmx's own copy, which is always
   right.
@@ -497,6 +502,13 @@ lost, and neither focus nor a harmless control byte can claim the size
   pointer is held to one marker per 0.5s; it counts because with the window
   already key and the pane focused, nothing else fires before the first key,
   and the user saw a mangled pane until they pressed an arrow (2026-11-09).
+  **The pointer counts only in the Zetty in use** (app active, window key:
+  `RemoteSizeHandoff.pointerClaims`). The terminal view tracks the pointer
+  even in the background, so with Screen Sharing in front on the laptop one
+  pointer crossed both the laptop's Zetty and the mini's (inside Screen
+  Sharing), each claimed in turn with a full repaint, and the pane flipped
+  between the Macs until the pointer rested (Glen, 2026-11-16). Clicks, keys
+  and window-key still claim at once.
   No marker goes to a pane in its first 2s (`focusQuietPeriod`): until the
   relay sets raw mode the pty is cooked and echoes it as
   `^[_zetty-focus^[\`, which a refusal then leaves on screen. A new

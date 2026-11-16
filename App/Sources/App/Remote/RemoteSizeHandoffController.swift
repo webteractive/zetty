@@ -8,7 +8,9 @@ import ZettyCore
 /// becoming key, a click, a key typed in it, or the pointer moving or
 /// scrolling over it. The pointer counts so that a hand on the trackpad
 /// redraws the pane before the first key: with the window already key and the
-/// pane focused, nothing else fires.
+/// pane focused, nothing else fires. It counts only in the Zetty in use
+/// (`RemoteSizeHandoff.pointerClaims`): Screen Sharing in front still passes
+/// the pointer over the other Zetty, and both then claimed in turn.
 /// - A remote pane (another Mac's, shown here) gets the focus marker, and its
 ///   relay takes the size if it doesn't have it (`RelaySizeDriver`). Typing
 ///   there needs nothing from here: the relay sees the keys itself.
@@ -53,7 +55,9 @@ final class RemoteSizeHandoffController {
         // arrive if the window opts in.
         window.acceptsMouseMovedEvents = true
         pointerMonitor = NSEvent.addLocalMonitorForEvents(matching: [.mouseMoved, .scrollWheel]) { [weak self, weak window] event in
-            guard let window, event.window === window, let content = window.contentView else { return event }
+            guard let window, event.window === window, let content = window.contentView,
+                  RemoteSizeHandoff.pointerClaims(appActive: NSApp.isActive, windowKey: window.isKeyWindow)
+            else { return event }
             self?.engage(content.hitTest(event.locationInWindow), typing: false, pointer: true)
             return event
         }

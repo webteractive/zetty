@@ -17,8 +17,22 @@ public enum RemoteSizeHandoff {
     public static let claim = " \u{7F}"
 
     /// How long the program gets to redraw at the new size before the screen
-    /// is repainted from zmx's copy.
+    /// is repainted from zmx's copy: at least `settle`, then until its output
+    /// has been `quiet` that long, but never past `settleLimit`. Claude Code
+    /// on a long conversation can still be redrawing at 0.4s, and a repaint
+    /// then replays a half-drawn screen that stays until a key (2026-11-16).
     public static let settle: TimeInterval = 0.4
+    public static let quiet: TimeInterval = 0.15
+    public static let settleLimit: TimeInterval = 2.5
+
+    /// Whether the pointer moving over a pane claims its size: only in the
+    /// Zetty in use (frontmost, its window key). The terminal view tracks the
+    /// pointer even when Zetty is in the background, so with Screen Sharing in
+    /// front one pointer crossed both Macs' windows and flipped the pane
+    /// between them, each time with a full repaint (2026-11-16).
+    public static func pointerClaims(appActive: Bool, windowKey: Bool) -> Bool {
+        appActive && windowKey
+    }
 
     /// Clears the screen and its scrollback, before a replay.
     public static let clearScreen = "\u{1B}[H\u{1B}[2J\u{1B}[3J"
@@ -51,7 +65,9 @@ public struct RelaySizeDriver: Sendable {
     /// This screen typed last since attaching, or since the server said the
     /// size moved.
     public private(set) var drives = false
-    private var repaintAt: Date?
+    /// When this screen claimed the size, while its repaint is pending.
+    private var claimedAt: Date?
+    private var lastOutput: Date?
 
     public init() {}
 
@@ -60,7 +76,7 @@ public struct RelaySizeDriver: Sendable {
     /// other Mac.
     public mutating func attached(first: Bool, now: Date) -> [TerminalFrame] {
         drives = false
-        repaintAt = nil
+        claimedAt = nil
         return first ? takeSize(now: now) : []
     }
 
@@ -79,16 +95,24 @@ public struct RelaySizeDriver: Sendable {
         drives = false
     }
 
-    /// The repaint, once the program has had time to redraw at this size.
+    /// Output from the session reached this screen.
+    public mutating func output(now: Date) {
+        lastOutput = now
+    }
+
+    /// The repaint, once the program has had time to redraw at this size:
+    /// past `settle` and quiet for `quiet`, or at `settleLimit` regardless.
     public mutating func due(now: Date) -> [TerminalFrame] {
-        guard let at = repaintAt, now >= at else { return [] }
-        repaintAt = nil
+        guard let claimedAt, now >= claimedAt.addingTimeInterval(RemoteSizeHandoff.settle) else { return [] }
+        let quiet = lastOutput.map { now >= $0.addingTimeInterval(RemoteSizeHandoff.quiet) } ?? true
+        guard quiet || now >= claimedAt.addingTimeInterval(RemoteSizeHandoff.settleLimit) else { return [] }
+        self.claimedAt = nil
         return [.repaint]
     }
 
     private mutating func takeSize(now: Date) -> [TerminalFrame] {
         drives = true
-        repaintAt = now.addingTimeInterval(RemoteSizeHandoff.settle)
+        claimedAt = now
         return [.data(Data(RemoteSizeHandoff.claim.utf8))]
     }
 }

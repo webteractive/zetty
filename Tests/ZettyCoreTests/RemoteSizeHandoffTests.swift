@@ -46,3 +46,35 @@ private let t0 = Date(timeIntervalSince1970: 1_000)
     #expect(driver.input(arrow, now: t0.addingTimeInterval(10)) == [claim, .data(arrow)])
     #expect(driver.due(now: t0.addingTimeInterval(10 + RemoteSizeHandoff.settle)) == [.repaint])
 }
+
+@Test func aRedrawStillStreamingPutsOffTheRepaint() {
+    // Claude Code on a long conversation is still redrawing at the new size
+    // when the settle ends; a repaint then copies a half-drawn screen.
+    var driver = RelaySizeDriver()
+    _ = driver.attached(first: true, now: t0)
+    driver.output(now: t0.addingTimeInterval(0.30))
+    driver.output(now: t0.addingTimeInterval(0.45))
+    #expect(driver.due(now: t0.addingTimeInterval(0.50)) == [])
+    #expect(driver.due(now: t0.addingTimeInterval(0.45 + RemoteSizeHandoff.quiet)) == [.repaint])
+}
+
+@Test func theRepaintWaitsNoLongerThanTheLimit() {
+    var driver = RelaySizeDriver()
+    _ = driver.attached(first: true, now: t0)
+    var at = 0.0
+    while at < RemoteSizeHandoff.settleLimit {
+        driver.output(now: t0.addingTimeInterval(at))
+        #expect(driver.due(now: t0.addingTimeInterval(at)) == [], "at \(at)")
+        at += 0.1
+    }
+    driver.output(now: t0.addingTimeInterval(RemoteSizeHandoff.settleLimit))
+    #expect(driver.due(now: t0.addingTimeInterval(RemoteSizeHandoff.settleLimit)) == [.repaint])
+}
+
+@Test func onlyTheZettyInUseClaimsOnHover() {
+    // Screen Sharing in front on the laptop: its Zetty still gets the
+    // pointer's moves, and claiming then flips the pane between the Macs.
+    #expect(RemoteSizeHandoff.pointerClaims(appActive: true, windowKey: true))
+    #expect(!RemoteSizeHandoff.pointerClaims(appActive: false, windowKey: true))
+    #expect(!RemoteSizeHandoff.pointerClaims(appActive: true, windowKey: false))
+}
