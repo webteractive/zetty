@@ -164,6 +164,17 @@ public final class SurfaceRegistry {
     /// production always uses `hasSurface`.
     private let surfaceAttached: @MainActor (TerminalViewPair) -> Bool
 
+    /// The frame a new terminal view starts with: none. libghostty builds
+    /// the surface, and starts the pane's command (its zmx attach), at the
+    /// size the view has when it enters a window, and waits for a real size
+    /// when it has none. A placeholder 720x480 started every new pane at
+    /// 65x19 until layout ran, and Claude Code, drawn at 65 columns in that
+    /// moment, missed the resize to the pane's real size right after (hydra
+    /// on the mini, 2026-11-17). Whoever puts the view in a window lays it
+    /// out at once (`TerminalViewController.rebuildSurfaceNodeView`), or
+    /// gives it a size first (`spawnOffscreen`).
+    public static let newTerminalFrame = NSRect.zero
+
     // MARK: - Init
 
     public init(
@@ -171,7 +182,7 @@ public final class SurfaceRegistry {
             TerminalController()
         },
         viewFactory: @escaping @MainActor (Surface, any TerminalControlling) -> (NSView, TerminalViewState?) = { surface, ctrl in
-            let v = TerminalView(frame: NSRect(x: 0, y: 0, width: 720, height: 480))
+            let v = TerminalView(frame: SurfaceRegistry.newTerminalFrame)
             // The default controllerFactory always produces a real `TerminalController`,
             // so this cast succeeds in production.  A test that injects a non-
             // TerminalController mock will hit the else-branch and leave `v.controller`

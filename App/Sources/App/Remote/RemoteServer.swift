@@ -370,7 +370,8 @@ final class RemoteServer {
             connection.enqueue(TerminalFrame.ended("couldn't repaint that pane on \(machineName)").encode())
             return
         }
-        connection.enqueue(TerminalFrame.data(Data(RemoteSizeHandoff.clearScreen.utf8)).encode())
+        // The repaint arguments clear the screen themselves, once the replay
+        // is in hand; clearing here left the pane blank while zmx answered.
         start(PaneStream(pty: pty, session: plan.session, queue: queue), on: connection)
     }
 

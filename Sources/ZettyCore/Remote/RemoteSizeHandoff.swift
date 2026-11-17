@@ -34,7 +34,9 @@ public enum RemoteSizeHandoff {
         appActive && windowKey
     }
 
-    /// Clears the screen and its scrollback, before a replay.
+    /// Clears the screen and its scrollback: what a repaint prints just
+    /// before its replay (`SessionPersistence.clearScreenEscaped` is the same
+    /// for a `printf` format).
     public static let clearScreen = "\u{1B}[H\u{1B}[2J\u{1B}[3J"
 
     /// What a viewing Mac's Zetty types into a remote pane's relay when the
@@ -101,13 +103,21 @@ public struct RelaySizeDriver: Sendable {
     }
 
     /// The repaint, once the program has had time to redraw at this size:
-    /// past `settle` and quiet for `quiet`, or at `settleLimit` regardless.
+    /// past `settle`, with output since the claim that has then been quiet
+    /// for `quiet`, or at `settleLimit` regardless.
+    ///
+    /// Silence since the claim is not a redraw done: the serving Mac's
+    /// attach may not have started, with the claim still unread in its pty.
+    /// A repaint restarts that attach and the claim goes with it, so a
+    /// repaint that never heard back sends the claim again after itself
+    /// (Glen, laptop opening a mini pane, 2026-11-17).
     public mutating func due(now: Date) -> [TerminalFrame] {
         guard let claimedAt, now >= claimedAt.addingTimeInterval(RemoteSizeHandoff.settle) else { return [] }
-        let quiet = lastOutput.map { now >= $0.addingTimeInterval(RemoteSizeHandoff.quiet) } ?? true
+        let answer = lastOutput.flatMap { $0 >= claimedAt ? $0 : nil }
+        let quiet = answer.map { now >= $0.addingTimeInterval(RemoteSizeHandoff.quiet) } ?? false
         guard quiet || now >= claimedAt.addingTimeInterval(RemoteSizeHandoff.settleLimit) else { return [] }
         self.claimedAt = nil
-        return [.repaint]
+        return answer == nil ? [.repaint, .data(Data(RemoteSizeHandoff.claim.utf8))] : [.repaint]
     }
 
     private mutating func takeSize(now: Date) -> [TerminalFrame] {

@@ -68,14 +68,28 @@ public enum SessionPersistence {
       status=$?
       [ "$status" = \(128 + repaintSignal) ] || exit "$status"
       stty sane 2>/dev/null
-      printf '\(clearScreenEscaped)'
-      "$1" list 2>/dev/null | grep -Fq "name=$2\t" || exit 0
-      "$1" history "$2" --vt 2>/dev/null
+      if replay=\(fetchReplay); then
+        printf '\(clearScreenEscaped)%s' "${replay%x}"
+      else
+        "$1" list 2>/dev/null | grep -Fq "name=$2\t" || exit 0
+        printf '\(clearScreenEscaped)'
+      fi
     done
     """
 
     /// `RemoteSizeHandoff.clearScreen` for a `printf` format.
-    private static let clearScreenEscaped = "\\033[H\\033[2J\\033[3J"
+    static let clearScreenEscaped = "\\033[H\\033[2J\\033[3J"
+
+    /// Shell for a repaint's replay, `$1` the zmx path and `$2` the session:
+    /// `zmx history --vt` into a variable, with an `x` after it so `$(…)`
+    /// keeps its trailing newlines (strip it with `${replay%x}`), and
+    /// history's own exit status. The replay is fetched BEFORE the screen
+    /// is cleared, so the pane keeps its old view while zmx answers instead
+    /// of going blank. A history that works also says the session is still
+    /// there: zmx exits 1 for one that has gone and never creates one. Only
+    /// a failure falls back to `zmx list`, which is slow: a second for each
+    /// session that runs another zmx version, 4s on the mini (2026-11-17).
+    static let fetchReplay = #"$("$1" history "$2" --vt 2>/dev/null; s=$?; printf x; exit $s)"#
 
     /// The ghostty `command` value that runs the pane inside its zmx session.
     /// zmx attach creates the session (running the user's shell) if missing.

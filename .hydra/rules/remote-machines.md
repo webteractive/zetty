@@ -277,10 +277,13 @@ the Settings status line.
   (a background tab never shown) is started offscreen on the serving Mac,
   and the host waits up to 3s for its session. The serving Mac's view
   doesn't change. `zmx attach` creates a missing session, so the pty runs
-  `RemoteServedAttach`, which checks `zmx list` again right before the
-  attach and just ends if the session is gone: a pane closed or hibernated
-  here while a long replay drains would otherwise come back as a bare
-  shell (`servedAttachNeverCreatesAMissingSession`).
+  `RemoteServedAttach`, which checks the session again right before the
+  attach and just ends if it is gone: a pane closed or hibernated here
+  while a long replay drains would otherwise come back as a bare shell
+  (`servedAttachNeverCreatesAMissingSession`). The check is a `zmx history`
+  that works (zmx exits 1 for a session that has gone and never creates
+  one); only a failure asks `zmx list`, which takes a second per session of
+  another zmx version, 4s on the mini (`SessionPersistence.fetchReplay`).
 - **Frames.** One kind byte (0 data, 1 resize as two big-endian `UInt16`
   rows then cols, 2 ended with a plain-words reason), a 4-byte big-endian
   length, then the payload. A frame over **1 MiB**
@@ -477,9 +480,15 @@ lost, and neither focus nor a harmless control byte can claim the size
   zmx doesn't flush input pending at startup, so raw from the start is
   enough. Output processing stays on for the `zmx history` replay.
 - **Then a repaint**, once the program has redrawn: at least
-  `RemoteSizeHandoff.settle` (0.4s), then until the session's output has been
-  quiet for `quiet` (0.15s), never past `settleLimit` (2.5s). The relay times
-  it from the output it receives. A fixed 0.4s let Claude Code on a long
+  `RemoteSizeHandoff.settle` (0.4s), then until output that arrived after the
+  claim has been quiet for `quiet` (0.15s), never past `settleLimit` (2.5s).
+  The relay times it from the output it receives. Silence since the claim
+  doesn't count as quiet: the serving Mac's attach may not have started yet,
+  with the claim unread in its pty, and the repaint restarts that attach and
+  throws the claim away. The laptop then believed it drove, a click did
+  nothing, and only two arrow keys brought the size over (Glen, 2026-11-17,
+  with the served script still waiting 4s on `zmx list`). A repaint at the
+  limit that never heard back sends the claim again after itself. A fixed 0.4s let Claude Code on a long
   conversation still be redrawing, so the repaint replayed a half-drawn screen
   that stayed garbled until a key (Glen, 2026-11-16, laptop viewing the
   mini). The local pane's repaint still waits the fixed `settle`. Claiming alone redraws Claude Code's visible screen (it clears on
@@ -488,10 +497,12 @@ lost, and neither focus nor a harmless control byte can claim the size
   right.
   - **Remote pane:** the relay sends a `repaint` frame; the server stops that
     connection's attach WITHOUT `detached` (which would hand the size back to
-    the mini), sends `RemoteSizeHandoff.clearScreen`, and starts
-    `plan.repaintArguments` (history, then attach) at the relay's last size.
+    the mini) and starts `plan.repaintArguments` at the relay's last size:
+    history, then the clear and the replay together, then attach. Clearing
+    before the history came back left the pane blank while zmx answered.
   - **Local pane:** SIGUSR1 to the attach under `scrollback-restore.sh`,
-    which clears, replays and reattaches (`session-preservation.md`). Never
+    which fetches the replay, clears and prints it at once, and reattaches
+    (`session-preservation.md`). Never
     free and rebuild the surface for this: freeing a live preserved surface
     can freeze the app (`surfaces-and-memory.md`).
 - **When.** The relay (`RelaySizeDriver`) claims on its first attach, then on

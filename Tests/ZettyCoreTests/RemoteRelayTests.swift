@@ -88,34 +88,53 @@ import Testing
 }
 
 /// Runs the serving side's attach script against a fake zmx that logs each
-/// call, with `list` reporting the session only while `alive` is true.
-private func runServedAttach(scrollback: Bool, alive: Bool) throws -> [String] {
+/// call. While `alive` is false, `history` fails and `list` leaves the
+/// session out, as zmx does for one that has gone. Returns the calls and
+/// what the script printed.
+private func runServedAttach(scrollback: Bool, clearing: Bool = false,
+                             alive: Bool) throws -> (calls: [String], printed: String) {
     let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
     defer { try? FileManager.default.removeItem(at: dir) }
     let log = dir.appendingPathComponent("calls").path
+    let out = dir.appendingPathComponent("out").path
     let zmx = dir.appendingPathComponent("zmx").path
     let listed = alive ? "printf 'name=zetty-ab12cd34\\tpid=1\\tclients=1\\n'" : ":"
     try """
     #!/bin/sh
     echo "$1" >> \(log)
     [ "$1" = list ] && { printf 'name=zetty-ab12cd3\\tpid=2\\n'; \(listed); }
+    [ "$1" = history ] && { \(alive ? "printf SCREEN" : "exit 1"); }
     exit 0
     """.write(toFile: zmx, atomically: true, encoding: .utf8)
     chmod(zmx, 0o755)
+    FileManager.default.createFile(atPath: out, contents: nil)
     let process = Process()
     process.executableURL = URL(fileURLWithPath: "/bin/sh")
-    process.arguments = RemoteServedAttach.arguments(zmx: zmx, session: "zetty-ab12cd34", scrollback: scrollback)
-    process.standardOutput = FileHandle.nullDevice
+    process.arguments = RemoteServedAttach.arguments(zmx: zmx, session: "zetty-ab12cd34",
+                                                     scrollback: scrollback, clearing: clearing)
+    process.standardOutput = try FileHandle(forWritingTo: URL(fileURLWithPath: out))
     try process.run()
     process.waitUntilExit()
-    return ((try? String(contentsOfFile: log, encoding: .utf8)) ?? "").split(separator: "\n").map(String.init)
+    let calls = ((try? String(contentsOfFile: log, encoding: .utf8)) ?? "").split(separator: "\n").map(String.init)
+    return (calls, (try? String(contentsOfFile: out, encoding: .utf8)) ?? "")
 }
 
 @Test func servedAttachNeverCreatesAMissingSession() throws {
-    #expect(try runServedAttach(scrollback: true, alive: true) == ["history", "list", "attach"])
-    #expect(try runServedAttach(scrollback: false, alive: true) == ["list", "attach"])
+    // A history that works says the session is there, so the slow `zmx list`
+    // (a second for each session of another zmx version) is skipped.
+    #expect(try runServedAttach(scrollback: true, alive: true).calls == ["history", "attach"])
+    #expect(try runServedAttach(scrollback: false, alive: true).calls == ["history", "attach"])
     // Closed on this Mac during the replay: attach would start a new shell.
-    #expect(try runServedAttach(scrollback: true, alive: false) == ["history", "list"])
-    #expect(try runServedAttach(scrollback: false, alive: false) == ["list"])
+    #expect(try runServedAttach(scrollback: true, alive: false).calls == ["history", "list"])
+    #expect(try runServedAttach(scrollback: false, alive: false).calls == ["history", "list"])
+}
+
+@Test func servedAttachPrintsTheReplayOnlyWhenAskedAndClearsJustBeforeIt() throws {
+    #expect(try runServedAttach(scrollback: false, alive: true).printed == "")
+    #expect(try runServedAttach(scrollback: true, alive: true).printed == "SCREEN")
+    // A repaint clears only once the replay is in hand, so the pane keeps its
+    // old view rather than going blank while zmx answers.
+    #expect(try runServedAttach(scrollback: true, clearing: true, alive: true).printed
+        == RemoteSizeHandoff.clearScreen + "SCREEN")
 }

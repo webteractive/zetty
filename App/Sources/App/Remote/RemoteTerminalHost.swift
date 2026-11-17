@@ -83,7 +83,7 @@ final class RemoteTerminalHost: RemoteTerminalHosting {
         return RemoteAttachPlan(executable: "/bin/sh",
                                 arguments: RemoteServedAttach.arguments(zmx: zmx, session: session, scrollback: scrollback),
                                 environment: environment, session: session,
-                                repaintArguments: RemoteServedAttach.arguments(zmx: zmx, session: session, scrollback: true))
+                                repaintArguments: RemoteServedAttach.arguments(zmx: zmx, session: session, scrollback: true, clearing: true))
     }
 
     func remoteTookSize(session: String) {

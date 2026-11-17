@@ -5649,8 +5649,9 @@ final class TerminalViewController: NSViewController {
             container.addSubview(host, positioned: .below, relativeTo: nil)
             spawnHost = host
         }
-        // A view that was laid out at zero size and then dropped keeps that
-        // frame, and libghostty will not build a surface for it.
+        // libghostty builds no surface for a view without a size: a new one
+        // has none (`SurfaceRegistry.newTerminalFrame`), and one laid out at
+        // zero and then dropped keeps that frame.
         if terminal.frame.width <= 0 || terminal.frame.height <= 0 {
             terminal.setFrameSize(container.bounds.size)
         }
@@ -9676,6 +9677,9 @@ final class TerminalViewController: NSViewController {
             grid.update(tiles: tileDescriptors(),
                         focused: tileFocusedSurfaceID,
                         emptyMessage: tileEmptyMessage())
+            // New panes start their command at their real size, not later
+            // (`SurfaceRegistry.newTerminalFrame`).
+            container.layoutSubtreeIfNeeded()
             pruneRegistry()
             refreshFileTreeRoots()
             onWorkspaceDidChange?()
@@ -9762,6 +9766,12 @@ final class TerminalViewController: NSViewController {
             newRoot.bottomAnchor.constraint(equalTo: bottomGuide),
         ])
         rootContentView = newRoot
+        // A new pane's view has no size until layout, and libghostty builds
+        // its surface, starting the pane's command, at the first real one
+        // (`SurfaceRegistry.newTerminalFrame`). Laying out now does that at
+        // the pane's own size before this returns, which callers that check
+        // `registry.isLive` straight after (`ensurePaneIsLive`) rely on.
+        container.layoutSubtreeIfNeeded()
 
         // Keep any live surface owned by an awake project so background sessions
         // survive project/tab switches. Hibernated projects' surfaces are freed

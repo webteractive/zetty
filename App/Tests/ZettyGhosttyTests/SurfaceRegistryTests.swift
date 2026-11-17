@@ -101,6 +101,15 @@ final class SurfaceRegistryTests: XCTestCase {
         )
     }
 
+    /// libghostty builds a surface, and starts the pane's command, at the
+    /// size the view has when it enters a window, and waits for a real size
+    /// when it has none. A placeholder frame started every new pane at 65×19
+    /// before layout gave it its real size, and Claude Code, drawn at 65
+    /// columns, then missed the resize (hydra on the mini, 2026-11-17).
+    func testANewTerminalViewWaitsForItsRealSize() {
+        XCTAssertEqual(SurfaceRegistry.newTerminalFrame.size, .zero)
+    }
+
     func testATerminalViewWithNoSurfaceIsNotLive() {
         let reg = registryWithTerminalViews()
         let s = Surface(workingDir: "/tmp")

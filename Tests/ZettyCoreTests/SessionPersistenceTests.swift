@@ -206,10 +206,12 @@ private let idB = UUID(uuidString: "11111111-2222-3333-4444-555555555555")!
     #expect(try String(contentsOf: logURL, encoding: .utf8) == "history zetty-test1234\nattach zetty-test1234\n")
 }
 
-@Test func restoreScriptRepaintsAfterTheRepaintSignalOnly() throws {
-    // A stub zmx whose first attach ends as if by the repaint signal: the
-    // wrapper clears, checks the session, replays history and attaches
-    // again; the second attach ends normally and so does the wrapper.
+/// Runs the restore wrapper against a stub zmx whose first attach ends as if
+/// by the repaint signal and whose second ends normally. `history` prints
+/// "SCREEN" and logs whether the clear was already printed when it ran;
+/// after the repaint it fails when `alive` is false, as zmx does for a
+/// session that has gone.
+private func runRepaint(alive: Bool) throws -> (calls: String, printed: String, status: Int32) {
     let dir = FileManager.default.temporaryDirectory
         .appendingPathComponent("zetty-repaint-test-\(UUID().uuidString)")
     try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
@@ -217,31 +219,58 @@ private let idB = UUID(uuidString: "11111111-2222-3333-4444-555555555555")!
     let scriptURL = dir.appendingPathComponent("scrollback-restore.sh")
     try SessionPersistence.restoreScriptContents.write(to: scriptURL, atomically: true, encoding: .utf8)
     let logURL = dir.appendingPathComponent("calls.log")
+    let outURL = dir.appendingPathComponent("out")
     let flagURL = dir.appendingPathComponent("repainted")
     let stubURL = dir.appendingPathComponent("zmx")
+    let listed = alive ? "printf 'name=%s\\tpid=1\\n' zetty-test1234" : ":"
+    let gone = alive ? ":" : "[ -f \"\(flagURL.path)\" ] && exit 1"
     try """
     #!/bin/sh
-    echo "$1" >> "\(logURL.path)"
     case "$1" in
-      list) printf 'name=%s\\tpid=1\\n' zetty-test1234 ;;
-      attach) [ -f "\(flagURL.path)" ] && exit 0; touch "\(flagURL.path)"; exit \(128 + SessionPersistence.repaintSignal) ;;
+      list) echo list >> "\(logURL.path)"; \(listed) ;;
+      history)
+        if grep -q 2J "\(outURL.path)"; then echo "history after clear" >> "\(logURL.path)"
+        else echo history >> "\(logURL.path)"; fi
+        \(gone)
+        printf SCREEN ;;
+      attach) echo attach >> "\(logURL.path)"
+        [ -f "\(flagURL.path)" ] && exit 0; touch "\(flagURL.path)"; exit \(128 + SessionPersistence.repaintSignal) ;;
     esac
     """.write(to: stubURL, atomically: true, encoding: .utf8)
     try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: stubURL.path)
+    FileManager.default.createFile(atPath: outURL.path, contents: nil)
 
     let process = Process()
     process.executableURL = URL(fileURLWithPath: "/bin/sh")
     process.arguments = [scriptURL.path, stubURL.path, "zetty-test1234"]
-    let output = Pipe()
-    process.standardOutput = output
+    process.standardOutput = try FileHandle(forWritingTo: outURL)
     try process.run()
-    let printed = output.fileHandleForReading.readDataToEndOfFile()
     process.waitUntilExit()
+    return (try String(contentsOf: logURL, encoding: .utf8),
+            try String(contentsOf: outURL, encoding: .utf8), process.terminationStatus)
+}
 
-    let calls = try String(contentsOf: logURL, encoding: .utf8)
-    #expect(calls == "history\nattach\nlist\nhistory\nattach\n")
-    #expect(printed == Data(RemoteSizeHandoff.clearScreen.utf8))
-    #expect(process.terminationStatus == 0)
+@Test func restoreScriptRepaintsAfterTheRepaintSignalOnly() throws {
+    // The second attach ends normally, and so does the wrapper.
+    let run = try runRepaint(alive: true)
+    #expect(run.status == 0)
+    #expect(run.printed == "SCREEN" + RemoteSizeHandoff.clearScreen + "SCREEN")
+}
+
+@Test func aRepaintFetchesTheScreenBeforeClearingIt() throws {
+    // Clearing first left the pane blank while zmx answered, and `zmx list`
+    // answered in 4s on the mini: one second for each session that runs
+    // another zmx version (2026-11-17). A history that works already says
+    // the session is there.
+    #expect(try runRepaint(alive: true).calls == "history\nattach\nhistory\nattach\n")
+}
+
+@Test func aRepaintOfASessionThatHasGoneEndsTheWrapper() throws {
+    // History fails for a session that has gone; the wrapper must not attach,
+    // which would start a new one.
+    let run = try runRepaint(alive: false)
+    #expect(run.calls == "history\nattach\nhistory\nlist\n")
+    #expect(run.status == 0)
 }
 
 // MARK: - Probe coverage: sessions `zmx list` misses

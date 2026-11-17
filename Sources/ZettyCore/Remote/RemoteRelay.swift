@@ -404,16 +404,25 @@ public enum RemoteRelay {
 /// remote attach must never start a fresh shell in its place. When it's gone
 /// the script just ends, and the viewer is told the pane closed.
 public enum RemoteServedAttach {
+    /// `$3`: 0 attaches only, 1 replays the scrollback first, 2 is a repaint,
+    /// which also clears the screen, once the replay is in hand
+    /// (`SessionPersistence.fetchReplay`, which also checks the session).
     static let script = """
     unset ZMX_SESSION
-    [ "$3" = 1 ] && "$1" history "$2" --vt 2>/dev/null
-    "$1" list 2>/dev/null | grep -Fq "name=$2\t" || exit 0
+    if replay=\(SessionPersistence.fetchReplay); then
+      [ "$3" = 2 ] && printf '\(SessionPersistence.clearScreenEscaped)'
+      [ "$3" = 0 ] || printf '%s' "${replay%x}"
+    else
+      "$1" list 2>/dev/null | grep -Fq "name=$2\t" || exit 0
+      [ "$3" = 2 ] && printf '\(SessionPersistence.clearScreenEscaped)'
+    fi
     exec "$1" attach "$2"
     """
 
-    /// Arguments for `/bin/sh`.
-    public static func arguments(zmx: String, session: String, scrollback: Bool) -> [String] {
-        ["-c", script, "zetty-attach", zmx, session, scrollback ? "1" : "0"]
+    /// Arguments for `/bin/sh`. `clearing`: a repaint, which clears the
+    /// screen just before the replay (and implies `scrollback`).
+    public static func arguments(zmx: String, session: String, scrollback: Bool, clearing: Bool = false) -> [String] {
+        ["-c", script, "zetty-attach", zmx, session, clearing ? "2" : scrollback ? "1" : "0"]
     }
 }
 

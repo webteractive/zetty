@@ -50,8 +50,18 @@ triggers:
     Zetty itself), `zmx attach` would *kill* that session instead of
     attaching the target.
   - **Repaint nudge** — zmx replays screen contents but a running TUI paints
-    only deltas, so a reattached pane stays half-drawn; ~1s after a pane's
-    surface appears it is shrunk ~20pt and restored (SIGWINCH → full repaint).
+    only deltas, so a reattached pane stays half-drawn; 1.5s after a pane's
+    surface appears the window is shrunk 1pt and restored
+    (`nudgeAfterReattach`). It reaches only panes on screen, and 1pt is often
+    less than a row.
+  - **A pane starts at its real size.** A new terminal view has no frame
+    (`SurfaceRegistry.newTerminalFrame`), so libghostty builds its surface,
+    and starts the attach, at the first real size layout gives it, and
+    `rebuildSurfaceNodeView` lays out at once. A 720x480 placeholder started
+    every pane at 65x19 first: zmx logged `init resize rows=19 cols=65`, then
+    the real size within the same second, and Claude Code, drawn at 65
+    columns, never redrew at the real width (hydra on the mini, 2026-11-17).
+    A SIGWINCH alone didn't fix it: Claude saw no change in its size.
   - **Scrollback restore** — `restore-scrollback` (default true): panes launch
     through a generated wrapper (`~/.zetty/scrollback-restore.sh`, contents in
     `SessionPersistence.restoreScriptContents`, written idempotently by
@@ -59,8 +69,9 @@ triggers:
     --vt` into the surface before attaching — full scrollback with
     attributes survives quit/relaunch. The wrapper stays as the attach's
     parent (it no longer `exec`s): an attach ended by
-    `SessionPersistence.repaintSignal` (SIGUSR1) is restarted after a clear
-    and a fresh replay, which is how a pane another Mac drew is repainted
+    `SessionPersistence.repaintSignal` (SIGUSR1) is restarted after a fresh
+    replay, fetched before the screen is cleared so the pane never sits
+    blank (`aRepaintFetchesTheScreenBeforeClearingIt`), which is how a pane another Mac drew is repainted
     (`remote-machines.md` → Taking the size back). Any other exit ends the
     wrapper with the attach's status. Only signal the wrapper's own attach
     (`ZmxAttachProcesses.repaintablePIDs`): the session's daemon can match
@@ -271,9 +282,12 @@ downloads and `~/.zetty/bin/zmx` are no longer used for new sessions.
     callers mean to end them and no zmx can; a hibernate teardown lists with
     the full `list` too, so another version's session is never read as
     already gone (final review, 2026-11-13).
-  - Accepted for the transition: the wrapper scripts' `"$1" list` runs with
-    the session's own binary, so an old pane's repaint or remote attach waits
-    about 1 s per 1.0 session while old and new sessions coexist.
+  - The wrapper scripts check a session with `zmx history`, whose exit
+    status says whether it is there, and ask `"$1" list` only when history
+    fails. Run with an old session's binary, `list` waits about 1 s per
+    session of another version while old and new sessions coexist: 4s on the
+    mini, which left a pane blank for that long on each repaint and lost a
+    viewing Mac's claim (2026-11-17).
   `NSHomeDirectory()` honors `CFFIXED_USER_HOME`, so the isolated test app
   keeps its copies under its own home.
 - **`zetty zmx <args>`** execs the right zmx from a shell without the app
