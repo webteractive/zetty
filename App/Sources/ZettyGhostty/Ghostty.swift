@@ -16,15 +16,23 @@ public enum Ghostty {
 
     /// Initializes the libghostty global runtime exactly once.
     ///
-    /// Calls `ghostty_init(0, nil)` — the documented bootstrap entry point
-    /// (argc/argv are optional for embedded use; passing 0 / nil is valid).
+    /// Calls `ghostty_init` with no arguments. Since Ghostty `0e067ded7`
+    /// (libghostty-spm 2.2.2026111701) argv is non-null, and Ghostty keeps
+    /// the slice for the life of the process even when argc is 0, so it is
+    /// a static array, as the package's own bootstrap passes.
     /// Returns 0 on success; any non-zero value is mapped to ``GhosttyError/initFailed(code:)``.
     public static func initializeRuntime() throws {
         guard !isInitialized else { return }
-        let rc = ghostty_init(0, nil)
+        let rc = ghostty_init(0, emptyArgv)
         guard rc == 0 else { throw GhosttyError.initFailed(code: Int(rc)) }
         isInitialized = true
     }
+
+    private static let emptyArgv: UnsafeMutablePointer<UnsafeMutablePointer<CChar>?> = {
+        let argv = UnsafeMutablePointer<UnsafeMutablePointer<CChar>?>.allocate(capacity: 1)
+        argv.initialize(to: nil)
+        return argv
+    }()
 }
 
 public enum GhosttyError: Error, Equatable {

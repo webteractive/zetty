@@ -158,7 +158,7 @@ final class TerminalViewController: NSViewController {
 
     /// The pinned libghostty-spm version (no runtime version API is exposed).
     /// Keep in sync with `Project.swift`'s package requirement.
-    static let libghosttyVersion = "1.2.7"
+    static let libghosttyVersion = "2.2.2026111701"
 
     /// Build identity for the status bar: the marketing version (`CFBundle
     /// ShortVersionString`) for clean builds — every release DMG and any clean

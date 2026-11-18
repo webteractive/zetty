@@ -66,6 +66,9 @@ the pin only moves when somebody looks.
   rewrites the tracked `.package.resolved`, which belongs in the same commit:
   it is the lockfile, and a transitive dependency can change with the bump
   (`1.6.20261003` swapped `MSDisplayLink` for `DisplayLink`).
+  The same commit sets `TerminalViewController.libghosttyVersion`, the
+  status bar's "libghostty …" label: the package has no runtime version
+  API, and the label read 1.2.7 from July until `2.2.2026111701`.
 - **Clean before building a bump** (`xcodebuild … clean`). The precompiled
   libghostty module from the old pin is rejected with "ghostty.h has been
   modified since the module file was built", which reads like a broken
