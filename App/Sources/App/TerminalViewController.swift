@@ -3600,10 +3600,13 @@ final class TerminalViewController: NSViewController {
     private var raisedBeforeReplay: Set<UUID> = []
 
     /// While the 3 s poll drains the panes' mailboxes: the time of the drain
-    /// before it, the earliest a signal delivered now can have happened. A
-    /// held-back "command finished" stamped on delivery outranked the
+    /// before it, the earliest a signal delivered now can have happened. Only
+    /// "command finished" uses it: stamped on delivery it outranked the
     /// SessionStart of the agent started after it, and ended that agent's
-    /// dot and title (release review, 2026-11-20).
+    /// dot and title (release review, 2026-11-20). Every other signal keeps
+    /// its delivery time: stamped early, a Codex decision lost to the key
+    /// that answered the one before, and a tick's signals all tied
+    /// (review of 70c34a5).
     private var drainedSignalStamp: TimeInterval?
     private var lastMailboxDrain: TimeInterval?
 
@@ -3614,11 +3617,11 @@ final class TerminalViewController: NSViewController {
         guard let surface = workspace.surface(with: surfaceID),
               let project = workspace.project(containing: surfaceID) else { return }
         let kind = agentIdentity(for: surface)
-        let now = drainedSignalStamp ?? Date().timeIntervalSince1970
+        let now = Date().timeIntervalSince1970
 
-        func report(_ state: AgentReport.State, agent: AgentKind, message: String? = nil) {
+        func report(_ state: AgentReport.State, agent: AgentKind, message: String? = nil, at: TimeInterval? = nil) {
             let result = agentDetector.apply(
-                report: AgentReport(source: .terminal, agent: agent, state: state, at: now, message: message),
+                report: AgentReport(source: .terminal, agent: agent, state: state, at: at ?? now, message: message),
                 session: surfaceID, now: now)
             if handleAgentResult(result, surface: surface, project: project, message: message) {
                 setNeedsChromeRefresh(tabBar: true, sidebar: true)
@@ -3659,7 +3662,9 @@ final class TerminalViewController: NSViewController {
             // The shell is back at its prompt: whatever agent the pane had has
             // exited, without waiting for the probe.
             guard let agent = agentDetector.state(for: surfaceID).kind else { return }
-            report(.ended, agent: agent)
+            // Drained on the tick, it is stamped with the tick before: the
+            // earliest it can have happened (`drainedSignalStamp`).
+            report(.ended, agent: agent, at: drainedSignalStamp)
             markTitleStale(surfaceID)
         case .bell:
             // A bell can't say whether it means a decision: a banner at most.
@@ -8914,6 +8919,10 @@ final class TerminalViewController: NSViewController {
             }
         }
         project.isHibernated = true
+        // Its waiting panes stop counting now, not at the next visible tick
+        // (`pruneClosedPaneState` waits for the window to show; review of
+        // 70c34a5).
+        publishAttentionCount()
         // A Space orders its members awake-before-dormant, so hibernating one
         // has to re-sort its Space. WorkspaceModel doesn't own this write.
         workspace.reapplyOrdering()

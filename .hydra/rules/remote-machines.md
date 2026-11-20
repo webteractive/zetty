@@ -489,8 +489,11 @@ lost, and neither focus nor a harmless control byte can claim the size
   nothing, and only two arrow keys brought the size over (Glen, 2026-11-17,
   with the served script still waiting 4s on `zmx list`). A repaint at the
   limit that never heard back sends the claim again after itself, and that
-  claim, the one that switches the size, gets one repaint of its own (once:
-  a program that never answers can't loop it).
+  claim gets no repaint of its own: against a server without the attach
+  marker, the replay of the repaint before it is still arriving when one
+  would fire, and it would throw the claim away again (review of 70c34a5,
+  2026-11-20). Scrollback above can then stay laid out for the other Mac;
+  with matching builds the marker makes a second claim unnecessary.
   **The serving Mac marks its attach starting** (`RemoteSizeHandoff.attachMarker`,
   an APC string printed just before `exec zmx attach`, after any replay), and
   says so in its hello (`features: ["attach-marker"]`, additive, no protocol

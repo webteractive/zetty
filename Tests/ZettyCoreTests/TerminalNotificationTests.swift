@@ -66,3 +66,15 @@ import Testing
     #expect(PromptAnswerPolicy.report(agent: .claude, current: .needsAttention) == nil)
     #expect(PromptAnswerPolicy.report(agent: nil, current: .needsAttention) == nil)
 }
+
+/// Only a key the pane's program receives answers it. ⌘ chords belong to
+/// the menus: ⌘C to copy the command Codex wants approved, or switching
+/// project, turned the pane green while Codex still waited (review of
+/// 70c34a5, 2026-11-20).
+@Test func onlyKeysTheProgramGetsAnswerAPrompt() {
+    #expect(PromptAnswerPolicy.answers(KeyChord.parse("y")!))
+    #expect(PromptAnswerPolicy.answers(KeyChord.parse("enter")!))
+    #expect(PromptAnswerPolicy.answers(KeyChord.parse("ctrl+c")!))
+    #expect(!PromptAnswerPolicy.answers(KeyChord.parse("cmd+c")!))
+    #expect(!PromptAnswerPolicy.answers(KeyChord.parse("cmd+shift+]")!))
+}

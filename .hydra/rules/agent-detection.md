@@ -70,7 +70,8 @@ and the inbox and badge are recounted only when a result moved a status or
 raised attention, or the set of live panes changed. **Only awake projects'
 panes can be waiting** (`AttentionInbox.waitingPanes`): hibernating a waiting
 project, or a replay into one at launch, kept the bell and the Dock badge
-counting it. A failed turn's banner reuses the pane's "finished"
+counting it. Hibernating recounts at once, since the tick's prune waits for
+the window to be visible. A failed turn's banner reuses the pane's "finished"
 notification identifier, so it replaces a "finished" posted for the same
 moment instead of adding a second banner.
 
@@ -109,11 +110,13 @@ receipt with source `.terminal`:
   its view is attached and the app is active, so a pane in another project
   (or every pane, with Zetty in the background) queued its actions and
   delivered the backlog stamped as new when shown (observed 2026-11-16).
-  Signals from a hidden pane now arrive at most one tick late, **stamped
-  with the previous drain's time** (`drainedSignalStamp`), the earliest they
-  can have happened: a held-back "command finished" stamped on delivery
-  outranked the SessionStart of the agent started after it and ended its
-  dot (release review, 2026-11-20).
+  Signals from a hidden pane now arrive at most one tick late. **A drained
+  "command finished" is stamped with the previous drain's time**
+  (`drainedSignalStamp`), the earliest it can have happened: stamped on
+  delivery it outranked the SessionStart of the agent started after it and
+  ended its dot (release review, 2026-11-20). Every other signal keeps its
+  delivery time: stamped early, a Codex decision lost to the key that
+  answered the one before, and a tick's signals tied (review of 70c34a5).
 
 Detection is **hook-driven** — libghostty exposes no PTY fd / child PID, so
 harness hooks *ping* Zetty:
@@ -146,8 +149,9 @@ Per-harness install (`HookInstaller` + the pure `*HookConfig` transforms):
   touched. `isInstalled` stays "any of ours present" (the Settings toggle);
   `needsRepair` is "installed but out of date". Launch writers of
   `settings.json` (mod sync, repair, account installs) share one serial queue.
-  Every write to a user's own config (`settings.json`, Codex `config.toml`,
-  Hermes `config.yaml`) goes through `LinkPreservingWrite`: through a symlink
+  Every write to a user's own config (`settings.json` from hook repair, the
+  mod's plugin-dir sync and account seeding, Codex `config.toml`, Hermes
+  `config.yaml`) goes through `LinkPreservingWrite`: through a symlink
   to the real file, keeping its permissions. A plain atomic write replaced a
   `settings.json` linked in from a dotfiles repo with a regular file, at
   launch, unasked (release review, 2026-11-20).
@@ -156,7 +160,9 @@ Per-harness install (`HookInstaller` + the pure `*HookConfig` transforms):
   and Codex 0.157.1 sends no progress, so **a key typed into a waiting Codex
   pane moves it to running** (`PromptAnswerPolicy`, `keyReachedFocusedPane`):
   the key is the answer, and the pane otherwise stayed yellow until the turn
-  ended.
+  ended. Only a key the terminal itself takes counts: not a ⌘ chord (⌘C
+  copying the command to approve turned it green), nor a key typed into the
+  sidebar or file tree.
 - **Hermes** — `hooks:` block in `~/.hermes/config.yaml` (pre_approval_request→
   needsAttention, pre_llm_call→running, post_llm_call→idle, session start/end). If
   a `hooks:` block already exists, install shows a snippet to merge by hand.

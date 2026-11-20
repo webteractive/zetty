@@ -167,26 +167,32 @@ private let t0 = Date(timeIntervalSince1970: 1_000)
         == [.repaint, .data(Data(RemoteSizeHandoff.claim.utf8))])
 }
 
-/// Against a serving Mac with no attach marker: a repaint that never heard
-/// back sends the claim again, and that claim is the one that switches the
-/// size, so it gets a repaint of its own; scrollback above stayed laid out
-/// for the other Mac otherwise. Once only, so a program that never answers
-/// can't loop (release review, 2026-11-20).
-@Test func aSecondClaimGetsOneRepaintOfItsOwn() {
+/// Against a serving Mac with no attach marker, the claim a repaint sends
+/// again gets no repaint of its own: that repaint's replay is still
+/// arriving when one would fire, and it would kill the attach with the
+/// claim unread, leaving the size on the other Mac until a key (review of
+/// 70c34a5, 2026-11-20). With the marker this can't arise: the claim is read
+/// as the attach starts, and the one repaint follows the redraw.
+@Test func aSecondClaimToAnUnmarkedServerGetsNoRepaintOfItsOwn() {
     var driver = RelaySizeDriver()
     _ = driver.attached(first: true, now: t0)
     let limit = RemoteSizeHandoff.settleLimit
     #expect(driver.due(now: t0.addingTimeInterval(limit)) == [.repaint, claim])
     driver.output(now: t0.addingTimeInterval(limit + 0.1))
-    #expect(driver.due(now: t0.addingTimeInterval(limit + 0.6)) == [.repaint])
-    #expect(driver.due(now: t0.addingTimeInterval(limit + 10)) == [])
+    #expect(driver.due(now: t0.addingTimeInterval(limit + 0.6)) == [])
+    #expect(driver.due(now: t0.addingTimeInterval(4 * limit)) == [])
 }
 
-@Test func aSecondClaimThatNeverHearsBackRepaintsOnceAndStops() {
+/// The marker can arrive in the same read as the server's `attached`, and
+/// those bytes are delivered before the driver hears of the attach. It still
+/// counts: a reset in `attached` made that first repaint wait out the 10 s
+/// limit (review of 70c34a5, 2026-11-20).
+@Test func aMarkerInTheFirstBytesStillCounts() {
     var driver = RelaySizeDriver()
-    _ = driver.attached(first: true, now: t0)
-    let limit = RemoteSizeHandoff.settleLimit
-    #expect(driver.due(now: t0.addingTimeInterval(limit)) == [.repaint, claim])
-    #expect(driver.due(now: t0.addingTimeInterval(2 * limit)) == [.repaint])
-    #expect(driver.due(now: t0.addingTimeInterval(4 * limit)) == [])
+    driver.expectsAttachMarker = true
+    driver.connectionStarted()
+    driver.attachStarted(now: t0)
+    _ = driver.attached(first: true, now: t0.addingTimeInterval(0.01))
+    driver.output(now: t0.addingTimeInterval(0.1))
+    #expect(driver.due(now: t0.addingTimeInterval(0.6)) == [.repaint])
 }

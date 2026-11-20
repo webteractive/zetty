@@ -115,7 +115,7 @@ enum AccountSeeder {
         do {
             let data = try JSONSerialization.data(
                 withJSONObject: account, options: [.prettyPrinted, .sortedKeys])
-            try data.write(to: destinationURL, options: .atomic)
+            try LinkPreservingWrite.write(data, to: destinationURL)
             return .seededPreferences(keys)
         } catch {
             return .failed(fileName, reason: error.localizedDescription)

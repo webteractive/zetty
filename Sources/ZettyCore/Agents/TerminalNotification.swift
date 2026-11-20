@@ -28,6 +28,13 @@ public enum PromptAnswerPolicy {
         guard let agent, answeredByKeys.contains(agent), current == .needsAttention else { return nil }
         return .running
     }
+
+    /// Whether `chord` is one the pane's program receives, so it can answer.
+    /// ⌘ chords belong to the menus (⌘C copying the command Codex wants
+    /// approved turned the pane green; review of 70c34a5, 2026-11-20).
+    public static func answers(_ chord: KeyChord) -> Bool {
+        !chord.modifiers.contains(.cmd)
+    }
 }
 
 /// What a desktop notification (OSC 9 / 777) from an agent pane means.

@@ -102,8 +102,6 @@ public struct RelaySizeDriver: Sendable {
     /// attach and after each repaint, until the marker.
     private var awaitingAttach = false
     private var attachStartedAt: Date?
-    /// The pending claim is the one a repaint sent again.
-    private var reclaimed = false
 
     public init() {}
 
@@ -113,9 +111,17 @@ public struct RelaySizeDriver: Sendable {
     public mutating func attached(first: Bool, now: Date) -> [TerminalFrame] {
         drives = false
         claimedAt = nil
-        awaitingAttach = expectsAttachMarker
-        attachStartedAt = nil
+        // A marker in the bytes that came with `attached` already started it.
+        awaitingAttach = expectsAttachMarker && attachStartedAt == nil
         return first ? takeSize(now: now) : []
+    }
+
+    /// A new connection, before any of its bytes: forgets the last one's
+    /// attach. Separate from `attached`, which comes after the bytes that
+    /// arrived with it, a marker among them (review of 70c34a5).
+    public mutating func connectionStarted() {
+        awaitingAttach = false
+        attachStartedAt = nil
     }
 
     /// The serving Mac's attach started: a claim sent before now waited in
@@ -153,8 +159,10 @@ public struct RelaySizeDriver: Sendable {
     /// attach may not have started, with the claim still unread in its pty.
     /// A repaint restarts that attach and the claim goes with it, so a
     /// repaint that never heard back sends the claim again after itself
-    /// (Glen, laptop opening a mini pane, 2026-11-17), and that claim gets
-    /// one repaint of its own, without a third claim.
+    /// (Glen, laptop opening a mini pane, 2026-11-17). That claim gets no
+    /// repaint of its own: against a server with no attach marker, its
+    /// repaint's replay is still arriving when one would fire, and it would
+    /// throw the claim away again (review of 70c34a5).
     ///
     /// A serving Mac that marks its attach takes the guessing out: output
     /// before the marker is the scrollback replay, never the program, and
@@ -179,21 +187,12 @@ public struct RelaySizeDriver: Sendable {
         self.claimedAt = nil
         // The repaint restarts the serving Mac's attach, replay first.
         awaitingAttach = expectsAttachMarker
-        if answer == nil, !marked, !reclaimed {
-            // The claim goes again after the repaint, and gets one repaint
-            // of its own: it is the one that switches the size. Once.
-            reclaimed = true
-            self.claimedAt = now
-            return [.repaint, .data(Data(RemoteSizeHandoff.claim.utf8))]
-        }
-        reclaimed = false
-        return [.repaint]
+        return answer == nil && !marked ? [.repaint, .data(Data(RemoteSizeHandoff.claim.utf8))] : [.repaint]
     }
 
     private mutating func takeSize(now: Date) -> [TerminalFrame] {
         drives = true
         claimedAt = now
-        reclaimed = false
         return [.data(Data(RemoteSizeHandoff.claim.utf8))]
     }
 }

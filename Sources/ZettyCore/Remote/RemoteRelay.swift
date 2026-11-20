@@ -306,6 +306,7 @@ public enum RemoteRelay {
         }
 
         // Bytes that arrived with the `attached` frame.
+        driver.connectionStarted()
         if let end = deliver(try? decoder.push(Data()), driver: &driver) { return end }
         guard send(driver.attached(first: first, now: Date())) else { return .dropped }
 

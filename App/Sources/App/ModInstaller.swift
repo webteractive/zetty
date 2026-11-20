@@ -110,7 +110,9 @@ struct ModInstaller {
                       withJSONObject: merged, options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes])
             else { continue }
             do {
-                try out.write(to: url, options: .atomic)
+                // Through a link to the real file (`LinkPreservingWrite`):
+                // a dotfiles-linked settings.json stays linked.
+                try LinkPreservingWrite.write(out, to: url)
                 ZettyLog.lifecycle.log("mod: \(enabled ? "added to" : "removed from") plugin dirs in \(url.path)")
             } catch {
                 ZettyLog.lifecycle.log("mod: could not update \(url.path): \(error.localizedDescription)")

@@ -55,7 +55,9 @@ triggers:
     prompt gets), the pane's command ends over a live session, "Process
     exited" shows, and the next key closes the pane. zmx 0.6.0 doesn't read
     the variable, so its sessions keep the key until they end (found driving
-    real keys, 2026-11-20).
+    real keys, 2026-11-20). A session the attach creates inherits it, so a
+    `zmx attach` run inside a pane has no detach key either: Ctrl+\ is the
+    program's at every level, which is the point.
   - **Repaint nudge** — zmx replays screen contents but a running TUI paints
     only deltas, so a reattached pane stays half-drawn; 1.5s after a pane's
     surface appears the window is shrunk 1pt and restored
