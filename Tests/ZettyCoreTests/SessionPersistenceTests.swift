@@ -16,7 +16,28 @@ private let idB = UUID(uuidString: "11111111-2222-3333-4444-555555555555")!
     // ZMX_SESSION must be stripped: if Zetty was launched from inside a
     // zmx-backed terminal (e.g. Supacode), an inherited ZMX_SESSION makes
     // `zmx attach` kill that session instead of attaching ours.
-    #expect(cmd == "/usr/bin/env -u ZMX_SESSION /opt/homebrew/bin/zmx attach zetty-abcdef01")
+    // ZMX_NO_DETACH_KEY: zmx detaches on Ctrl+\ otherwise, which ends the
+    // pane's command and leaves "Process exited" over a live session.
+    #expect(cmd == "/usr/bin/env -u ZMX_SESSION ZMX_NO_DETACH_KEY=1 /opt/homebrew/bin/zmx attach zetty-abcdef01")
+}
+
+/// The line that turns zmx's detach key off comes before the script's
+/// first `attach`. Read from the text rather than run: these suites spawn
+/// enough shells already, and more of them running in parallel made
+/// `theSenderKeepsItsCopyUntilTheReceiverHasIt` drop its descriptor.
+private func turnsDetachKeyOffBeforeAttaching(_ script: String) -> Bool {
+    guard let off = script.range(of: "export ZMX_NO_DETACH_KEY=1\n"),
+          let attach = script.range(of: "\"$1\" attach") else { return false }
+    return off.upperBound <= attach.lowerBound
+}
+
+@Test func restoreScriptAttachesWithTheDetachKeyOff() {
+    #expect(turnsDetachKeyOffBeforeAttaching(SessionPersistence.restoreScriptContents))
+}
+
+@Test func servedAttachRunsWithTheDetachKeyOff() {
+    // A viewer's Ctrl+\ would otherwise end the served attach on this Mac.
+    #expect(turnsDetachKeyOffBeforeAttaching(RemoteServedAttach.script))
 }
 
 @Test func attachCommandWithRestoreScriptWrapsAttach() {
@@ -150,7 +171,7 @@ private let idB = UUID(uuidString: "11111111-2222-3333-4444-555555555555")!
     // Without the script there is nothing to replay the file; the bare form is unchanged.
     let bare = SessionPersistence.attachCommand(zmxPath: "/opt/homebrew/bin/zmx", surfaceID: idA,
                                                 snapshotPath: "/x.vt")
-    #expect(bare == "/usr/bin/env -u ZMX_SESSION /opt/homebrew/bin/zmx attach zetty-abcdef01")
+    #expect(bare == "/usr/bin/env -u ZMX_SESSION ZMX_NO_DETACH_KEY=1 /opt/homebrew/bin/zmx attach zetty-abcdef01")
 }
 
 @Test func restoreScriptReplaysSnapshotFileInsteadOfHistoryAndDeletesIt() throws {

@@ -63,11 +63,19 @@ Gotchas, all deliberate:
 - **The root is the pane's current folder** (`currentDirectory(for:)`, the
   same rule as the status bar and new splits: the newest of the cwd file
   and the foreground agent's folder, else the persisted
-  `Surface.currentDirectory`, else the spawn folder). **OSC 7 counts only
-  when the shell writes no cwd file, and only for a local directory that
-  exists**: any program's output can carry an OSC 7, and this folder is
-  where a new split's shell starts (a crafted file `cat`-ed in a pane must
-  not steer it, e.g. into a repo whose prompt hooks run code). Agent report
+  `Surface.currentDirectory`, else the spawn folder). **A pane with no cwd
+  file goes by its session shell's own folder**, read from the kernel on the
+  3 s tick (`ProcessDirectory`, `PROC_PIDVNODEPATHINFO`): bash and fish
+  panes write no cwd file (Zetty's integration is zsh's), and OSC 7 there
+  let `cat` or a remote host pick where splits open (security review,
+  2026-11-20). **OSC 7 counts only when neither exists** (a scratch pane,
+  which has no session), **and only for a local directory that exists**:
+  any program's output can carry an OSC 7, and this folder is where a new
+  split's shell starts (a crafted file `cat`-ed in a pane must not steer
+  it, e.g. into a repo whose prompt hooks run code). **Single-pane readers
+  skip a folder that has gone** (a removed worktree) for the next source in
+  that order, so a split never starts in libghostty's default folder; the
+  readers that walk every pane stay off the disk. Agent report
   times are clamped to now. Every pane's cwd file is read off-main on the
   3 s tick; readers that walk every pane (status snapshot, agent list, tab
   titles) use that cache (`cachedDirectory(for:)`), and single-pane readers

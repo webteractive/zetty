@@ -52,7 +52,10 @@ pwd basename → positional.
   `suppressedLiveTitles`; Ghostty never resets a title, so `displayTitle`
   ignores the terminal's title while it still equals that one, and
   `onTitleChange` (which also fires for cwd changes) un-stales the pane only
-  when the title actually differs.
+  when the title actually differs. After two failed probes clear the
+  readings, the next good one compares against the readings from before
+  the failure (`foregroundBeforeProbeFailure`); against nothing, every idle
+  pane looked "just idle" and lost its title.
 - **Logos** live in `App/Resources/AgentLogos/agent-<command>.svg` — monochrome
   SVGs from simple-icons (CC0) / lobe-icons (MIT), loaded as template images
   and tinted to match the row's text (`AgentIcons`). Agents also have glyph

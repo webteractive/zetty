@@ -75,7 +75,10 @@ wake. The two share only the typing helper (`ZmxRunner.submit`).
    (`PendingBrief.observe`, fed from `handleAgentEvents`). Claude reports
    `idle` as it STARTS (its SessionStart hook), before reading anything, so
    only an `idle` after a `running` counts there; Codex's first `idle` is its
-   first turn ending. The old session's events are ignored: its `ended`
+   first turn ending. **A needs-you never counts**: the brief sits in
+   `~/.zetty/transfers`, outside the project, so Claude may ask before
+   reading it, and deleting on that question left nothing to read once it
+   was allowed (release review, 2026-11-20). The old session's events are ignored: its `ended`
    mid-relaunch, and anything carrying its session id
    (`handoffOldSessions`). A brief nobody read (no hooks, a failed relaunch)
    is swept at launch and at the next handoff after

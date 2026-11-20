@@ -52,9 +52,24 @@ public struct AgentReport: Sendable, Equatable {
         self.message = message
     }
 
+    /// How far a terminal signal's time can run ahead of the moment it
+    /// reports. It is stamped when it reaches Zetty, at once while the pane
+    /// is drawn; a hook line lands on a 0.5 s poll and the mod's snapshot
+    /// on a 1 s one, each with the time it happened.
+    static let terminalStampSlack: TimeInterval = 1
+
     /// True when this report should replace `other` as a pane's latest.
+    ///
+    /// A "needs you" from a hook or the mod also replaces a terminal signal
+    /// stamped up to `terminalStampSlack` after it: Claude clears its
+    /// progress as it stops to ask, and that clear, stamped on arrival,
+    /// outranked the prompt and hid it (release review, 2026-11-20).
     func supersedes(_ other: AgentReport?) -> Bool {
         guard let other else { return true }
+        if state == .needsAttention, source != .terminal, other.source == .terminal,
+           other.at >= at, other.at - at <= Self.terminalStampSlack {
+            return true
+        }
         return at > other.at || (at == other.at && source > other.source)
     }
 }

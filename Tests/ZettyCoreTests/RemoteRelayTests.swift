@@ -131,10 +131,12 @@ private func runServedAttach(scrollback: Bool, clearing: Bool = false,
 }
 
 @Test func servedAttachPrintsTheReplayOnlyWhenAskedAndClearsJustBeforeIt() throws {
-    #expect(try runServedAttach(scrollback: false, alive: true).printed == "")
-    #expect(try runServedAttach(scrollback: true, alive: true).printed == "SCREEN")
+    // The attach marker comes last, just before zmx attach starts.
+    let mark = RemoteSizeHandoff.attachMarker
+    #expect(try runServedAttach(scrollback: false, alive: true).printed == mark)
+    #expect(try runServedAttach(scrollback: true, alive: true).printed == "SCREEN" + mark)
     // A repaint clears only once the replay is in hand, so the pane keeps its
     // old view rather than going blank while zmx answers.
     #expect(try runServedAttach(scrollback: true, clearing: true, alive: true).printed
-        == RemoteSizeHandoff.clearScreen + "SCREEN")
+        == RemoteSizeHandoff.clearScreen + "SCREEN" + mark)
 }

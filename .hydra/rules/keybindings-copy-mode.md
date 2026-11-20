@@ -40,6 +40,13 @@ Guards: events outside the main window, active IME composition, and
 text-editing first responders (palette, rename, settings) always pass
 through. Status bar shows `PREFIX`/`COPY`/`ZOOM` chips.
 
+Broadcast sends each chord's `KeyChord.terminalBytes` to every target pane.
+**A Control chord sends its legacy C0 byte** (`legacyControlByte`: letters
+either case, `@ [ \ ] ^ _`, and the `2 6 / - ? `` ` `` aliases), and one with
+none (Ctrl+1) isn't broadcast at all but left to the focused pane: only
+lowercase letters were encoded before, so vim's Ctrl+[ typed a literal `[`
+in every pane (release review, 2026-11-20).
+
 Copy mode's keyboard cursor **is a Ghostty selection**: `CopyModeController`
 synthesizes in-process mouse press/drag/release into `AppTerminalView` at
 computed cell centers (`TerminalViewState.surfaceSize` supplies cell pixel

@@ -28,7 +28,10 @@ drops) so dots recover for agents already running inside preserved sessions.
 **Status model** (spec `docs/superpowers/specs/2026-11-14-agent-status-signals-design.md`):
 every source is a timestamped `AgentReport` (hook line `ts`, the mod's
 `turn.at`, terminal signals stamped on receipt) folded per pane by
-`AgentStatusBoard`: the newest wins, a tie goes to the mod, two empty
+`AgentStatusBoard`: the newest wins, a tie goes to the mod, a hook or mod
+"needs you" also beats a terminal signal stamped up to 1 s after it
+(`terminalStampSlack`: Claude clears its progress as it stops to ask, and that
+clear, stamped on arrival, hid the prompt; release review 2026-11-20), two empty
 foreground probes in a row end the agent (only an idle shell is a miss; a
 tool the agent runs is presence; an unprobed pane is decided by reports
 alone), and the probe's end outranks every earlier report so a dead agent's
@@ -64,7 +67,10 @@ round to it, and runs one tick at a time (`foregroundPollInFlight`), so a slow
 zmx can't count two misses a second apart. Each tick also prunes per-pane
 state (board entries, folder stamps, stale titles) for panes that are gone,
 and the inbox and badge are recounted only when a result moved a status or
-raised attention. A failed turn's banner reuses the pane's "finished"
+raised attention, or the set of live panes changed. **Only awake projects'
+panes can be waiting** (`AttentionInbox.waitingPanes`): hibernating a waiting
+project, or a replay into one at launch, kept the bell and the Dock badge
+counting it. A failed turn's banner reuses the pane's "finished"
 notification identifier, so it replaces a "finished" posted for the same
 moment instead of adding a second banner.
 
@@ -103,7 +109,11 @@ receipt with source `.terminal`:
   its view is attached and the app is active, so a pane in another project
   (or every pane, with Zetty in the background) queued its actions and
   delivered the backlog stamped as new when shown (observed 2026-11-16).
-  Signals from a hidden pane now arrive at most one tick late.
+  Signals from a hidden pane now arrive at most one tick late, **stamped
+  with the previous drain's time** (`drainedSignalStamp`), the earliest they
+  can have happened: a held-back "command finished" stamped on delivery
+  outranked the SessionStart of the agent started after it and ended its
+  dot (release review, 2026-11-20).
 
 Detection is **hook-driven** — libghostty exposes no PTY fd / child PID, so
 harness hooks *ping* Zetty:
@@ -136,8 +146,17 @@ Per-harness install (`HookInstaller` + the pure `*HookConfig` transforms):
   touched. `isInstalled` stays "any of ours present" (the Settings toggle);
   `needsRepair` is "installed but out of date". Launch writers of
   `settings.json` (mod sync, repair, account installs) share one serial queue.
+  Every write to a user's own config (`settings.json`, Codex `config.toml`,
+  Hermes `config.yaml`) goes through `LinkPreservingWrite`: through a symlink
+  to the real file, keeping its permissions. A plain atomic write replaced a
+  `settings.json` linked in from a dotfiles repo with a regular file, at
+  launch, unasked (release review, 2026-11-20).
 - **Codex** — chains the single `~/.codex/config.toml` `notify` (emits then execs
-  your original; uninstall restores it). Only turn-ended fires → idle/presence.
+  your original; uninstall restores it). Only turn-ended fires → idle/presence,
+  and Codex 0.157.1 sends no progress, so **a key typed into a waiting Codex
+  pane moves it to running** (`PromptAnswerPolicy`, `keyReachedFocusedPane`):
+  the key is the answer, and the pane otherwise stayed yellow until the turn
+  ended.
 - **Hermes** — `hooks:` block in `~/.hermes/config.yaml` (pre_approval_request→
   needsAttention, pre_llm_call→running, post_llm_call→idle, session start/end). If
   a `hooks:` block already exists, install shows a snippet to merge by hand.

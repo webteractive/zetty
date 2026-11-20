@@ -87,6 +87,25 @@ public enum Broadcast {
 }
 
 public extension KeyChord {
+    /// The C0 byte a Control chord sends in a terminal's legacy encoding,
+    /// as the focused pane gets it: letters either case (Ctrl+Shift+A is
+    /// 0x01), `@ [ \\ ] ^ _`, and xterm's digit and punctuation aliases.
+    /// nil for a Control chord with none (Ctrl+1): broadcast leaves it to
+    /// the focused pane rather than typing the bare character everywhere,
+    /// which put a literal `[` in every pane for vim's Ctrl+[ (release
+    /// review, 2026-11-20).
+    static func legacyControlByte(_ ascii: UInt8) -> UInt8? {
+        switch ascii {
+        case 97...122: return ascii - 96                    // a … z
+        case 64...95: return ascii - 64                     // @ A … Z [ \ ] ^ _
+        case UInt8(ascii: "2"), UInt8(ascii: "`"): return 0x00
+        case UInt8(ascii: "6"): return 0x1E
+        case UInt8(ascii: "/"), UInt8(ascii: "-"): return 0x1F
+        case UInt8(ascii: "?"): return 0x7F
+        default: return nil
+        }
+    }
+
     /// The bytes this chord sends to a terminal as plain input, or nil when it
     /// isn't a simple text/control/named key (best-effort — used by broadcast
     /// fan-out and `send-prefix`; exotic modified/dead keys are not encoded).
@@ -97,7 +116,7 @@ public extension KeyChord {
             case .enter: return "\r"
             case .tab: return modifiers.contains(.shift) ? "\u{1b}[Z" : "\t"
             case .escape: return "\u{1b}"
-            case .space: return " "
+            case .space: return modifiers.contains(.ctrl) ? "\u{0}" : " "
             case .backspace: return "\u{7f}"
             case .left: return "\u{1b}[D"
             case .right: return "\u{1b}[C"
@@ -105,10 +124,10 @@ public extension KeyChord {
             case .down: return "\u{1b}[B"
             }
         case .character(let character):
-            // ctrl+letter → C0 control byte (a=0x01 … z=0x1A).
-            if modifiers.contains(.ctrl), let ascii = character.asciiValue,
-               (97...122).contains(ascii) {
-                return String(UnicodeScalar(ascii - 96))
+            if modifiers.contains(.ctrl) {
+                guard !modifiers.contains(.cmd), !modifiers.contains(.alt),
+                      let byte = character.asciiValue.flatMap(Self.legacyControlByte) else { return nil }
+                return String(UnicodeScalar(byte))
             }
             // cmd/alt combos aren't plain text — don't guess.
             if modifiers.contains(.cmd) || modifiers.contains(.alt) { return nil }

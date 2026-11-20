@@ -263,3 +263,27 @@ private func report(_ state: AgentReport.State, at: TimeInterval, from source: A
     #expect(board.state(for: pane) == AgentState())
     #expect(board.state(for: kept).status == .running)
 }
+
+/// Claude clears its progress as it stops to ask. That clear is stamped when
+/// it reaches Zetty, while the hook and the mod carry when the prompt
+/// happened, so the clear looked newer and the prompt that followed it was
+/// thrown away: no dot, no sound, a "finished" banner instead (release
+/// review, 2026-11-20).
+@Test func aNeedsYouJustBeforeATerminalSignalStillWins() {
+    let board = AgentStatusBoard()
+    board.apply(report(.running, at: 9), to: pane, replay: false, now: 9)
+    board.apply(report(.idle, at: 10.2, from: .terminal), to: pane, replay: false, now: 10.2)
+    let hook = board.apply(report(.needsAttention, at: 10.0), to: pane, replay: false, now: 10.7)
+    #expect(hook.accepted)
+    #expect(hook.raisedAttention)
+    #expect(board.state(for: pane).status == .needsAttention)
+}
+
+@Test func anOlderNeedsYouStillLosesToALaterTerminalSignal() {
+    // Past the slack, the terminal signal is a real later moment.
+    let board = AgentStatusBoard()
+    board.apply(report(.running, at: 9), to: pane, replay: false, now: 9)
+    board.apply(report(.idle, at: 12, from: .terminal), to: pane, replay: false, now: 12)
+    #expect(!board.apply(report(.needsAttention, at: 10.0), to: pane, replay: false, now: 12.5).accepted)
+    #expect(board.state(for: pane).status == .idle)
+}

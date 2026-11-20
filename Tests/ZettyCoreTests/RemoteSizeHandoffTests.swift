@@ -102,3 +102,91 @@ private let t0 = Date(timeIntervalSince1970: 1_000)
     #expect(!RemoteSizeHandoff.pointerClaims(appActive: false, windowKey: true))
     #expect(!RemoteSizeHandoff.pointerClaims(appActive: true, windowKey: false))
 }
+
+// MARK: - The serving Mac's attach marker
+
+@Test func attachMarkersAreStrippedFromOutput() {
+    var chunk = Data("SCREEN".utf8)
+    chunk.append(Data(RemoteSizeHandoff.attachMarker.utf8))
+    chunk.append(Data("live".utf8))
+    let split = RemoteSizeHandoff.splitAttach(chunk)
+    #expect(split.output == Data("SCREENlive".utf8))
+    #expect(split.started)
+    let plain = RemoteSizeHandoff.splitAttach(Data("plain".utf8))
+    #expect(plain.output == Data("plain".utf8))
+    #expect(!plain.started)
+}
+
+/// A first open over a slow path: the serving Mac is still printing the
+/// scrollback replay at the limit, with the claim unread in its pty. The
+/// replay is not the program's answer, so nothing repaints until the attach
+/// has started and the program has redrawn (release review, 2026-11-20).
+@Test func aReplayStillArrivingIsNotTheProgramsAnswer() {
+    var driver = RelaySizeDriver()
+    driver.expectsAttachMarker = true
+    #expect(driver.attached(first: true, now: t0) == [.data(Data(RemoteSizeHandoff.claim.utf8))])
+    var at = 0.0
+    while at < 5 {
+        driver.output(now: t0.addingTimeInterval(at))
+        #expect(driver.due(now: t0.addingTimeInterval(at)) == [], "at \(at)")
+        at += 0.1
+    }
+    driver.attachStarted(now: t0.addingTimeInterval(5))
+    driver.output(now: t0.addingTimeInterval(5.1))
+    #expect(driver.due(now: t0.addingTimeInterval(5.2)) == [])
+    // The attach read the claim when it started, so the repaint needs no
+    // second one.
+    #expect(driver.due(now: t0.addingTimeInterval(5.5)) == [.repaint])
+}
+
+@Test func aRepaintWaitsForItsOwnAttachBeforeTheNextClaimSettles() {
+    var driver = RelaySizeDriver()
+    driver.expectsAttachMarker = true
+    _ = driver.attached(first: true, now: t0)
+    driver.attachStarted(now: t0.addingTimeInterval(0.1))
+    driver.output(now: t0.addingTimeInterval(0.2))
+    #expect(driver.due(now: t0.addingTimeInterval(0.6)) == [.repaint])
+    // The other Mac types, then this one does, while the repaint's attach
+    // is still replaying.
+    driver.sizeMoved()
+    _ = driver.input(Data("a".utf8), now: t0.addingTimeInterval(1))
+    driver.output(now: t0.addingTimeInterval(1.1))
+    #expect(driver.due(now: t0.addingTimeInterval(4)) == [])
+    driver.attachStarted(now: t0.addingTimeInterval(4))
+    driver.output(now: t0.addingTimeInterval(4.1))
+    #expect(driver.due(now: t0.addingTimeInterval(4.5)) == [.repaint])
+}
+
+@Test func aMarkerThatNeverComesFallsBackAfterTheAttachLimit() {
+    var driver = RelaySizeDriver()
+    driver.expectsAttachMarker = true
+    _ = driver.attached(first: true, now: t0)
+    let limit = RemoteSizeHandoff.attachLimit
+    #expect(driver.due(now: t0.addingTimeInterval(limit - 0.1)) == [])
+    #expect(driver.due(now: t0.addingTimeInterval(limit))
+        == [.repaint, .data(Data(RemoteSizeHandoff.claim.utf8))])
+}
+
+/// Against a serving Mac with no attach marker: a repaint that never heard
+/// back sends the claim again, and that claim is the one that switches the
+/// size, so it gets a repaint of its own; scrollback above stayed laid out
+/// for the other Mac otherwise. Once only, so a program that never answers
+/// can't loop (release review, 2026-11-20).
+@Test func aSecondClaimGetsOneRepaintOfItsOwn() {
+    var driver = RelaySizeDriver()
+    _ = driver.attached(first: true, now: t0)
+    let limit = RemoteSizeHandoff.settleLimit
+    #expect(driver.due(now: t0.addingTimeInterval(limit)) == [.repaint, claim])
+    driver.output(now: t0.addingTimeInterval(limit + 0.1))
+    #expect(driver.due(now: t0.addingTimeInterval(limit + 0.6)) == [.repaint])
+    #expect(driver.due(now: t0.addingTimeInterval(limit + 10)) == [])
+}
+
+@Test func aSecondClaimThatNeverHearsBackRepaintsOnceAndStops() {
+    var driver = RelaySizeDriver()
+    _ = driver.attached(first: true, now: t0)
+    let limit = RemoteSizeHandoff.settleLimit
+    #expect(driver.due(now: t0.addingTimeInterval(limit)) == [.repaint, claim])
+    #expect(driver.due(now: t0.addingTimeInterval(2 * limit)) == [.repaint])
+    #expect(driver.due(now: t0.addingTimeInterval(4 * limit)) == [])
+}

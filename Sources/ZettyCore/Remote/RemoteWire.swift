@@ -82,17 +82,28 @@ public struct RemoteHello: Codable, Equatable, Sendable {
     /// The sender's machine ID (`RemoteMachineID`): what the sidebar keys a
     /// Mac by, since its Tailscale node changes when it signs in again.
     public let machineID: String?
+    /// What the sender does beyond `protocolVersion` (`RemoteFeature`).
+    /// Optional and additive, so it needs no protocol bump: an older peer
+    /// ignores the key, and one that sends none offers nothing.
+    public let features: [String]?
 
     public init(machine: String, zettyVersion: String, protocolVersion: Int, attach: RemoteAttachRequest? = nil,
-                machineID: String? = nil) {
+                machineID: String? = nil, features: [String]? = nil) {
         self.machine = machine
         self.zettyVersion = zettyVersion
         self.protocolVersion = protocolVersion
         self.attach = attach
         self.machineID = machineID
+        self.features = features
     }
 
-    private enum CodingKeys: String, CodingKey { case machine, zettyVersion, protocolVersion, attach, machineID }
+    public func offers(_ feature: String) -> Bool {
+        features?.contains(feature) ?? false
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case machine, zettyVersion, protocolVersion, attach, machineID, features
+    }
 
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -101,7 +112,17 @@ public struct RemoteHello: Codable, Equatable, Sendable {
         protocolVersion = try c.decode(Int.self, forKey: .protocolVersion)
         attach = try c.decodeIfPresent(RemoteAttachRequest.self, forKey: .attach)
         machineID = try c.decodeIfPresent(String.self, forKey: .machineID)
+        features = try c.decodeIfPresent([String].self, forKey: .features)
     }
+}
+
+/// Names a serving Mac lists in its hello's `features`.
+public enum RemoteFeature {
+    /// Its served attach prints `RemoteSizeHandoff.attachMarker` as `zmx
+    /// attach` starts, so the viewer's repaint timing counts from there.
+    public static let attachMarker = "attach-marker"
+    /// Everything this build offers.
+    public static let all = [attachMarker]
 }
 
 /// Everything that crosses a remote-machines connection.

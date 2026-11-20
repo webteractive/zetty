@@ -55,11 +55,13 @@ private func pair() -> (Int32, Int32) {
     let (control, relay) = pair()
     defer { close(b) }
     let done = DispatchSemaphore(value: 0)
-    DispatchQueue.global().async {
+    // Its own thread: on GCD's shared pool, the rest of the suite running in
+    // parallel could hold the send back past the receiver's timeout.
+    Thread {
         FDPassing.handOver(fd: a, over: control, line: Data("{\"ok\":true}\n".utf8), waitUpTo: 5)
         close(control)
         done.signal()
-    }
+    }.start()
     Thread.sleep(forTimeInterval: 0.3)   // a receiver that is slow to start
     let got = try #require(FDPassing.receive(from: relay, timeout: 2))
     close(relay)                         // what the relay does once it has it

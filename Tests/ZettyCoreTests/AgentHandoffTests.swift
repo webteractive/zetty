@@ -100,6 +100,19 @@ private func target(_ name: String?, from agent: AgentKind = .claude,
     #expect(turnEnded)
 }
 
+/// The brief lives in ~/.zetty/transfers, outside the project, so Claude
+/// can stop to ask before reading it. That question is not the turn's end:
+/// deleting there left nothing to read once you allowed it (release review,
+/// 2026-11-20).
+@Test func aBriefOutlivesThePermissionPromptToReadIt() {
+    var brief = PendingBrief(path: "/b.md", agent: .claude)
+    _ = brief.observe(.running)
+    let asked = brief.observe(.needsAttention)
+    let turnEnded = brief.observe(.idle)
+    #expect(!asked)
+    #expect(turnEnded)
+}
+
 @Test func aBriefGoesWhenTheSessionEndsUnread() {
     var brief = PendingBrief(path: "/b.md", agent: .claude)
     let ended = brief.observe(.ended)

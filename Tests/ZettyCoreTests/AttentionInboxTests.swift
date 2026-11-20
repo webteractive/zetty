@@ -114,3 +114,16 @@ private let b = UUID(uuidString: "00000000-0000-0000-0000-00000000000B")!
     inbox.settleAfterReplay(needsAttention: [a, b], raisedLive: [b])
     #expect(inbox.unread == [b])
 }
+
+/// A hibernated project's panes are not waiting on anyone, whatever the
+/// board last heard: hibernating a waiting project, or a replay into one at
+/// launch, kept the bell and the Dock badge counting it (release review,
+/// 2026-11-20).
+@Test func aHibernatedProjectsPanesAreNotWaiting() {
+    let awake = ProjectRuntime(name: "awake", rootPath: "/a")
+    let asleep = ProjectRuntime(name: "asleep", rootPath: "/b", isHibernated: true)
+    let ids = [awake, asleep].flatMap { $0.tabList.trees.flatMap { $0.layout.surfaces.map(\.id) } }
+    #expect(ids.count == 2)
+    let waiting = AttentionInbox.waitingPanes(in: [awake, asleep]) { _ in .needsAttention }
+    #expect(waiting == Set(awake.tabList.trees.flatMap { $0.layout.surfaces.map(\.id) }))
+}

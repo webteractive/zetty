@@ -83,3 +83,18 @@ public struct AttentionInboxSnapshot: Codable, Equatable, Sendable {
         self.acknowledged = acknowledged
     }
 }
+
+extension AttentionInbox {
+    /// The panes waiting on you: needs-attention by `status`, in projects
+    /// that are awake. A hibernated project's panes have no process to
+    /// answer, whatever the board last heard; counting them kept the bell
+    /// and the Dock badge up after hibernating a waiting project (release
+    /// review, 2026-11-20).
+    public static func waitingPanes(in projects: [ProjectRuntime],
+                                    status: (UUID) -> AgentStatus?) -> Set<UUID> {
+        Set(projects.filter { !$0.isHibernated }
+            .flatMap { $0.tabList.trees.flatMap { $0.layout.surfaces } }
+            .map(\.id)
+            .filter { status($0) == .needsAttention })
+    }
+}

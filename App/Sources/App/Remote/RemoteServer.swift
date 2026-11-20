@@ -189,7 +189,8 @@ final class RemoteServer {
             return
         }
         let hello = RemoteHello(machine: machineName, zettyVersion: zettyVersion,
-                                protocolVersion: RemoteProtocol.version, machineID: machineID)
+                                protocolVersion: RemoteProtocol.version, machineID: machineID,
+                                features: RemoteFeature.all)
         guard let frame = try? RemoteFrame.encode(.hello(hello)) else { connection.close(); return }
         connection.phase = .awaitingHello
         send(frame, on: connection)

@@ -47,16 +47,41 @@ public enum RemoteSizeHandoff {
     /// Removes every focus marker from a chunk of the relay's input. `focused`
     /// says whether there was one.
     public static func splitFocus(_ chunk: Data) -> (input: Data, focused: Bool) {
-        let marker = Data(focusMarker.utf8)
+        strip(focusMarker, from: chunk)
+    }
+
+    /// What the serving Mac prints just before its `zmx attach` starts, after
+    /// any scrollback replay (`RemoteServedAttach`): an APC string, which a
+    /// terminal ignores. The relay strips it and from then on counts output
+    /// as the program's. A serving Mac that prints it says so in its hello
+    /// (`RemoteFeature.attachMarker`).
+    public static let attachMarker = "\u{1B}_zetty-attach\u{1B}\\"
+
+    /// `attachMarker` for a `printf` format.
+    static let attachMarkerEscaped = "\\033_zetty-attach\\033\\\\"
+
+    /// How long a claim waits for the serving Mac's attach to start before
+    /// settling as if no marker were coming: a replay of several MB over a
+    /// slow path, or a marker split across two reads.
+    public static let attachLimit: TimeInterval = 10
+
+    /// Removes every attach marker from a chunk of the session's output.
+    /// `started` says whether there was one.
+    public static func splitAttach(_ chunk: Data) -> (output: Data, started: Bool) {
+        strip(attachMarker, from: chunk)
+    }
+
+    private static func strip(_ marker: String, from chunk: Data) -> (Data, Bool) {
+        let marker = Data(marker.utf8)
         guard chunk.range(of: marker) != nil else { return (chunk, false) }
         var rest = chunk[...]
-        var input = Data()
+        var kept = Data()
         while let found = rest.range(of: marker) {
-            input.append(rest[rest.startIndex ..< found.lowerBound])
+            kept.append(rest[rest.startIndex ..< found.lowerBound])
             rest = rest[found.upperBound...]
         }
-        input.append(rest)
-        return (input, true)
+        kept.append(rest)
+        return (kept, true)
     }
 }
 
@@ -67,9 +92,18 @@ public struct RelaySizeDriver: Sendable {
     /// This screen typed last since attaching, or since the server said the
     /// size moved.
     public private(set) var drives = false
+    /// The serving Mac prints `RemoteSizeHandoff.attachMarker` as its attach
+    /// starts (its hello said so). Set per connection.
+    public var expectsAttachMarker = false
     /// When this screen claimed the size, while its repaint is pending.
     private var claimedAt: Date?
     private var lastOutput: Date?
+    /// The serving Mac is replaying, its attach not started yet: after an
+    /// attach and after each repaint, until the marker.
+    private var awaitingAttach = false
+    private var attachStartedAt: Date?
+    /// The pending claim is the one a repaint sent again.
+    private var reclaimed = false
 
     public init() {}
 
@@ -79,7 +113,16 @@ public struct RelaySizeDriver: Sendable {
     public mutating func attached(first: Bool, now: Date) -> [TerminalFrame] {
         drives = false
         claimedAt = nil
+        awaitingAttach = expectsAttachMarker
+        attachStartedAt = nil
         return first ? takeSize(now: now) : []
+    }
+
+    /// The serving Mac's attach started: a claim sent before now waited in
+    /// its pty and has been read.
+    public mutating func attachStarted(now: Date) {
+        awaitingAttach = false
+        attachStartedAt = now
     }
 
     /// Input from the pane, focus markers included. Focus, or a key typed
@@ -110,19 +153,47 @@ public struct RelaySizeDriver: Sendable {
     /// attach may not have started, with the claim still unread in its pty.
     /// A repaint restarts that attach and the claim goes with it, so a
     /// repaint that never heard back sends the claim again after itself
-    /// (Glen, laptop opening a mini pane, 2026-11-17).
+    /// (Glen, laptop opening a mini pane, 2026-11-17), and that claim gets
+    /// one repaint of its own, without a third claim.
+    ///
+    /// A serving Mac that marks its attach takes the guessing out: output
+    /// before the marker is the scrollback replay, never the program, and
+    /// the times count from the marker when it came after the claim. A
+    /// replay still arriving at the limit once counted as the answer, and
+    /// its repaint threw away the unread claim (release review,
+    /// 2026-11-20). Once the attach has started the claim has been read, so
+    /// the repaint goes without a second one.
     public mutating func due(now: Date) -> [TerminalFrame] {
-        guard let claimedAt, now >= claimedAt.addingTimeInterval(RemoteSizeHandoff.settle) else { return [] }
-        let answer = lastOutput.flatMap { $0 >= claimedAt ? $0 : nil }
+        guard let claimedAt else { return [] }
+        var marked = expectsAttachMarker
+        if awaitingAttach {
+            guard now >= claimedAt.addingTimeInterval(RemoteSizeHandoff.attachLimit) else { return [] }
+            awaitingAttach = false
+            marked = false
+        }
+        let start = max(claimedAt, attachStartedAt ?? claimedAt)
+        guard now >= start.addingTimeInterval(RemoteSizeHandoff.settle) else { return [] }
+        let answer = lastOutput.flatMap { $0 >= start ? $0 : nil }
         let quiet = answer.map { now >= $0.addingTimeInterval(RemoteSizeHandoff.quiet) } ?? false
-        guard quiet || now >= claimedAt.addingTimeInterval(RemoteSizeHandoff.settleLimit) else { return [] }
+        guard quiet || now >= start.addingTimeInterval(RemoteSizeHandoff.settleLimit) else { return [] }
         self.claimedAt = nil
-        return answer == nil ? [.repaint, .data(Data(RemoteSizeHandoff.claim.utf8))] : [.repaint]
+        // The repaint restarts the serving Mac's attach, replay first.
+        awaitingAttach = expectsAttachMarker
+        if answer == nil, !marked, !reclaimed {
+            // The claim goes again after the repaint, and gets one repaint
+            // of its own: it is the one that switches the size. Once.
+            reclaimed = true
+            self.claimedAt = now
+            return [.repaint, .data(Data(RemoteSizeHandoff.claim.utf8))]
+        }
+        reclaimed = false
+        return [.repaint]
     }
 
     private mutating func takeSize(now: Date) -> [TerminalFrame] {
         drives = true
         claimedAt = now
+        reclaimed = false
         return [.data(Data(RemoteSizeHandoff.claim.utf8))]
     }
 }

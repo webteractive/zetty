@@ -182,6 +182,7 @@ final class KeyInterceptor: NSObject {
 
         switch resolution {
         case .passthrough:
+            viewController.keyReachedFocusedPane()
             // Broadcast: mirror the keystroke to the target set and swallow the
             // native event (the focused pane is in the set, so it's not
             // doubled). Runs only after the text-editing/IME guards above, and

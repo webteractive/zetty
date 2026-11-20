@@ -177,8 +177,13 @@ public struct PendingBrief: Equatable, Sendable {
         case .running:
             sawTurn = true
             return false
-        case .idle, .needsAttention:
+        case .idle:
             return agent == .codex || sawTurn
+        case .needsAttention:
+            // A question, not the turn's end: often the permission to read
+            // the brief itself, which sits outside the project (release
+            // review, 2026-11-20).
+            return false
         case .ended:
             return true
         }

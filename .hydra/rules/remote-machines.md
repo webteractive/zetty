@@ -488,7 +488,20 @@ lost, and neither focus nor a harmless control byte can claim the size
   throws the claim away. The laptop then believed it drove, a click did
   nothing, and only two arrow keys brought the size over (Glen, 2026-11-17,
   with the served script still waiting 4s on `zmx list`). A repaint at the
-  limit that never heard back sends the claim again after itself. A fixed 0.4s let Claude Code on a long
+  limit that never heard back sends the claim again after itself, and that
+  claim, the one that switches the size, gets one repaint of its own (once:
+  a program that never answers can't loop it).
+  **The serving Mac marks its attach starting** (`RemoteSizeHandoff.attachMarker`,
+  an APC string printed just before `exec zmx attach`, after any replay), and
+  says so in its hello (`features: ["attach-marker"]`, additive, no protocol
+  bump). Against such a server the relay strips the marker, waits for it
+  (up to `attachLimit`, 10s) after an attach or a repaint, and times the
+  repaint from it when it came after the claim, never counting the replay as
+  the program's answer; a claim sent before it waited in the pty and was
+  read, so no second claim follows. A replay of a few MB over a slow path,
+  still arriving at the limit, was taken for the answer and its repaint threw
+  away the unread claim (release review, 2026-11-20). A server without the
+  feature gets the timing above. A fixed 0.4s let Claude Code on a long
   conversation still be redrawing, so the repaint replayed a half-drawn screen
   that stayed garbled until a key (Glen, 2026-11-16, laptop viewing the
   mini). The local pane's repaint still waits the fixed `settle`. Claiming alone redraws Claude Code's visible screen (it clears on

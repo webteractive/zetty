@@ -56,6 +56,7 @@ public enum SessionPersistence {
     # Zetty scrollback restore (generated; do not edit — rewritten on launch).
     # $1 = zmx path, $2 = session name, $3 = optional restart snapshot file.
     unset ZMX_SESSION
+    export \(noDetachKey)
     if [ -n "$3" ] && [ -f "$3" ]; then
       cat "$3"
       rm -f "$3"
@@ -76,6 +77,15 @@ public enum SessionPersistence {
       fi
     done
     """
+
+    /// Turns off zmx's own detach key, Ctrl+\\, for an attach Zetty runs.
+    /// A detach ends the pane's command while the session lives on, so the
+    /// pane shows "Process exited" over it, and the next key closes the
+    /// pane. Inside a pane Ctrl+\\ belongs to the program (SIGQUIT, an
+    /// editor binding), and Zetty detaches through its own lifecycle. zmx
+    /// 0.8.1 and 1.0.1 read it; a session still run by 0.6.0 keeps the key
+    /// until it ends (2026-11-20).
+    static let noDetachKey = "ZMX_NO_DETACH_KEY=1"
 
     /// `RemoteSizeHandoff.clearScreen` for a `printf` format.
     static let clearScreenEscaped = "\\033[H\\033[2J\\033[3J"
@@ -102,7 +112,8 @@ public enum SessionPersistence {
     /// `snapshotPath` (restart recovery) is appended as a fourth token and is
     /// subject to the same no-spaces rule.
     ///
-    /// ZMX_SESSION is unset first (by `env -u` here, by the script there):
+    /// ZMX_SESSION is unset first (by `env -u` here, by the script there),
+    /// and zmx's detach key is turned off (`noDetachKey`):
     /// when Zetty itself was launched from a zmx-backed terminal (e.g.
     /// Supacode), every pane inherits that variable, and `zmx attach` run
     /// "inside" a session kills it instead of attaching the target (or
@@ -115,7 +126,7 @@ public enum SessionPersistence {
     ) -> String {
         let session = sessionName(for: surfaceID)
         guard let script = restoreScriptPath else {
-            return "/usr/bin/env -u ZMX_SESSION \(zmxPath) attach \(session)"
+            return "/usr/bin/env -u ZMX_SESSION \(noDetachKey) \(zmxPath) attach \(session)"
         }
         var command = "/bin/sh \(script) \(zmxPath) \(session)"
         // Fourth plain token; present only for a surface the recovery manifest

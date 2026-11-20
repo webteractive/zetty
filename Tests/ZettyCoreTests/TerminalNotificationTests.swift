@@ -54,3 +54,15 @@ import Testing
     #expect(TerminalProgressPolicy.report(active: false, current: .running) == .idle)
     #expect(TerminalProgressPolicy.report(active: false, current: .idle) == nil)
 }
+
+/// Codex's only hook is the turn's end and it sends no progress, so after
+/// you approve, nothing it says moves the pane off yellow until the turn
+/// ends. A key typed into the waiting pane is the answer (release review,
+/// 2026-11-20). Claude's and Hermes's hooks report moving on themselves.
+@Test func aKeyInAWaitingCodexPaneAnswersIt() {
+    #expect(PromptAnswerPolicy.report(agent: .codex, current: .needsAttention) == .running)
+    #expect(PromptAnswerPolicy.report(agent: .codex, current: .running) == nil)
+    #expect(PromptAnswerPolicy.report(agent: .codex, current: .idle) == nil)
+    #expect(PromptAnswerPolicy.report(agent: .claude, current: .needsAttention) == nil)
+    #expect(PromptAnswerPolicy.report(agent: nil, current: .needsAttention) == nil)
+}

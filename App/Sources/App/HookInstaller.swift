@@ -107,7 +107,7 @@ final class HookInstaller {
             case .alreadyInstalled:
                 return .alreadyInstalled
             case let .updated(newText, backup):
-                try newText.write(to: url, atomically: true, encoding: .utf8)
+                try LinkPreservingWrite.write(newText, to: url)
                 try backup.write(to: codexBackupURL(inConfigDirectory: directory),
                                  atomically: true, encoding: .utf8)
                 return .installed
@@ -127,7 +127,7 @@ final class HookInstaller {
             let backup = (try? String(contentsOf: backupURL, encoding: .utf8)) ?? ""
             let restored = CodexHookConfig.uninstall(
                 configText: text, backup: backup, scriptPath: scriptURL.path)
-            try restored.write(to: url, atomically: true, encoding: .utf8)
+            try LinkPreservingWrite.write(restored, to: url)
             try? FileManager.default.removeItem(at: backupURL)
             return .uninstalled
         } catch {
@@ -195,7 +195,7 @@ final class HookInstaller {
                 case .alreadyInstalled:
                     return .alreadyInstalled
                 case let .updated(newText, backup):
-                    try newText.write(to: url, atomically: true, encoding: .utf8)
+                    try LinkPreservingWrite.write(newText, to: url)
                     try backup.write(to: codexBackupURL, atomically: true, encoding: .utf8)
                     return .installed
                 }
@@ -204,7 +204,7 @@ final class HookInstaller {
                 let text = (try? String(contentsOf: url, encoding: .utf8)) ?? ""
                 switch HermesHookConfig.install(configText: text, scriptPath: path) {
                 case let .updated(newText):
-                    try newText.write(to: url, atomically: true, encoding: .utf8)
+                    try LinkPreservingWrite.write(newText, to: url)
                     return .installed
                 case let .conflict(snippet):
                     return .conflict(snippet: snippet)
@@ -231,12 +231,12 @@ final class HookInstaller {
                 let text = try String(contentsOf: url, encoding: .utf8)
                 let backup = (try? String(contentsOf: codexBackupURL, encoding: .utf8)) ?? ""
                 let newText = CodexHookConfig.uninstall(configText: text, backup: backup, scriptPath: path)
-                try newText.write(to: url, atomically: true, encoding: .utf8)
+                try LinkPreservingWrite.write(newText, to: url)
                 try? FileManager.default.removeItem(at: codexBackupURL)
 
             case .hermes:
                 let text = try String(contentsOf: url, encoding: .utf8)
-                try HermesHookConfig.uninstall(configText: text).write(to: url, atomically: true, encoding: .utf8)
+                try LinkPreservingWrite.write(HermesHookConfig.uninstall(configText: text), to: url)
             }
             return .uninstalled
         } catch {
@@ -276,6 +276,6 @@ final class HookInstaller {
             withJSONObject: dict,
             options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
         )
-        try data.write(to: url, options: .atomic)
+        try LinkPreservingWrite.write(data, to: url)
     }
 }

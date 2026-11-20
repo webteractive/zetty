@@ -49,6 +49,13 @@ triggers:
     every zmx subprocess: inherited from a zmx-backed terminal (Supacode, or
     Zetty itself), `zmx attach` would *kill* that session instead of
     attaching the target.
+  - **zmx's detach key is off** (`ZMX_NO_DETACH_KEY=1`) in every attach
+    Zetty runs: the bare command, the restore script and the attach served
+    to another Mac. zmx otherwise detaches on Ctrl+\ (0x1c, which a plain
+    prompt gets), the pane's command ends over a live session, "Process
+    exited" shows, and the next key closes the pane. zmx 0.6.0 doesn't read
+    the variable, so its sessions keep the key until they end (found driving
+    real keys, 2026-11-20).
   - **Repaint nudge** — zmx replays screen contents but a running TUI paints
     only deltas, so a reattached pane stays half-drawn; 1.5s after a pane's
     surface appears the window is shrunk 1pt and restored

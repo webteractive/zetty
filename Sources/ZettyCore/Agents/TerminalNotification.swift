@@ -13,6 +13,23 @@ public enum TerminalProgressPolicy {
     }
 }
 
+/// What a key typed into an agent pane says about it.
+public enum PromptAnswerPolicy {
+    /// Agents whose own reports never move a pane off "needs you" once you
+    /// answer: Codex's only hook is the turn's end, and it sends no progress
+    /// (0.157.1), so an approved pane stayed yellow until the turn ended
+    /// (release review, 2026-11-20). Claude's and Hermes's hooks say when
+    /// they move on.
+    static let answeredByKeys: Set<AgentKind> = [.codex]
+
+    /// `.running` when a key reached a pane waiting on one of those agents:
+    /// the key is the answer. nil otherwise.
+    public static func report(agent: AgentKind?, current: AgentStatus?) -> AgentReport.State? {
+        guard let agent, answeredByKeys.contains(agent), current == .needsAttention else { return nil }
+        return .running
+    }
+}
+
 /// What a desktop notification (OSC 9 / 777) from an agent pane means.
 public enum TerminalNotificationMeaning: Equatable, Sendable {
     /// The agent is blocked on a decision: "needs you", with its own words.

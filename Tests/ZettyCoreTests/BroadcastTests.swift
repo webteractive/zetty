@@ -100,3 +100,20 @@ private func bytes(_ chord: String) -> String? {
         #expect(scope.isActive, "\(scope.displayLabel) should count as broadcasting")
     }
 }
+
+/// Broadcast typed the punctuation itself for every Control chord but a
+/// lowercase letter: Ctrl+[ (vim's Escape) put a literal `[` in every pane,
+/// Ctrl+Shift+A an `A` (release review, 2026-11-20). The legacy C0 bytes,
+/// as the focused pane gets them; a Control chord with none is not guessed.
+@Test func terminalBytesEncodesEveryLegacyControlChord() {
+    #expect(bytes("ctrl+[") == "\u{1b}")
+    #expect(bytes("ctrl+\\") == "\u{1c}")
+    #expect(bytes("ctrl+]") == "\u{1d}")
+    #expect(bytes("ctrl+6") == "\u{1e}")
+    #expect(bytes("ctrl+/") == "\u{1f}")
+    #expect(bytes("ctrl+-") == "\u{1f}")
+    #expect(bytes("ctrl+2") == "\u{00}")
+    #expect(bytes("ctrl+space") == "\u{00}")
+    #expect(bytes("ctrl+A") == "\u{01}")
+    #expect(bytes("ctrl+1") == nil)
+}

@@ -176,3 +176,17 @@ private let attachRequest = RemoteAttachRequest(pane: "ab12cd34", rows: 30, cols
         try decoder.push(Data(bytes: &length, count: 4) + body)
     }
 }
+
+/// A serving Mac lists what it does beyond the protocol version, so a
+/// newer viewer can rely on it and an older peer (no `features` key) is
+/// read as offering none. No protocol bump: older peers ignore the key.
+@Test func helloCarriesFeaturesAndAnOlderHelloHasNone() throws {
+    let hello = RemoteHello(machine: "Mac mini", zettyVersion: "0.1.63",
+                            protocolVersion: RemoteProtocol.version,
+                            features: [RemoteFeature.attachMarker])
+    let back = try JSONDecoder().decode(RemoteHello.self, from: JSONEncoder().encode(hello))
+    #expect(back.offers(RemoteFeature.attachMarker))
+    let older = #"{"machine":"m","zettyVersion":"0.1.62","protocolVersion":5}"#
+    let old = try JSONDecoder().decode(RemoteHello.self, from: Data(older.utf8))
+    #expect(!old.offers(RemoteFeature.attachMarker))
+}

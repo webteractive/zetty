@@ -134,7 +134,7 @@ public enum RemoteRelay {
     private static let readSize = 64 * 1024
 
     private enum Attempt {
-        case attached(fd: Int32, decoder: TerminalFrameDecoder)
+        case attached(fd: Int32, decoder: TerminalFrameDecoder, marksAttach: Bool)
         case failed(RelayPolicy.Event)
     }
 
@@ -157,9 +157,10 @@ public enum RemoteRelay {
             case .failed(let event):
                 let step = policy.next(event)
                 guard proceed(step) else { return 0 }
-            case .attached(let fd, let decoder):
+            case .attached(let fd, let decoder, let marksAttach):
                 let first = policy.scrollback
                 _ = policy.next(.attached)
+                driver.expectsAttachMarker = marksAttach
                 let end = pipe(fd, decoder: decoder, driver: &driver, first: first)
                 Darwin.close(fd)
                 switch end {
@@ -223,6 +224,7 @@ public enum RemoteRelay {
         }
         let deadline = Date().addingTimeInterval(RemoteProtocol.attachTimeout)
         var decoder = RemoteFrameDecoder()
+        var marksAttach = false
 
         // The server speaks first: its hello, or a refusal of this Mac.
         switch readMessage(fd, &decoder, until: deadline) {
@@ -231,6 +233,7 @@ public enum RemoteRelay {
                 Darwin.close(fd)
                 return .failed(.versionMismatch)
             }
+            marksAttach = theirs.offers(RemoteFeature.attachMarker)
         case .refused(let reason)?:
             Darwin.close(fd)
             return .failed(.refused(RemoteText.displayable(reason)))
@@ -254,7 +257,8 @@ public enum RemoteRelay {
 
         switch readMessage(fd, &decoder, until: deadline) {
         case .attached?:
-            return .attached(fd: fd, decoder: TerminalFrameDecoder(seed: decoder.takeRemainder()))
+            return .attached(fd: fd, decoder: TerminalFrameDecoder(seed: decoder.takeRemainder()),
+                             marksAttach: marksAttach)
         case .refused(let reason)?:
             Darwin.close(fd)
             return .failed(.refused(RemoteText.displayable(reason)))
@@ -337,7 +341,10 @@ public enum RemoteRelay {
         for frame in frames {
             switch frame {
             case .data(let bytes):
-                writeAll(1, bytes)
+                let (output, started) = RemoteSizeHandoff.splitAttach(bytes)
+                if started { driver.attachStarted(now: Date()) }
+                guard !output.isEmpty else { continue }
+                writeAll(1, output)
                 driver.output(now: Date())
             case .ended(let reason):
                 return .ended(reason)
@@ -404,11 +411,14 @@ public enum RemoteRelay {
 /// remote attach must never start a fresh shell in its place. When it's gone
 /// the script just ends, and the viewer is told the pane closed.
 public enum RemoteServedAttach {
+    /// The attach marker (`RemoteSizeHandoff.attachMarker`) goes out just
+    /// before the attach, so the viewer knows the replay is over.
     /// `$3`: 0 attaches only, 1 replays the scrollback first, 2 is a repaint,
     /// which also clears the screen, once the replay is in hand
     /// (`SessionPersistence.fetchReplay`, which also checks the session).
     static let script = """
     unset ZMX_SESSION
+    export \(SessionPersistence.noDetachKey)
     if replay=\(SessionPersistence.fetchReplay); then
       [ "$3" = 2 ] && printf '\(SessionPersistence.clearScreenEscaped)'
       [ "$3" = 0 ] || printf '%s' "${replay%x}"
@@ -416,6 +426,7 @@ public enum RemoteServedAttach {
       "$1" list 2>/dev/null | grep -Fq "name=$2\t" || exit 0
       [ "$3" = 2 ] && printf '\(SessionPersistence.clearScreenEscaped)'
     fi
+    printf '\(RemoteSizeHandoff.attachMarkerEscaped)'
     exec "$1" attach "$2"
     """
 

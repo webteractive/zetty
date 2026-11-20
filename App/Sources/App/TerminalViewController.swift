@@ -797,7 +797,13 @@ final class TerminalViewController: NSViewController {
         // Zetty in the background) queued its notifications, progress and
         // bells until shown, then delivered the backlog stamped as new.
         // Draining here bounds that to one tick (`drainMailboxes`).
+        // What a drain delivers happened at some point since the last one,
+        // so it is stamped with that earliest time (`drainedSignalStamp`).
+        let drainedAt = Date().timeIntervalSince1970
+        drainedSignalStamp = lastMailboxDrain ?? drainedAt
         registry.drainMailboxes(of: Set(allSurfaceIDs))
+        drainedSignalStamp = nil
+        lastMailboxDrain = drainedAt
         // Probe while the window is on screen, not only while Zetty is the
         // active app: a window beside or behind another app still shows tab
         // names and dots, and they froze until you clicked back in. Skipped
@@ -851,6 +857,14 @@ final class TerminalViewController: NSViewController {
                 self?.lastSessionPIDs = pids
                 self?.sessionSampler.ingest(psOutput: ps, sessionPIDs: pids, at: Date())
             }
+            // Each session shell's own folder (`ProcessDirectory`): what a
+            // pane without a cwd file goes by instead of OSC 7.
+            var shellFolders: [UUID: String] = [:]
+            for id in ids {
+                guard let pid = pids[SessionPersistence.sessionName(for: id)] else { continue }
+                shellFolders[id] = ProcessDirectory.current(of: pid)
+            }
+            DispatchQueue.main.async { self?.ingestShellFolders(shellFolders, for: ids, at: readAt) }
             var commands: [UUID: String] = [:]
             for id in ids {
                 guard let pid = pids[SessionPersistence.sessionName(for: id)] else { continue }
@@ -875,8 +889,13 @@ final class TerminalViewController: NSViewController {
                     self.setNeedsChromeRefresh(tabBar: true, sidebar: true)
                     self.publishAttentionCount()
                 }
-                guard self.foregroundBySurface != commands else { return }
-                let previous = self.foregroundBySurface
+                // After a failed probe cleared the readings, compare with
+                // the last real ones: against nothing, every idle pane read
+                // as "just went idle" and lost its title (release review,
+                // 2026-11-20).
+                let previous = self.foregroundBeforeProbeFailure ?? self.foregroundBySurface
+                self.foregroundBeforeProbeFailure = nil
+                guard previous != commands || self.foregroundBySurface != commands else { return }
                 self.foregroundBySurface = commands
                 // A pane that just went idle keeps whatever title its tool
                 // last emitted (ghostty never resets titles) — mark it stale
@@ -928,6 +947,10 @@ final class TerminalViewController: NSViewController {
 
     /// Consecutive probe ticks with no answer from zmx or ps.
     private var foregroundProbeFailures = 0
+    /// The panes the last prune kept, to recount attention when they change.
+    private var lastPrunedPaneIDs: Set<UUID> = []
+    /// The readings a failed probe cleared, until the next one succeeds.
+    private var foregroundBeforeProbeFailure: [UUID: String]?
     /// A probe tick is out (off-main); the next waits for it.
     private var foregroundPollInFlight = false
 
@@ -940,14 +963,33 @@ final class TerminalViewController: NSViewController {
         }
     }
 
+    /// Stamps each shell's folder with the reading's time when it moved, and
+    /// keeps the earlier stamp while it stays put, so an agent's later
+    /// report of its own folder (a worktree) still wins.
+    private func ingestShellFolders(_ folders: [UUID: String], for ids: [UUID], at readAt: TimeInterval) {
+        for id in ids {
+            guard let path = folders[id] else { shellFolderStamps[id] = nil; continue }
+            guard shellFolderStamps[id]?.path != path else { continue }
+            shellFolderStamps[id] = StampedPath(path: path, at: readAt)
+            refreshCurrentDirectory(id)
+        }
+    }
+
     /// Drops per-pane state for panes no longer in the workspace (closed, or
     /// in a hibernated project): the status board, folder stamps and stale
     /// titles were otherwise kept for every pane ever opened.
     private func pruneClosedPaneState(keeping ids: Set<UUID>) {
+        // Panes went (closed, or their project hibernated): whoever was
+        // waiting among them no longer counts on the bell or the badge.
+        if ids != lastPrunedPaneIDs {
+            lastPrunedPaneIDs = ids
+            publishAttentionCount()
+        }
         agentDetector.prune(keeping: ids)
         osc7Stamps = osc7Stamps.filter { ids.contains($0.key) }
         agentCwdStamps = agentCwdStamps.filter { ids.contains($0.key) }
         cwdFileStamps = cwdFileStamps.filter { ids.contains($0.key) }
+        shellFolderStamps = shellFolderStamps.filter { ids.contains($0.key) }
         suppressedLiveTitles = suppressedLiveTitles.filter { ids.contains($0.key) }
         staleTitleSurfaces.formIntersection(ids)
     }
@@ -955,6 +997,7 @@ final class TerminalViewController: NSViewController {
     private func foregroundProbeFailed() {
         foregroundProbeFailures += 1
         guard foregroundProbeFailures >= 2, !foregroundBySurface.isEmpty else { return }
+        foregroundBeforeProbeFailure = foregroundBySurface
         foregroundBySurface = [:]
         setNeedsChromeRefresh(tabBar: true, sidebar: true)
     }
@@ -1574,7 +1617,10 @@ final class TerminalViewController: NSViewController {
     func currentDirectory(for surface: Surface?) -> String {
         guard let surface else { return Self.normalizedPath(NSHomeDirectory()) }
         cwdFileStamps[surface.id] = PaneCwdStore.readStamped(surface.id)
-        return Self.normalizedPath(chosenDirectory(for: surface))
+        return Self.normalizedPath(chosenDirectory(for: surface, exists: { path in
+            var isDirectory: ObjCBool = false
+            return FileManager.default.fileExists(atPath: path, isDirectory: &isDirectory) && isDirectory.boolValue
+        }))
     }
 
     /// `currentDirectory(for:)` without touching the disk: the cwd file as the
@@ -1583,13 +1629,16 @@ final class TerminalViewController: NSViewController {
         Self.normalizedPath(chosenDirectory(for: surface))
     }
 
-    private func chosenDirectory(for surface: Surface) -> String {
+    private func chosenDirectory(for surface: Surface,
+                                 exists: (String) -> Bool = { _ in true }) -> String {
         CurrentDirectory.choose(
             cwdFile: cwdFileStamps[surface.id],
+            process: shellFolderStamps[surface.id],
             osc7: osc7Stamps[surface.id],
             agent: agentIdentity(for: surface) != nil ? agentCwdStamps[surface.id] : nil,
             persisted: surface.currentDirectory,
-            spawn: surface.workingDir)
+            spawn: surface.workingDir,
+            exists: exists)
     }
 
     /// When each pane's OSC 7 folder last changed (it carries no time itself).
@@ -1599,6 +1648,9 @@ final class TerminalViewController: NSViewController {
     private var cwdFileStamps: [UUID: StampedPath] = [:]
     /// The folder each pane's agent last reported, with the report's time.
     private var agentCwdStamps: [UUID: StampedPath] = [:]
+    /// Each session shell's own folder as the 3 s tick last read it, stamped
+    /// when it last moved (`ProcessDirectory`).
+    private var shellFolderStamps: [UUID: StampedPath] = [:]
 
     /// Persists the pane's chosen folder when it moved, so it survives a
     /// relaunch before the shell reports again.
@@ -3547,6 +3599,14 @@ final class TerminalViewController: NSViewController {
     /// Panes a live report raised before the startup replay finished.
     private var raisedBeforeReplay: Set<UUID> = []
 
+    /// While the 3 s poll drains the panes' mailboxes: the time of the drain
+    /// before it, the earliest a signal delivered now can have happened. A
+    /// held-back "command finished" stamped on delivery outranked the
+    /// SessionStart of the agent started after it, and ended that agent's
+    /// dot and title (release review, 2026-11-20).
+    private var drainedSignalStamp: TimeInterval?
+    private var lastMailboxDrain: TimeInterval?
+
     /// A live pane's terminal reported a notification, progress, a finished
     /// command or a bell (spec 2026-11-14, section 7). The main registry
     /// only: a remote project's panes never reach here.
@@ -3554,7 +3614,7 @@ final class TerminalViewController: NSViewController {
         guard let surface = workspace.surface(with: surfaceID),
               let project = workspace.project(containing: surfaceID) else { return }
         let kind = agentIdentity(for: surface)
-        let now = Date().timeIntervalSince1970
+        let now = drainedSignalStamp ?? Date().timeIntervalSince1970
 
         func report(_ state: AgentReport.State, agent: AgentKind, message: String? = nil) {
             let result = agentDetector.apply(
@@ -3606,6 +3666,26 @@ final class TerminalViewController: NSViewController {
             guard let kind, !isPaneInView(surfaceID) else { return }
             finished(kind, message: nil)
         }
+    }
+
+    /// A key is on its way to the focused pane. For an agent that never
+    /// reports moving on (`PromptAnswerPolicy`: Codex), a key in its waiting
+    /// pane is the answer, so the pane runs again.
+    func keyReachedFocusedPane() {
+        // The focused tile while the grid is up (`statusBarSurface`).
+        guard !isShowingRemoteProject, let surface = statusBarSurface,
+              let project = workspace.project(containing: surface.id) else { return }
+        let id = surface.id
+        let current = agentDetector.state(for: id)
+        guard let agent = current.kind,
+              let state = PromptAnswerPolicy.report(agent: agent, current: current.status) else { return }
+        let now = Date().timeIntervalSince1970
+        let result = agentDetector.apply(
+            report: AgentReport(source: .terminal, agent: agent, state: state, at: now), session: id, now: now)
+        if handleAgentResult(result, surface: surface, project: project, message: nil) {
+            setNeedsChromeRefresh(tabBar: true, sidebar: true)
+        }
+        if Self.movesAttention(result) { attentionChanged() }
     }
 
     /// After reports moved any pane's state: recount the inbox and badge.
@@ -3681,12 +3761,9 @@ final class TerminalViewController: NSViewController {
     /// inbox first so ended attention episodes drop their read marks. The
     /// bell shows every unread pane; the Dock badge only badge-eligible ones.
     func publishAttentionCount() {
-        let needsAttention = Set(
-            workspace.projects
-                .flatMap { $0.tabList.trees.flatMap { $0.layout.surfaces } }
-                .filter { agentDetector.state(for: $0.id).status == .needsAttention }
-                .map(\.id)
-        )
+        let needsAttention = AttentionInbox.waitingPanes(in: workspace.projects) {
+            agentDetector.state(for: $0).status
+        }
         // Before the replay the board doesn't know who is waiting; syncing
         // then would drop every restored entry (and its read mark).
         guard hasReplayedAgentEvents else { return }
