@@ -87,6 +87,40 @@ public enum SessionPersistence {
     /// until it ends (2026-11-20).
     static let noDetachKey = "ZMX_NO_DETACH_KEY=1"
 
+    /// The session-shell wrapper's file name, in `~/.zetty/`.
+    public static let sessionShellName = "session-shell.sh"
+
+    /// What zmx starts as a NEW session's shell (the app writes it to
+    /// `~/.zetty/session-shell.sh`; `attachCommand` hands it to zmx as
+    /// `$SHELL`). zmx starts the shell with the attaching client's
+    /// environment, so the shell inherited `noDetachKey`, which is for the
+    /// client alone, and a zmx run inside the pane lost its own detach key,
+    /// in every shell (security review of 9e58763..cb4df1b). This drops it,
+    /// puts the real `SHELL` back, and execs the account's login shell as a
+    /// login shell (`-zsh`, as zmx itself starts it). The daemon's command
+    /// line is unchanged, so `ZmxDaemons` still finds it. An attach to a
+    /// session that exists starts no shell and never runs this.
+    public static let sessionShellContents = """
+    #!/bin/sh
+    # Zetty session shell (generated; do not edit — rewritten on launch).
+    # zmx runs it as a new session's $SHELL; it starts the real login shell.
+    unset ZMX_NO_DETACH_KEY
+    SHELL=${ZETTY_SESSION_SHELL:-/bin/zsh}
+    export SHELL
+    unset ZETTY_SESSION_SHELL
+    exec -a "-${SHELL##*/}" "$SHELL"
+    """
+
+    /// The wrapper and the real login shell for `attachCommand`.
+    public struct SessionShell: Equatable, Sendable {
+        public let wrapperPath: String
+        public let loginShell: String
+        public init(wrapperPath: String, loginShell: String) {
+            self.wrapperPath = wrapperPath
+            self.loginShell = loginShell
+        }
+    }
+
     /// `RemoteSizeHandoff.clearScreen` for a `printf` format.
     static let clearScreenEscaped = "\\033[H\\033[2J\\033[3J"
 
@@ -122,13 +156,16 @@ public enum SessionPersistence {
         zmxPath: String,
         surfaceID: UUID,
         restoreScriptPath: String? = nil,
-        snapshotPath: String? = nil
+        snapshotPath: String? = nil,
+        sessionShell: SessionShell? = nil
     ) -> String {
         let session = sessionName(for: surfaceID)
+        // A session this attach creates starts its shell through the wrapper.
+        let shell = sessionShell.map { "ZETTY_SESSION_SHELL=\($0.loginShell) SHELL=\($0.wrapperPath) " } ?? ""
         guard let script = restoreScriptPath else {
-            return "/usr/bin/env -u ZMX_SESSION \(noDetachKey) \(zmxPath) attach \(session)"
+            return "/usr/bin/env -u ZMX_SESSION \(noDetachKey) \(shell)\(zmxPath) attach \(session)"
         }
-        var command = "/bin/sh \(script) \(zmxPath) \(session)"
+        var command = (shell.isEmpty ? "" : "/usr/bin/env \(shell)") + "/bin/sh \(script) \(zmxPath) \(session)"
         // Fourth plain token; present only for a surface the recovery manifest
         // named, so an ordinary launch renders exactly the command it did before.
         if let snapshotPath { command += " \(snapshotPath)" }

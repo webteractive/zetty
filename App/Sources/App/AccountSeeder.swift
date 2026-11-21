@@ -170,7 +170,10 @@ enum AccountSeeder {
                 try fm.createSymbolicLink(atPath: destination, withDestinationPath: source)
                 return .linked(item.id)
             case .copy:
-                try fm.copyItem(atPath: source, toPath: destination)
+                // The file itself, not a link to it: an account's copy has
+                // to be its own (`LinkPreservingWrite.copyTarget`).
+                try LinkPreservingWrite.copyTarget(of: URL(fileURLWithPath: source),
+                                                   to: URL(fileURLWithPath: destination))
                 return .copied(item.id)
             }
         } catch {

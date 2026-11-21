@@ -152,7 +152,10 @@ Per-harness install (`HookInstaller` + the pure `*HookConfig` transforms):
   Every write to a user's own config (`settings.json` from hook repair, the
   mod's plugin-dir sync and account seeding, Codex `config.toml`, Hermes
   `config.yaml`) goes through `LinkPreservingWrite`: through a symlink
-  to the real file, keeping its permissions. A plain atomic write replaced a
+  to the real file, keeping its permissions. A relative link resolves from
+  its folder's real location, as the kernel does (with `~/.claude` itself a
+  link, a string `..` wrote to an unrelated file), and a loop of links fails
+  rather than losing a link. A plain atomic write replaced a
   `settings.json` linked in from a dotfiles repo with a regular file, at
   launch, unasked (release review, 2026-11-20).
 - **Codex** — chains the single `~/.codex/config.toml` `notify` (emits then execs

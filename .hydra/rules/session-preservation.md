@@ -55,9 +55,19 @@ triggers:
     prompt gets), the pane's command ends over a live session, "Process
     exited" shows, and the next key closes the pane. zmx 0.6.0 doesn't read
     the variable, so its sessions keep the key until they end (found driving
-    real keys, 2026-11-20). A session the attach creates inherits it, so a
-    `zmx attach` run inside a pane has no detach key either: Ctrl+\ is the
-    program's at every level, which is the point.
+    real keys, 2026-11-20). **The variable is the client's alone**: zmx
+    starts a new session's shell with the attaching client's environment,
+    so both attach commands hand zmx `~/.zetty/session-shell.sh` as
+    `$SHELL` (`SessionPersistence.sessionShellContents`, written at launch
+    by `ScrollbackRestore.sessionShell()`, with the account's login shell
+    in `ZETTY_SESSION_SHELL`). It unsets the variable, puts the real
+    `SHELL` back and execs the login shell as `-zsh`/`-bash`, as zmx would.
+    Before, the shell inherited it and a `zmx attach` run inside a pane
+    had no detach key, in every shell (security review of
+    9e58763..cb4df1b). The daemon's command line is unchanged
+    (`ZmxDaemons` still finds it); an attach to an existing session starts
+    no shell. If the wrapper can't be written, new sessions start their
+    shell as zmx does.
   - **Repaint nudge** — zmx replays screen contents but a running TUI paints
     only deltas, so a reattached pane stays half-drawn; 1.5s after a pane's
     surface appears the window is shrunk 1pt and restored

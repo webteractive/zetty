@@ -128,7 +128,11 @@ Gotchas, all deliberate:
 - **Seeding is three tiers, not two.** `skills/`, `commands/`, `agents/`,
   `CLAUDE.md` are **symlinked** (read-mostly). `settings.json` is **copied** —
   Claude rewrites it, so a shared link is last-writer-wins between two live
-  processes, and each account needs a real file for its hooks. `plugins/` is
+  processes, and each account needs a real file for its hooks. A copied
+  item copies what a link points at (`LinkPreservingWrite.copyTarget`): a
+  `settings.json` linked in from dotfiles was copied as a link, and the
+  account's hook writes went through it into the shared file (security
+  review of 70c34a5..cb4df1b). `plugins/` is
   **never shared in any form**: it is mutable state (marketplace JSON, a catalog
   cache, git clones), and it sits on `AccountSeed.identity` alongside the
   credential-bearing paths. That denylist is deliberately a SEPARATE list from

@@ -90,3 +90,17 @@ private func codeLines(_ text: String) -> [String] {
         Issue.record("stop() waits for a queue: \(line.trimmingCharacters(in: .whitespaces))")
     }
 }
+
+@Test func thePanesFolderNeverComesFromOSC7() {
+    // Any program's output can carry OSC 7, and the pane's folder is where a
+    // new split's shell starts: `cat` of a file or a remote host picked it
+    // for bash and fish panes (security reviews, 2026-11-20 and of
+    // 9e58763..cb4df1b). The folder comes from the shell's cwd file or its
+    // own process (`CurrentDirectory.choose`), never from OSC 7.
+    for file in ["Sources/ZettyCore/Model/CurrentDirectory.swift", "App/Sources/App/TerminalViewController.swift"] {
+        let text = (try? String(contentsOf: repo.appendingPathComponent(file), encoding: .utf8)) ?? ""
+        #expect(!text.isEmpty, "\(file) is missing")
+        let offending = codeLines(text).filter { $0.lowercased().contains("osc7") }
+        #expect(offending.isEmpty, "\(file) reads OSC 7 into the pane's folder: \(offending)")
+    }
+}

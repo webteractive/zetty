@@ -1392,6 +1392,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             // the file is the only copy of that pane's screen.
             let wantsScript = appConfig.restoreScrollback || !recoverySnapshotPaths.isEmpty
             let restoreScript = wantsScript ? ScrollbackRestore.ensureScript() : nil
+            // A new session's shell starts through it, without the no-detach key.
+            let sessionShell = ScrollbackRestore.sessionShell()
             tvc.sessionCommandProvider = { [weak self, weak tvc] id in
                 guard let self else { return nil }
                 // Resolve the owning project's effective value; a surface not
@@ -1427,7 +1429,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
                 }
                 return SessionPersistence.attachCommand(
                     zmxPath: binary, surfaceID: id, restoreScriptPath: restoreScript,
-                    snapshotPath: self.recoverySnapshotPaths[id])
+                    snapshotPath: self.recoverySnapshotPaths[id], sessionShell: sessionShell)
             }
         } else {
             tvc.sessionCommandProvider = nil

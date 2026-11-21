@@ -313,3 +313,48 @@ private func runRepaint(alive: Bool) throws -> (calls: String, printed: String, 
     #expect(SessionPersistence.sessionPIDs(listed: ["zetty-aaaa": 20], daemons: daemons,
                                            wanted: ["zetty-aaaa", "zetty-cccc"]) == ["zetty-aaaa": 20])
 }
+
+// MARK: - The session's shell
+
+/// zmx starts a new session's shell with the attaching client's environment,
+/// so the shell inherited ZMX_NO_DETACH_KEY and a zmx run inside the pane
+/// lost its own detach key, in every shell (security review of
+/// 9e58763..cb4df1b). The wrapper zmx starts as `$SHELL` drops it, puts the
+/// real SHELL back, and execs the real login shell as a login shell.
+@Test func theSessionShellDropsTheNoDetachKeyAndStartsTheRealLoginShell() throws {
+    let dir = FileManager.default.temporaryDirectory
+        .appendingPathComponent("zetty-session-shell-\(UUID().uuidString)")
+    try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: dir) }
+    let wrapper = dir.appendingPathComponent(SessionPersistence.sessionShellName)
+    try SessionPersistence.sessionShellContents.write(to: wrapper, atomically: true, encoding: .utf8)
+
+    let process = Process()
+    process.executableURL = URL(fileURLWithPath: "/bin/sh")
+    process.arguments = [wrapper.path]
+    process.environment = ["ZMX_NO_DETACH_KEY": "1", "ZETTY_SESSION_SHELL": "/bin/sh",
+                           "SHELL": wrapper.path, "PATH": "/usr/bin:/bin"]
+    let input = Pipe(), output = Pipe()
+    process.standardInput = input
+    process.standardOutput = output
+    try process.run()
+    input.fileHandleForWriting.write(Data("echo \"arg0=$0\"; env; exit\n".utf8))
+    try input.fileHandleForWriting.close()
+    let text = String(decoding: output.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+    process.waitUntilExit()
+
+    #expect(text.contains("arg0=-sh\n"))
+    #expect(text.contains("SHELL=/bin/sh\n"))
+    #expect(!text.contains("ZMX_NO_DETACH_KEY"))
+    #expect(!text.contains("ZETTY_SESSION_SHELL"))
+}
+
+@Test func bothAttachCommandsStartANewSessionThroughTheSessionShell() {
+    let shell = SessionPersistence.SessionShell(wrapperPath: "/Users/g/.zetty/session-shell.sh", loginShell: "/bin/bash")
+    let bare = SessionPersistence.attachCommand(zmxPath: "/z/zmx", surfaceID: idA, sessionShell: shell)
+    #expect(bare == "/usr/bin/env -u ZMX_SESSION ZMX_NO_DETACH_KEY=1 ZETTY_SESSION_SHELL=/bin/bash SHELL=/Users/g/.zetty/session-shell.sh /z/zmx attach zetty-abcdef01")
+    let restore = SessionPersistence.attachCommand(zmxPath: "/z/zmx", surfaceID: idA,
+                                                   restoreScriptPath: "/Users/g/.zetty/scrollback-restore.sh",
+                                                   sessionShell: shell)
+    #expect(restore == "/usr/bin/env ZETTY_SESSION_SHELL=/bin/bash SHELL=/Users/g/.zetty/session-shell.sh /bin/sh /Users/g/.zetty/scrollback-restore.sh /z/zmx zetty-abcdef01")
+}

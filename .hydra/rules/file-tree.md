@@ -68,11 +68,14 @@ Gotchas, all deliberate:
   3 s tick (`ProcessDirectory`, `PROC_PIDVNODEPATHINFO`): bash and fish
   panes write no cwd file (Zetty's integration is zsh's), and OSC 7 there
   let `cat` or a remote host pick where splits open (security review,
-  2026-11-20). **OSC 7 counts only when neither exists** (a scratch pane,
-  which has no session), **and only for a local directory that exists**:
-  any program's output can carry an OSC 7, and this folder is where a new
-  split's shell starts (a crafted file `cat`-ed in a pane must not steer
-  it, e.g. into a repo whose prompt hooks run code). **Single-pane readers
+  2026-11-20). **OSC 7 never counts**: any program's output can carry
+  one, and this folder is where a new split's shell starts (a crafted file
+  `cat`-ed in a pane must not steer it, e.g. into a repo whose prompt hooks
+  run code). It once filled in for a bash or fish pane with no session (a
+  scratch pane, `preserve-sessions` off, the seconds before the first
+  reading); such a pane now keeps its persisted or spawn folder (security
+  review of 9e58763..cb4df1b, guarded by `thePanesFolderNeverComesFromOSC7`).
+  **Single-pane readers
   skip a folder that has gone** (a removed worktree) for the next source in
   that order, so a split never starts in libghostty's default folder; the
   readers that walk every pane stay off the disk. Agent report

@@ -729,11 +729,6 @@ final class TerminalViewController: NSViewController {
                 self.suppressedLiveTitles[id] = nil
             }
             self.persistTitle(for: id)
-            // Only on an OSC 7 change: an animating title fires this many
-            // times a second, and the 3 s poll covers the cwd file.
-            if let surface = self.surface(with: id), self.noteOSC7(for: surface) {
-                self.refreshCurrentDirectory(id)
-            }
             // This subscription fires for a cwd change as well as a title, so
             // it is what tells a tile footer its directory may have moved.
             if self.tileMode { self.tileDirectories.markDirty(id) }
@@ -858,7 +853,8 @@ final class TerminalViewController: NSViewController {
                 self?.sessionSampler.ingest(psOutput: ps, sessionPIDs: pids, at: Date())
             }
             // Each session shell's own folder (`ProcessDirectory`): what a
-            // pane without a cwd file goes by instead of OSC 7.
+            // pane without a cwd file goes by (never OSC 7, which output can
+            // carry).
             var shellFolders: [UUID: String] = [:]
             for id in ids {
                 guard let pid = pids[SessionPersistence.sessionName(for: id)] else { continue }
@@ -986,7 +982,6 @@ final class TerminalViewController: NSViewController {
             publishAttentionCount()
         }
         agentDetector.prune(keeping: ids)
-        osc7Stamps = osc7Stamps.filter { ids.contains($0.key) }
         agentCwdStamps = agentCwdStamps.filter { ids.contains($0.key) }
         cwdFileStamps = cwdFileStamps.filter { ids.contains($0.key) }
         shellFolderStamps = shellFolderStamps.filter { ids.contains($0.key) }
@@ -1607,9 +1602,10 @@ final class TerminalViewController: NSViewController {
     }
 
     /// The pane's folder, normalised (`CurrentDirectory.choose`): the newest
-    /// of the shell's cwd file, OSC 7 and — while an agent holds the pane —
-    /// the folder the agent reported; else the persisted one; else the spawn
-    /// folder. Every reader of "where the pane is" goes through this: status
+    /// of the shell's cwd file (else its own folder, read from the kernel)
+    /// and — while an agent holds the pane — the folder the agent reported;
+    /// else the persisted one; else the spawn folder. Never OSC 7, which any
+    /// program's output can carry. Every reader of "where the pane is" goes through this: status
     /// bar, tile footers, Open/Reveal, tab title, file tree, new splits.
     ///
     /// Reads the pane's cwd file fresh (one file): for the readers that act on
@@ -1634,15 +1630,12 @@ final class TerminalViewController: NSViewController {
         CurrentDirectory.choose(
             cwdFile: cwdFileStamps[surface.id],
             process: shellFolderStamps[surface.id],
-            osc7: osc7Stamps[surface.id],
             agent: agentIdentity(for: surface) != nil ? agentCwdStamps[surface.id] : nil,
             persisted: surface.currentDirectory,
             spawn: surface.workingDir,
             exists: exists)
     }
 
-    /// When each pane's OSC 7 folder last changed (it carries no time itself).
-    private var osc7Stamps: [UUID: StampedPath] = [:]
     /// Each pane's cwd file as last read (off-main every tick, or fresh by a
     /// single-pane reader).
     private var cwdFileStamps: [UUID: StampedPath] = [:]
@@ -1659,20 +1652,6 @@ final class TerminalViewController: NSViewController {
         let chosen = Self.normalizedPath(chosenDirectory(for: surface))
         guard chosen != surface.currentDirectory else { return }
         updateSurfaceAnywhere(surfaceID) { $0.currentDirectory = chosen }
-    }
-
-    /// Stamps the pane's OSC 7 folder when it changed; true if it did. An
-    /// OSC 7 naming no local directory (a remote host's path, or anything a
-    /// program printed) is never stamped: this folder is where splits spawn.
-    @discardableResult
-    private func noteOSC7(for surface: Surface) -> Bool {
-        guard let path = registry.workingDirectory(for: surface), osc7Stamps[surface.id]?.path != path else { return false }
-        var isDirectory: ObjCBool = false
-        guard FileManager.default.fileExists(atPath: path, isDirectory: &isDirectory), isDirectory.boolValue else {
-            return false
-        }
-        osc7Stamps[surface.id] = StampedPath(path: path, at: Date().timeIntervalSince1970)
-        return true
     }
 
     /// Git state for the tile footers, probed once per directory.
