@@ -287,3 +287,16 @@ private func report(_ state: AgentReport.State, at: TimeInterval, from source: A
     #expect(!board.apply(report(.needsAttention, at: 10.0), to: pane, replay: false, now: 12.5).accepted)
     #expect(board.state(for: pane).status == .idle)
 }
+
+/// Reports are ordered newest-first, and a hook line's `ts` or the mod's
+/// `turn.at` is whatever the file says: one stamped in the future beat every
+/// real report after it, so the pane stayed yellow until its agent exited,
+/// and replay restored that at every launch (native security review of
+/// v0.1.62..475736a). A report counts as no newer than the moment it arrives.
+@Test func aReportStampedInTheFutureDoesNotPinThePane() {
+    let board = AgentStatusBoard()
+    board.apply(report(.needsAttention, at: 10 + 365 * 86_400), to: pane, replay: false, now: 10)
+    let next = board.apply(report(.idle, at: 15), to: pane, replay: false, now: 15)
+    #expect(next.accepted)
+    #expect(board.state(for: pane).status == .idle)
+}

@@ -46,7 +46,15 @@ public final class AgentStatusBoard {
     }
 
     @discardableResult
-    public func apply(_ report: AgentReport, to id: UUID, replay: Bool, now: TimeInterval) -> AgentApplyResult {
+    public func apply(_ incoming: AgentReport, to id: UUID, replay: Bool, now: TimeInterval) -> AgentApplyResult {
+        // No report is newer than the moment it arrives. A hook line's `ts`
+        // and the mod's `turn.at` are whatever their files say, and one
+        // stamped in the future beat every real report after it, pinning the
+        // pane until its agent exited (native security review of
+        // v0.1.62..475736a).
+        var report = incoming
+        report.at = min(report.at, now)
+        if let confirmed = report.confirmedAt { report.confirmedAt = min(confirmed, now) }
         var pane = panes[id] ?? Pane()
         let previous = pane.state.status
         guard report.supersedes(pane.latest) else {

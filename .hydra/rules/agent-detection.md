@@ -28,7 +28,9 @@ drops) so dots recover for agents already running inside preserved sessions.
 **Status model** (spec `docs/superpowers/specs/2026-11-14-agent-status-signals-design.md`):
 every source is a timestamped `AgentReport` (hook line `ts`, the mod's
 `turn.at`, terminal signals stamped on receipt) folded per pane by
-`AgentStatusBoard`: the newest wins, a tie goes to the mod, a hook or mod
+`AgentStatusBoard`: the newest wins (no report counts as newer than its
+arrival: a future `ts` or `turn.at` pinned the pane until its agent exited;
+native security review of v0.1.62..475736a), a tie goes to the mod, a hook or mod
 "needs you" also beats a terminal signal stamped up to 1 s after it
 (`terminalStampSlack`: Claude clears its progress as it stops to ask, and that
 clear, stamped on arrival, hid the prompt; release review 2026-11-20), two empty
