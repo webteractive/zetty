@@ -85,8 +85,8 @@ installed or running. The Tailscale app is never touched or needed.
   and the uploader's buffer file under Caches still held the sign-in link
   while signed out (final review, 2026-11-10). It sets `TS_NO_LOGS_NO_SUPPORT` too, and
   netstack keepalive 10s/3s (a vanished viewer is dropped in under a minute;
-  gVisor's outgoing conns expose no keepalive, so a viewer notices a sleeping
-  Mac when its peer goes offline in Tailscale, a minute or two). Those three
+  gVisor's outgoing conns expose no keepalive, so the viewer's side relies on
+  the feed heartbeat under Wire and limits). Those three
   variables are set by `zt_prepare_env`, called from `main.swift` before any
   pane exists, never by `zt_start`: setting them while panes exist crashed
   the laptop in `ghostty_surface_new` (`surfaces-and-memory.md`, 2026-11-13).
@@ -247,6 +247,18 @@ the Settings status line.
   resets on the next snapshot. Links are socketpair ends, so
   `RemoteProtocol.configureLink` only sets `SO_NOSIGPIPE`; keepalive is the
   bridge's (above).
+- **Feed heartbeat** (`FeedLiveness`, hello feature `feed-heartbeat`, no
+  protocol bump). The server re-sends its latest snapshot to a feed that has
+  had nothing for 15s (checked every 5s), so an idle Mac's frames arrive every
+  15–20s. A viewer whose server offered the feature drops a link silent for
+  45s and dials again (log: `client: <Mac> sent nothing for 45s`). Before
+  this, a link that outlived its serving Mac (a quit and relaunch, a sleep,
+  anything the peer's Tailscale status never showed as offline) got no error,
+  only silence. The laptop kept the mini "online" with a snapshot two days
+  old, missing the projects added since (2026-11-24). An older server, without the
+  feature, is never dropped for silence: it sends nothing while unchanged.
+  Older viewers just take the resends as snapshots. A resend also fills a
+  dead reader's outbox, so the server drops it by the 8-frame limit.
 - `Tailnet` refreshes the node's status every 10s and on every state event,
   only while one of the two keys is on.
 
@@ -431,9 +443,15 @@ through `setNeedsChromeRefresh`, since a feed can tick as fast as a title.
 - **Two Macs, each Zetty signed in to Tailscale as Glen.** Serve on the mini,
   show on the laptop. `remote-e2e.sh` covers most of this. By hand: the
   mini's projects and dots appear and update within ~1s; sleeping the mini
-  reads offline once Tailscale marks its device offline (a minute or two) and
-  online again after; a build with another `RemoteProtocol.version` reads
-  "needs update"; no copy lists itself.
+  reads offline within about 50s (the feed heartbeat) and online again after;
+  a build with another `RemoteProtocol.version` reads "needs update"; no copy
+  lists itself.
+- **A silent link, on one Mac** (checked 2026-11-24): two isolated copies,
+  each its own ephemeral device (`ZETTY_TAILSCALE_AUTH_KEY_FILE`), both
+  serving and showing. `kill -STOP` the serving copy: the other lists it
+  offline about 50s after its last frame, logs `sent nothing for 45s`, and
+  reconnects at its next retry after `kill -CONT`. Peers on an older build
+  stay online throughout.
 - Screenshots are TCC-denied in agent sessions, so the sidebar's look needs a
   human.
 

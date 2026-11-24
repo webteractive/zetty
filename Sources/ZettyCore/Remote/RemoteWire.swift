@@ -121,8 +121,11 @@ public enum RemoteFeature {
     /// Its served attach prints `RemoteSizeHandoff.attachMarker` as `zmx
     /// attach` starts, so the viewer's repaint timing counts from there.
     public static let attachMarker = "attach-marker"
+    /// Its feed re-sends the latest snapshot after `FeedLiveness.resendInterval`
+    /// of quiet, so a viewer can take a silent feed for a dead one.
+    public static let feedHeartbeat = "feed-heartbeat"
     /// Everything this build offers.
-    public static let all = [attachMarker]
+    public static let all = [attachMarker, feedHeartbeat]
 }
 
 /// Everything that crosses a remote-machines connection.

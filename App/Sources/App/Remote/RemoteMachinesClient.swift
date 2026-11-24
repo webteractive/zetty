@@ -43,6 +43,8 @@ final class RemoteMachinesClient {
     private var lastSave: Date?
     private var pendingSave: DispatchWorkItem?
     private var stopped = false
+    /// Drops links that went silent (`FeedLiveness`).
+    private var livenessTimer: DispatchSourceTimer?
 
     private static let connectTimeout: TimeInterval = 3
     private static let backoff: [TimeInterval] = [5, 10, 30, 60]
@@ -64,6 +66,7 @@ final class RemoteMachinesClient {
         queue.async { [self] in
             for machine in cache.load() { byID[machine.stableID] = machine }
             emit()
+            startLivenessTimer()
         }
     }
 
@@ -109,6 +112,8 @@ final class RemoteMachinesClient {
         stoppedOnMain = true
         queue.sync { [self] in
             stopped = true
+            livenessTimer?.cancel()
+            livenessTimer = nil
             disconnectAll()
             pendingSave?.cancel()
             cache.save(Array(byID.values))
@@ -193,6 +198,7 @@ final class RemoteMachinesClient {
 
     private func received(_ messages: [RemoteMessage], from id: String) {
         guard let link = links[id], let node = candidates[id] else { return }
+        link.liveness?.heard(at: Date())
         for message in messages {
             switch message {
             case .hello(let theirs):
@@ -210,6 +216,7 @@ final class RemoteMachinesClient {
                     return drop(id, retry: true)
                 }
                 link.greeted = true
+                link.liveness = FeedLiveness(serverHello: theirs, at: Date())
             case .snapshot(let snapshot):
                 guard link.greeted else { return drop(id, retry: true) }
                 let machineKey = key(forNode: id)
@@ -246,6 +253,29 @@ final class RemoteMachinesClient {
         emit()
     }
 
+    // MARK: - Liveness
+
+    private func startLivenessTimer() {
+        guard livenessTimer == nil, !stopped else { return }
+        let timer = DispatchSource.makeTimerSource(queue: queue)
+        let check = FeedLiveness.resendInterval / 3
+        timer.schedule(deadline: .now() + check, repeating: check, leeway: .seconds(1))
+        timer.setEventHandler { [weak self] in self?.dropSilentLinks() }
+        livenessTimer = timer
+        timer.resume()
+    }
+
+    /// A link that outlived its serving Mac (a relaunch, a sleep) gets no
+    /// error, only silence: hang up and dial again.
+    private func dropSilentLinks() {
+        let now = Date()
+        for (id, link) in links where link.liveness?.isDead(at: now) == true {
+            let name = byID[key(forNode: id)]?.name ?? id
+            ZettyLog.remote.log("client: \(name) sent nothing for \(Int(FeedLiveness.silenceLimit))s; dialling again")
+            drop(id, retry: true)
+        }
+    }
+
     private func scheduleRetry(_ id: String) {
         let attempt = retries[id]?.attempt ?? 0
         let delay = Self.backoff[min(attempt, Self.backoff.count - 1)]
@@ -276,6 +306,8 @@ private final class Link {
     private var closed = false
     /// This side has answered the server's hello.
     var greeted = false
+    /// Set at the server's hello; nil until then.
+    var liveness: FeedLiveness?
 
     var onMessages: (([RemoteMessage]) -> Void)?
     var onFailed: (() -> Void)?

@@ -66,6 +66,10 @@ final class RemoteServer {
     private var stopped = false
     private var connections: [ObjectIdentifier: Connection] = [:]
     private var latestFrame: Data?
+    /// Re-sends `latestFrame` to feeds that have been quiet for
+    /// `FeedLiveness.resendInterval` (`RemoteFeature.feedHeartbeat`). Runs
+    /// while listening.
+    private var heartbeat: DispatchSourceTimer?
     /// The relay connection whose screen drives each session's size. A
     /// session missing here is driven by this Mac.
     private var drivers: [String: ObjectIdentifier] = [:]
@@ -100,6 +104,7 @@ final class RemoteServer {
             guard let tailnet, me != nil else {
                 listener?.close()
                 listener = nil
+                stopHeartbeat()
                 closeAllConnections()
                 return
             }
@@ -108,6 +113,7 @@ final class RemoteServer {
                 guard let self else { Darwin.close(fd); return }
                 self.queue.async { self.accepted(fd, remote: remote) }
             }
+            startHeartbeat()
         }
     }
 
@@ -129,6 +135,7 @@ final class RemoteServer {
             stopped = true
             listener?.close()
             listener = nil
+            stopHeartbeat()
             closeAllConnections()
             latestFrame = nil
         }
@@ -385,7 +392,36 @@ final class RemoteServer {
 
     private func send(_ frame: Data, on connection: Connection) {
         guard connection.pendingFrames < Self.maxPendingFrames else { connection.close(); return }
+        connection.lastSent = Date()
         connection.enqueue(frame)
+    }
+
+    // MARK: - Heartbeat
+
+    private func startHeartbeat() {
+        guard heartbeat == nil else { return }
+        let timer = DispatchSource.makeTimerSource(queue: queue)
+        let check = FeedLiveness.resendInterval / 3
+        timer.schedule(deadline: .now() + check, repeating: check, leeway: .seconds(1))
+        timer.setEventHandler { [weak self] in self?.resendToQuietFeeds() }
+        heartbeat = timer
+        timer.resume()
+    }
+
+    private func stopHeartbeat() {
+        heartbeat?.cancel()
+        heartbeat = nil
+    }
+
+    /// A feed whose viewer is gone fills its outbox with these and is
+    /// dropped by `send`, like any reader that stopped reading.
+    private func resendToQuietFeeds() {
+        guard let latestFrame else { return }
+        let now = Date()
+        for connection in connections.values
+        where connection.phase == .streaming && FeedLiveness.resendIsDue(lastSent: connection.lastSent, now: now) {
+            send(latestFrame, on: connection)
+        }
     }
 
     private func closeAllConnections() {
@@ -411,6 +447,8 @@ private final class Connection {
     /// The relay's window, as last sent.
     var size: (rows: UInt16, cols: UInt16) = (24, 80)
     var lastRepaint: Date?
+    /// When a frame was last queued here, for the feed heartbeat.
+    var lastSent = Date()
     /// After each write, so a paused pane can resume.
     var onFlushed: (() -> Void)?
     /// Close once everything queued has been written (a refusal).
